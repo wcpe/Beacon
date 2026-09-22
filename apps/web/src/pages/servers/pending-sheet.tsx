@@ -25,7 +25,7 @@ import {
 import type { AgentIdentityItem } from '@beacon/contracts'
 
 import { ApiClientError, approveIdentity, fetchIdentities, rejectIdentity } from '../../api/cluster'
-import { fetchPagedItemsByEnvScope, resolveRequestNamespaceScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, resolveRequestNamespaceScope, useEnvNamespaceScope, useEnvScopePending } from '../../features/env/use-env-scope'
 import ReasonDialog from './reason-dialog'
 import IdentityDetailSheet from './identity-detail-sheet'
 
@@ -44,6 +44,8 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
   const queryClient = useQueryClient()
   // FR-178：待确认列表跟随顶栏 env
   const envScope = useEnvNamespaceScope()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
   const requestScope = resolveRequestNamespaceScope(namespaceId, envScope)
   const [action, setAction] = useState<PendingAction | null>(null)
   // Q3 占用冲突强制解绑勾选
@@ -205,7 +207,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
               <Link className="w-fit text-brand hover:underline" to={`/approvals/${encodeURIComponent(approvalRequestID)}`}>查看统一审批</Link>
             </div>
           )}
-          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+          <AsyncSection isLoading={query.isLoading || envPending} isError={query.isError} error={query.error}>
             <DataTable
               columns={columns}
               rows={pendingRows}

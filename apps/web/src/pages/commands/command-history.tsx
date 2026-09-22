@@ -21,7 +21,7 @@ import {
 import type { CommandItem } from '@beacon/contracts'
 
 import { fetchCommands } from '../../api/observability'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes, useEnvScopePending } from '../../features/env/use-env-scope'
 import {
   COMMAND_TYPES,
   commandResultSummary,
@@ -63,6 +63,8 @@ export default function CommandHistory({ onView, selectedId }: CommandHistoryPro
   const { t } = useTranslation()
   // FR-178：命令历史按每个 env 的命名空间受限请求。
   const envCodes = useEnvNamespaceCodes()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
   // 互跳承接：以 URL 查询参数为筛选初值（仅初始化，页内变更不回写 URL）
   const [searchParams] = useSearchParams()
   const [keyword, setKeyword] = useState(() => searchParams.get('serverId') ?? '')
@@ -209,7 +211,7 @@ export default function CommandHistory({ onView, selectedId }: CommandHistoryPro
       }
     >
       <AsyncSection
-        isLoading={query.isLoading}
+        isLoading={query.isLoading || envPending}
         isError={query.isError}
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={8} />}

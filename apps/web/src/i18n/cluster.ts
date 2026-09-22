@@ -204,6 +204,8 @@ export const cluster = {
       close: '收起未分配栏',
       selected: '已选 {{count}} 台',
       selectHint: '勾选服务器后可批量分配（须同类）',
+      lobbyAssigned: '已为 {{count}} 台创建大厅迁移审批申请（待审批执行）',
+      lobbyPartialFail: '部分失败：成功 {{ok}}，失败 {{fail}}',
     },
     drag: {
       hintBackend: '将子服拖到目标小区节点上松手即可落区',
@@ -249,6 +251,7 @@ export const cluster = {
       target: '目标',
       targetZone: '目标小区',
       targetCluster: '目标集群',
+      targetLobby: '大厅集群（入口服）',
       setDefaultEntry: '同时设为默认入口',
       searchTarget: '搜索目标（按名称过滤）',
       noTargetMatch: '无匹配的目标节点',
@@ -364,6 +367,8 @@ export const cluster = {
     filter: {
       namespace: '命名空间',
       allNamespaces: '全部命名空间',
+      // 顶栏观测范围（env）选项未就绪时的占位：此间 namespace 集合尚未解析，非真为空
+      namespaceLoading: '范围解析中…',
     },
   },
   // 身份冲突页（/identity-conflicts，FR-177）：复制整服目录导致的同 identityId 并发双实例，卡片平铺处置

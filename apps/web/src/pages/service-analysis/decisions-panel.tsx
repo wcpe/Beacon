@@ -10,7 +10,7 @@ import { AsyncSection, Badge, Checkbox, DataTable, Input, TableSkeleton, type Da
 import type { SchedDecisionItem } from '@beacon/contracts'
 
 import { fetchSchedDecisions } from '../../api/metrics'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope, useEnvScopePending } from '../../features/env/use-env-scope'
 import FilterSelect from '../../features/observability/filter-select'
 import Pager from '../../features/observability/pager'
 import CursorPager from '../../features/observability/cursor-pager'
@@ -28,6 +28,8 @@ export default function DecisionsPanel() {
   const { t } = useTranslation()
   // FR-178：调度决策跟随顶栏 env（namespaceId 维度）
   const envScope = useEnvNamespaceScope()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
   const [windowKey, setWindowKey] = useState<WindowKey>('1h')
   const [keyword, setKeyword] = useState('')
   const [result, setResult] = useState('all')
@@ -233,7 +235,7 @@ export default function DecisionsPanel() {
           }
         >
           <AsyncSection
-            isLoading={query.isLoading}
+            isLoading={query.isLoading || envPending}
             isError={query.isError}
             error={query.error}
             skeleton={<TableSkeleton columns={columns.length} rows={8} />}

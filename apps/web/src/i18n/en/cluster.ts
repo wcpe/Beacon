@@ -199,6 +199,8 @@ export const cluster = {
       close: 'Collapse unassigned rail',
       selected: '{{count}} selected',
       selectHint: 'Select servers to batch-assign (same kind required)',
+      lobbyAssigned: 'Created lobby-migration approvals for {{count}} server(s) (pending approval)',
+      lobbyPartialFail: 'Partial failure: {{ok}} ok, {{fail}} failed',
     },
     drag: {
       hintBackend: 'Drag a backend onto a zone node to place it',
@@ -240,6 +242,7 @@ export const cluster = {
       target: 'Target',
       targetZone: 'Target zone',
       targetCluster: 'Target cluster',
+      targetLobby: 'Lobby cluster (entry)',
       setDefaultEntry: 'Also set as default entry',
       searchTarget: 'Search target (filter by name)',
       noTargetMatch: 'No matching target node',
@@ -355,6 +358,7 @@ export const cluster = {
     filter: {
       namespace: 'Namespace',
       allNamespaces: 'All namespaces',
+      namespaceLoading: 'Resolving scope…',
     },
   },
   // Identity conflicts page (/identity-conflicts, FR-177): concurrent dual instances of same identityId after full-server directory copy
