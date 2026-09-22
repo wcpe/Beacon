@@ -1,5 +1,5 @@
 // 服务分析页选中服务器持久化：刷新 / 重进页面恢复上次多选。
-// 与 state/env-filter.ts 同构：模块级快照 + localStorage + 订阅集合。
+// 模块级快照 + localStorage + 订阅集合（与 state/auth.ts 同构）。
 
 import { useSyncExternalStore } from 'react'
 

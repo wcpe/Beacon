@@ -16,7 +16,7 @@ import {
   useObservationScopeSelection,
 } from '../features/env/observation-scope'
 
-/** FR-214 页眉观测范围选择器：当前仅 mock-first 交互，不改变任何写目标。 */
+/** FR-214 页眉观测范围选择器：驱动各观测 / 集群页按范围收窄取数（FR-178，真源见 features/env/observation-scope）。 */
 export default function EnvFilter() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
