@@ -69,6 +69,7 @@ import {
   fetchPagedItemsByEnvScope,
   resolveRequestNamespaceScope,
   useEnvNamespaceScope,
+  useEnvScopePending,
 } from '../../features/env/use-env-scope'
 import { notifyError, notifySuccess } from '../../lib/notify'
 import { LEVEL_META, badgeOf } from './health-level'
@@ -110,8 +111,8 @@ interface AssetsPanelProps {
   onViewHealth: (serverId: string) => void
   // 打开注册待确认抽屉
   onOpenPending: () => void
-  // 待确认数（吸顶入口徽标）
-  pendingCount: number
+  // 待确认数（吸顶入口徽标）；null = 观测范围仍在解析，计数未知，不渲染徽标
+  pendingCount: number | null
   // URL / 互跳预填搜索（如 ?keyword=lobby）
   initialKeyword?: string
 }
@@ -127,6 +128,8 @@ export default function AssetsPanel({
   const queryClient = useQueryClient()
   // FR-178：顶栏 env 作用域与页内命名空间合成受限请求范围。
   const envScope = useEnvNamespaceScope()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
   const requestScope = resolveRequestNamespaceScope(namespaceId, envScope)
 
   const [keyword, setKeyword] = useState(initialKeyword)
@@ -669,8 +672,9 @@ export default function AssetsPanel({
       { label: t('cluster.servers.summary.total'), value: total, tone: 'default' as const },
       {
         label: t('cluster.servers.summary.pending'),
-        value: pendingCount,
-        tone: pendingCount > 0 ? ('warning' as const) : ('muted' as const),
+        // 未知（范围解析中）以「—」占位，避免把未解析读成 0
+        value: pendingCount ?? '—',
+        tone: pendingCount !== null && pendingCount > 0 ? ('warning' as const) : ('muted' as const),
       },
       {
         label: t('cluster.servers.summary.residual'),
@@ -771,7 +775,7 @@ export default function AssetsPanel({
           <Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={onOpenPending}>
             <Inbox className="size-3.5" />
             {t('cluster.servers.pending.title')}
-            {pendingCount > 0 && (
+            {pendingCount !== null && pendingCount > 0 && (
               <Badge variant="warn" className="tnum">
                 {pendingCount}
               </Badge>
@@ -806,7 +810,7 @@ export default function AssetsPanel({
 
         {/* 列表区：自身滚动（max-height），页面整体高度可控，1000+ 台亦不无限增高 */}
         <div className="max-h-[calc(100vh-20rem)] overflow-y-auto px-4 pt-2 pb-1">
-          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+          <AsyncSection isLoading={query.isLoading || envPending} isError={query.isError} error={query.error}>
             <DataTable
               columns={columns}
               rows={rows}

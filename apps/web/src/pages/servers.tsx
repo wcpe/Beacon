@@ -9,7 +9,7 @@ import { useSearchParams } from 'react-router-dom'
 
 import { fetchIdentities } from '../api/cluster'
 import { isDemoMode } from '../demo-mode'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope, useEnvScopePending } from '../features/env/use-env-scope'
 import LifecycleMockReview from '../features/lifecycle/mock-review'
 import AssetsPanel from './servers/assets-panel'
 import HealthSheet from './servers/health-sheet'
@@ -24,6 +24,8 @@ export default function ServersPage() {
   // 注册待确认抽屉开关
   const [pendingOpen, setPendingOpen] = useState(false)
   const envScope = useEnvNamespaceScope()
+  // 观测范围未就绪 → envScope 为 fail-closed 空集合，此间计数是「未知」而非 0，须传 null 由下游隐藏徽标。
+  const envPending = useEnvScopePending()
 
   // 待确认数：按每个命名空间受限请求并汇总，绝不拉全量后过滤。
   const pendingQuery = useQuery({
@@ -33,7 +35,11 @@ export default function ServersPage() {
         fetchIdentities({ status: 'pending', namespaceId, pageSize: 100 }),
       ),
   })
-  const pendingCount = useMemo(() => pendingQuery.data?.items.length ?? 0, [pendingQuery.data])
+  const pendingCount = useMemo(
+    // 范围未就绪时计几都不对，置 null 让徽标不渲染，杜绝「假 0」
+    () => (envPending ? null : (pendingQuery.data?.items.length ?? 0)),
+    [envPending, pendingQuery.data],
+  )
 
   return (
     <section className="grid gap-4">

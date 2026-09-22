@@ -17,7 +17,7 @@ import {
 import type { CommandItem } from '@beacon/contracts'
 
 import { fetchCommands } from '../../api/observability'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes, useEnvScopePending } from '../../features/env/use-env-scope'
 import { commandTypeLabel } from '../../features/observability/command-labels'
 
 const REFETCH_MS = 5000
@@ -33,6 +33,8 @@ export default function CommandQueue({ onView, selectedId }: CommandQueueProps) 
   const { t } = useTranslation()
   // FR-178：在途队列按每个 env 的命名空间受限请求。
   const envCodes = useEnvNamespaceCodes()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
 
   // 分别拉 pending / fetched（Legacy 端点单值 status 过滤），合并成在途队列
   const pendingQuery = useQuery({
@@ -99,7 +101,7 @@ export default function CommandQueue({ onView, selectedId }: CommandQueueProps) 
         count={rows.length > 0 ? t('observability.common.total', { count: rows.length }) : undefined}
       />
       <AsyncSection
-        isLoading={pendingQuery.isLoading || fetchedQuery.isLoading}
+        isLoading={pendingQuery.isLoading || fetchedQuery.isLoading || envPending}
         isError={pendingQuery.isError || fetchedQuery.isError}
         error={pendingQuery.error ?? fetchedQuery.error}
         skeleton={<TableSkeleton columns={columns.length} rows={4} />}

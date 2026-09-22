@@ -19,11 +19,24 @@ import {
 import type { ServerItem, ZoneTreeResponse } from '@beacon/contracts'
 
 import type { ApprovalTicket } from '../../api/cluster'
-import AssignTargetTree from './assign-target-tree'
+import AssignTargetTree, { LOBBY_TARGET_PREFIX } from './assign-target-tree'
 
 /** 从结构树按 id 找目标可读名（小区含集群 / 大区路径，集群直接用名）。 */
-function targetLabelOf(tree: ZoneTreeResponse | undefined, kind: 'backend' | 'proxy', target: string): string {
-  if (!tree || target === '') {
+function targetLabelOf(
+  tree: ZoneTreeResponse | undefined,
+  kind: 'backend' | 'proxy',
+  target: string,
+  lobbyCluster: { id: number; name: string } | null,
+  lobbyLabel: string,
+): string {
+  if (target === '') {
+    return ''
+  }
+  // 大厅集群目标（FR-225 / A1）：值形如 lobby:<id>
+  if (target.startsWith(LOBBY_TARGET_PREFIX)) {
+    return lobbyCluster === null ? lobbyLabel : `${lobbyLabel} · ${lobbyCluster.name}`
+  }
+  if (!tree) {
     return ''
   }
   if (kind === 'proxy') {
@@ -50,11 +63,13 @@ interface AssignDialogProps {
   kind: 'backend' | 'proxy'
   // 结构树：目标选择器用可搜索树呈现
   tree: ZoneTreeResponse | undefined
+  // 可选：当前 namespace 的大厅集群（backend 时可指派为大厅成员，FR-225 / A1）
+  lobbyCluster?: { id: number; name: string } | null
   pending: boolean
   errorText?: string | null
   // 审批申请票据；创建后必须等待审批中心和 worker。
   approvalTicket: ApprovalTicket | null
-  // targetId 为目标 id 字符串
+  // targetId 为目标 id 字符串（小区 / 集群 id，或 lobby:<id>）
   onConfirm: (targetId: string, isDefaultEntry: boolean, reason: string) => void
 }
 
@@ -64,6 +79,7 @@ export default function AssignDialog({
   servers,
   kind,
   tree,
+  lobbyCluster = null,
   pending,
   errorText,
   approvalTicket,
@@ -83,7 +99,11 @@ export default function AssignDialog({
     }
   }, [open])
 
-  const targetLabel = useMemo(() => targetLabelOf(tree, kind, target), [tree, kind, target])
+  const isLobbyTarget = target.startsWith('lobby:')
+  const targetLabel = useMemo(
+    () => targetLabelOf(tree, kind, target, lobbyCluster, t('cluster.zones.assign.targetLobby')),
+    [tree, kind, target, lobbyCluster, t],
+  )
 
   const targetLabelKey = kind === 'backend' ? 'cluster.zones.assign.targetZone' : 'cluster.zones.assign.targetCluster'
 
@@ -97,11 +117,12 @@ export default function AssignDialog({
         <div className="grid gap-3">
           <div className="space-y-1.5">
             <Label>{t(targetLabelKey)}</Label>
-            {/* 可搜索树选目标：不拍平成下拉，按 集群 → 大区 → 小区 / 代理 层级选择 */}
-            <AssignTargetTree tree={tree} kind={kind} value={target} onChange={setTarget} />
+            {/* 可搜索树选目标：不拍平成下拉，按 大厅 / 集群 → 大区 → 小区 / 代理 层级选择 */}
+            <AssignTargetTree tree={tree} kind={kind} value={target} onChange={setTarget} lobbyCluster={lobbyCluster} />
           </div>
 
-          {kind === 'backend' && (
+          {/* 大厅目标不适用「默认入口」（默认入口是小区级语义），仅小区目标可勾选 */}
+          {kind === 'backend' && !isLobbyTarget && (
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
                 checked={isDefaultEntry}

@@ -24,7 +24,7 @@ import type { AuditItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/cluster'
 import { exportAudits, fetchAudits } from '../../api/observability'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes, useEnvScopePending } from '../../features/env/use-env-scope'
 
 // 错误文案：API 错误用脱敏 message，其它异常 stringify
 function messageOf(error: unknown): string {
@@ -129,6 +129,8 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
   const { t } = useTranslation()
   // FR-178：审计列表按每个 env 的命名空间受限请求。
   const envCodes = useEnvNamespaceCodes()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
   // 审计动作中文标签：有映射用中文，未映射经 defaultValue 回退原始枚举（防裸 key 同时不挡未知动作）
   const actionLabel = useCallback(
     (action: string): string => t(`observability.audits.action.${action}`, { defaultValue: action }),
@@ -448,7 +450,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
       }
     >
       <AsyncSection
-        isLoading={query.isLoading}
+        isLoading={query.isLoading || envPending}
         isError={query.isError}
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={8} />}

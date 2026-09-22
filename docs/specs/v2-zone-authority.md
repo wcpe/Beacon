@@ -190,6 +190,7 @@ server 行由首次注册人工确认通过时创建（流程归 v2-agent-identi
 - `/zones` 页固定呈现「未分配」区（结构树外挂篮），按 namespace 过滤，展示 kind、serverId、确认时间、在线状态摘要；服务端搜索 / 筛选 / 分页（NFR：1000+ 子服）。
 - 未分配 ⇒ 不可调度：schedulable=false、原因 `unassigned`（判定执行归 v2-metrics-health-scheduling.md，本文提供事实）。
 - 换区中的服（pending_zone_id / pending_bc_cluster_id 非空）也在未分配区呈现，带「换区中 → 目标」标记；其身份同时出现在 `/servers` 待确认列表（重确认入口，归身份域）。
+- **大厅集群目标（FR-225，A1 已落地）**：未分配 backend 除小区 / 集群外还可指派进**大厅集群**（入口服 = 大厅成员，ADR-0083）。大厅是三态归属的第三种落点（`lobby_cluster_id`），与 `zone_id` / `bc_cluster_id` 互斥（§3.6 不变量）。**不新增直改通道**：走统一审批的归属迁移端点（`transferServerPlacement`）逐台提交，与小区 / 集群分配同一通道；大厅目标下不提供「设为默认入口」（默认入口是**小区内**语义，大厅成员不适用）。大厅集群按 namespace 唯一（ADR-0075），故页内选「全部命名空间」时按所选服的**共同命名空间**解析，跨命名空间选择不给该目标。
 
 ### 4.3 批量分配流程
 
@@ -290,7 +291,7 @@ agent 面（`/beacon/v2/agent/*`）不暴露任何改归属接口——zone 归�
 1. 全部 §3 表结构经 GORM 迁移在 MySQL 与 sqlite（e2e 基线）建表成功，无方言专有语法；枚举列均 VARCHAR、无 JSON/ENUM 列。
 2. 同 namespace 内 server_id 唯一约束生效；不同 namespace 允许同名 serverId。
 3. 已确认未分配的 agent 出现在 `/zones` 未分配区，schedulable=false 且原因为 `unassigned`。
-4. 可一次勾选多台同 kind 未分配 server 批量分配到小区 / BC 集群；混合 kind 或跨 namespace 目标被拒绝；整批事务原子（构造一台失败可见整批回滚）。
+4. 可一次勾选多台同 kind 未分配 server 批量分配到小区 / BC 集群；混合 kind 或跨 namespace 目标被拒绝；整批事务原子（构造一台失败可见整批回滚）。未分配 backend 亦可指派进大厅集群（FR-225）：目标树含「大厅集群（入口服）」节点且受搜索过滤，选中后逐台经统一审批的迁移端点提交（不新增直改通道），此时不出现「设为默认入口」；页内「全部命名空间」时按所选服共同命名空间解析，跨命名空间不提供该目标。
 5. 分配结果实时反映到 `/zones` 树、`/servers` 列表与拓扑数据（一次轮询周期内）；调度候选按新归属计算（P4 联验）。
 6. 默认入口可在分配时或分配后设置；解除分配自动清除标记；同集群 proxy agent 能收到默认入口列表下发。
 7. 删除挂有 server 的 zone、有下级的 region / bc_cluster 均返回 409 并说明阻断原因；结构增删改与分配 / 解除 / 换区工单全部产生审计条目（含原因字段）。

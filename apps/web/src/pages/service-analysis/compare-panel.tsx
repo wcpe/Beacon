@@ -12,7 +12,7 @@ import type { HealthDetail, HealthItem, HealthLevel, ServerItem } from '@beacon/
 
 import { fetchServers } from '../../api/cluster'
 import { fetchHealthDetail, fetchHealthList } from '../../api/metrics'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope, useEnvScopePending } from '../../features/env/use-env-scope'
 
 interface ComparePanelProps {
   // 已选 serverId（顺序稳定）
@@ -38,6 +38,8 @@ interface CompareRow {
 export default function ComparePanel({ serverIds }: ComparePanelProps) {
   const { t } = useTranslation()
   const envScope = useEnvNamespaceScope()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
 
   // 复用 picker 的 env scope：按 namespace 受限拉取基础属性，避免多命名空间时回退全量。
   const serversQuery = useQuery({
@@ -220,7 +222,7 @@ export default function ComparePanel({ serverIds }: ComparePanelProps) {
       </div>
 
       <AsyncSection
-        isLoading={isLoading}
+        isLoading={isLoading || envPending}
         isError={isError}
         error={error}
         skeleton={<TableSkeleton columns={serverIds.length + 1} rows={8} />}

@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 
 import { fetchNamespaces } from '../../api/cluster'
-import { useEnvNamespaceScope } from '../env/use-env-scope'
+import { useEnvNamespaceScope, useEnvScopePending } from '../env/use-env-scope'
 
 /** 哨兵：全部命名空间（与后端 zone-tree?namespaceId=0 全量语义对齐） */
 export const ALL_NAMESPACES = 0
@@ -27,6 +27,9 @@ export default function NamespaceSelect({ value, onChange, allowAll = true }: Na
   const { t } = useTranslation()
   const query = useQuery({ queryKey: ['namespaces'], queryFn: fetchNamespaces })
   const envScope = useEnvNamespaceScope()
+  // env 选项未就绪时 envScope 是 fail-closed 的空集合：此间「无可选 namespace」是未解析而非真为空，
+  // 需以加载占位呈现，避免误报空态（同 FR-178 收窄语义）。
+  const envPending = useEnvScopePending()
   const allItems = query.data?.items ?? []
   // env 过滤器收窄：选中 env 时只保留其映射的 namespace；「全部环境」（null）不收窄
   const items = useMemo(
@@ -38,7 +41,7 @@ export default function NamespaceSelect({ value, onChange, allowAll = true }: Na
 
   // 数据到达 / env 变化后校准选中值
   useEffect(() => {
-    if (query.isLoading) {
+    if (query.isLoading || envPending) {
       return
     }
     // env 收窄且无任何 ns：无法选择
@@ -66,7 +69,7 @@ export default function NamespaceSelect({ value, onChange, allowAll = true }: Na
     if (items.length > 0) {
       onChange(items[0].id)
     }
-  }, [value, items, onChange, showAllOption, envScope, query.isLoading])
+  }, [value, items, onChange, showAllOption, envScope, query.isLoading, envPending])
 
   const selectValue =
     value === null
@@ -91,8 +94,14 @@ export default function NamespaceSelect({ value, onChange, allowAll = true }: Na
           className="h-9 w-44"
           aria-label={t('cluster.topology.filter.namespace')}
           data-slot="namespace-select"
+          // 观测范围未就绪：暂无合法可选集合，禁用并显示加载文案，避免空下拉被读成「无可用命名空间」
+          disabled={envPending}
         >
-          <SelectValue placeholder={t('cluster.topology.filter.namespace')} />
+          <SelectValue
+            placeholder={
+              envPending ? t('cluster.topology.filter.namespaceLoading') : t('cluster.topology.filter.namespace')
+            }
+          />
         </SelectTrigger>
         <SelectContent>
           {showAllOption ? (

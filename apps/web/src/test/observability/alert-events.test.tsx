@@ -1,7 +1,7 @@
 // /alert-events 告警事件页测试：KPI + 列表渲染、空态、处理写闭环（确认 / 标记已处理 / 403 错误展示）。
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import AlertEventsPage from '../../pages/alert-events'
@@ -190,6 +190,27 @@ describe('/alert-events 批量按筛选的观测范围 guard', () => {
     })
     // 不得出现无 scope 的全量请求被当作收窄后的结果
     expect(seen.some((u) => !u.includes('namespace='))).toBe(false)
+    setObservationScope({ kind: 'all' })
+  })
+
+  it('已选具体环境但 env 选项仍在加载时显示骨架，不误报空态', async () => {
+    useScenario('empty')
+    // env 选项永久挂起：此间 namespace 作用域无法解析（fail-closed 空集合）
+    server.use(
+      http.get('/admin/v2/envs', async () => {
+        await delay('infinite')
+        return HttpResponse.json({ items: [], total: 0 })
+      }),
+    )
+    setObservationScope({ kind: 'env', envId: 1 })
+    renderPage(<AlertEventsPage />)
+
+    // 骨架在场（loading 态）
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
+    })
+    // 且不得把「范围解析中」渲染成空记录提示
+    expect(screen.queryByText('当前筛选条件下无告警事件')).toBeNull()
     setObservationScope({ kind: 'all' })
   })
 })

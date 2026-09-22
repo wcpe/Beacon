@@ -4,7 +4,7 @@
 // 选择集只允许同 kind（分配要求同 namespace、同 kind）。
 
 import { useEffect, useMemo, useState } from 'react'
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { GripVertical, Inbox, Network, PanelRightClose, Server } from 'lucide-react'
@@ -12,10 +12,12 @@ import { GripVertical, Inbox, Network, PanelRightClose, Server } from 'lucide-re
 import { AsyncSection, Badge, Button, Checkbox, cn } from '@beacon/ui'
 import type { ServerItem } from '@beacon/contracts'
 
-import { type ApprovalTicket, fetchServers, fetchZoneTree } from '../../api/cluster'
+import { type ApprovalTicket, fetchLobbyClusters, fetchServers, fetchZoneTree, transferServerPlacement } from '../../api/cluster'
+import { notifyError, notifySuccess } from '../../lib/notify'
 import { writeAssignDrag } from '../../features/cluster/assign-drag'
 import { messageOf, useAssignServers } from '../../features/cluster/use-assign-servers'
 import AssignDialog from './assign-dialog'
+import { LOBBY_TARGET_PREFIX } from './assign-target-tree'
 import ServerContextMenu, { type ContextMenuItem } from './server-context-menu'
 
 interface UnassignedRailProps {
@@ -30,6 +32,7 @@ interface UnassignedRailProps {
 export default function UnassignedBasket({ namespaceId, open, onClose, onDraggingKindChange }: UnassignedRailProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [selectedRowsById, setSelectedRowsById] = useState<Map<number, ServerItem>>(new Map())
   const [keyword, setKeyword] = useState('')
@@ -86,6 +89,34 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
   const selectionKind: 'backend' | 'proxy' | null = selectedRows.length > 0 ? selectedRows[0].kind : null
 
   const assignMutation = useAssignServers()
+  // 未分配服务器也可指派为大厅集群成员（=入口服，FR-225 / A1）。
+  // 大厅集群按 namespace 唯一：优先用页内选定的 namespace；若为「全部命名空间」则回退到所选服务器共同所属的
+  // namespace（全为同一 ns 时才提供该目标——跨 ns 选择没有唯一大厅可指派）。
+  const lobbyNamespaceId = useMemo(() => {
+    if (namespaceId > 0) {
+      return namespaceId
+    }
+    if (selectedRows.length === 0) {
+      return 0
+    }
+    const first = selectedRows[0].namespaceId
+    return selectedRows.every((row) => row.namespaceId === first) ? first : 0
+  }, [namespaceId, selectedRows])
+  const lobbyQuery = useQuery({
+    queryKey: ['lobby-clusters', lobbyNamespaceId],
+    queryFn: () => fetchLobbyClusters(lobbyNamespaceId),
+    enabled: lobbyNamespaceId > 0,
+    placeholderData: keepPreviousData,
+  })
+  const lobbyCluster = lobbyNamespaceId > 0 ? (lobbyQuery.data?.items[0] ?? null) : null
+  const [lobbyPending, setLobbyPending] = useState(false)
+
+  const invalidateAssign = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['servers'] })
+    await queryClient.invalidateQueries({ queryKey: ['zone-tree'] })
+    await queryClient.invalidateQueries({ queryKey: ['lobby-clusters'] })
+    await queryClient.invalidateQueries({ queryKey: ['lobby-cluster'] })
+  }
 
   const toggle = (row: ServerItem) => {
     setSelectedIds((prev) => {
@@ -102,6 +133,38 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
   const submitAssign = (targetId: string, isDefaultEntry: boolean, reason: string) => {
     setErrorText(null)
     setApprovalTicket(null)
+    // 大厅集群目标（FR-225 / A1）：逐台建大厅迁移审批申请（无批量端点，迁移走统一审批）。
+    if (targetId.startsWith(LOBBY_TARGET_PREFIX)) {
+      const lobbyId = Number.parseInt(targetId.slice(LOBBY_TARGET_PREFIX.length), 10)
+      void (async () => {
+        setLobbyPending(true)
+        let ok = 0
+        let lastError: string | null = null
+        for (const row of selectedRows) {
+          try {
+            await transferServerPlacement(row.serverId, { kind: 'lobby_cluster', id: lobbyId }, reason)
+            ok += 1
+          } catch (error) {
+            lastError = messageOf(error)
+          }
+        }
+        await invalidateAssign()
+        setLobbyPending(false)
+        if (lastError !== null) {
+          setErrorText(
+            ok > 0
+              ? t('cluster.zones.basket.lobbyPartialFail', { ok: ok, fail: selectedRows.length - ok })
+              : lastError,
+          )
+          notifyError(lastError)
+          return
+        }
+        setSelectedIds(new Set())
+        setAssignOpen(false)
+        notifySuccess(t('cluster.zones.basket.lobbyAssigned', { count: ok }))
+      })()
+      return
+    }
     const kind = selectionKind === 'proxy' ? 'bc_cluster' : 'zone'
     assignMutation.mutate(
       {
@@ -281,7 +344,8 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
         servers={selectedRows}
         kind={selectionKind === 'proxy' ? 'proxy' : 'backend'}
         tree={treeQuery.data}
-        pending={assignMutation.isPending}
+        lobbyCluster={lobbyCluster === null ? null : { id: lobbyCluster.id, name: lobbyCluster.namespaceName }}
+        pending={assignMutation.isPending || lobbyPending}
         errorText={errorText}
         approvalTicket={approvalTicket}
         onConfirm={submitAssign}
