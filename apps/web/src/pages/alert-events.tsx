@@ -109,6 +109,8 @@ export default function AlertEventsPage() {
         { page, pageSize: PAGE_SIZE, compare: (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) },
       ),
     placeholderData: keepPreviousData,
+    // 观测范围未就绪时不发请求，交回 react-query 原生 pending 态（骨架由此承接）
+    enabled: !envPending,
   })
 
   // 处理状态无独立后端参数，仅保留该维度的页内过滤。
@@ -571,7 +573,7 @@ export default function AlertEventsPage() {
         }
       >
         <AsyncSection
-          isLoading={query.isLoading || envPending}
+          isLoading={query.isPending}
           isError={query.isError}
           error={query.error}
           skeleton={<TableSkeleton columns={columns.length} rows={8} />}

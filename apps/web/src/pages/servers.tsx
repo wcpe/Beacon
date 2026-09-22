@@ -34,11 +34,13 @@ export default function ServersPage() {
       fetchPagedItemsByEnvScope(envScope, (namespaceId) =>
         fetchIdentities({ status: 'pending', namespaceId, pageSize: 100 }),
       ),
+    // 观测范围未就绪时不发请求，交回 react-query 原生 pending 态
+    enabled: !envPending,
   })
   const pendingCount = useMemo(
-    // 范围未就绪时计几都不对，置 null 让徽标不渲染，杜绝「假 0」
-    () => (envPending ? null : (pendingQuery.data?.items.length ?? 0)),
-    [envPending, pendingQuery.data],
+    // 未解析或首屏取数中都算「未知」：置 null 让徽标不渲染、KPI 显示「—」，杜绝「假 0」
+    () => (pendingQuery.isPending ? null : (pendingQuery.data?.items.length ?? 0)),
+    [pendingQuery.isPending, pendingQuery.data],
   )
 
   return (

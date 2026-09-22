@@ -61,6 +61,8 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
       fetchPagedItemsByEnvScope(requestScope, (namespaceId) =>
         fetchIdentities({ status: 'pending', namespaceId, pageSize: 100 }),
       ),
+    // 观测范围未就绪时不发请求，交回 react-query 原生 pending 态（骨架由此承接）
+    enabled: !envPending,
   })
   const pendingRows = useMemo(() => query.data?.items ?? [], [query.data])
 
@@ -207,7 +209,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
               <Link className="w-fit text-brand hover:underline" to={`/approvals/${encodeURIComponent(approvalRequestID)}`}>查看统一审批</Link>
             </div>
           )}
-          <AsyncSection isLoading={query.isLoading || envPending} isError={query.isError} error={query.error}>
+          <AsyncSection isLoading={query.isPending} isError={query.isError} error={query.error}>
             <DataTable
               columns={columns}
               rows={pendingRows}

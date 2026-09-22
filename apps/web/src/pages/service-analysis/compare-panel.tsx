@@ -51,6 +51,8 @@ export default function ComparePanel({ serverIds }: ComparePanelProps) {
           fetchServers({ kind: 'backend', namespaceId, pageSize: pageRequest?.pageSize ?? 200 }),
         { page: 1, pageSize: 200, compare: (left, right) => left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId) },
       ),
+    // 观测范围未就绪时不发请求，交回 react-query 原生 pending 态（骨架由此承接）
+    enabled: !envPending,
   })
 
   // 一次拉 scope 内健康列表（单次/每命名空间一次请求，非逐服 N+1），拿健康分 / 等级 / 可调度 / 原因
@@ -69,10 +71,12 @@ export default function ComparePanel({ serverIds }: ComparePanelProps) {
     queries: serverIds.map((serverId) => ({
       queryKey: ['service-analysis', 'health-detail', envScope, serverId],
       queryFn: () => fetchHealthDetail(serverId),
+      // 观测范围未就绪时不发请求，交回 react-query 原生 pending 态
+      enabled: !envPending,
     })),
   })
 
-  const isLoading = serversQuery.isLoading || healthQuery.isLoading || detailQueries.some((q) => q.isLoading)
+  const isLoading = serversQuery.isPending || healthQuery.isPending || detailQueries.some((q) => q.isPending)
   const isError = serversQuery.isError || healthQuery.isError
   const error = serversQuery.error ?? healthQuery.error
 
@@ -222,7 +226,7 @@ export default function ComparePanel({ serverIds }: ComparePanelProps) {
       </div>
 
       <AsyncSection
-        isLoading={isLoading || envPending}
+        isLoading={isLoading}
         isError={isError}
         error={error}
         skeleton={<TableSkeleton columns={serverIds.length + 1} rows={8} />}
