@@ -22,18 +22,23 @@ describe('/dashboard 运维总览页', () => {
     useScenario('normal')
     renderPage(<DashboardPage />)
 
-    expect(await screen.findByText('集群健康总览')).toBeInTheDocument()
+    // E5：健康区不再渲染区段标题（页面身份在页眉面包屑），仅 KPI 卡行
+    expect(await screen.findByText('可调度服务器')).toBeInTheDocument()
+    expect(screen.queryByText('集群健康总览')).not.toBeInTheDocument()
     expect(await screen.findByText('玩家流 / 连接流')).toBeInTheDocument()
     expect(await screen.findByText('告警概览')).toBeInTheDocument()
     expect(await screen.findByText('调度概览')).toBeInTheDocument()
   })
 
-  it('健康区提供下钻到服务器页的入口', async () => {
+  it('服务器页入口由状态墙承担，健康区不再重复提供', async () => {
     useScenario('normal')
     renderPage(<DashboardPage />)
 
-    const link = await screen.findByRole('link', { name: '前往服务器' })
-    expect(link).toHaveAttribute('href', '/servers')
+    // 健康区的「前往服务器」已移除（同页不留重复入口）
+    expect(await screen.findByText('可调度服务器')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '前往服务器' })).not.toBeInTheDocument()
+    // /servers 入口仍可达：状态墙卡的「查看全部」
+    expect(screen.getByRole('link', { name: '查看全部' })).toHaveAttribute('href', '/servers')
   })
 
   it('空态健康区给出接入引导', async () => {

@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { ChartLine, ChevronRight } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton } from '@beacon/ui'
+import { AsyncSection, CardGridSkeleton, SectionHeader } from '@beacon/ui'
 
 import { fetchConnStats } from '../../api/connections'
 import { ApiClientError } from '../../api/http'
@@ -78,23 +78,28 @@ export default function FlowOverview() {
       ? ''
       : `M${polyline(onlinePts).replace(/ /g, ' L')} L${String(VW)},${String(VH)} L0,${String(VH)} Z`
 
-  return (
-    <section className="grid grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-      <div className="flex items-center gap-2.5">
-        <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
-          <ChartLine className="size-[15px]" />
-        </span>
-        <h2 className="text-[13px] font-semibold text-ink-1">{t('dashboard.flow.title')}</h2>
-        <span className="text-[11px] text-ink-4">{t('dashboard.flow.window1h')}</span>
-        {/* 「明细」下钻到连接明细页：带 1h 时间窗，落位即同一观测窗（此前为无链接的死标签） */}
+  // 标题行：复用 @beacon/ui SectionHeader，时间窗进 count 槽；「明细」下钻到连接明细页（带 1h 时间窗，
+  // 落位即同一观测窗）放在 actions 槽，由该槽负责右对齐，故不重复加 ml-auto。
+  const header = (
+    <SectionHeader
+      icon={<ChartLine className="size-4" />}
+      title={t('dashboard.flow.title')}
+      count={t('dashboard.flow.window1h')}
+      actions={
         <Link
-          className="ml-auto flex items-center gap-0.5 text-[11.5px] text-brand-600 hover:underline"
+          className="flex items-center gap-0.5 text-[11.5px] text-brand-600 hover:underline"
           to="/connections?window=1h"
         >
           {t('dashboard.flow.detail')}
           <ChevronRight className="size-3" />
         </Link>
-      </div>
+      }
+    />
+  )
+
+  return (
+    <section className="grid grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-3.5 shadow-card">
+      {header}
       <AsyncSection
         isLoading={query.isLoading}
         isError={query.isError && !endpointPending}
@@ -122,7 +127,7 @@ export default function FlowOverview() {
             <svg
               viewBox={`0 0 ${String(VW)} ${String(VH)}`}
               preserveAspectRatio="none"
-              className="h-40 w-full"
+              className="h-32 w-full"
               role="img"
               aria-label={t('dashboard.flow.title')}
             >

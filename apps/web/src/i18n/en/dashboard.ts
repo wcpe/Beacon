@@ -39,7 +39,6 @@ export const dashboard = {
   },
   // Cluster health overview
   health: {
-    title: 'Cluster health overview',
     proxy: 'Proxy',
     backend: 'Backend',
     online: 'Online',
@@ -53,7 +52,6 @@ export const dashboard = {
     levelUnhealthy: 'Unhealthy',
     distribution: 'Health level distribution',
     empty: 'No health data yet; overview appears after servers connect',
-    viewServers: 'Go to servers',
   },
   // Player / connection flow trends
   flow: {

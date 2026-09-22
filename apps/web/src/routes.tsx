@@ -77,7 +77,7 @@ export interface NavGroup {
   pages: NavPage[]
 }
 
-// 顶层运维总览（不属于任何大域）
+// 运维总览（不属于任何大域）
 export const DASHBOARD_PAGE: NavPage = {
   path: '/dashboard',
   titleKey: 'nav.dashboard',
@@ -162,3 +162,4 @@ export const NAV_GROUPS: NavGroup[] = [
 
 // 全部页面的扁平列表（路由注册用）
 export const ALL_PAGES: NavPage[] = [DASHBOARD_PAGE, APPROVALS_PAGE, ...NAV_GROUPS.flatMap((group) => group.pages)]
+
