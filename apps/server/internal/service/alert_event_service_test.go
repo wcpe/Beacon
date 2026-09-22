@@ -517,3 +517,47 @@ func TestFR232ConvergenceAndAutoResolve(t *testing.T) {
 		t.Fatalf("已 resolved 后同键再触发应新起一行，实际 %d", len(rows))
 	}
 }
+
+// TestFR230ContextRespectsObservationScope 校验 FR-230：受限观测范围下，详情时间线锁定该告警所属
+// namespace 且不越出范围——serverId 跨 namespace 重名时按 namespace 收敛，集群级告警按 namespace 退化。
+func TestFR230ContextRespectsObservationScope(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	base := time.Now().UTC()
+	mk := func(ns, serverID, msg string) uint {
+		t.Helper()
+		e := &model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning, Namespace: ns, ServerID: serverID, Message: msg, Status: model.AlertEventStatusOpen, OccurrenceCount: 1, CreatedAt: base}
+		if err := db.Create(e).Error; err != nil {
+			t.Fatalf("seed 失败: %v", err)
+		}
+		return e.ID
+	}
+	prodServer := mk("prod", "same-id", "prod-server")
+	mk("dev", "same-id", "dev-server")      // 同 serverId 但不同 namespace
+	prodCluster := mk("prod", "", "prod-c") // 集群级
+	mk("dev", "", "dev-c")
+
+	scopedProd := ObservationScope{NamespaceCodes: []string{"prod"}}
+
+	// serverId 分支：仅 prod 的 same-id，dev 同名不串入
+	res, err := svc.Context(prodServer, scopedProd)
+	if err != nil {
+		t.Fatalf("聚合失败: %v", err)
+	}
+	if len(res.Timeline) != 1 || res.Timeline[0].Namespace != "prod" {
+		t.Fatalf("受限下应只含 prod 的 same-id，实际 %+v", res.Timeline)
+	}
+
+	// 集群级分支：退化为该 namespace 近期告警——只含 prod（可含同 namespace 的实例级），不含 dev。
+	res2, err := svc.Context(prodCluster, scopedProd)
+	if err != nil {
+		t.Fatalf("聚合失败: %v", err)
+	}
+	if len(res2.Timeline) == 0 {
+		t.Fatalf("集群级应退化返回该 namespace 告警")
+	}
+	for _, e := range res2.Timeline {
+		if e.Namespace != "prod" {
+			t.Fatalf("受限下集群级不应越出 prod，实际含 %q", e.Namespace)
+		}
+	}
+}

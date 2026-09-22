@@ -42,7 +42,7 @@ func GradeAlert(healthLevel, role string, override *string) string {
 	}
 }
 
-// RoleOf 把控制面权威事实解析为分级角色（FR-231 §3）：kind=proxy → proxy；lobby_cluster_id != NULL → lobby；其余 → backend。
+// RoleOf 把控制面权威事实解析为分级角色（FR-231 §3）：kind=proxy → proxy；lobby_cluster_id != NULL（非零）→ lobby；其余 → backend。
 func RoleOf(kind string, lobbyClusterID uint) string {
 	if kind == model.ServerKindProxy {
 		return RoleProxy

@@ -28,7 +28,8 @@
 - **写入路径**：告警产生时先按收敛键查**未恢复行**（`status != 'resolved'`）：
   - 命中 → `occurrence_count += 1`、`last_at = now`、（按 FR-231）`level = max(level, 新级)`；
   - 未命中 → 插新行。
-- **自动 resolve 触发点**：健康扫描器把实例推进到 `online` 时，把其对应未恢复行 `status='resolved'`，且 **`handled_by = system`**、`handle_note` 记"实例恢复自动消解"——使 UI 能区分「系统自动消解」vs「人工已处理」（与 FR-229 §7 对齐）。**复用既有健康扫描循环**，不新起定时器。
+- **自动 resolve 触发点**：实例由**非 online → online**（心跳续上 / 重新注册）时，把其未恢复行 `status='resolved'`，且 **`handled_by = system`**、`handle_note` 记"实例恢复自动消解"——使 UI 能区分「系统自动消解」vs「人工已处理」（与 FR-229 §7 对齐）。
+  - ⚠️ **实现修正**：恢复 online 由 `registry.Heartbeat` / `registry.Register` **直接置位**，**不经**健康扫描的 `SweepExpired` 输出（`healthByAge` 默认返回 `current`、永不产出 online）。故触发挂在 **`InstanceService.Register` / `Heartbeat`**（真正的恢复写点，写前读旧状态判迁移），**不在**健康扫描循环内——否则该分支在生产永不可达（一条只测分支、不测接线的测试会假绿）。
 - **状态保持**：`acknowledged` 行再次触发仅更新计数 / 时间，**不回退 `open`**。
 - **审计**：自动 resolve 与合并是否逐条审计——建议**不逐条**（量大）；可选按周期汇总（**待实现时定**）。
 
@@ -44,7 +45,7 @@
 
 - [x] `alert_event` 增 `occurrence_count` / `last_at` 列 + 迁移（另加 `to_status` 作方向维度）
 - [x] 写入路径改为按收敛键合并（计数 + 取最高级）
-- [x] 健康扫描恢复点接入自动 resolve
+- [x] 恢复写点（InstanceService.Register/Heartbeat）接入自动 resolve（接线测试覆盖）
 - [x] `acknowledged` 状态保持（不因再触发回退 `open`）
 - [x] 前端：计数徽标 / `resolved` 样式 / 待办计数口径
 - [x] 文档同步：PRD 状态、ADR-0041/0064 引用、CHANGELOG

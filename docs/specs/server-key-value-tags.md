@@ -23,6 +23,8 @@
 
 - **数据模型**：`server` 关联 `server_tag`（`server_pk` + `tag_key` + `tag_value`，唯一键 `(server_pk, tag_key)`）。key 非空、长度受限；value 允许空串。
 - **与 metadata 的关系**：**同源**——以 `server_tag` 为**唯一真源**，FR-29 的 `tag.<key>=<value>` 过滤**直接读它**（避免两份与数据迁移）（见 §7）。
+  - ⚠️ **破坏性语义变更**：此前 `tag.*` 过滤匹配的是**实例注册 metadata**（agent 上报、仅内存、不落库）。改为读 `server_tag` 后，**只对经标签接口写入的标签生效**；依赖 agent metadata 打标签的既有用法会**静默不再命中**。
+  - **无法自动回填**：registry metadata 为**内存态**（agent 注册时上报、不持久化），无历史数据可迁移——运维需在升级后经标签接口重新登记所需标签。已在 CHANGELOG 以「变更」显式声明。
 - **接口**：
   - `PUT /admin/v2/servers/{serverId}/tags`（整体覆盖或按 key 增改）
   - `DELETE /admin/v2/servers/{serverId}/tags/{key}`

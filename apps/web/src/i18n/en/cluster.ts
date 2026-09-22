@@ -280,6 +280,7 @@ export const cluster = {
       proxyBadge: 'Proxy × {{count}}',
       lobbyLayerTitle: 'Lobby cluster (entry)',
       lobbyMeta: '{{count}} entry servers · incl. offline',
+      lobbyTruncated: 'showing first {{shown}}',
       memberOnline: 'Online',
       memberOffline: 'Offline',
       lobbyHint: 'Entry servers are lobby cluster members (ADR-0083); no separate entry entity.',

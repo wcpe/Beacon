@@ -157,17 +157,17 @@ func (h *AlertEventHandler) Handle(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAlertBatchRequest 是批量处理请求体（FR-229）：按筛选条件处理整个结果集，而非仅当前页勾选行。
-// 观测范围由服务端解析器决定（客户端不传 namespace 时即当前观测范围，越界不由客户端指定）；status 亦为筛选维。
+// 观测范围由服务端解析器决定（客户端不传时即全量，越界不由客户端指定）；批量仅作用于「未处理（open）」条目，
+// 故筛选维不含 status（目标状态由顶层 status 决定）。
 type handleAlertBatchRequest struct {
 	Status string `json:"status"`
 	Action string `json:"action"`
 	Note   string `json:"note"`
 	Filter struct {
-		Type   string `json:"type"`
-		Level  string `json:"level"`
-		Status string `json:"status"`
-		From   string `json:"from"`
-		To     string `json:"to"`
+		Type  string `json:"type"`
+		Level string `json:"level"`
+		From  string `json:"from"`
+		To    string `json:"to"`
 	} `json:"filter"`
 }
 

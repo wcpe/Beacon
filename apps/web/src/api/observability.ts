@@ -173,8 +173,9 @@ export interface HandleAlertBatchBody {
   note?: string
 }
 
-export function handleAlertEventsBatch(body: HandleAlertBatchBody): Promise<{ affected: number }> {
-  return request('POST', '/admin/v1/alert-events/handle', body)
+export function handleAlertEventsBatch(body: HandleAlertBatchBody, scope: { envId?: number; namespaceId?: number } = {}): Promise<{ affected: number }> {
+  // 观测范围（FR-213）经 query 交服务端解析，确保批量不越出当前范围（FR-229 guard）。
+  return request('POST', `/admin/v1/alert-events/handle${buildQuery({ envId: scope.envId, namespaceId: scope.namespaceId })}`, body)
 }
 
 /** 告警详情聚合（FR-230）：该服近期状态 + 该服告警时间线。 */

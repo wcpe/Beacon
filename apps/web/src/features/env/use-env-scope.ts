@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { fetchEnvList } from '../../api/system'
 import { ALL_ENVS, useEnvFilter } from '../../state/env-filter'
+import { deriveObservationScope, useObservationScopeSelection } from './observation-scope'
 
 /** 全量 env 选项（顶栏过滤器与作用域解析共用同一 query key，避免重复请求）。 */
 export function useEnvOptions(): EnvItem[] {
@@ -50,6 +51,43 @@ export function resolveEnvNamespaceCodes(
 /** 当前 env 映射的 namespace 名称集合。 */
 export function useEnvNamespaceCodes(): string[] | null {
   return resolveEnvNamespaceCodes(useEnvFilter(), useEnvOptions())
+}
+
+/**
+ * 页眉「观测范围」选择器（observation-scope 真源）解析出的 namespace 名称集合。
+ * 与 useEnvNamespaceCodes 同语义（null=全部、[]=无效/空映射），但读的是**用户实际可切换**的页眉选择。
+ * 供需要与 scope 端点（FR-213）保持同源的页面（如 /alert-events 批量写）使用。
+ */
+export function useObservationScopeNamespaceCodes(): string[] | null {
+  const envs = useEnvOptions()
+  const scope = deriveObservationScope(useObservationScopeSelection(), envs)
+  if (scope.kind === 'all') {
+    return null
+  }
+  if (scope.kind === 'invalid') {
+    return []
+  }
+  return resolveEnvNamespaceCodes(scope.envId, envs)
+}
+
+/** 页眉观测范围对应的 scope 查询参数（envId/namespaceId），供 scope 感知端点带参（FR-213）。 */
+export interface ObservationScopeQuery {
+  envId?: number
+  namespaceId?: number
+}
+
+/** 取当前页眉观测范围的 scope 查询参数；「全部环境」返回空对象（server 端即全量）。 */
+export function useObservationScopeQuery(): ObservationScopeQuery {
+  const envs = useEnvOptions()
+  const scope = deriveObservationScope(useObservationScopeSelection(), envs)
+  if (scope.kind === 'invalid') {
+    // 无效范围：显式传一个必然越界的 namespaceId，令 scope 端点 fail-closed（不回退全量）。
+    return { namespaceId: -1 }
+  }
+  if (scope.kind === 'all') {
+    return scope.namespaceId > 0 ? { namespaceId: scope.namespaceId } : {}
+  }
+  return scope.namespaceId > 0 ? { envId: scope.envId, namespaceId: scope.namespaceId } : { envId: scope.envId }
 }
 
 /** 带分页元数据的受限请求结果。多 namespace 不提供跨 namespace 游标。 */
