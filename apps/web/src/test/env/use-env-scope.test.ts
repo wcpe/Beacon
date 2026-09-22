@@ -6,6 +6,7 @@ import {
   resolveApiNamespaceId,
   resolveEnvNamespaceCodes,
   resolveEnvNamespaceScope,
+  resolveObservationScopeNamespaceIds,
 } from '../../features/env/use-env-scope'
 
 describe('resolveEnvNamespaceScope', () => {
@@ -119,5 +120,38 @@ describe('resolveApiNamespaceId', () => {
   it('全部环境才允许不传 namespaceId', () => {
     expect(resolveApiNamespaceId(null, null)).toBeUndefined()
     expect(resolveApiNamespaceId(0, null)).toBeUndefined()
+  })
+})
+
+// 观测范围（FR-213 页眉真源）→ 受限 namespace id 集合的映射（本次修复的核心纯逻辑）。
+describe('resolveObservationScopeNamespaceIds', () => {
+  const envs = [
+    { id: 1, namespaces: [{ id: 11, name: 'prod' }] },
+    { id: 2, namespaces: [{ id: 21, name: 'staging' }, { id: 22, name: 'dev' }] },
+    { id: 3, namespaces: [] },
+  ]
+
+  it('范围失效 → 空集合（fail-closed，不回退全量）', () => {
+    expect(resolveObservationScopeNamespaceIds({ kind: 'invalid', envId: 0, namespaceId: 0, empty: true, selection: { kind: 'invalid' } }, envs)).toEqual([])
+  })
+
+  it('全部环境且未选 namespace → null（不收窄）', () => {
+    expect(resolveObservationScopeNamespaceIds({ kind: 'all', envId: 0, namespaceId: 0, empty: false, selection: { kind: 'all' } }, envs)).toBeNull()
+  })
+
+  it('全部环境下选了具体 namespace → 收窄到该单 namespace', () => {
+    expect(resolveObservationScopeNamespaceIds({ kind: 'all', envId: 0, namespaceId: 3, empty: false, selection: { kind: 'all', namespaceId: 3 } }, envs)).toEqual([3])
+  })
+
+  it('选中环境 → 该 env 映射的 namespace 集合', () => {
+    expect(resolveObservationScopeNamespaceIds({ kind: 'env', envId: 2, namespaceId: 0, empty: false, selection: { kind: 'env', envId: 2 } }, envs)).toEqual([21, 22])
+  })
+
+  it('选中环境下再选 namespace → 收窄到该单 namespace', () => {
+    expect(resolveObservationScopeNamespaceIds({ kind: 'env', envId: 2, namespaceId: 21, empty: false, selection: { kind: 'env', envId: 2, namespaceId: 21 } }, envs)).toEqual([21])
+  })
+
+  it('选中空映射环境 → 空集合（停止请求）', () => {
+    expect(resolveObservationScopeNamespaceIds({ kind: 'env', envId: 3, namespaceId: 0, empty: true, selection: { kind: 'env', envId: 3 } }, envs)).toEqual([])
   })
 })

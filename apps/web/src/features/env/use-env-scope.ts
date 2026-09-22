@@ -1,16 +1,23 @@
-// env 过滤器作用域解析（FR-178）：把顶栏选中的 env 解析为其映射的 namespace 集合，
-// 供各运维主路径页按 env 收窄取数。env 是纯展示 / 过滤维度：只影响前端视图，不改权威数据。
+// env / 观测范围作用域解析（FR-178 / FR-213）：把页眉观测范围选择器选中的范围解析为其映射的 namespace 集合，
+// 供各运维主路径页按范围收窄取数。范围是纯展示 / 过滤维度：只影响前端视图，不改权威数据。
 //
 // 语义：
 // - null →「全部环境」，允许不带 namespace 参数请求；
 // - 返回数组 → 仅可请求数组内的 namespace；空数组表示作用域无效或空映射，必须停止请求。
 //
+// ⚠️ 修复：作用域真源为页眉 observation-scope 选择器（FR-213 起页眉已切到它）。
+// 此前误读 state/env-filter（该 store 自 FR-213 起再无写入方、恒为「全部」），
+// 导致所有观测 / 集群页的 env 收窄静默失效；现统一以页眉实际选择为准。
 import type { EnvItem } from '@beacon/contracts'
 import { useQuery } from '@tanstack/react-query'
 
 import { fetchEnvList } from '../../api/system'
-import { ALL_ENVS, useEnvFilter } from '../../state/env-filter'
-import { deriveObservationScope, useObservationScopeSelection } from './observation-scope'
+import {
+  ALL_OBSERVATION_ENV,
+  deriveObservationScope,
+  type DerivedObservationScope,
+  useObservationScopeSelection,
+} from './observation-scope'
 
 /** 全量 env 选项（顶栏过滤器与作用域解析共用同一 query key，避免重复请求）。 */
 export function useEnvOptions(): EnvItem[] {
@@ -26,15 +33,34 @@ export function resolveEnvNamespaceScope(
   envId: number,
   envs: readonly Pick<EnvItem, 'id' | 'namespaces'>[],
 ): number[] | null {
-  if (envId === ALL_ENVS) {
+  if (envId === ALL_OBSERVATION_ENV) {
     return null
   }
   return envs.find((item) => item.id === envId)?.namespaces.map((namespace) => namespace.id) ?? []
 }
 
-/** 当前 env 过滤器对应的 namespace id 集合。 */
+/** 把页眉观测范围映射为受限 namespace id 集合（null=全部；[]=无效 / 空映射，必须停止请求）。 */
+export function resolveObservationScopeNamespaceIds(
+  scope: DerivedObservationScope,
+  envs: readonly Pick<EnvItem, 'id' | 'namespaces'>[],
+): number[] | null {
+  if (scope.kind === 'invalid') {
+    return []
+  }
+  // 页眉可进一步选具体 namespace（env 级或「全部环境」级）→ 收窄到该单 namespace。
+  if (scope.namespaceId > 0) {
+    return [scope.namespaceId]
+  }
+  if (scope.kind === 'all') {
+    return null
+  }
+  return resolveEnvNamespaceScope(scope.envId, envs)
+}
+
+/** 当前页眉观测范围对应的 namespace id 集合（数据收窄真源）。 */
 export function useEnvNamespaceScope(): number[] | null {
-  return resolveEnvNamespaceScope(useEnvFilter(), useEnvOptions())
+  const envs = useEnvOptions()
+  return resolveObservationScopeNamespaceIds(deriveObservationScope(useObservationScopeSelection(), envs), envs)
 }
 
 /** 将选中的 env id 解析为 namespace 名称作用域；失效选项和空映射均停止查询。 */
@@ -42,32 +68,21 @@ export function resolveEnvNamespaceCodes(
   envId: number,
   envs: readonly Pick<EnvItem, 'id' | 'namespaces'>[],
 ): string[] | null {
-  if (envId === ALL_ENVS) {
+  if (envId === ALL_OBSERVATION_ENV) {
     return null
   }
   return envs.find((item) => item.id === envId)?.namespaces.map((namespace) => namespace.name) ?? []
 }
 
-/** 当前 env 映射的 namespace 名称集合。 */
+/** 当前页眉观测范围映射的 namespace 名称集合。 */
 export function useEnvNamespaceCodes(): string[] | null {
-  return resolveEnvNamespaceCodes(useEnvFilter(), useEnvOptions())
-}
-
-/**
- * 页眉「观测范围」选择器（observation-scope 真源）解析出的 namespace 名称集合。
- * 与 useEnvNamespaceCodes 同语义（null=全部、[]=无效/空映射），但读的是**用户实际可切换**的页眉选择。
- * 供需要与 scope 端点（FR-213）保持同源的页面（如 /alert-events 批量写）使用。
- */
-export function useObservationScopeNamespaceCodes(): string[] | null {
   const envs = useEnvOptions()
-  const scope = deriveObservationScope(useObservationScopeSelection(), envs)
-  if (scope.kind === 'all') {
+  const ids = resolveObservationScopeNamespaceIds(deriveObservationScope(useObservationScopeSelection(), envs), envs)
+  if (ids === null) {
     return null
   }
-  if (scope.kind === 'invalid') {
-    return []
-  }
-  return resolveEnvNamespaceCodes(scope.envId, envs)
+  const nameById = new Map(envs.flatMap((env) => env.namespaces).map((namespace) => [namespace.id, namespace.name]))
+  return ids.map((id) => nameById.get(id)).filter((name): name is string => name !== undefined)
 }
 
 /** 页眉观测范围对应的 scope 查询参数（envId/namespaceId），供 scope 感知端点带参（FR-213）。 */
