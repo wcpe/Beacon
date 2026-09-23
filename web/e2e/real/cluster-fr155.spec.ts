@@ -537,7 +537,11 @@ test('服务器：注册待确认 → 确认接入 → 身份转 active、进入
   await page.goto('/servers')
   // 打开待确认抽屉
   await page.getByRole('button', { name: /注册待确认/ }).click()
-  const pendingRow = page.getByRole('row').filter({ hasText: serverId })
+  // 待确认行必须限定在抽屉作用域内：确认接入后该 server 会进入资产表（同样含 serverId），
+  // 若用全页 getByRole('row') 过滤，reload 后会命中资产行导致「待确认行应消失」恒假失败。
+  const pendingSheet = page.locator('[data-slot="sheet-content"]')
+  await expect(pendingSheet).toBeVisible()
+  const pendingRow = pendingSheet.getByRole('row').filter({ hasText: serverId })
   await expect(pendingRow).toBeVisible()
   await pendingRow.getByRole('button', { name: '确认接入' }).click()
   // 确认弹窗（无需原因）
@@ -553,9 +557,12 @@ test('服务器：注册待确认 → 确认接入 → 身份转 active、进入
   const ticket = (await (await approvalResponse).json()) as ApprovalTicket
   await approveTicket(page, token, ticket)
 
-  // worker 完成后刷新资产视图，待确认行应消失。
+  // worker 完成后刷新资产视图：重新打开待确认抽屉，该行不应再出现（作用域限定在抽屉内，
+  // 不把「已进入资产表」误判成待确认残留）。
   await page.reload()
-  await expect(pendingRow).toHaveCount(0)
+  await page.getByRole('button', { name: /注册待确认/ }).click()
+  await expect(pendingSheet).toBeVisible()
+  await expect(pendingSheet.getByRole('row').filter({ hasText: serverId })).toHaveCount(0)
 
   // 交叉校验：身份转 active、server 已进入真后端资产列表
   await expect
