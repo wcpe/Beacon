@@ -177,6 +177,8 @@ case "${1:-}" in
                     case "$1" in
                         --draft) draft=true; shift ;;
                         --title|--notes-file) shift 2 ;;
+                        --generate-notes) shift ;;
+                        --notes-start-tag) shift 2 ;;
                         --verify-tag) shift ;;
                         --*) exit 4 ;;
                         *) cp "$1" "$FAKE_STATE/release-assets"/; asset_count=$((asset_count + 1)); shift ;;
@@ -363,6 +365,7 @@ test_missing() {
     assert_log_contains "missing 创建同提交 tag" "gh api --method POST repos/example/Beacon/git/refs"
     assert_log_contains "missing 创建草稿" "gh release create $ga_tag"
     assert_log_contains "missing 草稿参数" "--draft"
+    assert_log_contains "missing 自动发布说明" "--generate-notes"
     assert_log_order "missing 必须先校验再创建草稿" "make release-verify-ga" "gh release create $ga_tag"
     assert_log_order "missing 必须先创建草稿再公开" "gh release create $ga_tag" "gh release edit $ga_tag"
     assert_state "missing 最终公开" published
@@ -376,6 +379,7 @@ test_tag_only() {
     expect_pass "已有同提交 tag 且无 Release 时恢复"
     assert_log_not_contains "已有 tag 不得重建 tag" "gh api --method POST"
     assert_log_contains "已有 tag 创建草稿" "gh release create $ga_tag"
+    assert_log_contains "已有 tag 自动发布说明" "--generate-notes"
     assert_log_order "已有 tag 必须先校验再创建草稿" "make release-verify-ga" "gh release create $ga_tag"
     assert_state "已有 tag 最终公开" published
     assert_assets_equal "已有 tag 复制 RC 资产" "$scenario/ga-assets"

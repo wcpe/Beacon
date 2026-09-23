@@ -82,12 +82,19 @@
 
 采用 GitHub Flow（适合小团队 + 持续发布）：
 
-- **`master`**：受保护主干；改动经 PR 合入（PR 模板含防漂移自检）。PR 只运行质量门，不执行产品打包，也不上传产品 Artifact。
-- **`feature/*`、`fix/*`、`refactor/*`**：短生命周期分支，做完发 PR 回 `master`。
+- **`master`**：受保护主干；改动经 PR 合入（PR 模板含防漂移自检）。禁止任何情形直推 `master`（单人开发期、发版提交同样经 PR）。PR 只运行质量门，不执行产品打包，也不上传产品 Artifact。
+- **`feature/*`、`fix/*`、`refactor/*`**：短生命周期分支，做完发 PR 回 `master`。`docs/*`、`chore/*` 同理，一个 PR 只做一件事。本地允许 `dev` 等集成草稿分支长期存在，但进入 `master` 仍须走 PR。
 - **临时开发构建**：`master` push 的 Go、Web、Agent 与集成质量任务全部成功后，CI 才按 `linux-amd64`、`linux-arm64`、`windows-amd64`、`darwin-arm64` 四个平台运行 `make package`，并把 `beacon-ci-<commit>-<platform>` 上传到对应 GitHub Actions run。只有最终状态成功的 run 可供开发验证，失败或取消 run 中已上传的部分 Artifact 仍未准入；临时 Artifact 保留 7 天，不是 GitHub Release、版本或在线更新来源。
 - **RC/GA 目标边界**：FR-182 只建立临时开发构建与版本准备契约；后续 FR-183/FR-184 才负责受保护 workflow 的 RC 构建与 GA 晋级。标准流程中的 RC/GA tag 必须由对应 workflow 在门禁通过后创建，不以人工预推 tag 触发。
 - **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 `master`**（`sdd-hotfix` 技能）。
-- **回滚**优先 `git revert`，不重写已 push 历史（`sdd-rollback-change` 技能）。
+- **回滚**优先 `git revert`，不重写已 push 历史（`sdd-rollback-change` 技能）。严禁 `force push` 到 `master`，严禁 `--no-verify`，严禁 `--amend` 已 push 提交。
+- **合并策略**：分支先 `rebase` 到最新 `master`，再 `git merge --ff-only` 合入，保留逻辑提交（与 `.claude/rules/git-commit.md` §5 一致）。禁止 `squash` 把多意图 PR 压成单提交，禁止整版本一提交。
+- **PR 标题**：沿用 Conventional + 中文（见 `.claude/rules/git-commit.md` §1）。自动发布说明只统计两 tag 间合并的 PR 标题，标题质量决定 Release 说明外观。
+- **合并门槛**：CI 质量门全绿才可合入；PR 的产品打包必须为 `skipped`（由 quality-gate 断言），不以 Artifact 旁路门禁。
+- **分支保护运维 checklist**（仓库 Settings，需人在网页操作，文件只声明不代开）：
+  - 要求一切变更经 PR（禁止直推 `master`，含管理员）。
+  - 要求 status checks 全绿才可合并（质量门）。
+  - 禁止 `force push` 与删除 `master`。
 
 版本号唯一来源是根 `VERSION` 文件（ADR-0007），构建注入三组件，恒一致。
 
@@ -142,9 +149,9 @@
 进入第二版治理后，日常开发按稳态迭代处理。**每个工作项的标准循环**：
 
 1. **识别工作项**，选对应技能（路由见下表）。
-2. **开分支**：`feature/*` / `fix/*` / `refactor/*` / `hotfix/*`（§8）。
+2. **开分支**：`feature/*` / `fix/*` / `refactor/*` / `hotfix/*` / `docs/*` / `chore/*`（§8；提交细节见 `.claude/rules/git-commit.md` §6），禁止直推 `master`；本地 `dev` 等草稿进 `master` 仍走 PR。
 3. **按技能走**：读相关 PRD / ARCHITECTURE / ADR → 测试先行 → 实现（守不变量、简单优先）→ 过验证门 → `doc-sync` 同步文档。
-4. **发 PR**：填防漂移自检模板 → 评审 → 合入 `master`；PR 只运行质量门，不上传产品包。
+4. **发 PR**：标题沿用 Conventional + 中文 → 填防漂移自检模板 → 评审 → CI 质量门全绿后按 `rebase` + `fast-forward` 合入 `master`（禁 `squash` 压单提交、禁 merge 提交；回滚用 `git revert`）；PR 只运行质量门，不上传产品包。
 5. **日常试用 → 下载临时 Artifact**：`master` 质量门与四平台打包全部成功后，从对应 Actions run 下载按 commit 与平台命名的 Artifact；仅成功 run 可用，7 天后自动过期。
 6. **准备版本 → 独立发布准备 PR**：只修改根 `VERSION` 与 `CHANGELOG.md`，按普通 PR 通过质量门后合入 `master`。
 7. **进入 RC/GA → 等待受保护 workflow**：后续 FR-183/FR-184 的目标流程在门禁通过后创建 RC/GA tag；禁止人工预推 tag，FR-182 不宣称这些 workflow 已落地。
