@@ -82,6 +82,21 @@ func TestAlertEventPersistAlerterRecords(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "server")
 	svc := service.NewAlertEventService(db, repository.NewAlertEventRepository(db), repository.NewAuditLogRepository(db))
 
+	// FR-231：级别按「健康级别 × 角色」判定矩阵计算，角色经控制面权威事实解析（kind=proxy → proxy、
+	// lobby_cluster_id 非空 → lobby、其余/查不到 → backend）。本用例断言 lost → critical，
+	// 故须显式登记该服为 proxy（proxy 的 lost 为 critical；未登记则角色未知、按 backend 降级为 warning）。
+	ns := model.Namespace{Code: "prod", Name: "prod", Lifecycle: model.NamespaceLifecycleActive}
+	if err := db.Where("code = ?", "prod").FirstOrCreate(&ns).Error; err != nil {
+		t.Fatalf("建 namespace 失败: %v", err)
+	}
+	// 测试库跨用例共享，(namespace, serverId) 唯一索引下先清残留再建，保证角色确定。
+	if err := db.Where("namespace_id = ? AND server_id = ?", ns.ID, "boss-1").Delete(&model.Server{}).Error; err != nil {
+		t.Fatalf("清理残留 server 行失败: %v", err)
+	}
+	if err := db.Create(&model.Server{NamespaceID: ns.ID, ServerID: "boss-1", Kind: model.ServerKindProxy}).Error; err != nil {
+		t.Fatalf("建 server 失败: %v", err)
+	}
+
 	// persist 通道 + Dispatcher 扇出，等价健康扫描循环里对一次异常转移的派发
 	d := alert.NewDispatcher(alert.NewPersistAlerter(svc))
 	d.Dispatch(context.Background(), alert.Alert{
