@@ -24,7 +24,7 @@ jobs:
       version: ${{ steps.identity.outputs.version }}
       rc_commit: ${{ steps.identity.outputs.rc_commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -105,7 +105,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release.outputs.rc_commit }}
       - uses: actions/setup-java@v4
