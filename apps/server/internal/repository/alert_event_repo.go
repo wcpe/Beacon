@@ -89,7 +89,10 @@ func applyAlertEventFilter(q *gorm.DB, f AlertEventFilter) *gorm.DB {
 		q = q.Where("type = ?", f.Type)
 	}
 	if f.Level != "" {
-		q = q.Where("level = ?", f.Level)
+		// 级别筛选取「生效级别」（FR-231）：人工改级（severity_override 非空）优先于自动分级列，
+		// 否则改级后按级别筛选 / 排序不会跟随，与验收要求「人工改级后排序 / 筛选随之变化」不符。
+		// COALESCE/NULLIF 为标准 SQL，MySQL / SQLite / Postgres 均支持，保持方言无关。
+		q = q.Where("COALESCE(NULLIF(severity_override, ''), level) = ?", f.Level)
 	}
 	if f.Status != "" {
 		q = q.Where("status = ?", f.Status)

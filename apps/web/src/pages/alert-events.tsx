@@ -326,19 +326,26 @@ export default function AlertEventsPage() {
       },
       {
         header: t('observability.alertEvents.columns.level'),
-        cell: (row) => (
-          <span className="inline-flex items-center gap-1">
-            <Badge variant={levelBadgeVariant(row.level)}>{t(`observability.alertEvents.level.${row.level}`)}</Badge>
-            {/* FR-232：同键合并计数徽标（×N） */}
-            {(row.occurrenceCount ?? 1) > 1 && (
-              <Badge variant="secondary" className="tnum">
-                ×{row.occurrenceCount}
+        cell: (row) => {
+          // FR-231：展示「生效级别」——人工改级（severityOverride）优先于自动分级，
+          // 与后端按生效级别筛选保持一致；✎ 标记仍保留以示该行为人工调整。
+          const effectiveLevel = row.severityOverride ?? row.level
+          return (
+            <span className="inline-flex items-center gap-1">
+              <Badge variant={levelBadgeVariant(effectiveLevel)}>
+                {t(`observability.alertEvents.level.${effectiveLevel}`)}
               </Badge>
-            )}
-            {/* FR-231：人工调整标记 */}
-            {row.severityOverride != null && <Badge variant="outline">✎</Badge>}
-          </span>
-        ),
+              {/* FR-232：同键合并计数徽标（×N） */}
+              {(row.occurrenceCount ?? 1) > 1 && (
+                <Badge variant="secondary" className="tnum">
+                  ×{row.occurrenceCount}
+                </Badge>
+              )}
+              {/* FR-231：人工调整标记 */}
+              {row.severityOverride != null && <Badge variant="outline">✎</Badge>}
+            </span>
+          )
+        },
       },
       {
         header: t('observability.alertEvents.columns.type'),
