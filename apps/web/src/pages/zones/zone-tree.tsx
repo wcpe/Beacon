@@ -1,5 +1,6 @@
 // 区服结构树：BC 集群 → 大区 → 小区 → 子服，真正的层级树形（缩进 + 连线 + 展开折叠）。
 // 各层可新建。代理服（BC/bungee，kind=proxy）用清晰角色标签与图标区分于子服（bukkit，kind=backend）。
+import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -75,12 +76,15 @@ export default function ZoneTree({
   namespaceId,
   draggingKind,
   onDraggingKindChange,
+  toolbarActions,
 }: {
   namespaceId: number
   // 当前拖拽中的服务器 kind（由父页面共享）：dragover 阶段据此高亮兼容目标
   draggingKind?: 'backend' | 'proxy' | null
   // 树内已分配服务器拖起/结束时上报 kind（改派拖拽用），供树高亮兼容目标
   onDraggingKindChange?: (kind: 'backend' | 'proxy' | null) => void
+  // 页级操作（命名空间选择器 / 未分配入口等）：并入吸顶工具条，不另起独立操作行
+  toolbarActions?: ReactNode
 }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -534,9 +538,11 @@ export default function ZoneTree({
           <Boxes className="size-[15px]" />
         </span>
         <h2 className="text-[13px] font-semibold text-ink-1">{t('cluster.zones.tree.title')}</h2>
+        {/* 页级操作（命名空间选择器 / 未分配入口）：与新建集群同一行，不另起独立操作行 */}
+        {toolbarActions != null && <div className="ml-auto flex items-center gap-2">{toolbarActions}</div>}
         <Button
           size="sm"
-          className="ml-auto gap-1"
+          className={toolbarActions != null ? 'gap-1' : 'ml-auto gap-1'}
           disabled={namespaceId <= 0}
           title={namespaceId <= 0 ? t('cluster.zones.create.needNamespace') : undefined}
           onClick={() => {

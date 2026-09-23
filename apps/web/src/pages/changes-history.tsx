@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { PageHeader } from '@beacon/ui'
 import type { ChangeOrderSummary } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
@@ -20,24 +19,21 @@ export default function ChangesHistoryPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        actions={
-          <NamespacePicker
-            value={namespaceId}
-            onChange={(id) => {
-              setNamespaceId(id)
-              setSelected(null)
-            }}
-          />
-        }
-      />
-
       <MasterDetail
         master={
           <ListView
             namespaceId={effectiveNamespaceId}
             selectedId={selected?.id ?? null}
             onView={setSelected}
+            actions={
+              <NamespacePicker
+                value={namespaceId}
+                onChange={(id) => {
+                  setNamespaceId(id)
+                  setSelected(null)
+                }}
+              />
+            }
           />
         }
         detail={selected ? <DetailView orderId={selected.id} /> : null}

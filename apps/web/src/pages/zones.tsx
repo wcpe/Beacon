@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Inbox } from 'lucide-react'
 
-import { Badge, Button, PageHeader } from '@beacon/ui'
+import { Badge, Button } from '@beacon/ui'
 
 import { fetchZoneTree } from '../api/cluster'
 import NamespaceSelect from '../features/cluster/namespace-select'
@@ -33,30 +33,6 @@ export default function ZonesPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        actions={
-          <>
-            <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />
-            {/* 未分配入口：开合右侧非模态窄栏 */}
-            <Button
-              variant={basketOpen ? 'default' : 'outline'}
-              size="sm"
-              className="gap-1.5"
-              onClick={() => {
-                setBasketOpen((v) => !v)
-              }}
-            >
-              <Inbox className="size-3.5" />
-              {t('cluster.zones.basket.title')}
-              {unassignedCount > 0 && (
-                <Badge variant="warn" className="tnum">
-                  {unassignedCount}
-                </Badge>
-              )}
-            </Button>
-          </>
-        }
-      />
       {/* 主从布局：结构树占主区，未分配窄栏（非模态）在右侧共存，不遮罩、不 reflow 主区 */}
       <div className="flex items-start gap-3.5">
         <div className="min-w-0 flex-1">
@@ -64,6 +40,28 @@ export default function ZonesPage() {
             namespaceId={effectiveNamespaceId}
             draggingKind={draggingKind}
             onDraggingKindChange={setDraggingKind}
+            toolbarActions={
+              <>
+                <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />
+                {/* 未分配入口：开合右侧非模态窄栏 */}
+                <Button
+                  variant={basketOpen ? 'default' : 'outline'}
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => {
+                    setBasketOpen((v) => !v)
+                  }}
+                >
+                  <Inbox className="size-3.5" />
+                  {t('cluster.zones.basket.title')}
+                  {unassignedCount > 0 && (
+                    <Badge variant="warn" className="tnum">
+                      {unassignedCount}
+                    </Badge>
+                  )}
+                </Button>
+              </>
+            }
           />
         </div>
         <UnassignedBasket

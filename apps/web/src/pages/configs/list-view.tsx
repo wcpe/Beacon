@@ -1,5 +1,6 @@
 // 配置文件列表（主从布局主列）：ListCard 吸顶工具条（标题 / 新建 / 回收站 / keyword）+ 自区滚列表 + 吸底分页。
 // 点行选中（右侧非模态详情面板打开），行「删除」移入回收站（模态确认）。四态齐全（loading/error/empty/huge 分页）。
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -31,9 +32,11 @@ interface ListViewProps {
   selectedId: number | null
   onSelect: (file: ConfigFileItem) => void
   onOpenTrash: () => void
+  // 页级操作（命名空间选择器等）：并入列表工具条标题行右侧，不另起独立操作行
+  actions?: ReactNode
 }
 
-export default function ListView({ namespaceId, selectedId, onSelect, onOpenTrash }: ListViewProps) {
+export default function ListView({ namespaceId, selectedId, onSelect, onOpenTrash, actions }: ListViewProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
 
@@ -172,6 +175,8 @@ export default function ListView({ namespaceId, selectedId, onSelect, onOpenTras
           >
             {t('delivery.configs.list.create')}
           </Button>
+          {/* 页级操作（命名空间选择器等）并入同一行右侧，不另起独立操作行 */}
+          {actions}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
