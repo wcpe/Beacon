@@ -85,7 +85,8 @@ func NewMCPProxyPolicy(enabled bool, publicBaseURL string, trustedProxyCIDRs []s
 type MCPProxyOptions struct {
 	// AllowInsecureInternal 允许内网明文 http 直连入口。
 	AllowInsecureInternal bool
-	// AllowedHosts 直连模式下放行的 Host 白名单；为空时仅校验与基址 host 一致。
+	// AllowedHosts 直连模式下放行的 Host 白名单；为空时仅放行与基址 host 完全一致的 Host，
+	// 因此需要用 127.0.0.1 / localhost 等本机地址直连的部署必须显式列出。
 	AllowedHosts []string
 }
 

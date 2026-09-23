@@ -296,6 +296,28 @@ go test -tags=e2e -timeout=30m ./apps/server/test/e2e/hotreload -run '^TestDeliv
 
 **日常运维入口**：管理台「系统 → MCP 客户端」（`/mcp-clients`）用于查看客户端清单、创建 / 轮换 / 启用 / 吊销，并只读查看入口的部署配置（启用状态、公网基址、可信网段与两个开关）——排查「外部 Agent 连不上」时可先看该页确认 `enabled` 与基址是否符合预期。该页只读展示这些**启动项**：修改仍需编辑配置文件并重启控制面。创建与轮换的明文 secret 只在提交申请的那次响应出现一次，遗失需重新申请轮换。
 
+### 9.1 内网明文直连部署（allow-insecure-internal）
+
+无 TLS 终止、无反向代理的内网 / 回环部署用 `mcp.allow-insecure-internal: true` 放宽为 http。此时 Host 校验改为白名单模式，**有一条容易踩空的规则**：
+
+- `allowed-hosts` **留空时只放行与 `public-base-url` 的 host 完全一致的 Host**，不会自动放行 `127.0.0.1` 或 `localhost`。
+- 因此若 MCP 客户端实际连的是 `http://127.0.0.1:<port>`（例如跑在同一台机器上的 stdio 桥接进程），而 `public-base-url` 写的是对外的内网地址，则必须在 `allowed-hosts` 中**显式**列出客户端使用的 host:port，否则请求会以 401 `ADMIN_UNAUTHORIZED` 被拒，且日志里只能看到鉴权失败、看不出是 Host 白名单导致。
+
+```yaml
+mcp:
+  enabled: true
+  # 对外基址（token issuer 与 audience 由它派生，客户端 audience 必须与此一致）
+  public-base-url: "http://<内网地址>:19999"
+  allow-insecure-internal: true
+  # 显式放行本机回环入口，否则同机 MCP 客户端连 127.0.0.1 会被 401
+  allowed-hosts:
+    - "<内网地址>:19999"
+    - "127.0.0.1:19999"
+    - "localhost:19999"
+```
+
+**客户端侧对齐三要素**：直连部署下换 token 请求必须同时满足 `audience == public-base-url + /admin/v2/mcp`、`client_id/client_secret` 属于**该实例自己的库**（多套 Beacon 部署共存时最容易拿错别家的凭据，症状同样是 401 `invalid_client`）、以及 Host 命中白名单。三者任一不符都只回 401，需分别核对。
+
 ## 10. 内部信任通道（机器注册，FR-222）
 
 单操作者内网部署下，外部管理平台（如 JianManager）批量创建实例后逐个走人工审批不可行（60 台 = 60 次审批）。`mcp.allow-machine-register` 提供一条**默认关闭**的内部信任通道：开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的注册**直接创建 active 身份并绑定指定 serverId**，跳过人工审批。规格见 [internal-trust-channel.md](specs/internal-trust-channel.md)。

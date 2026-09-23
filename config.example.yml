@@ -122,7 +122,9 @@ mcp:
   trusted-proxy-cidrs: []
   # 允许内网明文 HTTP 直连 MCP 入口（无 TLS 终止、无反向代理）。仅供内网 / 回环部署，公网必须保持 false
   allow-insecure-internal: false
-  # 直连模式下允许的 Host 头白名单（host 或 host:port）；留空回退 SDK 默认
+  # 直连模式下允许的 Host 头白名单（host 或 host:port），用于防 DNS rebinding。
+  # 留空时仅放行与 public-base-url 的 host 完全一致的 Host；内网直连部署若需用
+  # 127.0.0.1 / localhost 等本机地址访问 MCP，必须在此显式列出对应 host:port。
   allowed-hosts: []
   # 允许 automation 客户端执行审批决定（默认 false）。默认关闭以保持"审批决定权归人类"的分权设计（FR-223）
   allow-approval-decide: false
