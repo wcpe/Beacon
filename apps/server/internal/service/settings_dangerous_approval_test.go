@@ -2,9 +2,10 @@ package service
 
 import (
 	"errors"
+	"testing"
+
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
-	"testing"
 
 	"gorm.io/gorm"
 
