@@ -2,7 +2,7 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 未发布
+## 1.2.0（2026-09-24）
 
 ### 新增
 - 未归属服可直接指派为大厅成员（A1 / FR-225）：`/zones` 未分配篮的目标选择树新增「大厅集群（入口服）」节点，与小区 / 集群并列呈现（同样受搜索过滤）。选中大厅目标后对每台服逐条**走统一审批**提交归属迁移（`transferServerPlacement`，与小区 / 集群分配同一通道，不新增直改通道）；「同时设为默认入口」在大厅目标下隐藏（默认入口是小区级语义，大厅成员不适用）。大厅集群按 namespace 唯一（ADR-0075），故选「全部命名空间」时按所选服的共同命名空间回退解析，跨命名空间选择时不提供该目标。
@@ -30,6 +30,7 @@
 - **页眉层级与页面操作行归位**：①第二层页眉改为**面包屑在最左**（汉堡之后、环境 / 命名空间选择器之前），页面身份先于范围过滤出现；②原先「左半空、右半按钮」的**独立页级操作行**取消，各页操作下移融入内容区：`/zones` 并入区服树吸顶工具条、`/topology` 并入页签行、`/assets` 并入页签行、`/changes` 与 `/configs` 与 `/changes/history` 并入各自列表卡工具条、`/lobby-clusters` 并入作用域工具条卡。随之**移除已无引用**的 `@beacon/ui` `PageHeader` 组件（其唯一职责即该独立操作行；ui-wiki 对应条目并入 `SectionHeader`），避免后续页面再落回该形态。
 
 ### 修复
+- **告警级别筛选与展示未跟随人工改级（FR-231）**：按级别筛选查的是 `alert_event.level` 原始列，未考虑人工覆盖列 `severity_override`——把一条告警从 `warning` 改为 `critical` 后，`?level=critical` 查不到它、`?level=warning` 仍能查到；前端级别徽标也只显示原始级别，出现「筛出 critical 却显示 warning」。现统一按**生效级别**判定：后端筛选用 `COALESCE(NULLIF(severity_override, ''), level)`（标准 SQL，MySQL / SQLite / Postgres 通用），前端徽标改用 `severityOverride ?? level`（`✎` 标记保留以示人工调整）。
 - **共享 agent token 比较改为常数时间**：v1 数据面中间件此前用 `rawToken == token` 比较 `X-Beacon-Token`，存在时序侧信道（可逐字节推断共享 token）。该 token 在开启 `mcp.allow-machine-register` 时是机器注册直落 active 的**唯一信任源**，故改用 `crypto/subtle.ConstantTimeCompare`（与 `auth.go` 的用户名比较同范式），并补长度不等 / 前缀 / 等长不同 / 空值等边界用例锁定。
 - **待确认服务器 E2E 用例间歇失败**：`cluster-fr155` 的「注册待确认 → 确认接入」用例用全页 `getByRole('row')` 过滤 serverId 定位待确认行；确认接入后该服进入**资产表**（同样含 serverId），reload 后断言「待确认行消失」恒假失败（master 定时 E2E 近 10 次挂 4 次）。现把定位器限定在待确认抽屉内（`[data-slot="sheet-content"]`），并在 reload 后重新打开抽屉再断言，语义与作用域都正确。
 - **告警列表 `?status=` 筛选被静默忽略（真机验收发现）**：`AlertEventFilter` 缺 `Status` 字段、`applyAlertEventFilter` 无对应分支、handler 也未接线，导致 `GET /admin/v1/alert-events?status=open` 被静默忽略——实测返回 18 条中混有 16 条 `resolved`，「只看未处理」形同虚设（前端还因此在客户端做分页后过滤，会丢行）。现补全三处（filter 字段 + 仓储条件 + handler 接线）。批量处理端点本身不受影响（仓储层自带 `status='open'` 条件，不会误伤已处理条目），故此为列表查询的独立缺陷。
