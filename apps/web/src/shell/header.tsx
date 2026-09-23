@@ -81,6 +81,9 @@ export default function Header() {
         >
           {mobileNavOpen ? <X className="size-4" /> : <Menu className="size-4" />}
         </Button>
+        {/* 当前页面面包屑（E3）：置于段 2 最左（汉堡之后），先给出「分组 › 页面」身份，
+            其后才是环境/命名空间选择器与右侧工具 */}
+        <Breadcrumb />
         {location.pathname === '/approvals' || location.pathname.startsWith('/approvals/') ? (
           <div data-slot="global-approval-header" className="rounded-md bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand">
             全局审批
@@ -88,8 +91,6 @@ export default function Header() {
         ) : (
           <EnvFilter />
         )}
-        {/* 当前页面面包屑（E3）：环境/命名空间选择器之后给出「分组 › 页面」身份 */}
-        <Breadcrumb />
         <div className="flex flex-1 items-center justify-end gap-1.5">
           <HeaderUtilities
             onOpenSearch={() => {

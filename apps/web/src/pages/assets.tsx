@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Info, ShieldAlert } from 'lucide-react'
 
-import { Button, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
+import { Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
 
 import NamespacePicker from '../features/delivery/namespace-picker'
 import ScanPanel from './assets/scan-panel'
@@ -24,25 +24,6 @@ export default function AssetsPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        actions={
-          <>
-            {/* 敏感路径规则编辑（FR-164）：命中 glob 的文件预览 / diff 需原因放行 */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setRulesOpen(true)
-              }}
-            >
-              <ShieldAlert className="size-4" aria-hidden />
-              {t('delivery.assets.sensitiveRules.manage')}
-            </Button>
-            <NamespacePicker value={namespaceId} onChange={setNamespaceId} />
-          </>
-        }
-      />
-
       <SensitiveRulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
 
       {/* 去向提示：文件差异的下发统一走变更单（与 /configs 提示同款式） */}
@@ -57,12 +38,29 @@ export default function AssetsPage() {
       </div>
 
       <Tabs value={view} onValueChange={setView}>
-        <TabsList>
-          <TabsTrigger value="manifest">{t('delivery.assets.list.title')}</TabsTrigger>
-          <TabsTrigger value="scan">{t('delivery.assets.scan.title')}</TabsTrigger>
-          <TabsTrigger value="compare">{t('delivery.assets.compare.title')}</TabsTrigger>
-          <TabsTrigger value="diff">{t('delivery.assets.diff.title')}</TabsTrigger>
-        </TabsList>
+        {/* 页签与页级操作（敏感规则 / 命名空间）同一行，不另起独立操作行 */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TabsList>
+            <TabsTrigger value="manifest">{t('delivery.assets.list.title')}</TabsTrigger>
+            <TabsTrigger value="scan">{t('delivery.assets.scan.title')}</TabsTrigger>
+            <TabsTrigger value="compare">{t('delivery.assets.compare.title')}</TabsTrigger>
+            <TabsTrigger value="diff">{t('delivery.assets.diff.title')}</TabsTrigger>
+          </TabsList>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 敏感路径规则编辑（FR-164）：命中 glob 的文件预览 / diff 需原因放行 */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setRulesOpen(true)
+              }}
+            >
+              <ShieldAlert className="size-4" aria-hidden />
+              {t('delivery.assets.sensitiveRules.manage')}
+            </Button>
+            <NamespacePicker value={namespaceId} onChange={setNamespaceId} />
+          </div>
+        </div>
         <TabsContent value="manifest" className="pt-4">
           <ManifestPanel namespaceId={effectiveNamespaceId} />
         </TabsContent>

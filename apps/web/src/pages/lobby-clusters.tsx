@@ -15,7 +15,6 @@ import {
   DialogHeader,
   DialogTitle,
   Label,
-  PageHeader,
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -166,9 +165,15 @@ export default function LobbyClustersPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        actions={
-          <>
+      {/* 作用域工具条：命名空间选择器须常驻（其内部 effect 负责在未选时落定首个命名空间，
+          放进条件分支会与数据加载形成循环依赖）；与状态卡同为一列内容流，不是独立空行。 */}
+      <div className="grid gap-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+          <div className="grid gap-0.5">
+            <p className="text-sm font-semibold text-ink-1">大厅集群</p>
+            <p className="text-xs text-ink-3">选择命名空间后查看入口就绪状态与成员</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <NamespaceSelect value={namespaceId} onChange={setNamespaceId} allowAll={false} />
             <Button
               size="sm"
@@ -183,9 +188,9 @@ export default function LobbyClustersPage() {
               <RefreshCw className="size-3.5" />
               刷新
             </Button>
-          </>
-        }
-      />
+          </div>
+        </div>
+      </div>
 
       <AsyncSection
         isLoading={loading}

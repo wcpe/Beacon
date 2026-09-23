@@ -8,7 +8,6 @@ export const UI_WIKI_COVERED_EXPORTS = [
   'DestructiveConfirmDialog',
   'MarkdownLite',
   'SectionHeader',
-  'PageHeader',
   'SummaryStrip',
   'SummaryItem',
   'SummaryTone',

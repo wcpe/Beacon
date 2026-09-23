@@ -1,5 +1,6 @@
 // 交付历史列表（主从布局主列）：ListCard 吸顶工具条（标题 / 状态筛选 / 标题搜索）+ 自区滚列表 + 吸底分页。
 // 点行选中（右侧非模态详情面板打开）；行「在变更单中打开」跳 /changes。
+import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -47,9 +48,11 @@ interface ListViewProps {
   namespaceId: number
   selectedId: number | null
   onView: (order: ChangeOrderSummary) => void
+  // 页级操作（命名空间选择器等）：并入列表工具条标题行右侧，不另起独立操作行
+  actions?: ReactNode
 }
 
-export default function ListView({ namespaceId, selectedId, onView }: ListViewProps) {
+export default function ListView({ namespaceId, selectedId, onView, actions }: ListViewProps) {
   const { t } = useTranslation()
   const [keyword, setKeyword] = useState('')
   const [status, setStatus] = useState('all')
@@ -119,6 +122,7 @@ export default function ListView({ namespaceId, selectedId, onView }: ListViewPr
           {t('delivery.changesHistory.list.title')}
           {total > 0 && <span className="text-xs font-normal text-ink-3">{total}</span>}
         </span>
+        {actions != null && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input

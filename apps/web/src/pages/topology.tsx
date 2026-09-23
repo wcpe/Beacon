@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Network, Table2 } from 'lucide-react'
 
-import { PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
 
 import NamespaceSelect, { ALL_NAMESPACES } from '../features/cluster/namespace-select'
 import EdgesPanel from './topology/edges-panel'
@@ -25,21 +25,21 @@ export default function TopologyPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        actions={<NamespaceSelect value={namespaceId} onChange={setNamespaceId} />}
-      />
-
       <Tabs value={mode} onValueChange={setMode}>
-        <TabsList>
-          <TabsTrigger value="graph" className="gap-1.5">
-            <Network className="size-3.5" />
-            {t('cluster.topology.mode.graph')}
-          </TabsTrigger>
-          <TabsTrigger value="data" className="gap-1.5">
-            <Table2 className="size-3.5" />
-            {t('cluster.topology.mode.data')}
-          </TabsTrigger>
-        </TabsList>
+        {/* 模式切换与命名空间选择器同一行：不另起独立操作行 */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TabsList>
+            <TabsTrigger value="graph" className="gap-1.5">
+              <Network className="size-3.5" />
+              {t('cluster.topology.mode.graph')}
+            </TabsTrigger>
+            <TabsTrigger value="data" className="gap-1.5">
+              <Table2 className="size-3.5" />
+              {t('cluster.topology.mode.data')}
+            </TabsTrigger>
+          </TabsList>
+          <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />
+        </div>
         <TabsContent value="graph">
           <TopologyGraph namespaceId={apiNamespaceId} />
         </TabsContent>

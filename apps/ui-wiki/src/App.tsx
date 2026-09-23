@@ -91,7 +91,6 @@ import {
   SheetTrigger,
   Skeleton,
   SectionHeader,
-  PageHeader,
   SummaryStrip,
   Table,
   TableBody,
@@ -203,33 +202,10 @@ function ButtonPreview() {
   )
 }
 
-function PageHeaderPreview() {
+function SectionHeaderPreview() {
   return (
     <ComponentShell>
       <div className="space-y-5">
-        <PageHeader
-          actions={
-            <>
-              <Button variant="outline" size="sm">
-                导出
-              </Button>
-              <Button size="sm">接入新服</Button>
-            </>
-          }
-        />
-        <PageHeader
-          actions={
-            <Select defaultValue="1h">
-              <SelectTrigger className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1h">近 1 小时</SelectItem>
-                <SelectItem value="24h">近 24 小时</SelectItem>
-              </SelectContent>
-            </Select>
-          }
-        />
         <SectionHeader
           icon={<ListChecks className="size-4" />}
           title="区段标题 base"
@@ -792,13 +768,13 @@ const items: MuseumItem[] = [
     preview: <DashboardPreview />,
   },
   {
-    id: 'page-header',
-    title: '二阶页眉',
+    id: 'section-header',
+    title: '区段标题',
     group: '展示组件',
-    description: '业务页顶栏操作行：仅右侧操作槽（图标徽章与标题已上移到页眉面包屑）；区段标题 base/lg 对照。',
-    exports: ['PageHeader', 'SectionHeader'],
+    description: '卡内 / 页内区段标题：图标 + 标题 + 计数 + 右侧操作；base/lg 两档。',
+    exports: ['SectionHeader'],
     states: ['with actions', 'section base', 'section lg'],
-    preview: <PageHeaderPreview />,
+    preview: <SectionHeaderPreview />,
   },
   {
     id: 'text',
