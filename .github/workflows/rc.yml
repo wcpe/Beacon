@@ -103,7 +103,7 @@ jobs:
       - name: Go 单元测试
         run: go test ./... -count=1
       - name: Go 静态检查
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           args: ./...

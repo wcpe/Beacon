@@ -49,7 +49,7 @@ jobs:
       - name: 运行单元测试
         run: go test ./...
       - name: 运行 golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           args: ./...
