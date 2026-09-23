@@ -97,11 +97,25 @@ if test "$ga_release_state" = missing; then
         printf 'Beacon %s 正式版。\n\n' "$VERSION"
         printf '由同提交 RC 原样晋级，产品资产及 SHA256SUMS.txt 保持不变。\n'
     } > "$GA_NOTES_FILE"
-    gh release create "$GA_TAG" "$GA_ASSETS_DIR"/* \
-        --draft \
-        --title "$GA_TAG" \
-        --notes-file "$GA_NOTES_FILE" \
-        --verify-tag
+    # GA 与 RC 同提交，无显式起点时自动笔记可能选中同提交 RC 导致为空。
+    # 故显式指向上一个 GA；首个 GA 无前任时省略起点参数。
+    PREV_GA_TAG=$(git tag --list 'v[0-9]*' 2>/dev/null | grep -v -F -- '-rc.' | sort -V | grep -v -F -x -- "$GA_TAG" | tail -n 1 || true)
+    if test -n "$PREV_GA_TAG"; then
+        gh release create "$GA_TAG" "$GA_ASSETS_DIR"/* \
+            --draft \
+            --title "$GA_TAG" \
+            --notes-file "$GA_NOTES_FILE" \
+            --generate-notes \
+            --notes-start-tag "$PREV_GA_TAG" \
+            --verify-tag
+    else
+        gh release create "$GA_TAG" "$GA_ASSETS_DIR"/* \
+            --draft \
+            --title "$GA_TAG" \
+            --notes-file "$GA_NOTES_FILE" \
+            --generate-notes \
+            --verify-tag
+    fi
 fi
 
 current_state=$(release_state)

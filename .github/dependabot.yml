@@ -1,0 +1,35 @@
+# 依赖自动更新配置：每周小批量提 PR，全部经 PR 门禁合入 master，不直推。
+version: 2
+updates:
+  # 根 go.mod 的 Go 模块依赖（对应根 go.mod / go.sum）
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+  # apps/agent 的 Gradle 依赖（对应 apps/agent/build.gradle.kts，含 gradle wrapper）
+  - package-ecosystem: "gradle"
+    directory: "/apps/agent"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+  # 根 pnpm workspace 的前端依赖（对应根 package.json / pnpm-lock.yaml）
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+  # 工作流引用的 GitHub Actions（对应 .github/workflows/*.yml）
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"

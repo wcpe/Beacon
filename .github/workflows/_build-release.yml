@@ -294,6 +294,7 @@ jobs:
           name: ${{ needs.meta.outputs.tag }}
           files: artifacts/*
           prerelease: true
+          generate_release_notes: true
           body_path: release-body.md
           fail_on_unmatched_files: true
 

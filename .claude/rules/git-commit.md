@@ -104,3 +104,15 @@ feat(api): 加 discovery 端点（handler 还没接，编译不过）
 - **分支并入 master 必须保持线性历史**：先把特性分支 `rebase` 到最新 master，再 `git merge --ff-only`（fast-forward）并入。**禁止产生 merge 提交**——`git merge` 默认 no-ff 合并、`--no-ff`、`merge(scope):` 形式的合并提交一律不允许。
 - 并行 worktree 分支收尾同理：逐个 rebase 到 master 后 FF 并入；rebase 冲突**报告给用户、不强推**（不 `--force`、不丢提交）。
 - 本约束对**新并入**生效；历史中已存在的 merge 提交保留、不追溯重写。
+
+## 6. 分支与 PR 合入（强制）
+
+- **一切变更经 PR 进 `master`**：禁止任何情形直推 `master`（单人期、发版提交同样经 PR）。本地允许 `dev` 等集成草稿分支，但进 `master` 仍走 PR。
+- **分支命名**：`feature/*`、`fix/*`、`refactor/*`、`hotfix/*`、`docs/*`、`chore/*`；短生命周期，一个 PR 只做一件事（粒度见 §3）。
+- **合入前同步**：先 `rebase` 到最新 `master`，再合入；线性历史与禁 merge 提交按 §5 执行（本节不重复）。
+- **禁压单提交**：多意图 PR 不得 `squash` 压成单提交，不得整版本一提交；按逻辑提交保留。
+- **回滚**：优先 `git revert`；严禁 `force push` 到 `master`（`rebase` 冲突报告用户、不强推）。
+- **提交卫生**：严禁 `--no-verify`，严禁 `--amend` 已 push 提交（见 §4）。
+- **PR 标题**：沿用 §1 的 Conventional + 中文；自动发布说明只统计两 tag 间合并的 PR 标题，标题质量决定 Release 外观。
+- **合并门槛**：CI 质量门全绿才合；PR 的产品打包必须为 `skipped`（由 quality-gate 断言）。
+- **分支保护开关**：由人在网页 Settings 开启（要求 PR、要求 status checks、禁 `force push`），AI 只遵守、不操作网页。
