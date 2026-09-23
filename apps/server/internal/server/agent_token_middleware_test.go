@@ -140,3 +140,43 @@ func TestAgentTokenMiddlewareV2PathNotTrusted(t *testing.T) {
 		t.Fatal("agent 自持身份不得被标成受信内部调用方（否则可绕过人工审批）")
 	}
 }
+
+// TestAgentTokenMiddlewareConstantTimeCompareBoundaries 锁死共享 token 的常数时间比较语义（FR-222 安全加固）：
+// 改用 subtle.ConstantTimeCompare 后，长度不等、前缀、等长但不同、超出等边界一律不得判定为命中，
+// 且不得因空 token 误判为受信调用方（受信标记是机器注册直落 active 的唯一依据）。
+func TestAgentTokenMiddlewareConstantTimeCompareBoundaries(t *testing.T) {
+	const global = "global-agent-token"
+	cases := []struct {
+		name        string
+		headerToken string
+		wantServed  bool
+		wantTrusted bool
+	}{
+		{name: "完全一致", headerToken: global, wantServed: true, wantTrusted: true},
+		{name: "等长但不同", headerToken: "global-agent-tokeN", wantServed: false},
+		{name: "前缀更短", headerToken: "global-agent", wantServed: false},
+		{name: "更长（含正确前缀）", headerToken: global + "-extra", wantServed: false},
+		{name: "仅大小写不同", headerToken: "Global-Agent-Token", wantServed: false},
+		{name: "空头", headerToken: "", wantServed: false},
+		{name: "仅空白", headerToken: "   ", wantServed: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			served, trusted := false, false
+			h := agentTokenMiddleware(global, nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				served, trusted = true, agentauth.IsTrustedInternal(r.Context())
+			}))
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/beacon/v1/agent/heartbeat", nil)
+			req.Header.Set("X-Beacon-Token", tc.headerToken)
+			h.ServeHTTP(rec, req)
+
+			if served != tc.wantServed {
+				t.Fatalf("放行与否不符：served=%v want=%v（状态 %d）", served, tc.wantServed, rec.Code)
+			}
+			if trusted != tc.wantTrusted {
+				t.Fatalf("受信标记应为 %v，实际 %v（未命中却标记会让注册直落 active）", tc.wantTrusted, trusted)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"log/slog"
 	"net/http"
@@ -69,7 +70,9 @@ func agentTokenMiddleware(token string, v2 AgentV2Authenticator) func(http.Handl
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rawToken := r.Header.Get("X-Beacon-Token")
-			if token != "" && rawToken == token {
+			// 共享 token 是机器注册通道（FR-222）的唯一信任源，比较须常数时间，
+			// 防时序侧信道逐字节推断；写法与 auth.go 的用户名比较同范式。
+			if token != "" && subtle.ConstantTimeCompare([]byte(rawToken), []byte(token)) == 1 {
 				next.ServeHTTP(w, r.WithContext(agentauth.WithTrustedInternal(r.Context())))
 				return
 			}
