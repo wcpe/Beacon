@@ -152,7 +152,10 @@ export const cluster = {
     summary: {
       total: 'Total servers',
       online: 'Online',
+      offline: 'Offline',
       unassigned: 'Unassigned',
+      degraded: 'Degraded',
+      unhealthy: 'Unhealthy',
       pending: 'Pending',
       residual: 'Residual (no identity)',
     },

@@ -419,6 +419,7 @@ export const delivery = {
     flow: {
       open: '交付流程',
       title: '一次交付是怎么走完的',
+      subtitle: '五步生命周期：从创建到完成或回滚',
       close: '收起',
       steps: {
         create: { name: '创建', desc: '选好交付内容、范围与批次，提交审批' },

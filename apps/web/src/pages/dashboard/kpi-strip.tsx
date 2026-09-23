@@ -3,7 +3,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Activity, Gauge, Network, Server, Users } from 'lucide-react'
+import { Activity, CircleAlert, Cpu, Gauge, Network, Server, Users } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -102,7 +102,7 @@ export default function KpiStrip() {
       skeleton={<CardGridSkeleton count={5} />}
     >
       {data && (
-        <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-[repeat(4,1fr)_1.25fr]">
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-[repeat(6,1fr)_1.4fr]">
           {/* 可调度服务器 */}
           <KpiCard
             label={t('dashboard.kpi.schedulable')}
@@ -170,6 +170,34 @@ export default function KpiStrip() {
                 {t('dashboard.kpi.target')} 20.0 · {t('dashboard.kpi.avgCpu')}{' '}
                 {data.avgCpuPct.toFixed(1)}%
               </>
+            }
+          />
+
+          {/* 不健康实例（需立即处置） */}
+          <KpiCard
+            label={t('dashboard.kpi.unhealthy')}
+            value={data.levelDistribution.unhealthy}
+            unit={` / ${String(
+              data.levelDistribution.healthy +
+                data.levelDistribution.degraded +
+                data.levelDistribution.unhealthy,
+            )} ${t('dashboard.kpi.units')}`}
+            icon={<CircleAlert className="size-4" />}
+            tone={data.levelDistribution.unhealthy > 0 ? 'crit' : 'off'}
+            meta={t('dashboard.kpi.unhealthyHint')}
+          />
+
+          {/* 平均 CPU */}
+          <KpiCard
+            label={t('dashboard.kpi.avgCpu')}
+            value={`${data.avgCpuPct.toFixed(1)}%`}
+            icon={<Cpu className="size-4" />}
+            tone={data.avgCpuPct >= 85 ? 'crit' : data.avgCpuPct >= 70 ? 'warn' : 'ok'}
+            visual={
+              <MiniBar
+                pct={data.avgCpuPct}
+                level={data.avgCpuPct >= 85 ? 'danger' : data.avgCpuPct >= 70 ? 'warn' : 'ok'}
+              />
             }
           />
 

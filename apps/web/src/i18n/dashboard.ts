@@ -14,6 +14,8 @@ export const dashboard = {
     avgTps: '平均 TPS',
     target: '目标',
     avgCpu: '平均 CPU',
+    unhealthy: '不健康实例',
+    unhealthyHint: '需立即处置',
     units: '台',
     distribution: '健康等级分布',
     levelHealthy: '健康',
