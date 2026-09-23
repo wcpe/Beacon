@@ -1,5 +1,6 @@
 // Package testsupport 提供集成测试的共享脚手架。
-// 为每个测试包分配独立数据库（beacon_<suffix>），避免 go test 并行迁移同库冲突。
+// 为每个测试包分配独立数据库（beacon_<suffix>），避免 go test 并行迁移同库冲突；
+// 受限账号可经 BEACON_TEST_SHARED_DB=1 改为共用单库（见 OpenTestDB）。
 package testsupport
 
 import (
@@ -23,6 +24,10 @@ var resetTables = []string{"approval_credential_secret", "approval_execution_rec
 
 // OpenTestDB 为某测试包打开独立数据库（beacon_<suffix>），迁移并清表。
 // 未设 BEACON_TEST_DSN 则跳过该测试。
+//
+// 受限账号（仅有单库权限、无 CREATE DATABASE）可置 BEACON_TEST_SHARED_DB=1：
+// 此时不建 <库名>_<后缀> 库，改用 BEACON_TEST_DSN 指定的库本身。该模式下各测试包
+// 共用同一库，必须传 -p 1 串行执行（CI 与 rc 门禁本就以 -p 1 运行）。
 func OpenTestDB(t *testing.T, suffix string) *gorm.DB {
 	t.Helper()
 	raw := os.Getenv("BEACON_TEST_DSN")
@@ -33,17 +38,19 @@ func OpenTestDB(t *testing.T, suffix string) *gorm.DB {
 	if err != nil {
 		t.Fatalf("解析 BEACON_TEST_DSN 失败: %v", err)
 	}
-	target := cfg.DBName + "_" + suffix
-
-	// 先连到基础库创建独立测试库（IF NOT EXISTS 并发安全）
-	admin, err := sql.Open("mysql", raw)
-	if err != nil {
-		t.Fatalf("打开基础连接失败: %v", err)
-	}
-	_, err = admin.Exec("CREATE DATABASE IF NOT EXISTS `" + target + "`")
-	_ = admin.Close()
-	if err != nil {
-		t.Fatalf("创建测试库 %s 失败: %v", target, err)
+	target := cfg.DBName
+	if !sharedDBMode() {
+		target = cfg.DBName + "_" + suffix
+		// 先连到基础库创建独立测试库（IF NOT EXISTS 并发安全）
+		admin, err := sql.Open("mysql", raw)
+		if err != nil {
+			t.Fatalf("打开基础连接失败: %v", err)
+		}
+		_, err = admin.Exec("CREATE DATABASE IF NOT EXISTS `" + target + "`")
+		_ = admin.Close()
+		if err != nil {
+			t.Fatalf("创建测试库 %s 失败: %v（受限账号可置 %s=1 共用 BEACON_TEST_DSN 指定的库，需 -p 1）", target, err, sharedDBEnv)
+		}
 	}
 
 	cfg.DBName = target
@@ -63,6 +70,15 @@ func OpenTestDB(t *testing.T, suffix string) *gorm.DB {
 	}
 	dropDailyTables(t, db)
 	return db
+}
+
+// sharedDBEnv 是「共用单库」开关名：置 1 时不按测试包建 <库名>_<后缀> 库，
+// 直接使用 BEACON_TEST_DSN 指定的库。供只有单库权限、无 CREATE DATABASE 的受限账号做本地验证。
+const sharedDBEnv = "BEACON_TEST_SHARED_DB"
+
+// sharedDBMode 判是否启用共用单库模式（见 sharedDBEnv）。
+func sharedDBMode() bool {
+	return os.Getenv(sharedDBEnv) == "1"
 }
 
 // dropDailyTables 清掉全部残留日表（<base>_YYYYMMDD，命名规则见 store.DailyTableName）。
