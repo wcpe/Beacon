@@ -231,7 +231,7 @@ jobs:
           PY
       - name: 归档 Agent E2E 日志与 mc-testkit 结果
         if: always() && steps.scan_e2e_artifacts.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-e2e-${{ runner.os }}-directory-override-${{ github.run_id }}
           path: |

@@ -235,7 +235,7 @@ jobs:
         shell: bash
         run: make package
       - name: 上传临时开发产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: beacon-ci-${{ github.sha }}-${{ matrix.target }}
           path: dist/
