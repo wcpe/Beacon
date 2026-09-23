@@ -16,7 +16,7 @@ dependencies {
     compileOnly(project(":agent-api"))
     compileOnly(kotlin("stdlib"))
     // BungeeCord 平台 API：目录探针需读 ProxyServer 服务器目录与命令注册状态。
-    compileOnly("net.md-5:bungeecord-api:1.20-R0.2@jar")
+    compileOnly("net.md-5:bungeecord-api:1.21-R0.4@jar")
     // 连接采集探针需引用 agent 已装配的真采集入口；仅编译期依赖，运行期由 BeaconAgentProxy 提供。
     compileOnly(project(":agent-bungee"))
     compileOnly(project(":agent-core"))
