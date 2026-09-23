@@ -153,7 +153,10 @@ export const cluster = {
     summary: {
       total: '服务器总数',
       online: '在线',
+      offline: '离线',
       unassigned: '未分配',
+      degraded: '亚健康',
+      unhealthy: '健康异常',
       pending: '待确认',
       residual: '遗留无身份',
     },

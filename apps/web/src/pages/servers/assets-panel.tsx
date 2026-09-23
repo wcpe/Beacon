@@ -1,7 +1,9 @@
-// 服务器资产主列表（页面主体）：紧凑 KPI 一行 + 吸顶筛选/操作条（keyword + 类型 + 分配状态 +
-// 待确认入口 + 批量操作）+ 高密度分页表。列表区自身滚动，筛选条 sticky 吸顶不被推走。
+// 服务器资产主列表（页面主体）：KPI 卡带（图标 + 文字：总数 / 在线 / 待确认 / 未分配 / 健康异常 /
+// 遗留无身份）+ 吸顶筛选/操作条（keyword + 类型 + 分配状态 + 待确认入口 + 批量操作）+ 高密度分页表。
+// 列表区自身滚动，筛选条 sticky 吸顶不被推走。
 // 点某行看健康详情走右侧抽屉（onViewHealth 回调），绝不内联展开把下面内容顶走。
 
+import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -11,15 +13,21 @@ import {
   Ban,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
+  CircleCheck,
   CircleHelp,
   DoorOpen,
+  Gauge,
   Inbox,
   Link2Off,
+  MapPinOff,
   MoreHorizontal,
   Network,
+  PowerOff,
   Search,
   Server,
   ShieldAlert,
+  ShieldOff,
   Tag,
   X,
 } from 'lucide-react'
@@ -37,12 +45,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Input,
+  KpiCard,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  SummaryStrip,
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -50,9 +58,9 @@ import {
   cn,
   levelText,
   type DataTableColumn,
+  type KpiTone,
 } from '@beacon/ui'
 import type { HealthItem, MetricsSeriesPoint, ServerItem } from '@beacon/contracts'
-
 import {
   ApiClientError,
   type ApprovalTicket,
@@ -77,6 +85,21 @@ import ReasonDialog from './reason-dialog'
 import TagDialog from './tag-dialog'
 
 const PAGE_SIZE = 15
+
+// 身份归属判定的最小入参：ServerItem 与 HealthItem 都含这两项，故同一判定函数两处复用。
+interface IdentifiableServer {
+  namespaceId: number
+  serverId: string
+}
+
+// 单张 KPI 卡的数据（纯展示，取数与派生在组件内完成）。
+interface KpiCardItem {
+  key: string
+  label: string
+  value: string | number
+  icon: ReactNode
+  tone: KpiTone
+}
 
 // F1：操作「?」说明——小问号按钮 + 悬停 / 聚焦弹出解释（自带 Provider，不依赖全局挂载）。
 function HelpTip({ text }: { text: string }) {
@@ -192,11 +215,13 @@ export default function AssetsPanel({
   // 同一 serverId 可能有多条历史身份（unbound/rejected/active）；解绑/禁用只对可迁状态生效，
   // 优先 active → disabled → conflict，避免命中已 unbound 的旧行导致 409 illegal_state。
   // 注意：仅有 unbound/rejected 历史时仍可能返回旧行——调用方可迁操作前必须再看 status。
-  const identityMatchesOf = (row: ServerItem) =>
+  // 身份归属判定只需 (namespaceId, serverId) 两项；入参用该最小结构类型，使健康视图项（HealthItem，
+  // 同含这两项）也能复用同一口径计算 scope 级「遗留无身份」，避免两处判定逻辑漂移。
+  const identityMatchesOf = (row: IdentifiableServer) =>
     identitiesQuery.data?.items.filter(
       (item) => item.serverId === row.serverId && item.namespaceId === row.namespaceId,
     ) ?? []
-  const actionableIdentityOf = (row: ServerItem) => {
+  const actionableIdentityOf = (row: IdentifiableServer) => {
     const matches = identityMatchesOf(row)
     return (
       matches.find((item) => item.status === 'active') ??
@@ -215,7 +240,7 @@ export default function AssetsPanel({
     return identityMatchesOf(row)[0]?.status ?? 'none'
   }
   // 解绑/禁用仅 active|disabled|conflict 可迁；已解绑/已拒绝/无身份时隐藏按钮，避免 409 假死
-  const canTransitionIdentity = (row: ServerItem): boolean => actionableIdentityOf(row) !== null
+  const canTransitionIdentity = (row: IdentifiableServer): boolean => actionableIdentityOf(row) !== null
 
   // 健康视图列表：serverId → 健康分/等级/可调度/不可调度原因，供列表行直显基础健康信息（一眼可见，不必点开详情）。
   // 每个命名空间最多一次健康请求，避免逐行查详情的 N+1。
@@ -662,34 +687,96 @@ export default function AssetsPanel({
   const active = action?.row ?? null
   const dialogConfig = action && action.kind !== 'defaultEntry' ? dialogConfigOf(action, t) : null
 
-  // 当前页遗留行计数（无活跃身份）；用于 KPI 提示试验代理等残留
-  const residualOnPage = useMemo(
-    () => (query.data?.items ?? []).filter((row) => !canTransitionIdentity(row)).length,
-    [query.data, identitiesQuery.data],
-  )
+  // KPI 卡（紧凑网格，图标在左 + 文字 + 数值）：总数 / 在线 / 离线 / 待确认 / 未分配 /
+  // 健康异常 / 不健康 / 遗留无身份。口径：服务器总数取服务器表当前观测范围的 total；
+  // 其余按健康视图（覆盖全部 server，见 health_compute 的 ListAll）+ 身份表在同一范围内派生，故各卡同域可比。
+  // 数据未就绪一律以「—」占位（不把未取到读成 0）；计数为 0 时用弱色调，不抢视线。
+  const kpiCards = useMemo(() => {
+    const healthItems = healthQuery.data?.items ?? null
+    const countWhere = (pred: (h: HealthItem) => boolean): number | null =>
+      healthItems?.filter(pred).length ?? null
+    // 在线口径与列表行一致：健康视图 reasons 不含 lost（见后端 serverOnline / healthview.ReasonLost）
+    const onlineCount = countWhere((h) => !h.reasons.includes('lost'))
+    const offlineCount = countWhere((h) => h.reasons.includes('lost'))
+    const unassignedCount = countWhere((h) => h.reasons.includes('unassigned'))
+    const unhealthyCount = countWhere((h) => h.level === 'unhealthy')
+    const degradedCount = countWhere((h) => h.level === 'degraded')
+    // 遗留无身份：该 (namespace, serverId) 上无可迁身份（与列表行 canTransitionIdentity 同判定）
+    const residualCount = countWhere((h) => !canTransitionIdentity(h))
 
-  // 紧凑 KPI 一行：总数 / 待确认 / 本页遗留（不占大块，语义色提示）
-  const summaryItems = useMemo(
-    () => [
-      { label: t('cluster.servers.summary.total'), value: total, tone: 'default' as const },
+    // 计数 → 色调：正数按语义上色，0 用弱色；未知（null）单独用 off
+    const toneOf = (n: number | null, positive: KpiTone, zero: KpiTone): KpiTone =>
+      n === null ? 'off' : n > 0 ? positive : zero
+
+    return [
       {
+        key: 'total',
+        label: t('cluster.servers.summary.total'),
+        value: total,
+        icon: <Server className="size-4" />,
+        tone: 'brand',
+      },
+      {
+        key: 'online',
+        label: t('cluster.servers.summary.online'),
+        value: onlineCount ?? '—',
+        icon: <CircleCheck className="size-4" />,
+        tone: onlineCount === null ? 'off' : 'ok',
+      },
+      {
+        key: 'offline',
+        label: t('cluster.servers.summary.offline'),
+        value: offlineCount ?? '—',
+        icon: <PowerOff className="size-4" />,
+        tone: toneOf(offlineCount, 'crit', 'off'),
+      },
+      {
+        key: 'pending',
         label: t('cluster.servers.summary.pending'),
         // 未知（范围解析中）以「—」占位，避免把未解析读成 0
         value: pendingCount ?? '—',
-        tone: pendingCount !== null && pendingCount > 0 ? ('warning' as const) : ('muted' as const),
+        icon: <Inbox className="size-4" />,
+        tone: toneOf(pendingCount, 'warn', 'off'),
       },
       {
-        label: t('cluster.servers.summary.residual'),
-        value: residualOnPage,
-        tone: residualOnPage > 0 ? ('warning' as const) : ('muted' as const),
+        key: 'unassigned',
+        label: t('cluster.servers.summary.unassigned'),
+        value: unassignedCount ?? '—',
+        icon: <MapPinOff className="size-4" />,
+        tone: toneOf(unassignedCount, 'warn', 'off'),
       },
-    ],
-    [t, total, pendingCount, residualOnPage],
-  )
+      {
+        key: 'degraded',
+        label: t('cluster.servers.summary.degraded'),
+        value: degradedCount ?? '—',
+        icon: <Gauge className="size-4" />,
+        tone: toneOf(degradedCount, 'warn', 'off'),
+      },
+      {
+        key: 'unhealthy',
+        label: t('cluster.servers.summary.unhealthy'),
+        value: unhealthyCount ?? '—',
+        icon: <CircleAlert className="size-4" />,
+        tone: toneOf(unhealthyCount, 'crit', 'ok'),
+      },
+      {
+        key: 'residual',
+        label: t('cluster.servers.summary.residual'),
+        value: residualCount ?? '—',
+        icon: <ShieldOff className="size-4" />,
+        tone: toneOf(residualCount, 'warn', 'off'),
+      },
+    ] satisfies KpiCardItem[]
+  }, [t, total, pendingCount, healthQuery.data, identitiesQuery.data])
 
   return (
     <section className="grid gap-3.5">
-      <SummaryStrip items={summaryItems} />
+      {/* KPI 卡带：紧凑网格，图标在左 + 文字 + 数值 */}
+      <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-8">
+        {kpiCards.map((c) => (
+          <KpiCard key={c.key} label={c.label} value={c.value} icon={c.icon} tone={c.tone} />
+        ))}
+      </div>
 
       <div className="grid gap-0 rounded-xl border border-border bg-card shadow-card">
         {/* 吸顶筛选/操作条：keyword + 类型 + 分配状态 + 待确认入口。列表滚动时保持可见。 */}

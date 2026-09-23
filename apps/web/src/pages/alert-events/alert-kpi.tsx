@@ -1,8 +1,8 @@
-// 告警 KPI：告警总数 + 待处理 / 严重 / 已处理计数（客户端按当前页数据派生，超大量以 total 明示）。
-// 对齐 B 版：图标角标 KpiCard 卡带，按语义上色。
+// 告警 KPI：告警总数 + 按级别（严重 / 警告 / 提示）与按状态（待处理 / 已确认 / 已处理）计数。
+// 客户端按当前页数据派生（超大量以服务端 total 明示）；级别与状态两组维度一眼看全。
 
 import { useTranslation } from 'react-i18next'
-import { Bell, CircleAlert, CircleCheck, Inbox } from 'lucide-react'
+import { Bell, CircleAlert, CircleCheck, CircleHelp, Inbox, TriangleAlert } from 'lucide-react'
 
 import { KpiCard, type KpiTone } from '@beacon/ui'
 import type { AlertEventItem } from '@beacon/contracts'
@@ -16,20 +16,28 @@ interface AlertKpiProps {
 
 export default function AlertKpi({ total, items }: AlertKpiProps) {
   const { t } = useTranslation()
-  const openCount = items.filter((i) => i.status === 'open').length
-  const criticalCount = items.filter((i) => i.level === 'critical').length
-  const resolvedCount = items.filter((i) => i.status === 'resolved').length
+  const countWhere = (pred: (i: AlertEventItem) => boolean) => items.filter(pred).length
+  const openCount = countWhere((i) => i.status === 'open')
+  const ackedCount = countWhere((i) => i.status === 'acknowledged')
+  const resolvedCount = countWhere((i) => i.status === 'resolved')
+  const criticalCount = countWhere((i) => i.level === 'critical')
+  const warningCount = countWhere((i) => i.level === 'warning')
+  const infoCount = countWhere((i) => i.level === 'info')
 
-  // KPI 四卡：总数（品牌）/ 待处理（注意）/ 严重（危急）/ 已处理（正常）。
+  // KPI 七卡：总数（品牌）/ 待处理（注意）/ 已确认（品牌）/ 已处理（正常）
+  //           + 严重（危急）/ 警告（注意）/ 提示（次要）。
   const cards: { key: string; value: number; icon: typeof Bell; tone: KpiTone }[] = [
     { key: 'total', value: total, icon: Bell, tone: 'brand' },
     { key: 'open', value: openCount, icon: Inbox, tone: 'warn' },
-    { key: 'critical', value: criticalCount, icon: CircleAlert, tone: 'crit' },
+    { key: 'acknowledged', value: ackedCount, icon: CircleHelp, tone: 'brand' },
     { key: 'resolved', value: resolvedCount, icon: CircleCheck, tone: 'ok' },
+    { key: 'critical', value: criticalCount, icon: CircleAlert, tone: 'crit' },
+    { key: 'warning', value: warningCount, icon: TriangleAlert, tone: 'warn' },
+    { key: 'info', value: infoCount, icon: CircleHelp, tone: 'off' },
   ]
 
   return (
-    <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7">
       {cards.map((c) => {
         const Icon = c.icon
         return (

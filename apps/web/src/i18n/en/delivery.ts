@@ -420,6 +420,7 @@ export const delivery = {
     flow: {
       open: 'Delivery flow',
       title: 'How a delivery runs end to end',
+      subtitle: 'Five-stage lifecycle: from creation to completion or rollback',
       close: 'Collapse',
       steps: {
         create: { name: 'Create', desc: 'Pick payload, scope and batch strategy; submit for approval' },
