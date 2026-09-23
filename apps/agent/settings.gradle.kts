@@ -23,7 +23,7 @@ pluginManagement {
         // ktlint Gradle 插件：格式化与格式检查（与 Gradle 8.5 / Kotlin 1.9.x 兼容的固定版本）。
         id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
         // detekt 官方静态检查插件：结构 / 复杂度 / 坏味道检查（兼容 Kotlin 1.9.x 的固定版本）。
-        id("io.gitlab.arturbosch.detekt") version "1.23.6"
+        id("io.gitlab.arturbosch.detekt") version "1.23.8"
         // 真实 Paper/BungeeCord E2E 的统一拓扑编排插件。
         id("top.wcpe.mc-testkit") version "0.5.0"
     }
