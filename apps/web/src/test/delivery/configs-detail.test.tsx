@@ -223,20 +223,27 @@ describe('/configs 回收站', () => {
       expect(screen.queryByText('plugins/Essentials/config.yml')).not.toBeInTheDocument()
     })
 
-    // 回收站：恢复 Essentials
+    // 回收站：改为右侧滑出抽屉（不替换页面主体），断言一律限定在抽屉内
     await user.click(screen.getByRole('button', { name: '回收站' }))
-    const trashedCell = await screen.findByText('plugins/Essentials/config.yml')
+    const sheet = await waitFor(() => {
+      const el = document.querySelector('[data-slot="sheet-content"]')
+      if (el === null) {
+        throw new Error('未打开回收站抽屉')
+      }
+      return el as HTMLElement
+    })
+    const trashedCell = await within(sheet).findByText('plugins/Essentials/config.yml')
     const trashedRow = trashedCell.closest('tr')
     if (!trashedRow) {
       throw new Error('未找到回收站行')
     }
     await user.click(within(trashedRow).getByRole('button', { name: '恢复' }))
     await waitFor(() => {
-      expect(screen.queryByText('plugins/Essentials/config.yml')).not.toBeInTheDocument()
+      expect(within(sheet).queryByText('plugins/Essentials/config.yml')).not.toBeInTheDocument()
     })
 
     // 彻底删除 OldShop（原因必填），回收站清空
-    const oldShopCell = await screen.findByText('plugins/OldShop/config.yml')
+    const oldShopCell = await within(sheet).findByText('plugins/OldShop/config.yml')
     const oldShopRow = oldShopCell.closest('tr')
     if (!oldShopRow) {
       throw new Error('未找到 OldShop 行')
@@ -244,10 +251,10 @@ describe('/configs 回收站', () => {
     await user.click(within(oldShopRow).getByRole('button', { name: '彻底删除' }))
     await user.type(await screen.findByLabelText('原因'), '插件已下线留档确认')
     await user.click(screen.getByRole('button', { name: '确认彻底删除' }))
-    expect(await screen.findByText('回收站为空')).toBeInTheDocument()
+    expect(await within(sheet).findByText('回收站为空')).toBeInTheDocument()
 
-    // 返回列表：恢复的 Essentials 回到常规列表
-    await user.click(screen.getByRole('button', { name: '返回列表' }))
+    // 关闭抽屉：恢复的 Essentials 已回到常规列表
+    await user.click(within(sheet).getByRole('button', { name: '返回列表' }))
     expect(await screen.findByText('plugins/Essentials/config.yml')).toBeInTheDocument()
   })
 })

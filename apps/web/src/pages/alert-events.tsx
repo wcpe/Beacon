@@ -12,6 +12,12 @@ import {
   Button,
   Checkbox,
   DataTable,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   TableSkeleton,
   Textarea,
   type DataTableColumn,
@@ -460,30 +466,48 @@ export default function AlertEventsPage() {
           {filterBatchResult !== null && <span className="text-xs text-ok">{filterBatchResult}</span>}
           {filterBatchPending && <span className="text-xs text-ink-3">{t('observability.alertEvents.batchProgress', { done: 0, total: 1 })}</span>}
         </div>
-        {filterBatchOpen && (
-          <div className="grid gap-2">
-            <Textarea
-              value={filterBatchNote}
-              placeholder={t('observability.alertEvents.batchNotePlaceholder')}
-              onChange={(e) => {
-                setFilterBatchNote(e.target.value)
-              }}
-              disabled={filterBatchPending}
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                disabled={filterBatchPending || filterBatchNote.trim() === ''}
-                onClick={() => {
-                  void runFilterBatch('resolved', filterBatchNote.trim())
-                }}
-              >
-                {t('observability.alertEvents.filterBatchResolve')}
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
+      {/* 按筛选批量「已处理」：需填原因，走模态填单，不在工具条内联撑开 */}
+      <Dialog
+        open={filterBatchOpen}
+        onOpenChange={(open) => {
+          setFilterBatchOpen(open)
+          if (!open) setBatchErrorText(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('observability.alertEvents.filterBatchResolve')}</DialogTitle>
+            <DialogDescription>{t('observability.alertEvents.filterBatchHint')}</DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={filterBatchNote}
+            placeholder={t('observability.alertEvents.batchNotePlaceholder')}
+            onChange={(e) => {
+              setFilterBatchNote(e.target.value)
+            }}
+            disabled={filterBatchPending}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFilterBatchOpen(false)
+              }}
+            >
+              {t('observability.alertEvents.cancel')}
+            </Button>
+            <Button
+              disabled={filterBatchPending || filterBatchNote.trim() === ''}
+              onClick={() => {
+                void runFilterBatch('resolved', filterBatchNote.trim())
+              }}
+            >
+              {t('observability.alertEvents.filterBatchResolve')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* 批量操作条：已选 N + 批量确认 / 批量标记已处理 */}
       {checkedIds.size > 0 && (
         <div className="grid gap-2 rounded-lg border border-border bg-secondary/40 px-2.5 py-2">
@@ -513,42 +537,56 @@ export default function AlertEventsPage() {
             </Button>
             {batchProgress !== null && <span className="text-xs text-ink-3">{batchProgress}</span>}
           </div>
-          {batchResolveOpen && (
-            <div className="grid gap-2">
-              <Textarea
-                value={batchNote}
-                placeholder={t('observability.alertEvents.batchNotePlaceholder')}
-                onChange={(e) => {
-                  setBatchNote(e.target.value)
-                }}
-                disabled={batchPending}
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  disabled={batchPending || batchNote.trim() === ''}
-                  onClick={() => {
-                    void runBatch('resolved', batchNote.trim())
-                  }}
-                >
-                  {t('observability.alertEvents.confirmResolve')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={batchPending}
-                  onClick={() => {
-                    setBatchResolveOpen(false)
-                    setBatchNote('')
-                  }}
-                >
-                  {t('observability.alertEvents.cancel')}
-                </Button>
-              </div>
-            </div>
-          )}
         </div>
       )}
+      {/* 勾选后批量「标记已处理」：需填原因，走模态填单，不撑高批量操作条 */}
+      <Dialog
+        open={batchResolveOpen}
+        onOpenChange={(open) => {
+          setBatchResolveOpen(open)
+          if (!open) {
+            setBatchNote('')
+            setBatchErrorText(null)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('observability.alertEvents.confirmResolve')}</DialogTitle>
+            <DialogDescription>
+              {t('observability.alertEvents.batchSelected', { count: checkedIds.size })}
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={batchNote}
+            placeholder={t('observability.alertEvents.batchNotePlaceholder')}
+            onChange={(e) => {
+              setBatchNote(e.target.value)
+            }}
+            disabled={batchPending}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={batchPending}
+              onClick={() => {
+                setBatchResolveOpen(false)
+                setBatchNote('')
+              }}
+            >
+              {t('observability.alertEvents.cancel')}
+            </Button>
+            <Button
+              disabled={batchPending || batchNote.trim() === ''}
+              onClick={() => {
+                void runBatch('resolved', batchNote.trim())
+              }}
+            >
+              {t('observability.alertEvents.confirmResolve')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {batchErrorText !== null && <p className="text-sm text-destructive">{batchErrorText}</p>}
     </div>
   )
