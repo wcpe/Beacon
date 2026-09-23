@@ -43,8 +43,9 @@ type MCPConfig struct {
 	// AllowInsecureInternal 允许内网明文 HTTP 直连 MCP 入口（无 TLS 终止、无反向代理）。
 	// 仅供内网/回环部署；公网环境必须保持 false。
 	AllowInsecureInternal bool `yaml:"allow-insecure-internal"`
-	// AllowedHosts 直连模式下允许的 Host 头白名单（host 或 host:port）。
-	// 供 go-sdk 的 DNS rebinding 保护放行内网地址；留空则回退 SDK 默认（localhost/127.0.0.1 等）。
+	// AllowedHosts 直连模式下允许的 Host 头白名单（host 或 host:port），用于防 DNS rebinding。
+	// 留空时仅放行与 public-base-url 的 host 完全一致的 Host；因此内网直连部署若要用
+	// 127.0.0.1 / localhost 等本机地址访问 MCP，必须把它们显式列入本白名单。
 	AllowedHosts []string `yaml:"allowed-hosts"`
 	// AllowApprovalDecide 允许 automation 客户端执行审批决定（默认 false）。
 	// 默认关闭以保持"审批决定权归人类"的分权设计；仅内网单操作者部署可显式开启闭环自动化。
