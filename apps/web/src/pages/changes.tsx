@@ -68,13 +68,7 @@ export default function ChangesPage() {
         </p>
       )}
 
-      {helpOpen && (
-        <FlowHelp
-          onClose={() => {
-            setHelpOpen(false)
-          }}
-        />
-      )}
+      <FlowHelp open={helpOpen} onOpenChange={setHelpOpen} />
 
       <MasterDetail
         master={

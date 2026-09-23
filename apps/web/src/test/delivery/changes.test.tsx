@@ -55,7 +55,7 @@ describe('/changes 变更单页', () => {
     expect(screen.getByLabelText('按状态过滤')).toBeInTheDocument()
   })
 
-  it('页头「交付流程」入口展开五步生命周期说明卡', async () => {
+  it('页头「交付流程」入口以模态弹窗展示五步生命周期', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
@@ -63,11 +63,11 @@ describe('/changes 变更单页', () => {
     await screen.findByText('大厅插件升级 v2.4')
     await user.click(screen.getByRole('button', { name: '交付流程' }))
 
-    // 非模态说明卡：五步生命周期
-    expect(await screen.findByText('一次交付是怎么走完的')).toBeInTheDocument()
-    expect(screen.getByText('灰度批次')).toBeInTheDocument()
-    expect(screen.getByText('完成 / 回滚')).toBeInTheDocument()
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // 模态弹窗：五步生命周期（不再内联撑开、不把列表下推）
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('一次交付是怎么走完的')).toBeInTheDocument()
+    expect(within(dialog).getByText('灰度批次')).toBeInTheDocument()
+    expect(within(dialog).getByText('完成 / 回滚')).toBeInTheDocument()
   })
 
   it('审批写闭环：通过后仅展示单一审批状态，不再要求第二次启动', async () => {
