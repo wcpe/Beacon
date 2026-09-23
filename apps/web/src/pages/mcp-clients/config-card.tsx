@@ -10,7 +10,8 @@ import { AsyncSection, Badge, Skeleton } from '@beacon/ui'
 import type { MCPConfigView } from '@beacon/contracts'
 
 // 部署文档地址：后端不提供仓库内文档 URL，故指向仓库文档页；集中定义便于后续调整为内网镜像。
-const DOCS_URL = 'https://github.com/wcpe/Beacon/blob/main/docs/OPERATIONS.md#9-mcp-反向代理验收'
+// 分支必须是仓库默认分支 master（本仓库无 main 分支，写 main 会 404）。
+const DOCS_URL = 'https://github.com/wcpe/Beacon/blob/master/docs/OPERATIONS.md#9-mcp-反向代理验收'
 
 interface ConfigCardProps {
   data: MCPConfigView | undefined
