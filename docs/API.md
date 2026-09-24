@@ -19,7 +19,9 @@
 
 ## 一、agent 侧 `/beacon/v1/agent/*`
 
-### 1. 注册 `POST /beacon/v1/agent/register`
+### 1. 数据面挂载 `POST /beacon/v1/agent/data-plane/attach`
+
+> **FR-233 更名**：本端点原为 `POST /beacon/v1/agent/register`。因它与 `POST /beacon/v2/agent/register`（**身份状态机**，见 [v2-agent-identity.md](specs/v2-agent-identity.md)）**同名却不同职责**、真实造成过接入误判，现更名为 `data-plane/attach` 以显式化为「**挂载数据面**」而非「注册身份」。旧路径 `POST /beacon/v1/agent/register` 保留为**兼容别名**（一个版本周期），响应额外回带 `Deprecation: true` 与 `Link: </beacon/v1/agent/data-plane/attach>; rel="successor-version"`；本端点是**机器注册直落**的落点（见下方 FR-222 段），v2 端点不承担该职责。
 
 请求（**只报 serverId；capacity/weight 为顶层一等字段；metadata 仅自定义 `map<string,string>`；无 canary**）：
 ```json

@@ -89,7 +89,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 	// 供 v1 注册 handler 决定是否直落 active（开关 mcp.allow-machine-register 另由部署配置注入）。
 	r.Route("/beacon/v1/agent", func(r chi.Router) {
 		r.Use(agentTokenMiddleware(agentToken, v2Auth))
-		r.Post("/register", h.Agent.Register)
+		// 数据面挂载（FR-233，见 ADR-0084）：规范路径为 /data-plane/attach，语义=挂载数据面（非身份注册），
+		// 与旧名 /register 同 handler。**必须留在本组内**：本组挂了 agentTokenMiddleware，FR-222 机器注册的
+		// 「受信内部调用方」判定依赖它；移出该组或另起组会让机器注册分支静默失效。
+		r.Post("/data-plane/attach", h.Agent.Register)
+		// 兼容别名（FR-233）：旧路径保留一个版本周期，行为完全不变，但**仅它**回带 Deprecation / Link 头。
+		// 头设在包装层（不进 handler），否则新路径也会带上。
+		r.Post("/register", deprecatedAgentRegister(h.Agent.Register))
 		r.Post("/heartbeat", h.Agent.Heartbeat)
 		r.Get("/config/effective", h.Agent.Effective)
 		// 单条 SSE 推送流（FR-24）：合并配置/文件树/覆盖集三条长轮询，只发变更通知 + 连接即对账
@@ -129,7 +135,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 	if h.V2 != nil {
 		// v2 agent 侧：namespace token 在注册 handler 内按库中哈希校验，未确认身份仅开放 register / registration。
 		// 注意：本组不在 agentTokenMiddleware 之下，故共享 token（机器注册通道 FR-222 的判定依据）**不**流经此处；
-		// 受信内部调用方的机器注册分支落在 v1 注册端点（见上方 /beacon/v1/agent 组）。
+		// 受信内部调用方的机器注册分支落在 v1 数据面挂载端点（FR-233 后规范路径 /beacon/v1/agent/data-plane/attach，
+		// 旧名 /beacon/v1/agent/register 为兼容别名，见上方 /beacon/v1/agent 组）。
 		r.Route("/beacon/v2/agent", func(r chi.Router) {
 			r.Post("/register", h.V2.AgentRegister)
 			r.Get("/registration", h.V2.AgentRegistration)
@@ -590,6 +597,25 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 	// 非 API、非静态文件的路径交给内嵌前端（含 SPA history 回退）
 	r.NotFound(h.Web.ServeHTTP)
 	return r
+}
+
+// agentRegisterSuccessorPath 是 FR-233 更名后的规范路径，供旧路径的 Link 响应头指向后继版本。
+const agentRegisterSuccessorPath = "/beacon/v1/agent/data-plane/attach"
+
+// deprecatedAgentRegister 把 v1 注册 handler 包成兼容别名（FR-233，见 ADR-0084）：
+// 旧路径 /beacon/v1/agent/register 与规范路径 /beacon/v1/agent/data-plane/attach 共用同一个 handler，
+// 运行时行为逐字不变，只在旧路径的响应上追加两个声明性响应头：
+//   - Deprecation: true —— 告知调用方该路径已废弃；
+//   - Link: <规范路径>; rel="successor-version" —— 指向后继版本路径。
+//
+// 头必须在包装层设置而非 handler 内：handler 同时服务新路径，写进 handler 会让新路径也带上废弃声明。
+// 旧客户端忽略未知响应头即可，故该变更为非破坏性（ADR-0084「约束与迁移」）。
+func deprecatedAgentRegister(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Deprecation", "true")
+		w.Header().Set("Link", "<"+agentRegisterSuccessorPath+`>; rel="successor-version"`)
+		next(w, r)
+	}
 }
 
 // registerV2AssetsAgentRoutes 注册文件资产 agent 面清单上报（FR-163，见 §5.1）；V2Assets 未装配则跳过。

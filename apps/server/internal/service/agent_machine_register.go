@@ -18,9 +18,10 @@ import (
 // 背景：agent 接入是分权设计——身份注册落 pending、人工审批后转 active（FR-203/220）。单操作者内网部署下
 // 外部管理平台批量建实例后无法自助接入（60 台 = 60 次人工审批）。本通道让**受信内部调用方**的注册直落 active。
 //
-// 落点说明（真机验证后确定）：共享 token 只到达 v1 数据面 `/beacon/v1/agent/register`（该组挂了
-// agentTokenMiddleware，命中共享 token 即被标记为受信内部调用方）；v2 身份注册端点要求 namespace token、
-// 且不在该中间件组内，故机器注册的分支落点是 **v1 注册** + 本文件的身份直落逻辑。
+// 落点说明（真机验证后确定）：共享 token 只到达 v1 数据面挂载端点 `/beacon/v1/agent/data-plane/attach`
+// （FR-233 更名后的规范路径，见 ADR-0084；旧名 `/beacon/v1/agent/register` 保留为兼容别名，同组同 handler。
+// 该组挂了 agentTokenMiddleware，命中共享 token 即被标记为受信内部调用方）；v2 身份注册端点要求 namespace
+// token、且不在该中间件组内，故机器注册的分支落点是 **v1 数据面挂载** + 本文件的身份直落逻辑。
 //
 // 三条硬约束：
 //  1. 分支依据是中间件判定的调用方类型 + 部署开关，**绝不取自请求体**（调用方无法伪造）。

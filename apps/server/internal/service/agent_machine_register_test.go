@@ -19,8 +19,9 @@ import (
 // FR-222 机器注册通道（见 docs/specs/internal-trust-channel.md）：
 // 分支依据是「中间件判定的调用方类型 + 部署开关」，二者都不取自请求体。
 //
-// 落点说明（真机验证后确定）：共享 token 只到达 v1 数据面 `/beacon/v1/agent/register`（该组挂了
-// agentTokenMiddleware），故机器注册的分支落在 InstanceService.Register（v1 路径），
+// 落点说明（真机验证后确定）：共享 token 只到达 v1 数据面挂载端点 `/beacon/v1/agent/data-plane/attach`
+// （FR-233 更名后的规范路径，见 ADR-0084；旧名 `/beacon/v1/agent/register` 为兼容别名，同组同 handler。
+// 该组挂了 agentTokenMiddleware），故机器注册的分支落在 InstanceService.Register（v1 路径），
 // 由它负责把身份直落 active 并绑定 serverId（v1 路径此前完全不触碰 agent_identity 表）。
 //
 // 本组用例锁定四条不变量：

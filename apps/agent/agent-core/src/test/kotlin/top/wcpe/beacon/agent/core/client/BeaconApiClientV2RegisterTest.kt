@@ -218,9 +218,86 @@ class BeaconApiClientV2RegisterTest {
         assertEquals("prod/lobby-1", success.result.instanceKey)
         assertEquals(2, transport.requests.size)
         assertTrue(transport.requests[0].url.endsWith("/beacon/v2/agent/register"))
-        assertTrue(transport.requests[1].url.endsWith("/beacon/v1/agent/register"))
+        assertTrue(transport.requests[1].url.endsWith("/beacon/v1/agent/data-plane/attach"))
         assertEquals(identity().identityId, transport.requests[1].headers[BeaconApiClient.HEADER_IDENTITY])
         assertEquals(identity().bootId, transport.requests[1].headers[BeaconApiClient.HEADER_BOOT])
+    }
+
+    @Test
+    fun `新路径 404 时回退旧兼容路径重试一次并成功`() {
+        // 旧控制面（尚未支持新路径）对 /data-plane/attach 回 404，插件须改用旧路径重试一次。
+        val transport =
+            ScriptedTransport(
+                ArrayDeque(
+                    listOf(
+                        HttpResponse(200, "v2-active"),
+                        HttpResponse(404, "not found"),
+                        HttpResponse(200, "legacy-ok"),
+                    ),
+                ),
+            )
+        val outcome = BeaconApiClient(transport, CapturingCodec(), settings()).register(identity())
+
+        val success = assertIs<RegisterOutcome.Success>(outcome)
+        assertEquals("prod/lobby-1", success.result.instanceKey)
+        assertEquals(3, transport.requests.size)
+        assertTrue(transport.requests[1].url.endsWith("/beacon/v1/agent/data-plane/attach"))
+        assertTrue(transport.requests[2].url.endsWith("/beacon/v1/agent/register"))
+        // 回退仅改路径：报文与请求头逐字一致，语义等同新路径。
+        assertEquals(transport.requests[1].body, transport.requests[2].body)
+        assertEquals(transport.requests[1].headers, transport.requests[2].headers)
+    }
+
+    @Test
+    fun `回退后的响应仍按既有状态码映射返回`() {
+        // 404 只决定「走哪条路径」；回退后的状态码一律按既有映射处理，不得再触发任何重试。
+        val transport =
+            ScriptedTransport(
+                ArrayDeque(
+                    listOf(
+                        HttpResponse(200, "v2-active"),
+                        HttpResponse(404, "not found"),
+                        HttpResponse(409, "duplicated"),
+                    ),
+                ),
+            )
+        val outcome = BeaconApiClient(transport, CapturingCodec(), settings()).register(identity())
+
+        assertEquals(RegisterOutcome.DuplicateServerId, outcome)
+        assertEquals(3, transport.requests.size)
+        assertTrue(transport.requests[2].url.endsWith("/beacon/v1/agent/register"))
+    }
+
+    @Test
+    fun `新路径非 404 状态码一律不回退旧路径`() {
+        // 200/400/401/403/409 都由真实业务语义产生：回退会掩盖真实错误
+        // （例如此处 409 重复 serverId 被误当作「版本不匹配」而重试）。
+        val cases =
+            mapOf(
+                409 to RegisterOutcome.DuplicateServerId,
+                403 to RegisterOutcome.OfflineRejected,
+                401 to RegisterOutcome.Unauthorized,
+                400 to RegisterOutcome.IdentityRequired,
+            )
+        cases.forEach { (statusCode, expected) ->
+            val transport =
+                ScriptedTransport(
+                    ArrayDeque(
+                        listOf(
+                            HttpResponse(200, "v2-active"),
+                            HttpResponse(statusCode, "rejected"),
+                            // 多备一条：若实现错误地回退，请求次数断言会先失败，而非在此静默成功。
+                            HttpResponse(200, "legacy-ok"),
+                        ),
+                    ),
+                )
+
+            val outcome = BeaconApiClient(transport, CapturingCodec(), settings()).register(identity())
+
+            assertEquals(expected, outcome, "状态码 $statusCode 应按既有映射返回")
+            assertEquals(2, transport.requests.size, "状态码 $statusCode 不得触发回退重试")
+            assertTrue(transport.requests[1].url.endsWith("/beacon/v1/agent/data-plane/attach"))
+        }
     }
 
     @Test

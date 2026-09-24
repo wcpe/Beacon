@@ -320,9 +320,9 @@ mcp:
 
 ## 10. 内部信任通道（机器注册，FR-222）
 
-单操作者内网部署下，外部管理平台（如 JianManager）批量创建实例后逐个走人工审批不可行（60 台 = 60 次审批）。`mcp.allow-machine-register` 提供一条**默认关闭**的内部信任通道：开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的注册**直接创建 active 身份并绑定指定 serverId**，跳过人工审批。规格见 [internal-trust-channel.md](specs/internal-trust-channel.md)。
+单操作者内网部署下，外部管理平台（如 JianManager）批量创建实例后逐个走人工审批不可行（60 台 = 60 次审批）。`mcp.allow-machine-register` 提供一条**默认关闭**的内部信任通道：开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/data-plane/attach`（原名 `/beacon/v1/agent/register`，旧路径仍作兼容别名可用）提交的注册**直接创建 active 身份并绑定指定 serverId**，跳过人工审批。规格见 [internal-trust-channel.md](specs/internal-trust-channel.md)。
 
-> 落点说明：共享 token 的判定由 `agentTokenMiddleware` 完成，该中间件只挂在 `/beacon/v1/agent` 组；v2 身份注册端点（`/beacon/v2/agent/register`）要求 namespace token 且不在该组内，行为不受本开关影响（仍落 pending 待人工确认）。
+> 落点说明（FR-233 更名后）：共享 token 的判定由 `agentTokenMiddleware` 完成，该中间件只挂在 `/beacon/v1/agent` 组；新端点 `data-plane/attach` **仍在该组内**（故机器注册不受更名影响）；v2 身份注册端点（`/beacon/v2/agent/register`）要求 namespace token 且不在该组内，行为不受本开关影响（仍落 pending 待人工确认）。
 
 ```yaml
 mcp:
