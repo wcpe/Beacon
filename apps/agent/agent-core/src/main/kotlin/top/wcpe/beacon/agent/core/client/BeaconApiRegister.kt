@@ -77,27 +77,24 @@ internal fun BeaconApiClient.registerLegacy(
         )
     }
 
-    // 先请求新规范路径；仅当 404（对端为尚未支持新路径的旧控制面）时才改走旧兼容路径重试一次，
-    // 避免「插件先升级、控制面后升级」时注册中断（MC 插件与控制面分批部署很常见）。
-    // 其余状态码（200 / 400 / 401 / 403 / 409）均由真实业务语义产生，回退会掩盖真实错误，
-    // 例如 409 重复 serverId 会被误当作「版本不匹配」而重试（FR-233 §3.2）。
     val resp = postDataPlane(DATA_PLANE_ATTACH_PATH)
+
+    // FR-233：仅当对端**不认识新路径**时才回退旧兼容路径。
+    //
+    // 不能只看状态码 404：老控制面把未匹配路径交给内嵌前端做 SPA 兜底（r.NotFound(h.Web.ServeHTTP)），
+    // 因此「有前端产物」的正式构建会回 **200 + text/html** 而非 404——只判 404 会导致不回退，
+    // 进而把 HTML 当 JSON 解析。改判「响应是否为本控制面的 JSON」，两种老控制面形态
+    // （404 + text/plain、200 + text/html）都能正确回退；而 409/401/403/400 等真实业务错误
+    // 一律为 application/json，绝不回退（否则 409 重复 serverId 会被误当作版本不匹配而重试）。
+    val isBeaconJson = resp?.contentType?.contains("application/json", ignoreCase = true) == true
     val finalResp =
-        if (resp?.statusCode == 404) {
+        if (resp != null && !isBeaconJson) {
             postDataPlane(LEGACY_REGISTER_PATH)
         } else {
             resp
         } ?: return RegisterOutcome.Failed(connectFailReason())
 
-    return when (finalResp.statusCode) {
-        200 -> RegisterOutcome.Success(parseRegister(finalResp.body))
-        409 -> RegisterOutcome.DuplicateServerId
-        // 403：实例被控制面主动下线，拒绝接入（FR-49），区别于 409 重复 / 404 未注册。
-        403 -> RegisterOutcome.OfflineRejected
-        401 -> RegisterOutcome.Unauthorized
-        400 -> RegisterOutcome.IdentityRequired
-        else -> RegisterOutcome.Failed("非预期状态码 ${finalResp.statusCode}")
-    }
+    return mapDataPlaneResponse(finalResp)
 }
 
 /** v2 身份注册：先走确认状态机，active 后再衔接 legacy 数据面注册。 */
