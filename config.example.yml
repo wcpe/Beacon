@@ -11,10 +11,17 @@
 # API 与管理台 UI 的监听地址（二者同端口）
 http-addr: ":8848"
 
-# agent 端共享 token，仅防误连（非安全边界）。需与各 agent 的 bootstrap-token 一致；
-# 默认固定值与 agent 样例开箱匹配，可直接改本项，或用环境变量 BEACON_BOOTSTRAP_TOKEN 覆盖。
-# 注意（FR-222）：开启下方 mcp.allow-machine-register 时本项即升级为安全边界，必须换为强随机值，
-# 否则控制面启动校验失败。
+# agent 端**共享 token**（易与 agent 本地键 bootstrap-token 混淆，务必分清）：
+#   本项（控制面 agent-token）= 共享 token，是 **v1 数据面**端点的凭据，也是机器注册（FR-222）
+#     的唯一信任源——匹配即「受信内部调用方」，开启 mcp.allow-machine-register 后可直落 active。
+#   agent 本地键 beacon.bootstrap-token = **namespace token**（非本项），是 **v2 身份注册**
+#     端点（/beacon/v2/agent/register）的凭据，按 namespace 表里的哈希校验、与 namespace 绑定。
+#   两者是**不同**的凭据，取值互不相同；用错通道是 401 的常见成因（详见 docs/OPERATIONS.md §9）。
+#   注：agent 把 bootstrap-token 放进 X-Beacon-Token 头，v1 数据面请求另带 X-Beacon-Identity / X-Beacon-Boot，
+#     此时 v1 中间件走 v2 兼容分支（非本项校验），故 agent 自身并不需要本项的值。
+# 安全定位：默认仅防误连（非安全边界）。但开启下方 mcp.allow-machine-register 后本项即升级为
+#   安全边界，必须换为强随机值，否则控制面启动校验失败。
+# 默认固定值开箱可用，可直接改本项，或用环境变量 BEACON_BOOTSTRAP_TOKEN 覆盖。
 agent-token: "beacon-bootstrap-token"
 
 # 管理面鉴权（FR-11，单操作者模型，见 docs/adr/0009）。口令与密钥为敏感项，走环境变量，勿写入此文件

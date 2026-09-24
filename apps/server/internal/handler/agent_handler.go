@@ -63,7 +63,15 @@ type registerResponse struct {
 	BoundAt *time.Time `json:"boundAt,omitempty"`
 }
 
-// Register 处理 POST /beacon/v1/agent/register。
+// Register 处理 POST /beacon/v1/agent/data-plane/attach（FR-233 更名后的规范路径，见 ADR-0084）。
+// 旧路径 POST /beacon/v1/agent/register 保留一个版本周期作兼容别名，与本端点共用同一 handler；
+// 两者运行时行为完全一致，仅旧路径在路由层额外回带 Deprecation / Link 响应头。
+//
+// 本端点承担两件事：① 数据面挂载（写内存 registry + instance.register 审计，服务全部心跳 / 配置 /
+// 文件 / 命令等数据面端点）；② 机器注册直落（FR-222）——请求命中 agentTokenMiddleware 的共享 token 分支时
+// 被判定为「受信内部调用方」，开启 mcp.allow-machine-register 后把身份直落 active 并绑定 serverId。
+// 注意与 v2 /beacon/v2/agent/register（身份状态机 pending→审批→active）的分工：机器注册直落**不在** v2 端点，
+// 见对应 handler 注释与 docs/specs/internal-trust-channel.md。
 func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

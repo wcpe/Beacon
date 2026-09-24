@@ -2,6 +2,22 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 未发布
+
+### 新增
+
+### 变更
+
+- **agent 数据面注册端点更名为 `/data-plane/attach`（FR-233，语义消歧）**：v1 的 `POST /beacon/v1/agent/register` 与 v2 的 `POST /beacon/v2/agent/register` **同名却不同职责**（v1 = 数据面挂载 + 机器注册直落；v2 = 身份状态机 pending→审批→active），在真机搭建时直接造成过接入误判（判定「功能重叠该退役一个」，并据此排查到错误方向）。现把 v1 端点更名为 `POST /beacon/v1/agent/data-plane/attach`，语义显式化为「**挂载数据面**」而非「注册身份」。
+  - **运行时行为逐字不变**：鉴权、机器注册直落（FR-222）、审计、registry 写入、状态码语义全部保持。新端点仍留在 `/beacon/v1/agent` 路由组内（该组挂 `agentTokenMiddleware`，是机器注册「受信内部调用方」判定的唯一来源，移出即静默失效）。
+  - **旧路径保留一个版本周期的兼容别名**，行为不变，但**仅旧路径**在响应回带 `Deprecation: true` 与 `Link: </beacon/v1/agent/data-plane/attach>; rel="successor-version"`；新路径不带（头设在路由包装层而非 handler，避免新路径也被读作已废弃）。旧客户端忽略未知响应头即可，故为非破坏性。
+  - **agent 插件**改用新路径，并在新路径返回 404（对端为尚未支持新路径的旧控制面）时自动回退旧路径重试一次——避免「插件先升级、控制面后升级」导致接入中断；其余状态码（200/400/401/403/409）一律不回退，以免掩盖真实错误（如 409 重复 serverId 被误当作版本不匹配而重试）。
+  - **配置注释澄清两个 token 的区别**：控制面 `agent-token` 是**共享 token**（v1 数据面凭据 + 机器注册唯一信任源）；agent 本地键 `beacon.bootstrap-token` 是 **namespace token**（v2 身份注册凭据，按库中哈希校验）。二者是不同凭据、取值互不相同——用错通道正是真机 401 的常见成因，此前 `config.example.yml` 的「需与 bootstrap-token 一致」表述含混。
+  - **外部平台（如 JianManager）需同步推送路径**；兼容别名窗口内旧路径仍可用。规格见 [agent-registration-endpoint-disambiguation](docs/specs/agent-registration-endpoint-disambiguation.md)，决策见 [ADR-0084](docs/adr/0084-agent-registration-endpoint-disambiguation.md)。
+
+### 修复
+
+
 ## 1.2.0（2026-09-24）
 
 ### 新增

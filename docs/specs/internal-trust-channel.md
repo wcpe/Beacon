@@ -63,7 +63,7 @@ if c.MCP.AllowMachineRegister {
 
 ### 3.3 注册路径的分支
 
-`POST /beacon/v1/agent/register` 现有流程：
+`POST /beacon/v1/agent/data-plane/attach` 现有流程（FR-233 更名前为 `/beacon/v1/agent/register`，旧路径仍作兼容别名可用）：
 ```
 注册 → agent_identity 落 pending → 等审批
 ```

@@ -286,8 +286,10 @@ func run() error {
 
 	instanceService := service.NewInstanceService(db, registry, assignRepo, offlineRepo, auditRepo, heartbeatInterval, ttl)
 	// 机器注册通道（FR-222，见 specs/internal-trust-channel.md）：默认关闭；仅显式开启时，受信内部调用方
-	// （命中 X-Beacon-Token 共享 token，由 agentTokenMiddleware 判定并透传）经 /beacon/v1/agent/register
-	// 提交的注册才直落 active 并绑定 serverId。启动校验（config.validate）已保证开启时 agent-token 为强随机值；
+	// （命中 X-Beacon-Token 共享 token，由 agentTokenMiddleware 判定并透传）经 v1 数据面挂载端点
+	// /beacon/v1/agent/data-plane/attach（FR-233 更名后的规范路径，见 ADR-0084；旧名
+	// /beacon/v1/agent/register 为兼容别名，同组同 handler）提交的注册才直落 active 并绑定 serverId。
+	// 启动校验（config.validate）已保证开启时 agent-token 为强随机值；
 	// 分配 / 换区 / 默认入口仍走各自审批，不受本开关影响。
 	instanceService.SetMachineRegisterAllowed(cfg.MCP.AllowMachineRegister)
 	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)

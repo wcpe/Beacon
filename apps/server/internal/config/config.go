@@ -5,7 +5,12 @@ package config
 type Config struct {
 	// API 与管理台 UI 的监听地址（二者同端口），如 ":8848"
 	HTTPAddr string `yaml:"http-addr"`
-	// agent 端共享 token，仅防误连（非安全边界，鉴权属 P2）
+	// agent 端**共享 token**（易与 agent 本地键 beacon.bootstrap-token 混淆，见 config.example.yml 的说明）：
+	// 它是 **v1 数据面**端点（现名 /beacon/v1/agent/data-plane/attach）的凭据，也是机器注册（FR-222）
+	// 的唯一信任源（匹配即「受信内部调用方」，开启 mcp.allow-machine-register 后可直落 active）。
+	// 与 v2 身份注册端点使用的 **namespace token** 是两套不同凭据：后者按 namespace 表哈希校验并与
+	// namespace 绑定；用本项去打 v2 必然 401（用错通道是常见故障，见 docs/OPERATIONS.md §9）。
+	// 默认仅防误连（非安全边界）；开启 mcp.allow-machine-register 后升级为安全边界，启动校验强制强随机值。
 	AgentToken string `yaml:"agent-token"`
 	// 配置/版本/分配/审计的权威库连接
 	Database DatabaseConfig `yaml:"database"`
