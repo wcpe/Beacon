@@ -164,29 +164,129 @@ func TestFR235MachineRegisterMarksPreplacedSource(t *testing.T) {
 	}
 }
 
-// TestFR235IsPreplacedOccupierRequiresBothSignals 判别式必须两个信号同时成立：
-// 只有来源正确但带 bootId（真 agent 用过的行被误标）不放行；
-// 只有 bootId 为空但来源非预置（历史未迁移行）也不放行——宁可要求人工，不可误伤真身份。
+// TestFR235DisabledPreplacedOccupierStillRequiresForceUnbind 安全边界：被人工**禁用**的预置壳
+// 不得被自动让位——disabled 是人工/审批侧的止损动作（见 refreshMachineRegisterIdentity 的同类边界），
+// 必须由人显式强制解绑才能顶掉，否则「禁用」这一止损手段会被"免人工"的自动让位绕过。
+func TestFR235DisabledPreplacedOccupierStillRequiresForceUnbind(t *testing.T) {
+	svc, db := newFr235TestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	const (
+		preplacedID = "77777777-7777-4777-8777-777777777777"
+		realAgentID = "88888888-8888-4888-8888-888888888888"
+		serverID    = "lobby-1"
+	)
+	seedPreplacedIdentity(t, db, ns.ID, preplacedID, serverID, "")
+	// 人工禁用该预置壳（止损）。
+	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", preplacedID).
+		Update("status", model.AgentIdentityStatusDisabled).Error; err != nil {
+		t.Fatalf("置禁用失败: %v", err)
+	}
+
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: realAgentID, ServerID: serverID,
+		Kind: model.ServerKindBackend, BootID: "boot-real",
+	}); err != nil {
+		t.Fatalf("真 agent 注册失败: %v", err)
+	}
+
+	// 不带 ForceUnbindOccupier：禁用壳不得被自动让位。
+	if _, err := svc.ApproveAgentIdentity(realAgentID, ApproveAgentIdentityParams{
+		Operator: "admin", ServerID: serverID,
+	}); !errors.Is(err, apperr.ErrServerIDOccupied) {
+		t.Fatalf("被禁用的预置壳应仍要求显式强制解绑（server_id_occupied），实际 %v", err)
+	}
+	// 显式强制解绑后应成功（人工止损可由人显式推翻）。
+	if _, err := svc.ApproveAgentIdentity(realAgentID, ApproveAgentIdentityParams{
+		Operator: "admin", ServerID: serverID, ForceUnbindOccupier: true,
+	}); err != nil {
+		t.Fatalf("显式强制解绑后被禁用壳应让位，实际 %v", err)
+	}
+}
+
+// TestFR235AutoYieldWritesDistinctAudit 审计须能分辨责任主体：
+// 控制面自动让位记 identity.preplaced_yielded（operator=system:preplaced-yield），
+// 人工强制解绑仍记既有 identity.rebind_with_force_unbind（operator=操作者）。
+func TestFR235AutoYieldWritesDistinctAudit(t *testing.T) {
+	svc, db := newFr235TestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	const (
+		preplacedID = "99999999-9999-4999-8999-999999999999"
+		realAgentID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		serverID    = "lobby-1"
+	)
+	seedPreplacedIdentity(t, db, ns.ID, preplacedID, serverID, "")
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: realAgentID, ServerID: serverID,
+		Kind: model.ServerKindBackend, BootID: "boot-real",
+	}); err != nil {
+		t.Fatalf("真 agent 注册失败: %v", err)
+	}
+	if _, err := svc.ApproveAgentIdentity(realAgentID, ApproveAgentIdentityParams{
+		Operator: "admin", ServerID: serverID,
+	}); err != nil {
+		t.Fatalf("自动让位应成功，实际 %v", err)
+	}
+
+	var auto model.AuditLog
+	if err := db.Where("action = ? AND target_ref = ?", model.ActionIdentityPreplacedYielded, preplacedID).
+		First(&auto).Error; err != nil {
+		t.Fatalf("自动让位应写 identity.preplaced_yielded 审计: %v", err)
+	}
+	if auto.Operator != "system:preplaced-yield" {
+		t.Fatalf("自动让位 operator 应为 system:preplaced-yield，实际 %q", auto.Operator)
+	}
+	// 反向：不应误记为人工强制解绑动作。
+	var forced int64
+	if err := db.Model(&model.AuditLog{}).
+		Where("action = ? AND target_ref = ?", model.ActionIdentityForceRebind, preplacedID).
+		Count(&forced).Error; err != nil {
+		t.Fatalf("统计失败: %v", err)
+	}
+	if forced != 0 {
+		t.Fatalf("自动让位不应记成人工强制解绑动作，实际存在 %d 条", forced)
+	}
+}
+
+// TestFR235IsPreplacedOccupierRequiresBothSignals 判别式必须三个信号同时成立：
+// 状态非 disabled；来源正确但带 bootId（真 agent 用过的行被误标）不放行；
+// bootId 为空但来源非预置（历史未迁移行）也不放行——宁可要求人工，不可误伤真身份。
 func TestFR235IsPreplacedOccupierRequiresBothSignals(t *testing.T) {
 	cases := []struct {
 		name   string
 		ident  model.AgentIdentity
 		expect bool
 	}{
-		{"预置壳（来源预置 + 空 bootId）", model.AgentIdentity{
+		{"预置壳（active + 来源预置 + 空 bootId）", model.AgentIdentity{
+			Status:        model.AgentIdentityStatusActive,
 			BindingSource: model.AgentIdentityBindingSourceMachineRegistered, BootID: "",
 		}, true},
 		{"来源预置但有 bootId（已被真 agent 用过）", model.AgentIdentity{
+			Status:        model.AgentIdentityStatusActive,
 			BindingSource: model.AgentIdentityBindingSourceMachineRegistered, BootID: "boot-x",
 		}, false},
 		{"空 bootId 但来源为 admin_assigned（历史未迁移行）", model.AgentIdentity{
+			Status:        model.AgentIdentityStatusActive,
 			BindingSource: model.AgentIdentityBindingSourceAdminAssigned, BootID: "",
 		}, false},
 		{"空 bootId 但来源为 legacy_local", model.AgentIdentity{
+			Status:        model.AgentIdentityStatusActive,
 			BindingSource: model.AgentIdentityBindingSourceLegacyLocal, BootID: "",
 		}, false},
 		{"真身份（其他来源 + 有 bootId）", model.AgentIdentity{
+			Status:        model.AgentIdentityStatusActive,
 			BindingSource: model.AgentIdentityBindingSourceLegacyLocal, BootID: "boot-y",
+		}, false},
+		// FR-235 修复项：disabled 是人工止损动作，不得被自动让位绕过——
+		// 即使它同时满足「来源预置 + 空 bootId」，也必须要求显式强制解绑。
+		{"被人工禁用的预置壳（止损，不得自动让位）", model.AgentIdentity{
+			Status:        model.AgentIdentityStatusDisabled,
+			BindingSource: model.AgentIdentityBindingSourceMachineRegistered, BootID: "",
 		}, false},
 	}
 	for _, tc := range cases {

@@ -1078,14 +1078,21 @@ func pageOffset(page, size int) int {
 // 就会撞上这行控制面自己造的壳，被当作「他人占用」要求人工 forceUnbindOccupier——
 // 批量建服时每台都要人工解绑一次，与 FR-222「消灭 60 次人工审批」的初衷直接冲突。
 //
-// 判别依据（两条同时成立才算预置壳，见 FR-235 spec §3）：
+// 判别依据（三条同时成立才算预置壳，见 FR-235 spec §3）：
+//   - 状态不是 disabled——**已禁用身份是人工止损动作**，不得被自动让位绕过；
+//     它必须走下方「显式 forceUnbindOccupier」通道，与 refreshMachineRegisterIdentity
+//     拒绝复活 disabled 身份的边界保持一致（该边界见 agent_machine_register.go）。
 //   - 来源为 machine_registered（本 FR 新增标记；历史存量行由迁移回填）；
 //   - boot_id 为空——真 agent 的 bootId 由插件生成、注册时必填（RegisterAgentV2 入口校验），
 //     故「有真 agent 用过」的身份必然带 bootId，而预置壳永远没有。
 //
-// 二者缺一不可：只看 boot_id 会把「旧版本控制面建的、来源字段尚未标记」的行误判；
-// 只看来源则依赖标记完备。双条件使本函数对「未迁移的历史行」也保持保守（宁可要求人工）。
+// 三者缺一不可：不看状态会绕过人工止损；只看 boot_id 会把「旧版本控制面建的、来源字段
+// 尚未标记」的行误判；只看来源则依赖标记完备。多条件使本函数对「未迁移的历史行」保持保守
+// （宁可要求人工）。
 func isPreplacedOccupier(ident *model.AgentIdentity) bool {
+	if ident.Status == model.AgentIdentityStatusDisabled {
+		return false
+	}
 	return ident.BindingSource == model.AgentIdentityBindingSourceMachineRegistered && ident.BootID == ""
 }
 
@@ -1096,7 +1103,8 @@ func (s *V2ControlPlaneService) resolveOccupierForApprove(tx *gorm.DB, ident *mo
 	}
 	// FR-235：控制面预置的占位空壳自动让位，不要求人工强制解绑——
 	// 它不是「他人的真身份」，而是本控制面替这台服预先占位的壳，真 agent 到来即应接管。
-	// 注意：真身份（有 bootId 或来源非预置）之间的冲突仍走下方既有防线，语义不变。
+	// 注意：真身份（有 bootId 或来源非预置）与**被人工禁用的身份**之间的冲突仍走下方既有防线，
+	// 语义不变；后者是止损动作，必须由人显式强制解绑（见 isPreplacedOccupier 注释）。
 	autoYield := isPreplacedOccupier(occupier)
 	if !autoYield && !p.ForceUnbindOccupier {
 		return apperr.ErrServerIDOccupied
@@ -1110,7 +1118,15 @@ func (s *V2ControlPlaneService) resolveOccupierForApprove(tx *gorm.DB, ident *mo
 	if err != nil {
 		return err
 	}
-	return auditIdentity(tx, ns, occupier, model.ActionIdentityForceRebind, operatorOrSystem(p.Operator), model.ResultOK, p.ClientIP)
+	// FR-235：审计动作区分「控制面自动让位」与「人工强制解绑」——两者后果相同但责任主体不同，
+	// 审计须能回答「谁让的位」。自动让位记 identity.preplaced_yielded，人工强制仍记既有动作。
+	auditAction := model.ActionIdentityForceRebind
+	operator := operatorOrSystem(p.Operator)
+	if autoYield {
+		auditAction = model.ActionIdentityPreplacedYielded
+		operator = "system:preplaced-yield"
+	}
+	return auditIdentity(tx, ns, occupier, auditAction, operator, model.ResultOK, p.ClientIP)
 }
 
 type GrantNamespaceTrustParams struct {
