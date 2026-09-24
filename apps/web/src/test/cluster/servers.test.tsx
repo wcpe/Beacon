@@ -301,4 +301,42 @@ describe('/servers 服务器页', () => {
     await user.click(screen.getByRole('button', { name: '展开已失活监听' }))
     expect(screen.getAllByText('上报监听')).toHaveLength(2)
   })
+
+  // FR-235：控制面经机器注册通道替服预置的占位身份（尚无真 agent 接入），
+  // 详情页需给出可辨识中文标签，而非回落成「未提供」。
+  it('FR-235：控制面预置来源显示专属中文标签', async () => {
+    useScenario('normal')
+    const identityId = uuidFrom('identity:1:proxy-1')
+    // 覆盖详情端点：保留 mock 既有响应，仅改 bindingSource 为 FR-235 新增来源。
+    // 用最小自洽响应（本用例只断言来源标签渲染，不覆盖地址覆盖等其它字段语义）。
+    server.use(
+      http.get('/admin/v2/agent-identities/:identityId', () =>
+        HttpResponse.json({
+          identityId,
+          namespaceId: 1,
+          serverId: 'proxy-1',
+          kind: 'proxy',
+          status: 'active',
+          bootId: uuidFrom('boot:proxy-1'),
+          lastAddr: '127.0.0.1:25577',
+          serverWorkDir: '/srv/mc/proxy-1',
+          agentVersion: '1.2.0',
+          pendingExpiresAt: null,
+          boundAt: new Date().toISOString(),
+          bindingSource: 'machine_registered',
+          migrationState: 'not_required',
+          legacyMigratedAt: null,
+          bindingFingerprint: null,
+          statusChangedAt: new Date().toISOString(),
+          conflictReason: null,
+          conflictPeers: null,
+          rezonePrefill: null,
+          endpoints: [],
+        }),
+      ),
+    )
+    renderPage(<IdentityDetailSheet identityId={identityId} onOpenChange={() => undefined} />)
+
+    expect(await screen.findByText('控制面预置')).toBeInTheDocument()
+  })
 })

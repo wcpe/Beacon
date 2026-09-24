@@ -1071,12 +1071,34 @@ func pageOffset(page, size int) int {
 	return (page - 1) * pageSize(size)
 }
 
+// isPreplacedOccupier 判断占用者是否为「控制面预置的占位空壳」（FR-235）。
+//
+// 背景：CP 推送（FR-222 机器注册）会替某台**尚未启动插件**的服预先建一行 active 身份，
+// 此时插件还没生成自己的 identityId，也从未上报过 bootId。等插件真的启动注册并走到审批时，
+// 就会撞上这行控制面自己造的壳，被当作「他人占用」要求人工 forceUnbindOccupier——
+// 批量建服时每台都要人工解绑一次，与 FR-222「消灭 60 次人工审批」的初衷直接冲突。
+//
+// 判别依据（两条同时成立才算预置壳，见 FR-235 spec §3）：
+//   - 来源为 machine_registered（本 FR 新增标记；历史存量行由迁移回填）；
+//   - boot_id 为空——真 agent 的 bootId 由插件生成、注册时必填（RegisterAgentV2 入口校验），
+//     故「有真 agent 用过」的身份必然带 bootId，而预置壳永远没有。
+//
+// 二者缺一不可：只看 boot_id 会把「旧版本控制面建的、来源字段尚未标记」的行误判；
+// 只看来源则依赖标记完备。双条件使本函数对「未迁移的历史行」也保持保守（宁可要求人工）。
+func isPreplacedOccupier(ident *model.AgentIdentity) bool {
+	return ident.BindingSource == model.AgentIdentityBindingSourceMachineRegistered && ident.BootID == ""
+}
+
 func (s *V2ControlPlaneService) resolveOccupierForApprove(tx *gorm.DB, ident *model.AgentIdentity, p ApproveAgentIdentityParams) error {
 	occupier, err := findActiveIdentityByServer(tx, ident.NamespaceID, string(ident.ServerID), ident.IdentityID)
 	if err != nil || occupier == nil {
 		return err
 	}
-	if !p.ForceUnbindOccupier {
+	// FR-235：控制面预置的占位空壳自动让位，不要求人工强制解绑——
+	// 它不是「他人的真身份」，而是本控制面替这台服预先占位的壳，真 agent 到来即应接管。
+	// 注意：真身份（有 bootId 或来源非预置）之间的冲突仍走下方既有防线，语义不变。
+	autoYield := isPreplacedOccupier(occupier)
+	if !autoYield && !p.ForceUnbindOccupier {
 		return apperr.ErrServerIDOccupied
 	}
 	occupier.Status = model.AgentIdentityStatusUnbound

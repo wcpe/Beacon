@@ -129,8 +129,11 @@ func TestMachineRegisterEnabledActivatesAndBinds(t *testing.T) {
 	if ident.PendingExpiresAt != nil {
 		t.Fatalf("active 身份不应有 pending 过期时间，实际 %v", ident.PendingExpiresAt)
 	}
-	if ident.BindingSource != model.AgentIdentityBindingSourceAdminAssigned {
-		t.Fatalf("机器注册来源应为 admin_assigned，实际 %q", ident.BindingSource)
+	if ident.BindingSource != model.AgentIdentityBindingSourceMachineRegistered {
+		t.Fatalf("机器注册来源应为 machine_registered（FR-235：标记为控制面预置空壳，供审批自动让位），实际 %q", ident.BindingSource)
+	}
+	if ident.BootID != "" {
+		t.Fatalf("机器注册不应带 bootId（FR-235 判据依赖此特征：有 bootId 即真 agent 用过），实际 %q", ident.BootID)
 	}
 	if ident.LastAddr != "10.0.0.7:25565" {
 		t.Fatalf("身份应记录上报地址，实际 %q", ident.LastAddr)

@@ -75,12 +75,17 @@ const (
 const (
 	AgentIdentityBindingSourceLegacyLocal   = "legacy_local"
 	AgentIdentityBindingSourceAdminAssigned = "admin_assigned"
+	// AgentIdentityBindingSourceMachineRegistered 是控制面经机器注册通道（FR-222）**预置**的身份来源。
+	// 它标记「这行是 CP 推送替某台服预先建好的占位行」，而非真 agent 自己登记的身份：
+	// 该路径不写 boot_id（真 agent 的 bootId 由插件生成并在注册时必填），故 boot_id 为空是其固有特征。
+	// 用途：审批时据此识别占位行并自动让位，避免把「控制面自己造的壳」当成真身份要求人工解绑（FR-235）。
+	AgentIdentityBindingSourceMachineRegistered = "machine_registered"
 )
 
 // IsValidAgentIdentityBindingSource 判断身份绑定来源是否属于受支持枚举。
 func IsValidAgentIdentityBindingSource(source string) bool {
 	switch source {
-	case AgentIdentityBindingSourceLegacyLocal, AgentIdentityBindingSourceAdminAssigned:
+	case AgentIdentityBindingSourceLegacyLocal, AgentIdentityBindingSourceAdminAssigned, AgentIdentityBindingSourceMachineRegistered:
 		return true
 	default:
 		return false

@@ -130,6 +130,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	if err := backfillLegacyIdentityBindingSources(db); err != nil {
 		return nil, err
 	}
+	if err := backfillMachineRegisteredIdentitySources(db); err != nil {
+		return nil, err
+	}
 
 	// 告警处理状态存量回填（FR-157，见 ADR-0064）：加列前的 append-only 历史行属过去已闭事件，
 	// 回填为终态 resolved，避免把当前健康 activeAlerts 撑爆。幂等一次性——只命中空串 / NULL 的旧行，
@@ -211,6 +214,23 @@ func backfillLegacyIdentityBindingSources(db *gorm.DB) error {
 		Update("binding_source", model.AgentIdentityBindingSourceLegacyLocal)
 	if res.Error != nil {
 		return fmt.Errorf("回填存量身份绑定来源失败: %w", res.Error)
+	}
+	return nil
+}
+
+// backfillMachineRegisteredIdentitySources 把 FR-235 之前由控制面机器注册预置的身份行标记出来。
+//
+// 判据：来源为 admin_assigned **且** boot_id 为空。FR-235 之前机器注册写入的正是这个组合
+// （该路径从不写 bootId，来源取 admin_assigned），而真 agent 身份在注册时强制带 bootId，
+// 故该组合唯一指向「控制面预置的占位空壳」。迁移后这类行可在审批时自动让位给真 agent。
+//
+// 只命中上述组合，不触碰其他来源或带 bootId 的行；幂等（回填后来源已变，重复启动不再命中）。
+func backfillMachineRegisteredIdentitySources(db *gorm.DB) error {
+	res := db.Model(&model.AgentIdentity{}).
+		Where("binding_source = ? AND (boot_id = ? OR boot_id IS NULL)", model.AgentIdentityBindingSourceAdminAssigned, "").
+		Update("binding_source", model.AgentIdentityBindingSourceMachineRegistered)
+	if res.Error != nil {
+		return fmt.Errorf("回填机器注册预置身份来源失败: %w", res.Error)
 	}
 	return nil
 }

@@ -201,6 +201,11 @@ function bindingSourceLabel(source: string | null): string {
   if (source === 'legacy_local') {
     return '旧本地配置迁移'
   }
+  // FR-235：控制面经机器注册通道替服预置的占位身份（尚无真 agent 接入），
+  // 真 agent 启动并获批后会自动接管该 serverId。
+  if (source === 'machine_registered') {
+    return '控制面预置'
+  }
   return '未提供'
 }
 
