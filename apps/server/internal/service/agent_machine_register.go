@@ -163,7 +163,9 @@ func createMachineRegisterIdentity(tx *gorm.DB, ns *model.Namespace, identityID,
 		Kind: kind, Status: model.AgentIdentityStatusActive,
 		LastAddr: agentLastAddr(p), AgentVersion: p.AgentVersion,
 		BoundAt: &now, StatusChangedAt: now,
-		BindingSource: model.AgentIdentityBindingSourceAdminAssigned,
+		// FR-235：标记为「控制面预置」来源，使后续审批能识别这是替服预先占位的空壳而非真身份。
+		// 本路径不写 BootID——真 agent 的 bootId 由插件生成且注册时必填，故 boot_id 为空是该来源的固有特征。
+		BindingSource: model.AgentIdentityBindingSourceMachineRegistered,
 	}
 	if err := tx.Create(ident).Error; err != nil {
 		return nil, err
