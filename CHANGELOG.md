@@ -22,6 +22,8 @@
   - **修复**：①机器注册新建身份标记来源 `machine_registered`（新增枚举）；②审批遇占用者时，若判定为预置壳则**自动解绑让位**，不再要求人工，让位仍写 `identity.rebind_with_force_unbind` 审计；③存量按同判据回填（幂等）。
   - **安全边界不变（明确不做）**：**真身份**之间的冲突（有 `boot_id` 或来源非预置）仍返回 `server_id_occupied` 并必须人工强制解绑，FR-141 身份冲突防线不削弱；`disabled` 身份拒绝被机器注册复活的边界不变。
   - **升级后存量冲突自动消退**：已被回填标记的预置空壳，其 pending 身份可直接审批通过，无需人工解绑。外部平台（如 JianManager）**无需改动**。规格见 [preplaced-identity-auto-yield](docs/specs/preplaced-identity-auto-yield.md)。
+- **被人工禁用的预置身份会被自动让位（FR-235，代码审查发现）**：FR-235 的自动让位判据只看「来源为机器注册」与「`boot_id` 为空」，未排除 **`disabled` 状态**——而 `disabled` 是人工/审批侧的**止损动作**（`refreshMachineRegisterIdentity` 明确「不得被机器注册通道悄悄复活」）。结果是：把某个预置身份禁用后，真 agent 审批时**不勾选强制解绑也能顶掉它**，绕过止损意图。现判据增加状态维度（`disabled` 一律不自动让位，必须人工显式强制解绑），与机器注册路径的同类边界对齐。
+- **自动让位与人工强制解绑在审计上无法区分（FR-235，代码审查发现）**：自动让位原复用 `identity.rebind_with_force_unbind`（前端标签「强制换绑身份」），审计看起来像人工强制操作，无法回答「谁让的位」。现自动让位改记独立动作 `identity.preplaced_yielded`（operator=`system:preplaced-yield`），人工强制解绑仍记原动作。
 - **MCP 内网直连部署的 `allowed-hosts` 语义说明与实现相反**：`config.go` 注释称该白名单留空会「回退 SDK 默认（放行 localhost/127.0.0.1 等）」，但 `MCPProxyPolicy.hostAllowed` 在留空时**只放行与 `public-base-url` 的 host 完全一致的 Host**，导致同机 MCP 客户端连 `127.0.0.1:19999` 持续 401，且日志只显示 `ADMIN_UNAUTHORIZED`，无从判断是 Host 白名单所致。现把三处注释（`config.go` / `mcp_proxy_policy.go` / `config.example.yml`）改为与实现一致的描述，并在 `docs/OPERATIONS.md` 新增 §9.1「内网明文直连部署」——给出含 `allowed-hosts` 的完整配置样例，以及客户端侧必须对齐的 audience / 凭据归属 / Host 三要素（多套 Beacon 共存时拿错凭据同样只回 401 `invalid_client`，需分别核对）。
 
 ## 1.2.0（2026-09-24）

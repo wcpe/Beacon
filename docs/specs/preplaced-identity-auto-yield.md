@@ -40,23 +40,26 @@ region1-zone1-lobby  unbound  空        admin_assigned   10:08   ← CP 推送�
 
 ```go
 func isPreplacedOccupier(ident *model.AgentIdentity) bool {
+    if ident.Status == model.AgentIdentityStatusDisabled {
+        return false
+    }
     return ident.BindingSource == model.AgentIdentityBindingSourceMachineRegistered && ident.BootID == ""
 }
 ```
 
-**为什么必须两个信号同时成立**：
+**为什么三个信号必须同时成立**：
 
-| 单看来源 | 单看 boot_id |
-|---|---|
-| 依赖标记完备；存量未迁移行会漏判（保守，需人工） | 会把「旧版本建的、来源未标记」的真身份误判为空壳 → **削弱 FR-141 防线** |
+| 不看状态 | 单看来源 | 单看 boot_id |
+|---|---|---|
+| 会把**被人工禁用的**预置壳也自动让位 → 绕过「disabled = 止损」边界 | 依赖标记完备；存量未迁移行会漏判（保守，需人工） | 会把「旧版本建的、来源未标记」的真身份误判为空壳 → **削弱 FR-141 防线** |
 
-双条件使函数对未迁移的历史行保持保守（宁可要求人工），且对已迁移行精确识别。
+多条件使函数对未迁移的历史行与止损态保持保守（宁可要求人工），且对已迁移的活跃空壳精确识别。
 
 ### 3.3 审批自动让位
 
 `resolveOccupierForApprove` 中，占用者为预置壳时**跳过** `ForceUnbindOccupier` 要求，直接解绑让位；否则维持原语义（返回 `server_id_occupied`，需显式强制解绑）。
 
-让位后仍写 `identity.rebind_with_force_unbind` 审计（与人工强制解绑同一动作），保留可追溯性。
+**审计区分责任主体**（`identity.preplaced_yielded` / operator=`system:preplaced-yield`）：自动让位与人工强制解绑后果相同但责任主体不同，审计须能回答「谁让的位」，故二者用不同动作名而非复用同一动作。
 
 ### 3.4 存量回填
 

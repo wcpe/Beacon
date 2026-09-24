@@ -553,6 +553,10 @@ const (
 	ActionIdentityReapplyAllowed  = "identity.reapply_allowed"
 	ActionIdentityForceRebind     = "identity.rebind_with_force_unbind"
 	ActionIdentityLegacyMigrated  = "identity.legacy_migrated"
+	// ActionIdentityPreplacedYielded 是控制面预置的占位空壳在审批时自动让位（FR-235）：
+	// 与人工触发的 ActionIdentityForceRebind 区分开——后者是人的强制操作，前者是控制面
+	// 让出自己预先占位的壳，无需人工干预。审计需能分辨「谁让的位」，故独立动作名。
+	ActionIdentityPreplacedYielded = "identity.preplaced_yielded"
 	// ActionIdentityMachineRegistered 是机器注册（FR-222，见 specs/internal-trust-channel.md §3.4）：
 	// 受信内部调用方经共享 token 提交的注册意图，无论开关是否开启都记一条——开启时记「已直落 active」，
 	// 关闭时记「已提交待人工审批」。detail 含 serverId / lastAddr / 调用来源 IP。
