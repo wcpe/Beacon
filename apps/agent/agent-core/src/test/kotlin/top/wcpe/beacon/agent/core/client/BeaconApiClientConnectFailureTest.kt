@@ -118,7 +118,10 @@ class BeaconApiClientConnectFailureTest {
                 ArrayDeque(
                     listOf(
                         ScriptedTransport.Step.Throw(IOException("connection refused to localhost:18848")),
-                        ScriptedTransport.Step.Return(HttpResponse(200, "{}")),
+                        // 真实控制面应答带 application/json（FR-233 判据据此识别应答归属）。
+                        ScriptedTransport.Step.Return(
+                            HttpResponse(200, "{}", contentType = "application/json; charset=utf-8"),
+                        ),
                         ScriptedTransport.Step.Throw(RuntimeException("boom")),
                     ),
                 ),

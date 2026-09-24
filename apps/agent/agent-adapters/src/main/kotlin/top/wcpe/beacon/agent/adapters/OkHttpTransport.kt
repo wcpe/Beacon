@@ -51,7 +51,11 @@ class OkHttpTransport(
 
         perCall.newCall(builder.build()).execute().use { resp ->
             val text = resp.body?.string() ?: ""
-            return HttpResponse(statusCode = resp.code, body = text)
+            return HttpResponse(
+                statusCode = resp.code,
+                body = text,
+                contentType = resp.header("Content-Type") ?: "",
+            )
         }
     }
 }

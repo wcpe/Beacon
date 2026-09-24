@@ -25,11 +25,20 @@ class BeaconApiClientTest {
 
     private fun client(transport: FakeHttpTransport) = BeaconApiClient(transport, codec, TestFixtures.settings())
 
+    /**
+     * 数据面挂载（register）的应答构造：真实控制面一律带 `Content-Type: application/json`，
+     * 插件据此识别应答归属与路由是否命中（FR-233 回退判据）。缺该头会被判为「非本控制面应答」。
+     */
+    private fun registerResponse(
+        status: Int,
+        body: String,
+    ) = HttpResponse(statusCode = status, body = body, contentType = "application/json; charset=utf-8")
+
     @Test
     fun `register 200 解析 resolvedGroup zone 与 assigned`() {
         val transport =
             FakeHttpTransport().enqueue(
-                HttpResponse(
+                registerResponse(
                     200,
                     """
                     {"instanceKey":"prod/lobby-1","resolvedGroup":"area1","resolvedZone":"zoneA",
@@ -50,7 +59,7 @@ class BeaconApiClientTest {
     fun `register 请求体含顶层 capacity weight 与 metadata map 且头带 token`() {
         val transport =
             FakeHttpTransport().enqueue(
-                HttpResponse(200, """{"instanceKey":"k","heartbeatIntervalSec":10,"ttlSec":30,"assigned":false}"""),
+                registerResponse(200, """{"instanceKey":"k","heartbeatIntervalSec":10,"ttlSec":30,"assigned":false}"""),
             )
         client(transport).register(TestFixtures.identity())
 
@@ -72,13 +81,13 @@ class BeaconApiClientTest {
 
     @Test
     fun `register 409 映射 DuplicateServerId`() {
-        val transport = FakeHttpTransport().enqueue(HttpResponse(409, """{"code":"DUPLICATE_SERVER_ID"}"""))
+        val transport = FakeHttpTransport().enqueue(registerResponse(409, """{"code":"DUPLICATE_SERVER_ID"}"""))
         assertIs<RegisterOutcome.DuplicateServerId>(client(transport).register(TestFixtures.identity()))
     }
 
     @Test
     fun `register 401 映射 Unauthorized`() {
-        val transport = FakeHttpTransport().enqueue(HttpResponse(401, ""))
+        val transport = FakeHttpTransport().enqueue(registerResponse(401, ""))
         assertIs<RegisterOutcome.Unauthorized>(client(transport).register(TestFixtures.identity()))
     }
 
