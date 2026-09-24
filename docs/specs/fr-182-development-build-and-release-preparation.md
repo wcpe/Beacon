@@ -81,7 +81,7 @@ FR-182 将开发构建与正式版本发布分开，并为所有 SemVer 版本�
 3. 运行现有质量门与一次产品构建。
 4. 生成 `SHA256SUMS.txt`，使其完整覆盖本次所有产品资产。
 5. 运行通用发布校验。
-6. 发布不可变 RC tag 与对应 prerelease 资产。
+6. 发布不可变 RC tag 与对应 prerelease 资产，Release 正文**自动生成**「自上一个 GA 起合并的 PR 标题清单」（`generate_release_notes`，见 FR-234）。
 
 若任一步失败，或发布后发现资产缺失、哈希错误、源码变化，不得修补原 RC；必须修复后创建 `vX.Y.Z-rc.(N+1)`。
 
@@ -92,7 +92,7 @@ FR-182 将开发构建与正式版本发布分开，并为所有 SemVer 版本�
 3. 从最终 RC 下载完整产品资产和 `SHA256SUMS.txt`。
 4. 逐项核对资产文件名、大小和 SHA-256。
 5. 在同一 commit 创建 `vX.Y.Z` 正式 tag。
-6. 将同一组产品资产原样发布到 GA Release，并再次执行 GA 校验。
+6. 将同一组产品资产原样发布到 GA Release，并再次执行 GA 校验；Release 正文追加自动生成的 PR 标题清单（`--generate-notes` + `--notes-start-tag` **显式指定上一个 GA** 为起点，避免起点落在 RC），人工正文段保留在前（见 FR-234）。
 
 GA 阶段不得重新编译、打包、生成或替换产品资产。任何资产变化都必须回到新的 RC。
 
@@ -152,6 +152,8 @@ make release-verify-ga \
 | GA 不重建 | GA job 不包含编译、打包或产品生成命令 |
 | 在线更新 | 只选择严格 `vX.Y.Z` GA，拒绝 RC 与开发 Artifact |
 | 通用入口 | `make release-test`、`make release-check`、`make release-verify-rc`、`make release-verify-ga` 均可按用途执行 |
+| 发布说明自动生成（FR-234） | RC 与 GA Release 正文均自动含「自上一个 GA 起合并的 PR 标题清单」与对比链接；GA 的清单起点为**上一个 GA**（非上一 RC），人工正文段保留不被覆盖 |
+| 依赖周更（FR-234） | 四生态（Go module / Gradle / npm / GitHub Actions）按周开出 PR，携 `chore(deps)` 前缀并全部经质量门合入 `master`，无直推 |
 
 ## 10. 失败处理
 
