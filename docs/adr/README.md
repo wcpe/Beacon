@@ -87,6 +87,7 @@
 | [0081](0081-local-persistent-encryption-key-files.md) | 控制面 at-rest 加密密钥使用本地持久文件 | 已接受；取代 ADR-0018 的环境变量密钥来源 |
 | [0082](0082-rc-ga-sdk-maven-publication.md) | RC/GA 发布 agent-api 与 agent-kit 的候选/正式 Maven 坐标，并保留 GitHub 产品资产原样晋级 | 已接受；取代 ADR-0074 中 GA 完全禁止重新发布的约束 |
 | [0083](0083-entry-server-as-lobby-member.md) | 入口 / 登录服作为 LobbyCluster 成员，不新增第二落脚真源 | 已接受；在 ADR-0075 约束内落地 FR-225，不取代任何 ADR |
+| [0084](0084-agent-registration-endpoint-disambiguation.md) | 保留 v1 / v2 双 agent 注册端点，只消除语义歧义，不退役任一端点 | 已接受（决策）；实现并入 FR-233 待排期。增强 FR-222 / FR-139/140/141 / FR-142，不取代任何 ADR |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 
