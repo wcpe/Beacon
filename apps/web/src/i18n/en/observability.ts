@@ -370,6 +370,8 @@ export const observability = {
       'identity.reapply_allowed': 'Allow identity re-apply',
       'identity.rebind_with_force_unbind': 'Force rebind identity',
       'identity.machine_registered': 'Machine-registered identity',
+      // FR-235: control-plane preplaced identity auto-yields on approval
+      'identity.preplaced_yielded': 'Preplaced identity auto-yielded',
       // Cluster authority
       'bc_cluster.create': 'Create BC cluster',
       'bc_cluster.delete': 'Delete BC cluster',
