@@ -232,6 +232,11 @@ func backfillMachineRegisteredIdentitySources(db *gorm.DB) error {
 	if res.Error != nil {
 		return fmt.Errorf("回填机器注册预置身份来源失败: %w", res.Error)
 	}
+	// 该回填是**语义不可逆**的（改写来源、无反向回填），故记录命中行数：
+	// 运维升级后可从日志确认影响了多少行、是否与预期（CP 预置壳数）一致。
+	if res.RowsAffected > 0 {
+		slog.Info("回填控制面预置身份来源为 machine_registered", "行数", res.RowsAffected)
+	}
 	return nil
 }
 
