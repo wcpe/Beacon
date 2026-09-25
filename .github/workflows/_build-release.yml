@@ -288,7 +288,7 @@ jobs:
             printf '%s 指向同一 master 提交，资产由 SHA256SUMS.txt 严格校验。\n' "$RC_TAG"
           } > release-body.md
       - name: 创建 RC Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.meta.outputs.tag }}
           name: ${{ needs.meta.outputs.tag }}
