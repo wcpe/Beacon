@@ -19,7 +19,7 @@ pluginManagement {
     plugins {
         kotlin("jvm") version "1.9.22"
         kotlin("plugin.serialization") version "1.9.22"
-        id("io.izzel.taboolib") version "2.0.37"
+        id("io.izzel.taboolib") version "2.0.38"
         // ktlint Gradle 插件：格式化与格式检查。
         id("org.jlleitschuh.gradle.ktlint") version "14.2.0"
         // detekt 官方静态检查插件：结构 / 复杂度 / 坏味道检查（兼容 Kotlin 1.9.x）。
