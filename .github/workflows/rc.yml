@@ -159,7 +159,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Agent 静态检查、测试与构建
         run: ./apps/agent/gradlew -p apps/agent ktlintCheck detekt test build --no-daemon
 

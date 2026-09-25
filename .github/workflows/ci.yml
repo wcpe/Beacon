@@ -133,7 +133,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: 准备 Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
       - name: 运行 Agent 格式、静态检查与测试
         run: ./apps/agent/gradlew -p apps/agent ktlintCheck detekt test --no-daemon
 
@@ -169,7 +169,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: 准备 Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
       - name: 配置临时 MySQL 测试连接
         shell: bash
         run: |
@@ -216,7 +216,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: 准备 Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
       - name: 安装 pnpm
         uses: pnpm/action-setup@v4
         with:
