@@ -30,6 +30,8 @@ const COMMON_AUDIT_ACTIONS = [
   'identity.unbound',
   'identity.approved',
   'identity.machine_registered',
+  // FR-235：自动让位是独立动作（与人工「强制换绑」区分），须有中文标签
+  'identity.preplaced_yielded',
   'bc_cluster.create',
   'server.assign',
   'server.unassign',

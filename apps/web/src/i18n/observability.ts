@@ -369,6 +369,8 @@ export const observability = {
       'identity.reapply_allowed': '允许身份重新申请',
       'identity.rebind_with_force_unbind': '强制换绑身份',
       'identity.machine_registered': '机器注册身份',
+      // FR-235：控制面预置的占位身份在审批时自动让位（与人工「强制换绑」区分责任主体）
+      'identity.preplaced_yielded': '控制面自动让位',
       // 区服权威
       'bc_cluster.create': '新建 BC 集群',
       'bc_cluster.delete': '删除 BC 集群',
