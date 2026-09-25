@@ -15,14 +15,14 @@ dependencies {
     // HTTP 客户端：长轮询读超时控制直接、连接复用稳。
     compileOnly("com.squareup.okhttp3:okhttp:4.12.0")
     // JSON 序列化：以 JsonElement 做 Map↔json 转换实现 JsonCodec。
-    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
     // 测试：BeaconApiClient / SnapshotStore / ConfigApplier 用真实 KotlinxJsonCodec + 假 HttpTransport，
     // 测试期需真实 okhttp/kotlinx 在 classpath。
     testImplementation(kotlin("test"))
     testImplementation(project(":agent-core"))
     testImplementation("com.squareup.okhttp3:okhttp:4.12.0")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 }
 
 tasks.test {
