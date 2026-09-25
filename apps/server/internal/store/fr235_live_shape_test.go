@@ -54,18 +54,18 @@ func TestFR235LiveShapeMigration(t *testing.T) {
 		t.Fatalf("回填失败: %v", err)
 	}
 
-	var preplaced, real int64
-	if err := db.Model(&model.AgentIdentity{}).Where("binding_source = ?", model.AgentIdentityBindingSourceMachineRegistered).Count(&preplaced).Error; err != nil {
+	var preplacedCount, realAgentCount int64
+	if err := db.Model(&model.AgentIdentity{}).Where("binding_source = ?", model.AgentIdentityBindingSourceMachineRegistered).Count(&preplacedCount).Error; err != nil {
 		t.Fatalf("统计失败: %v", err)
 	}
-	if err := db.Model(&model.AgentIdentity{}).Where("binding_source = ?", model.AgentIdentityBindingSourceAdminAssigned).Count(&real).Error; err != nil {
+	if err := db.Model(&model.AgentIdentity{}).Where("binding_source = ?", model.AgentIdentityBindingSourceAdminAssigned).Count(&realAgentCount).Error; err != nil {
 		t.Fatalf("统计失败: %v", err)
 	}
-	if preplaced != 11 {
-		t.Fatalf("应恰好回填 11 个空壳，实际 %d", preplaced)
+	if preplacedCount != 11 {
+		t.Fatalf("应恰好回填 11 个空壳，实际 %d", preplacedCount)
 	}
-	if real != 11 {
-		t.Fatalf("11 个真身份应保持 admin_assigned 不动，实际剩余 %d", real)
+	if realAgentCount != 11 {
+		t.Fatalf("11 个真身份应保持 admin_assigned 不动，实际剩余 %d", realAgentCount)
 	}
 	// 反向确认：真身份未被误标（这是安全边界，错了会让审批误让位）
 	var mislabeled model.AgentIdentity
