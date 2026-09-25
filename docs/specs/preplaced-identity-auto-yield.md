@@ -36,7 +36,7 @@ region1-zone1-lobby  unbound  空        admin_assigned   10:08   ← CP 推送�
 
 `agent_identity.binding_source` 新增枚举 `machine_registered`，机器注册新建身份时写入。
 
-### 3.2 判别式（两个信号同时成立）
+### 3.2 判别式（三个信号同时成立）
 
 ```go
 func isPreplacedOccupier(ident *model.AgentIdentity) bool {
@@ -88,7 +88,7 @@ func isPreplacedOccupier(ident *model.AgentIdentity) bool {
 |---|---|
 | 预置壳自动让位 | 占用者为预置壳时，**不带** `forceUnbindOccupier` 也能审批成功，旧壳转 `unbound` |
 | 真身份防线不破 | 真身份之间冲突仍返回 `server_id_occupied`，显式强制解绑后才成功 |
-| 判别式穷举 | 仅「来源预置 + 空 boot_id」为真；单独满足任一条件均为假 |
+| 判别式穷举 | 仅「状态非 disabled + 来源预置 + 空 boot_id」为真；单独满足任一条件（或状态为 disabled）均为假 |
 | 存量回填 | 幂等；`boot_id` 为空/NULL 的 `admin_assigned` 行被标记，真身份与其它来源不受影响 |
 | 真机同构 | 11 空壳 + 11 真身份同构数据回填后精确命中 11 个空壳、真身份零误伤 |
 | 前端可辨 | 详情页该来源显示「控制面预置」而非「未提供」 |
