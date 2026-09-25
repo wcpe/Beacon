@@ -40,7 +40,7 @@ jobs:
       E2E_ADMIN_PASS: ${{ github.event.inputs.admin-pass || secrets.E2E_ADMIN_PASS }}
       E2E_AUTH_SECRET: ${{ github.event.inputs.auth-secret || secrets.E2E_AUTH_SECRET }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: 安装 Go
         uses: actions/setup-go@v5
         with:
@@ -231,7 +231,7 @@ jobs:
           PY
       - name: 归档 Agent E2E 日志与 mc-testkit 结果
         if: always() && steps.scan_e2e_artifacts.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-e2e-${{ runner.os }}-directory-override-${{ github.run_id }}
           path: |
@@ -253,7 +253,7 @@ jobs:
       # 控制面 sqlite 经 go-sqlite3 需 CGO；ubuntu 自带 gcc
       CGO_ENABLED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: 安装 Go
         uses: actions/setup-go@v5
         with:
@@ -264,7 +264,7 @@ jobs:
         with:
           version: "10.32.1"
       - name: 安装 Node（启用 pnpm store 缓存）
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: pnpm
