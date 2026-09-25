@@ -47,6 +47,15 @@ updates:
       # 8.x 线的补丁与次要更新照常收。
       - dependency-name: "gradle-wrapper"
         update-types: ["version-update:semver-major"]
+
+      # ── JUnit：全版本锁定在 5.x ──
+      # JUnit 6 的基线是 Java 17 + Kotlin 2.1（见 6.0.0 release notes 的 Scope），
+      # 而本项目为 jvmTarget 1.8 + Kotlin 1.9.22 双重约束：Java 17 基线使测试
+      # 字节码无法在 Java 8 目标下运行，Kotlin 2.1 基线又与 Kotlin 锁定冲突。
+      # 故拦截全部更新，理由与 Kotlin 锁定同源（低版本 MC 服务端适配）。
+      - dependency-name: "org.junit.jupiter:junit-jupiter"
+      - dependency-name: "org.junit.jupiter:*"
+      - dependency-name: "org.junit.platform:*"
   # 根 pnpm workspace 的前端依赖（对应根 package.json / pnpm-lock.yaml）
   - package-ecosystem: "npm"
     directory: "/"
