@@ -17,7 +17,7 @@ pluginManagement {
         maven("https://repo.tabooproject.org/repository/releases")
     }
     plugins {
-        kotlin("jvm") version "1.9.22"
+        kotlin("jvm") version "2.4.20"
         kotlin("plugin.serialization") version "1.9.22"
         id("io.izzel.taboolib") version "2.0.37"
         // ktlint Gradle 插件：格式化与格式检查（与 Gradle 8.5 / Kotlin 1.9.x 兼容的固定版本）。
