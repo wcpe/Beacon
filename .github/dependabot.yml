@@ -18,17 +18,33 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     ignore:
-      # okhttp 5.x 全系列要求 Kotlin 2.x 元数据，而本工程 Kotlin 固定 1.9.22，
-      # 且运行期 Kotlin 由 TabooLib 以 kotlin1922 重定位供给（见 BeaconAgentBukkit.kt
-      # 的 @RuntimeDependencies relocate 规则）——即便绕过编译期检查，运行期仍会
-      # 因缺 Kotlin 2.x 符号而失败。升 Kotlin 2.x 牵动 TabooLib 兼容性、jvmTarget 1.8
-      # 与运行期重定位，属架构级决策。故只拦大版本，4.x 线的补丁与次要更新照常收。
-      # 待 Kotlin 升到 2.x 后移除此项。
+      # ── Kotlin 全家桶：全版本锁定，禁止任何升级 ──
+      # 本项目必须固定在 Kotlin 1.9.22，以适配低版本 Minecraft 服务端：
+      # 1) 字节码目标 jvmTarget 1.8（旧版 MC 服务端可加载）
+      # 2) 运行期 stdlib 由 TabooLib 以 kotlin1922 重定位供给（见 BeaconAgentBukkit.kt
+      #    的 @RuntimeDependencies relocate 规则）——升 Kotlin 会让构建期版本与
+      #    运行期重定位规则脱节，即便编译通过也会在运行期缺符号
+      # 3) detekt / ktlint 等静态检查插件按 Kotlin 1.9.x 配置
+      # 故拦截「全部」更新，不只是大版本。
+      #
+      # 名称形式说明：Dependabot 对 Gradle 插件按简称报告（PR 标题即 "jvm" /
+      # "plugin.serialization"），同时也存在 group:artifact 形式。为免漏拦，
+      # 简称、完整坐标与通配三种形式一并列出。
+      - dependency-name: "jvm"
+      - dependency-name: "plugin.serialization"
+      - dependency-name: "org.jetbrains.kotlin.jvm:*"
+      - dependency-name: "org.jetbrains.kotlin.plugin.serialization:*"
+      # 匹配 org.jetbrains.kotlin:*（stdlib / reflect 等）与
+      # org.jetbrains.kotlinx:*（serialization / coroutines 等整条生态线）
+      - dependency-name: "org.jetbrains.kotlin*"
+
+      # ── 受 Kotlin 1.9.22 连带约束的依赖：只拦大版本 ──
+      # okhttp 5.x 全系列要求 Kotlin 2.x 元数据（5.0.0/5.1.0 → stdlib 2.2.0，
+      # 5.2.0 → 2.2.20，5.3.0/5.5.0 → 2.2.21）。4.x 线的补丁与次要更新照常收。
       - dependency-name: "com.squareup.okhttp3:okhttp"
         update-types: ["version-update:semver-major"]
-      # Gradle 9.x 要求 Kotlin Gradle Plugin 2.3.0 以上（Gradle 9.7 需 KGP 2.4.20），
-      # 与上面 okhttp 同源：都卡在 Kotlin 1.9.22。同样只拦大版本。
-      # 待 Kotlin 升到 2.x 后移除此项。
+      # Gradle 9.x 要求 KGP 2.3.0 以上（9.7 需 2.4.20），与 Kotlin 锁定冲突。
+      # 8.x 线的补丁与次要更新照常收。
       - dependency-name: "gradle-wrapper"
         update-types: ["version-update:semver-major"]
   # 根 pnpm workspace 的前端依赖（对应根 package.json / pnpm-lock.yaml）
