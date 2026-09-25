@@ -68,7 +68,10 @@ class FakeBeaconBackend : HttpTransport {
     override fun execute(request: HttpRequest): HttpResponse {
         val url = request.url
         return when {
-            url.endsWith("/register") -> handleRegister()
+            // FR-233：数据面挂载的规范路径；旧名 /register 保留为兼容别名。
+            // 两者都须匹配——否则测试会落到 404 兜底、走插件的回退分支，
+            // 使断言看似覆盖注册路径、实则只覆盖了回退（假覆盖）。
+            url.endsWith("/data-plane/attach") || url.endsWith("/register") -> handleRegister()
             url.contains("/heartbeat") -> {
                 heartbeatCalls.incrementAndGet()
                 if (heartbeatStatus == 200) HttpResponse(200, BODY_HEARTBEAT) else HttpResponse(heartbeatStatus, "")
@@ -110,7 +113,13 @@ class FakeBeaconBackend : HttpTransport {
             registerEntered?.countDown()
             releaseRegister?.await()
             // 非 200（如 403 被主动下线）直接返回该码、不带成功体（FR-49）。
-            return if (registerStatus == 200) HttpResponse(200, BODY_REGISTER) else HttpResponse(registerStatus, "")
+            // 成功与业务错误均带 application/json，忠实反映生产侧 render.WriteJSON——
+            // 插件的「是否本控制面应答」判据依赖该头（FR-233），假体缺它会让判据行为失真。
+            return if (registerStatus == 200) {
+                HttpResponse(200, BODY_REGISTER, contentType = "application/json; charset=utf-8")
+            } else {
+                HttpResponse(registerStatus, "", contentType = "application/json; charset=utf-8")
+            }
         } finally {
             inFlightRegister.decrementAndGet()
         }
