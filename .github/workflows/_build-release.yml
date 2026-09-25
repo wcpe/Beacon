@@ -133,7 +133,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.commit }}
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
@@ -308,7 +308,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.candidate_tag }}
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
