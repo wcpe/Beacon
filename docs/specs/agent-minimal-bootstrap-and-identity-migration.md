@@ -84,7 +84,7 @@ beacon:
 | 字段 | 变更 | 约束 |
 |---|---|---|
 | `server_id` | `VARCHAR(64)` 改为可空 | 仅 `pending` / `rejected` / `expired` / `unbound` 可为空；`active` / `disabled` / `conflict` 必须非空 |
-| `binding_source` | 新增 `VARCHAR(24)`，非空 | `legacy_local` / `admin_assigned`，应用层校验 |
+| `binding_source` | 新增 `VARCHAR(24)`，非空 | `legacy_local` / `admin_assigned` / `machine_registered`（后者由 FR-235 新增：控制面经机器注册通道预置的身份），应用层校验 |
 | `legacy_migrated_at` | 新增 DATETIME，可空 | 旧绑定首次被新极简 Agent 成功接管的 UTC 时刻 |
 
 既有行迁移规则：
