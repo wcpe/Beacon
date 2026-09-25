@@ -128,8 +128,7 @@ export const mcpHandlers: HttpHandler[] = [
     return HttpResponse.json({ items: getClients() })
   }),
 
-  mockGet('/admin/v2/mcp-clients/:clientId', ({ params, request }) => {
-    void request
+  mockGet('/admin/v2/mcp-clients/:clientId', ({ params }) => {
     if (getMockScenario() === 'error') {
       return internalError()
     }
