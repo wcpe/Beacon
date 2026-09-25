@@ -84,18 +84,15 @@ export function fetchAuditAnalytics(): Promise<AuditAnalytics> {
  * 过滤口径与列表一致；成功后触发浏览器下载。
  */
 export async function exportAudits(format: 'csv' | 'json', query: AuditQuery = {}): Promise<void> {
-  // 导出不带分页游标；与 List 同口径过滤字段
-  const {
-    includeArchived: _includeArchived,
-    cursor: _cursor,
-    page: _page,
-    size: _size,
-    ...filters
-  } = query
-  void _includeArchived
-  void _cursor
-  void _page
-  void _size
+  // 导出不带分页游标；与 List 同口径过滤字段。
+  // 分页四个字段显式置 undefined 交给 buildQuery 跳过（它按 undefined 过滤），
+  // 避免解构出仅用于丢弃的未使用变量——那需要 void 语句，而
+  // @typescript-eslint/no-meaningless-void-operator 已禁止该写法。
+  const filters: AuditQuery = { ...query }
+  filters.includeArchived = undefined
+  filters.cursor = undefined
+  filters.page = undefined
+  filters.size = undefined
   const path = `/admin/v1/audits/export${buildQuery({ format, ...filters })}`
   const { clearAuth, currentToken, notifyUnauthorized } = await import('../state/auth')
   const { ApiClientError } = await import('./cluster')
