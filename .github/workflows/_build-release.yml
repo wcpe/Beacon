@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.commit }}
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: "10.32.1"
       - uses: actions/setup-node@v7
@@ -99,7 +99,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.commit }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -133,11 +133,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.commit }}
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: 构建 Agent 产品
         shell: sh
         env:
@@ -288,7 +288,7 @@ jobs:
             printf '%s 指向同一 master 提交，资产由 SHA256SUMS.txt 严格校验。\n' "$RC_TAG"
           } > release-body.md
       - name: 创建 RC Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.meta.outputs.tag }}
           name: ${{ needs.meta.outputs.tag }}
@@ -308,11 +308,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.candidate_tag }}
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: 发布候选 Maven SDK
         shell: sh
         env:
