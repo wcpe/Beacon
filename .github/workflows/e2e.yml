@@ -260,7 +260,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: 安装 pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: "10.32.1"
       - name: 安装 Node（启用 pnpm store 缓存）
