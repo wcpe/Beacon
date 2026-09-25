@@ -21,7 +21,7 @@ dependencies {
     api(project(":agent-api"))
 
     // 单元测试：纯逻辑（回退判据 / 订阅桥），用假门面驱动，不连任何外部依赖。
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
 }
 
 // 启用 JUnit 平台。
