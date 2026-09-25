@@ -1,18 +1,30 @@
 # Beacon
 
-> 面向 Minecraft 多群组服务器的集群调度中间件控制面  
+> **面向 Minecraft 多群组服务器的集群调度中间件控制面**
 > 区服治理 · 健康调度 · 跨服消息 · 可观测审计 · 配置与交付
 
-[![version](https://img.shields.io/badge/version-1.1.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/github/v/release/wcpe/Beacon?label=version&color=blue&sort=semver)](https://github.com/wcpe/Beacon/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/wcpe/Beacon/total?label=downloads&color=brightgreen)](https://github.com/wcpe/Beacon/releases)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
 [![CI](https://github.com/wcpe/Beacon/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/Beacon/actions/workflows/ci.yml)
+[![last commit](https://img.shields.io/github/last-commit/wcpe/Beacon/master?label=last%20commit)](https://github.com/wcpe/Beacon/commits/master)
 
-Beacon 把多个 **BungeeCord / Velocity 代理** 与 **Bukkit / Paper 子服** 串成可治理的集群：用独立 **Go 控制面**（内嵌 React 管理台，**单二进制同端口**）统一做身份绑定、区服分配、健康调度、跨服消息追踪、审计告警与灰度交付；游戏服只跑轻量 **Kotlin / TabooLib Agent**，业务插件只依赖本机 `agent-api`，禁止直连控制面。
+Beacon 把多个 **BungeeCord / Velocity 代理**与 **Bukkit / Paper 子服**串成可治理的集群：用独立 **Go 控制面**（内嵌 React 管理台，**单二进制同端口**）统一做身份绑定、区服分配、健康调度、跨服消息追踪、审计告警与灰度交付；游戏服只跑轻量 **Kotlin / TabooLib Agent**，业务插件只依赖本机 `agent-api`，禁止直连控制面。
 
 **控制面挂 ≠ 数据面挂**：Agent 持本地快照 fail-static，控制面不可用时按快照继续跑，不阻断玩家进服。
 
-> **发布状态**：当前公开 GA 为 GitHub Release `v1.0.0`；`1.1.0` 已完成本地验收与发布基线固定，仍待远端 RC/GA 工作流创建不可变资产。正式 GA 以实际创建的 GitHub Release `vX.Y.Z` 为准；在线更新只消费严格 `vX.Y.Z` GA。
+> **发布状态**：当前公开 GA 为 GitHub Release `v1.2.0`（[releases](https://github.com/wcpe/Beacon/releases)）。在线更新只消费严格 `vX.Y.Z` GA，不把 RC 当作自动更新源。
+
+## 目录
+
+- [界面预览](#界面预览)
+- [为什么用 Beacon](#为什么用-beacon)
+- [核心能力](#核心能力)
+- [架构一览](#架构一览)
+- [快速开始](#快速开始)
+- [文档](#文档)
+- [许可](#许可)
 
 ---
 
@@ -61,17 +73,31 @@ pnpm --filter @beacon/ui-wiki dev
 
 ## 核心能力
 
-- **Agent 自连接与身份绑定** — 地址 / token / namespace / serverId 接入；pending → 人工确认 → active  
-- **namespace 强隔离** — 默认禁止跨域调度与消息；跨域须后台显式信任并额外审计  
-- **区服治理** — 环境、BC 集群、大区、小区、默认入口、排空（draining）  
-- **健康调度** — TPS / CPU / 在线 / 连接 / 告警等综合评分；业务插件 `scheduling()` 取候选  
-- **跨服消息** — 定向、RPC、主题广播、按玩家寻址；控制面存元数据与受控 payload（非业务库）  
-- **可观测** — 运维总览、服务分析、拓扑、命令 / 审计 / 告警、连接与消息链路  
-- **配置与交付 V2** — 作用域配置、文件资产、变更单灰度、热重载 / 重启生效、整单回滚  
-- **热冷数据** — 近期热库；过期归档与冷查询；清理前必归档  
-- **在线自更新（GA only）** — 单二进制自我替换；只发现正式 GA，不把 RC 当自动更新源  
+**接入与隔离**
+
+- **Agent 自连接与身份绑定** — 地址 / token / namespace / serverId 接入；pending → 人工确认 → active
+- **namespace 强隔离** — 默认禁止跨域调度与消息；跨域须后台显式信任并额外审计
+- **区服治理** — 环境、BC 集群、大区、小区、默认入口、排空（draining）
+
+**调度与通信**
+
+- **健康调度** — TPS / CPU / 在线 / 连接 / 告警等综合评分；业务插件 `scheduling()` 取候选
+- **跨服消息** — 定向、RPC、主题广播、按玩家寻址；控制面存元数据与受控 payload（非业务库）
+
+**配置与交付**
+
+- **配置与交付 V2** — 作用域配置、文件资产、变更单灰度、热重载 / 重启生效、整单回滚
+- **热冷数据** — 近期热库；过期归档与冷查询；清理前必归档
+
+**可观测与安全**
+
+- **可观测** — 运维总览、服务分析、拓扑、命令 / 审计 / 告警、连接与消息链路
 - **统一审批与受控正文** — 高风险写入由审批 worker 与执行回执同事务完成；敏感配置、文件、反向抓取和命令结果使用一次性授权读取
 - **资源生命周期与 MCP 自动化** — 归档、恢复、墓碑化均保留影响预览与审批轨迹；MCP 以 OAuth 客户端身份、最小权限和审批交接运行
+
+**运维**
+
+- **在线自更新（GA only）** — 单二进制自我替换；只发现正式 GA，不把 RC 当自动更新源
 
 ---
 
@@ -123,17 +149,17 @@ dependencies {
 }
 ```
 
-调度、消息、配置读取示例见 [docs/SDK.md](docs/SDK.md)。  
+调度、消息、配置读取示例见 [docs/SDK.md](docs/SDK.md)。
 **运行期版本**：部署的 Agent ≥ 编译所用 api/kit 版本。
 
 ### 4. 从源码构建
 
-```bash
-make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar
-# 或：make web · make build · make agent
-```
+前置：**Go 1.26+** · **Node 22 + pnpm** · **JDK 21**。
 
-需要 Go 1.26+、Node + pnpm、JDK 21。
+```bash
+make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar → dist/
+# 或分开执行：make web · make build · make agent
+```
 
 ---
 
