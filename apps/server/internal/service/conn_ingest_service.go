@@ -155,10 +155,21 @@ func (s *ConnIngestService) Ingest(p ConnBatchParams) (ConnBatchResult, error) {
 		if skewDropped := s.guardClockSkew(p.Identity, in.ConnID, connMs, nowMs); skewDropped {
 			continue
 		}
+		// 批内去重：同 kind 同 connId 只保留**最后一条**。
+		//
+		// 不能简单「先到先得、后续丢弃」：agent 在玩家进入 / 切换到子服时会补发一条 open（同 connId、
+		// 携当前所在服），若登录与进服落在同一批（间隔常 <1s），丢弃后补的那条会让名册拿不到玩家所在服。
+		// 故按 key 覆盖保留最后一条。
 		dedupKey := in.Kind + "\x00" + in.ConnID
 		if _, dup := seen[dedupKey]; dup {
 			duplicated++
-			continue
+			// 移除先前那条，改用本条（后到者位置更新）
+			for i := range events {
+				if events[i].Kind == in.Kind && events[i].ConnID == in.ConnID {
+					events = append(events[:i], events[i+1:]...)
+					break
+				}
+			}
 		}
 		seen[dedupKey] = struct{}{}
 		events = append(events, s.toConnEvent(p.Identity, in, connMs))
@@ -208,18 +219,31 @@ func (s *ConnIngestService) toConnEvent(id agentauth.Identity, in ConnEventInput
 	}
 }
 
-// applyRoster 按已受理事件更新内存名册：open 登记（解析服 = 首后端，缺省回退 proxy）、close 摘除。
+// applyRoster 按已受理事件更新内存名册：open 登记（解析服取**当前所在服**）、close 摘除。
+//
+// 解析服的取值优先级：`last_backend` > `first_backend` > proxy。
+//   - agent 在玩家**进入 / 切换到**某子服时补发一条 open（同 connId，携 last_backend = 当前服），
+//     故 last_backend 才是「此刻在哪」——缺它时名册只能回退 proxy，按玩家寻址的消息会被投到代理
+//     并因代理无对应 handler 而失败（真机暴露）。
+//   - first_backend 是「会话首个后端」，仅在玩家从未换服时等于当前服，故只作次级兜底。
+//   - 全都拿不到（玩家还在代理上、未进任何子服）才回退 proxy。
+//
+// 同时登记玩家名（供按玩家名寻址）：上层门面 `sendToPlayer(playerName, ...)` 收的是玩家名，而子服 agent
+// 看不到异服玩家、无法自行换成 UUID，故由本名册提供两种形态的解析。
 func (s *ConnIngestService) applyRoster(events []model.ConnEvent) {
 	for _, ev := range events {
 		if ev.Kind == model.ConnEventKindClose {
 			s.roster.ApplyClose(ev.PlayerUUID, ev.ConnID)
 			continue
 		}
-		resolved := ev.FirstBackend
+		resolved := ev.LastBackend
+		if resolved == "" {
+			resolved = ev.FirstBackend
+		}
 		if resolved == "" {
 			resolved = ev.ProxyServerID
 		}
-		s.roster.ApplyOpen(ev.NamespaceID, ev.PlayerUUID, ev.ConnID, resolved)
+		s.roster.ApplyOpen(ev.NamespaceID, ev.PlayerUUID, ev.PlayerName, ev.ConnID, resolved)
 	}
 }
 
@@ -281,7 +305,7 @@ func (s *ConnIngestService) RebuildRoster() {
 			resolved = oc.ProxyServerID
 		}
 		entries = append(entries, roster.RebuildEntry{
-			PlayerUUID: oc.PlayerUUID, ConnID: oc.ConnID,
+			PlayerUUID: oc.PlayerUUID, PlayerName: oc.PlayerName, ConnID: oc.ConnID,
 			NamespaceID: oc.NamespaceID, ServerID: resolved,
 		})
 	}

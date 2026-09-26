@@ -16,7 +16,11 @@ package top.wcpe.beacon.agent.core.messaging
  * - [messageId]     P5 起：源 agent 发送时生成的 UUIDv7（控制面据高 48 位时间戳定位日表）；旧 Redis 通道可空。
  * - [sentAt]        P5 起：发送时刻（Unix 毫秒）；上线经适配器格式化为 UTC ISO8601。
  * - [targetKind]    P5 起：寻址类型 `server` / `player` / `broadcast`（FR-180）；HTTP 中转据此建 wire 目标（Redis 通道忽略）。
- * - [targetId]      P5 起：目标标识（targetKind=server 为 serverId、player 为 playerUuid、broadcast 为可选 zone 名）。
+ * - [targetId]      P5 起：目标标识（targetKind=server 为 serverId；targetKind=player 为**玩家名或玩家 UUID**
+ *                   两种形态皆可，由控制面按内存连接名册解析——见下方说明；broadcast 为可选 zone 名）。
+ *                   说明：门面 `sendToPlayer(playerName, ...)` 面向调用方收的是玩家名，而子服 agent 只有本服
+ *                   在线列表、看不到异服玩家，无法自行把名换成 UUID，故 wire 的 `targetPlayerUuid` 键保留原值，
+ *                   由持有全量连接明细的控制面完成「按 UUID 优先、回退按名」的解析。
  * - [broadcast]     FR-180：广播投递标记（additive 键，只增不改）。入站消息带 true 时按 topic 订阅分发表路由，
  *                   与定向 on(type) 分发表隔离；定向消息缺省 false。
  *

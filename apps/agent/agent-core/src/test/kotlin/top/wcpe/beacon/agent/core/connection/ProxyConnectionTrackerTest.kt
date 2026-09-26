@@ -9,8 +9,8 @@ import kotlin.test.assertTrue
 /**
  * 玩家连接会话追踪器 [ProxyConnectionTracker] 单测（FR-145 §4.1）。
  *
- * 覆盖：open 生成 connId（内嵌时间戳）+ 发 open 事件、后端首连与换服累加摘要、close 复用同 connId
- * 携时长/closeKind/首末后端/切换数、会话移除、多玩家独立、无会话的 close/backend 忽略。
+ * 覆盖：open 生成 connId（内嵌时间戳）+ 发 open 事件、后端首连与换服累加摘要**并补发携当前位置的 open**、
+ * close 复用同 connId 携时长/closeKind/首末后端/切换数、会话移除、多玩家独立、无会话的 close/backend 忽略。
  */
 class ProxyConnectionTrackerTest {
     private val events = mutableListOf<ConnectionEvent>()
@@ -36,7 +36,7 @@ class ProxyConnectionTrackerTest {
     fun `后端首连与换服累加摘要 close 事件携首末后端与切换数`() {
         tracker.onConnect("u1", "Steve", null, null)
         val connId = events.single().connId
-        tracker.onBackend("u1", "lobby-1") // 首连：first=last=lobby-1，switch=0
+        tracker.onBackend("u1", "lobby-1") // 首连：first=last=lobby-1，switch=0（并补发位置 open）
         tracker.onBackend("u1", "lobby-1") // 同服重复：不计切换
         tracker.onBackend("u1", "game-7") // 换服：last=game-7，switch=1
         tracker.onBackend("u1", "game-9") // 换服：last=game-9，switch=2
@@ -76,5 +76,42 @@ class ProxyConnectionTrackerTest {
         tracker.onDisconnect("ghost", "quit", null)
         tracker.onBackend("ghost", "lobby-1")
         assertTrue(events.isEmpty(), "无会话不产生事件")
+    }
+
+    /**
+     * 后端连接 / 换服时**补发一条 open 携当前所在服**：控制面名册据此得知「玩家此刻在哪」。
+     *
+     * 缺这条补发时控制面只能回退到代理，按玩家寻址的消息会被投到代理、因无对应 handler 而失败
+     * （真机暴露：跨服私聊与切服结果回传静默失败）。
+     */
+    @Test
+    fun `后端连接补发 open 携当前所在服供控制面名册更新`() {
+        tracker.onConnect("u1", "Steve", null, null)
+        events.clear()
+
+        tracker.onBackend("u1", "game-1")
+        val first = events.single()
+        assertEquals(ConnectionEventKind.OPEN, first.kind, "补发应为 open（复用既有 kind，不改 wire 枚举）")
+        assertEquals("u1", first.playerUuid)
+        assertEquals("Steve", first.playerName, "补发应携玩家名，控制面按名寻址索引依赖它")
+        assertEquals("game-1", first.lastBackend, "补发须携当前所在服")
+        assertEquals("game-1", first.firstBackend)
+
+        events.clear()
+        tracker.onBackend("u1", "game-7") // 换服
+        val switched = events.single()
+        assertEquals(ConnectionEventKind.OPEN, switched.kind)
+        assertEquals("game-7", switched.lastBackend, "换服后补发应携新所在服")
+    }
+
+    /** 补发 open 复用同一 connId（控制面据它更新位置列、不新增会话行）。 */
+    @Test
+    fun `后端连接补发的 open 复用登入时的 connId`() {
+        tracker.onConnect("u1", "Steve", null, null)
+        val connId = events.single().connId
+
+        events.clear()
+        tracker.onBackend("u1", "game-1")
+        assertEquals(connId, events.single().connId, "补发 open 必须复用同 connId")
     }
 }

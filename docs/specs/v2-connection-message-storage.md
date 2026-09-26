@@ -139,13 +139,13 @@ HTTP wire 的 payload 接受任意 JSON 值：object / array / string / number /
 ### 4.1 连接明细采集（proxy 侧）
 
 1. 玩家连接建立：proxy agent 生成 `connId`（UUIDv7），组装 open 事件入本地有界缓冲。
-2. 玩家断开：组装 close 事件（含 `connId`、close_kind/reason、last_backend、switch_count、duration）。后端切换只累加本地计数，不产生独立事件。
+2. 玩家连接到后端（首次进服与换服）：**补发一条 open 事件**（同 `connId`，携 `firstBackend`/`lastBackend` = 当前所在服）；玩家断开：组装 close 事件（含 `connId`、close_kind/reason、last_backend、switch_count、duration）。逐次切换本身仍不产生独立事件，但**当前位置**经补发的 open 上报——控制面名册要答「玩家此刻在哪」，缺它时名册只能回退到代理（§4.2 按玩家寻址会把消息投到代理并因无对应 handler 失败）。
 3. **批量上报**：每 5s 或缓冲达 200 条（先到者触发）批量 POST 一次，单批上限 500 条，open / close 混合。采集与上报全部在 TabooLib async 线程，不碰 MC/BC 主线程。
-4. **幂等**：open 按 `conn_id` 插入冲突即忽略；close 按 `conn_id` 更新、目标行已 closed 即忽略——agent 重试安全。
+4. **幂等**：open 按 `conn_id` 插入冲突时**只刷新位置列**（首末后端 / 切换数，有值才覆盖，防把已知位置抹空），不新增行、不动 open 时段字段；close 按 `conn_id` 更新、目标行已 closed 即忽略——agent 重试安全。批内同 `kind + connId` 重复时**保留最后一条**（登录与进服可能落在同一批，丢弃后补的那条会让名册拿不到位置）。
 5. **fail-static**：控制面不可用时事件进本地有界缓冲（默认上限 10000 条），恢复后补报；溢出丢弃最旧并累计丢弃计数，随下一批上报（控制面记 WARN），绝不阻塞玩家连接处理。
 6. 控制面侧：请求线程只做鉴权 + 结构校验 + 入内存有界队列即返回，独立 worker 批量 upsert 入日表（对齐基座「异步批量入库、禁请求主线程长耗时」）；队列满返回 429，agent 退避后重报。
 
-连接明细同时充当「玩家 → 所在服」名册的事实来源：控制面在内存维护 `player_uuid → resolved server` 快照（open/close/switch 摘要驱动），供 §4.2 按玩家寻址解析。快照属注册健康类内存事实，进程重启后由 `status=open` 行重建。
+连接明细同时充当「玩家 → 所在服」名册的事实来源：控制面在内存维护 `player_uuid / 玩家名 → resolved server` 快照（open/close 驱动，位置取 `last_backend` > `first_backend` > proxy），供 §4.2 按玩家寻址解析。名册**同时**索引 UUID 与玩家名（小写归一）：上层门面 `sendToPlayer(playerName, ...)` 收的是玩家名，而子服 agent 看不到异服玩家、无法自行换成 UUID，故转换只能在持有全量连接明细的控制面完成。快照属注册健康类内存事实，进程重启后由 `status=open` 行重建（重建须一并恢复名索引）。
 
 ### 4.2 跨服消息传输与状态机
 
@@ -212,7 +212,7 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 
 | 方法 | 路径 | 请求要点 | 响应要点 |
 |---|---|---|---|
-| POST | `/beacon/v2/agent/connections/batch` | proxy 专用；`{bootId, droppedCount, events:[{kind: open\|close, connId, playerUuid, playerName, clientIp?, protocolVersion?, openedAt, closedAt?, closeKind?, closeReason?, firstBackend?, lastBackend?, backendSwitchCount?}]}`，单批 ≤500 | `202 {accepted, duplicated}`；队列满 `429` 带退避提示 |
+| POST | `/beacon/v2/agent/connections/batch` | proxy 专用；`{bootId, droppedCount, events:[{kind: open\|close, connId, playerUuid, playerName, clientIp?, protocolVersion?, openedAt, closedAt?, closeKind?, closeReason?, firstBackend?, lastBackend?, backendSwitchCount?}]}`，单批 ≤500。**kind 枚举只 open\|close**：位置刷新复用 open（同 connId 携当前后端），不新增 kind（信封只增不改） | `202 {accepted, duplicated}`；队列满 `429` 带退避提示 |
 | POST | `/beacon/v2/agent/messages/send` | `{messageId, msgType, targetKind: server\|player\|broadcast, targetServerId?, targetPlayerUuid?, targetZone?, correlationId?, payload, sentAt}`；`msgType` 非空且 UTF-8 编码 ≤64 字节，冒号合法；payload 为任意 JSON 值（object / array / string / number / boolean / null），broadcast 时 targetZone 可选做 zone 级定向（FR-180） | `200 {messageId, status}`；跨域无信任 / 跨域广播 `403`；Agent 按 JSON 编码文本、控制面按中转 / 保存文本分别执行 64KB 校验，控制面超限返回 `400 payload_too_large`；目标无效 `200 status=failed` 带原因 |
 | POST | `/beacon/v2/agent/messages/poll` | `{waitSec ≤25, max ≤50}` 长轮询取本服待投消息 | `200 {messages:[{messageId, msgType, sourceServerId, correlationId?, broadcast?, payload, createdAt}]}`；payload 保持 send 时的 JSON 类型，string 保持业务原文且不被二次 JSON 编码，null 表示无 payload（`broadcast: true` 为广播投递标记，agent 据此路由 topic 订阅分发，FR-180）；无消息超时 `204` |
 | POST | `/beacon/v2/agent/messages/ack` | `{results:[{messageId, status: delivered\|failed, reason?, deliveredAt, handlerCostMs?}]}` 批量回执 | `200 {applied}`；未知 messageId 忽略计入 `ignored` |
@@ -267,7 +267,7 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 
 1. **消息经控制面单跳中转**：Legacy ADR-0016 决策为「消息不经控制面、走 Redis」，与第二版禁 Redis 冲突。本规格默认改为控制面中转 + 长轮询下发，**需要新 ADR 正式取代 ADR-0016**（不静默违背）。延迟量级（长轮询下发百 ms 级）能否满足业务插件预期需真机压测确认。**已拍板（2026-07-07）：确认控制面中转；[ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 已取代 ADR-0016 落地。**
 2. **主键用 UUIDv7 并以 ID 内嵌时间定位日表**：换取「免日期提示按 ID 直查」；代价是依赖 agent 时钟（已加 24h 拒收护栏）。备选是控制面接收时间定表 + 查询按 ID 需扫多表，未采用。
-3. **连接明细取「会话行」而非事件流水**：后端切换只记 `backend_switch_count` 与首末后端摘要，不存逐次切换事件——玩家流以 proxy 聚合近似。若后续要求精确「服 → 服」玩家迁移图，需另立事件表（待需求确认再做）。
+3. **连接明细取「会话行」而非事件流水**：后端切换只记 `backend_switch_count` 与首末后端摘要，不存逐次切换事件——玩家流以 proxy 聚合近似。若后续要求精确「服 → 服」玩家迁移图，需另立事件表（待需求确认再做）。**注意**：玩家**当前所在服**必须可由明细得知（控制面名册据此解析按玩家寻址的目标服），故后端连接 / 换服时补发一条携位置的 open（§4.1-2）——这仍不构成「逐次切换流水」：只刷新会话行的位置列，不新增行、不记切换序列。
 4. ~~消息目标只做 server / player 两种寻址~~ **已由 FR-180 / [ADR-0065](../adr/0065-message-broadcast-addressing.md) 补齐广播寻址**（真机 Lodestone 依赖广播，已回 PRD 立项——正是本条预留的口子）；订阅式 pub/sub 与离线留存仍不做。
 5. **可靠性档位**：TTL 30s、`dispatched` 后 10s 重投、最多 2 次、每服投递队列 1000 条——「至多短暂重试、不离线补投」。数值走运维设置热更，默认值待真机校准。
 6. **payload 上限 64KB、超限拒发不截断**；payload 明文落库（PRD 明确不做静态加密），DB 层防护依赖部署侧（DSN 权限、备份加密）另行约定。

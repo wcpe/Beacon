@@ -173,18 +173,22 @@ func TestConnIngestBootChangeTriggersReconcile(t *testing.T) {
 	}
 }
 
-// TestConnRebuildRoster 校验从 open 连接行重建名册。
+// TestConnRebuildRoster 校验从 open 连接行重建名册（UUID 与**玩家名**两条索引都要恢复）。
 func TestConnRebuildRoster(t *testing.T) {
 	rec := &fakeReconciler{openConns: []repository.OpenConn{
-		{ConnID: "c1", NamespaceID: 1, ProxyServerID: "proxy-1", PlayerUUID: "erin", FirstBackend: "game-5"},
-		{ConnID: "c2", NamespaceID: 1, ProxyServerID: "proxy-1", PlayerUUID: "frank"}, // 无后端 → 回退 proxy
+		{ConnID: "c1", NamespaceID: 1, ProxyServerID: "proxy-1", PlayerUUID: "uuid-erin", PlayerName: "Erin", FirstBackend: "game-5"},
+		{ConnID: "c2", NamespaceID: 1, ProxyServerID: "proxy-1", PlayerUUID: "uuid-frank", PlayerName: "Frank"}, // 无后端 → 回退 proxy
 	}}
 	s, rs := newConnSvc(&fakeConnEnqueuer{}, rec)
 	s.RebuildRoster()
-	if loc, ok := rs.Resolve("erin"); !ok || loc.ServerID != "game-5" {
+	if loc, ok := rs.Resolve("uuid-erin"); !ok || loc.ServerID != "game-5" {
 		t.Fatalf("应重建 erin→game-5，实际 %+v ok=%v", loc, ok)
 	}
-	if loc, ok := rs.Resolve("frank"); !ok || loc.ServerID != "proxy-1" {
+	if loc, ok := rs.Resolve("uuid-frank"); !ok || loc.ServerID != "proxy-1" {
 		t.Fatalf("无后端应回退 proxy-1，实际 %+v ok=%v", loc, ok)
+	}
+	// 关键：重建必须一并恢复**按名**索引 —— 否则控制面一重启，按玩家寻址的消息就全部落空。
+	if loc, ok := rs.ResolvePlayer("Erin"); !ok || loc.ServerID != "game-5" {
+		t.Fatalf("重建后按名应可解析 Erin→game-5，实际 %+v ok=%v", loc, ok)
 	}
 }

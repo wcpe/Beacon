@@ -97,15 +97,70 @@ func TestMessageSendPlayerNotOnline(t *testing.T) {
 	}
 }
 
+// TestMessageSendPlayerByName 按**玩家名**寻址应能解析并投递。
+//
+// 这是真机暴露的缺陷的回归：上层门面 `sendToPlayer(playerName, ...)` 收的是玩家名，而子服 agent 看不到
+// 异服玩家、无法自行把名换成 UUID，故控制面必须能按名解析——否则按玩家寻址的消息全部落空报
+// player_not_online（表现为跨服私聊 / 切服结果回传静默失败）。
+func TestMessageSendPlayerByName(t *testing.T) {
+	svc, _, _, rs, _ := newMsgSvc(t)
+	rs.ApplyOpen(1, "uuid-alice", "Alice", "c1", "game-9")
+	mid := uuid7(time.Now().UTC().UnixMilli(), "s7")
+	p := sendParams(mid, backendID(1, "game-1"))
+	p.TargetKind = model.MsgTargetKindPlayer
+	p.TargetServerID = ""
+	p.TargetPlayerUUID = "Alice" // 按名（门面 sendToPlayer 的入参形态）
+	res, err := svc.Send(p)
+	if err != nil || res.Status != model.MsgStatusAccepted {
+		t.Fatalf("按玩家名寻址应 accepted，实际 %+v err=%v", res, err)
+	}
+	if got := svc.relay.Poll(context.Background(), 1, "game-9", 0, 10); len(got) != 1 {
+		t.Fatalf("按名应投递到 Alice 所在 game-9，实际 %+v", got)
+	}
+}
+
+// TestMessageSendPlayerByNameCrossNamespace 按名寻址同样支持跨域解析与信任校验。
+func TestMessageSendPlayerByNameCrossNamespace(t *testing.T) {
+	svc, _, _, rs, trust := newMsgSvc(t)
+	trust.allowed[[2]uint{1, 2}] = true
+	rs.ApplyOpen(2, "uuid-bob", "Bob", "c4", "game-5") // bob 在 ns2
+	mid := uuid7(time.Now().UTC().UnixMilli(), "s8")
+	p := sendParams(mid, backendID(1, "game-1"))
+	p.TargetKind = model.MsgTargetKindPlayer
+	p.TargetServerID = ""
+	p.TargetPlayerUUID = "bob" // 按名（小写，验证大小写不敏感）
+	res, err := svc.Send(p)
+	if err != nil || res.Status != model.MsgStatusAccepted {
+		t.Fatalf("按名跨域有信任应 accepted，实际 %+v err=%v", res, err)
+	}
+}
+
+// TestMessageSendPlayerByNameOffline 名册无此人时仍应落 failed(player_not_online)，不因支持按名而放宽。
+func TestMessageSendPlayerByNameOffline(t *testing.T) {
+	svc, _, sink, _, _ := newMsgSvc(t)
+	mid := uuid7(time.Now().UTC().UnixMilli(), "s9")
+	p := sendParams(mid, backendID(1, "game-1"))
+	p.TargetKind = model.MsgTargetKindPlayer
+	p.TargetServerID = ""
+	p.TargetPlayerUUID = "Ghost"
+	if _, err := svc.Send(p); err != nil {
+		t.Fatalf("不在线应落 failed 而非报错，实际 %v", err)
+	}
+	rec, ok := sink.byID(mid)
+	if !ok || rec.Trace.FailReason != model.MsgFailPlayerNotOnline {
+		t.Fatalf("应落 failed(player_not_online)，实际 %+v ok=%v", rec.Trace, ok)
+	}
+}
+
 // TestMessageSendPlayerSameNamespace 校验同域玩家在线解析 resolved 并入队。
 func TestMessageSendPlayerSameNamespace(t *testing.T) {
 	svc, _, _, rs, _ := newMsgSvc(t)
-	rs.ApplyOpen(1, "alice", "c1", "game-9")
+	rs.ApplyOpen(1, "uuid-alice", "Alice", "c1", "game-9")
 	mid := uuid7(time.Now().UTC().UnixMilli(), "s4")
 	p := sendParams(mid, backendID(1, "game-1"))
 	p.TargetKind = model.MsgTargetKindPlayer
 	p.TargetServerID = ""
-	p.TargetPlayerUUID = "alice"
+	p.TargetPlayerUUID = "uuid-alice"
 	res, err := svc.Send(p)
 	if err != nil || res.Status != model.MsgStatusAccepted {
 		t.Fatalf("同域玩家在线应 accepted，实际 %+v err=%v", res, err)
@@ -118,12 +173,12 @@ func TestMessageSendPlayerSameNamespace(t *testing.T) {
 // TestMessageSendCrossNamespaceNoTrust 校验跨域玩家无信任 → 403 并记 failed。
 func TestMessageSendCrossNamespaceNoTrust(t *testing.T) {
 	svc, _, sink, rs, _ := newMsgSvc(t)
-	rs.ApplyOpen(2, "bob", "c2", "game-5") // bob 在 ns2
+	rs.ApplyOpen(2, "uuid-bob", "Bob", "c2", "game-5") // bob 在 ns2
 	mid := uuid7(time.Now().UTC().UnixMilli(), "s5")
 	p := sendParams(mid, backendID(1, "game-1")) // 源 ns1
 	p.TargetKind = model.MsgTargetKindPlayer
 	p.TargetServerID = ""
-	p.TargetPlayerUUID = "bob"
+	p.TargetPlayerUUID = "uuid-bob"
 	if _, err := svc.Send(p); err != apperr.ErrMessageCrossNamespaceNoTrust {
 		t.Fatalf("跨域无信任应 403，实际 %v", err)
 	}
@@ -137,12 +192,12 @@ func TestMessageSendCrossNamespaceNoTrust(t *testing.T) {
 func TestMessageSendCrossNamespaceTrusted(t *testing.T) {
 	svc, _, _, rs, trust := newMsgSvc(t)
 	trust.allowed[[2]uint{1, 2}] = true
-	rs.ApplyOpen(2, "bob", "c3", "game-5")
+	rs.ApplyOpen(2, "uuid-bob", "Bob", "c3", "game-5")
 	mid := uuid7(time.Now().UTC().UnixMilli(), "s6")
 	p := sendParams(mid, backendID(1, "game-1"))
 	p.TargetKind = model.MsgTargetKindPlayer
 	p.TargetServerID = ""
-	p.TargetPlayerUUID = "bob"
+	p.TargetPlayerUUID = "uuid-bob"
 	res, err := svc.Send(p)
 	if err != nil || res.Status != model.MsgStatusAccepted {
 		t.Fatalf("跨域有信任应 accepted，实际 %+v err=%v", res, err)

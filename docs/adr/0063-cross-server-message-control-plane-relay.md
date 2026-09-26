@@ -20,6 +20,8 @@ P5 需要让跨服通信真正可用（第二版消息面此前随 Redis 一并�
 
 4. **玩家位置名册权威迁至控制面**：ADR-0016 由 BC 侧 beacon-proxy 把"玩家→所在服"索引存 Redis；本 ADR 改为**控制面依 `conn_detail`（连接明细，FR-145）在内存维护 `player_uuid → resolved server` 快照**，作为按玩家寻址的解析权威。agent 侧不再维护 Redis 名册。沿用 ADR-0016 §5 的一致性取舍（接受换服瞬间短暂错位、解析落空走"找不到目标"兜底、进程重建期短暂误判可接受）。
 
+   **补充（真机修正）**：名册需同时支持**按玩家名**解析——门面 `sendToPlayer(playerName, ...)`（ADR-0016 §5 起既有契约）面向调用方收的是玩家名，而子服 agent 只有本服在线列表、看不到异服玩家，无法自行把名换成 UUID，故转换只能在持有全量连接明细的控制面完成（名册同时索引 UUID 与玩家名，UUID 优先）。同时名册的「当前所在服」取自 `last_backend` > `first_backend` > proxy：agent 在玩家进入 / 切换到子服时补发一条携位置的 open（复用既有 kind，§4.1-2），否则名册只能回退到代理、按玩家寻址的消息会被投到代理并因无对应 handler 失败。
+
 5. **信封只增不改**：消息信封新增 `messageId`(UUIDv7)、发送时间戳、`hops`（链路事件数组）等字段，沿用 ADR-0016 §13「只增不改」演进规约，保证集群内新老插件混跑向后兼容。
 
 6. **传输抽象仍遵 [ADR-0005](0005-agent-transport-codec-abstraction.md)**：agent core 依赖 `MessageTransport` / `HttpTransport` / `JsonCodec` 接口，HTTP 客户端与 JSON 库只在适配器。`MessageTransport` 的实现由 Redis 换为基于 `BeaconApiClient` 的 HTTP 实现；ADR-0016 的 `RedisMessageTransport` 及 Jedis 依赖退役为孤儿。Bukkit/Bungee v2 壳层不得创建或同步 Legacy Redis 消息引导，HTTP `MessagingRuntime` 是对外 `MessagingHolder` 的唯一写入者；Legacy 代码保留，按精准修改不做扩散式删除。

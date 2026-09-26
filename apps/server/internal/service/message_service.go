@@ -173,15 +173,18 @@ func broadcastUnreachable(reasons []string) bool {
 // err 非空表示拒绝（跨域无信任 403，已在此记 failed 落库）。
 //
 //   - server 目标：同 namespace 内定向，resolved = targetServerId（离线由 TTL 过期，不即时判失败）。
-//   - player 目标：查内存名册；不在线 → failReason=player_not_online；跨 namespace → 须 capability=message
-//     信任，无信任返回 403。
+//   - player 目标：查内存名册（**优先按 UUID、回退按玩家名**）；不在线 → failReason=player_not_online；
+//     跨 namespace → 须 capability=message 信任，无信任返回 403。
+//
+// 按名回退的原因：上层门面 `sendToPlayer(playerName, ...)` 面向调用方收的是玩家名，而子服 agent 看不到
+// 异服玩家（Bukkit 只有本服在线列表），无法自行把名换成 UUID——转换只能在持有全量连接明细的本层完成。
 func (s *MessageService) resolveTarget(msg *IncomingMessage) (string, error) {
 	if msg.TargetKind == model.MsgTargetKindServer {
 		msg.ResolvedNamespaceID = msg.NamespaceID
 		msg.ResolvedServerID = msg.TargetServerID
 		return "", nil
 	}
-	loc, ok := s.roster.Resolve(msg.TargetPlayer)
+	loc, ok := s.roster.ResolvePlayer(msg.TargetPlayer)
 	if !ok {
 		return model.MsgFailPlayerNotOnline, nil
 	}
