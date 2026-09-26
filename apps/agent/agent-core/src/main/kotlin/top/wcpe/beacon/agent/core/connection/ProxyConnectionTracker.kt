@@ -6,8 +6,9 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 玩家连接会话追踪器（proxy 侧，FR-145 §4.1）：把「登入 / 后端切换 / 登出」平台事件映射为 open/close 事件。
  *
- * 会话行语义：登入时生成 connId（UUIDv7）并发 open 事件、缓存会话；后端切换只累加本地摘要（首末后端 + 切换次数）、
- * 不发独立事件；登出时用同 connId 发 close 事件（携时长/closeKind/首末后端/切换数）。
+ * 会话行语义：登入时生成 connId（UUIDv7）并发 open 事件、缓存会话；后端连接 / 切换时**补发一条 open**
+ * 携当前所在服（控制面按 connId 更新位置列，控制面名册据此得知「玩家此刻在哪」）；登出时用同 connId 发
+ * close 事件（携时长/closeKind/首末后端/切换数）。
  *
  * core 纯逻辑、无 IO、无平台依赖：事件经 [sink] 交有界缓冲（[ConnectionEventBuffer.add]）。
  * 埋点零成本（map + UUID 生成，无阻塞），可在 BC 事件线程直接调用，绝不阻塞 MC/BC 主线程。
@@ -73,7 +74,16 @@ class ProxyConnectionTracker(
         )
     }
 
-    /** 玩家连接到某后端子服（首次进服与换服都触发）：只累加会话摘要，不发独立事件。 */
+    /**
+     * 玩家连接到某后端子服（首次进服与换服都触发）：累加会话摘要，并**补发一条 open 事件**携当前所在服。
+     *
+     * 为什么补发：控制面名册要答「玩家此刻在哪」，而 open（登录时发）尚不知后端、close 要等断线，
+     * 后端切换本身又不发独立事件（见 v2-connection-message-storage spec §4.1 的会话行取舍）。
+     * 缺这条补发时名册只能回退到代理，按玩家寻址的消息会被投到代理、因无对应 handler 而失败（真机暴露）。
+     *
+     * 复用 open 事件而非新增 kind：wire 的 kind 枚举是冻结契约（spec §4.1 只允许 open|close），
+     * 而 open 行的位置列本就存在（first/last_backend），冲突时按位置列更新即可（见控制面 insertConnOpens）。
+     */
     fun onBackend(
         playerUuid: String,
         backendServerId: String,
@@ -88,6 +98,24 @@ class ProxyConnectionTracker(
                 session.switchCount++
             }
         }
+        // 补发 open 携当前位置（同 connId；控制面按 connId 更新位置列，不新增会话行）
+        sink(
+            ConnectionEvent(
+                kind = ConnectionEventKind.OPEN,
+                connId = session.connId,
+                playerUuid = playerUuid,
+                playerName = session.playerName,
+                clientIp = session.clientIp,
+                protocolVersion = session.protocolVersion,
+                openedAtMs = session.openedAtMs,
+                closedAtMs = null,
+                closeKind = null,
+                closeReason = null,
+                firstBackend = session.firstBackend,
+                lastBackend = backendServerId,
+                backendSwitchCount = null,
+            ),
+        )
     }
 
     /** 玩家登出：用同 connId 发 close 事件（携时长/closeKind/首末后端/切换数），移除会话。无对应会话则忽略。 */

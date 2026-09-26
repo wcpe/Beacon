@@ -143,6 +143,70 @@ func TestConnFlushOpenIdempotent(t *testing.T) {
 	}
 }
 
+// TestConnFlushOpenRefreshesLocation 校验同 connId 的**补发 open** 刷新位置列而不新增行。
+//
+// 场景：agent 在「登录代理」时发第一条 open（尚不知后端，首末后端为空），玩家进入子服后再补发一条
+// open 携当前位置。控制面名册据此得知「玩家此刻在哪」——若位置列不刷新，名册只能回退到代理，
+// 按玩家寻址的消息会被投到代理并因无对应 handler 而失败。
+func TestConnFlushOpenRefreshesLocation(t *testing.T) {
+	db := openRepoSQLite(t, "conn_locrefresh")
+	repo := NewConnDetailRepository(db)
+	openedMs := time.Date(2026, 7, 11, 10, 0, 0, 0, time.UTC).UnixMilli()
+	cid := uuidV7At(openedMs, "c4")
+	table := store.DailyTableName("conn_detail", time.UnixMilli(openedMs).UTC())
+
+	// ① 登录时的 open：无后端信息
+	if _, err := repo.FlushDaily([]model.ConnEvent{openEvent(cid, 1, "proxy-1", "p4", openedMs)}); err != nil {
+		t.Fatalf("写登录 open 失败: %v", err)
+	}
+	row := fetchConn(t, db, table, cid)
+	if row.LastBackendServerID != "" {
+		t.Fatalf("登录 open 不应有后端，实际 %q", row.LastBackendServerID)
+	}
+
+	// ② 进入子服后的补发 open：携当前位置
+	refreshed := openEvent(cid, 1, "proxy-1", "p4", openedMs)
+	refreshed.FirstBackend = "game-1"
+	refreshed.LastBackend = "game-1"
+	if _, err := repo.FlushDaily([]model.ConnEvent{refreshed}); err != nil {
+		t.Fatalf("写补发 open 失败: %v", err)
+	}
+
+	if got := countDaily(t, db, table); got != 1 {
+		t.Fatalf("补发 open 不应新增会话行，实际 %d 行", got)
+	}
+	row = fetchConn(t, db, table, cid)
+	if row.LastBackendServerID != "game-1" {
+		t.Fatalf("补发 open 应刷新位置列为 game-1，实际 %q", row.LastBackendServerID)
+	}
+	if row.OpenedAt.UnixMilli() != openedMs {
+		t.Fatalf("补发 open 不应改动 opened_at，实际 %v", row.OpenedAt)
+	}
+}
+
+// TestConnFlushOpenRefreshKeepsLocationWhenBackendAbsent 补发 open 未携后端时不应把已知位置抹空。
+func TestConnFlushOpenRefreshKeepsLocationWhenBackendAbsent(t *testing.T) {
+	db := openRepoSQLite(t, "conn_lockeep")
+	repo := NewConnDetailRepository(db)
+	openedMs := time.Date(2026, 7, 11, 11, 0, 0, 0, time.UTC).UnixMilli()
+	cid := uuidV7At(openedMs, "c5")
+	table := store.DailyTableName("conn_detail", time.UnixMilli(openedMs).UTC())
+
+	first := openEvent(cid, 1, "proxy-1", "p5", openedMs)
+	first.FirstBackend = "game-7"
+	first.LastBackend = "game-7"
+	if _, err := repo.FlushDaily([]model.ConnEvent{first}); err != nil {
+		t.Fatalf("写 open 失败: %v", err)
+	}
+	// 再重放一条不带后端的 open（如离线的重试），位置应保留
+	if _, err := repo.FlushDaily([]model.ConnEvent{openEvent(cid, 1, "proxy-1", "p5", openedMs)}); err != nil {
+		t.Fatalf("重放 open 失败: %v", err)
+	}
+	if row := fetchConn(t, db, table, cid); row.LastBackendServerID != "game-7" {
+		t.Fatalf("无后端的重放不应抹掉已知位置，实际 %q", row.LastBackendServerID)
+	}
+}
+
 // TestConnFlushSameBatchOpenClose 校验同一批内 open+close 同 conn_id：先插后更、终为 closed。
 func TestConnFlushSameBatchOpenClose(t *testing.T) {
 	db := openRepoSQLite(t, "conn_samebatch")

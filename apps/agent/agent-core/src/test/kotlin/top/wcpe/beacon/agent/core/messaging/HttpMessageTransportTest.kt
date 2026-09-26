@@ -113,6 +113,9 @@ class HttpMessageTransportTest {
 
     @Test
     fun `player 信封映射为 targetPlayerUuid`() {
+        // 注意 targetId 的取值语义：wire 键名为 targetPlayerUuid（历史命名），但**按玩家寻址的入参是玩家名**
+        // —— 门面 sendToPlayer(playerName) 收名字，而子服 agent 看不到异服玩家、无法自行换成 UUID，
+        // 故原样透传、由控制面按连接名册解析（UUID 优先、回退按名）。本测试锁定该透传形态。
         val transport = SendCaptureTransport()
         val http = startedHttp(transport)
         val message =

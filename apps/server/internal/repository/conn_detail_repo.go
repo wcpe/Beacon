@@ -39,8 +39,10 @@ type OpenConn struct {
 	NamespaceID   uint
 	ProxyServerID string
 	PlayerUUID    string
-	FirstBackend  string
-	LastBackend   string
+	// PlayerName 登录时的玩家名：重建名册时一并恢复「按名寻址」索引（缺失会让控制面重启后按名投递失效）。
+	PlayerName   string
+	FirstBackend string
+	LastBackend  string
 }
 
 // FlushDaily 幂等批量落一批（可能跨日、open/close 混合）连接事件到各自当日表，返回被去重（未落）的事件数。
@@ -112,19 +114,72 @@ func splitConnEvents(evs []model.ConnEvent) (opens, closes []model.ConnDetail) {
 	return opens, closes
 }
 
-// insertConnOpens 幂等批插 open 会话行：conn_id 主键冲突即忽略（重试 / 已存在安全），返回被去重行数。
+// insertConnOpens 幂等批插 open 会话行：conn_id 已存在的行**只刷新位置列**（首末后端 / 切换数），
+// 返回被去重（未新增行）的数量——语义与旧的 `DoNothing` 一致，只是多了一步位置刷新。
+//
+// 为什么冲突时不能整体丢弃：agent 在玩家**进入 / 切换到**某子服时会补发一条 open（同 connId、
+// 携当前所在服），这是控制面唯一能得知「玩家此刻在哪」的通道（后端切换本身不发独立事件，见
+// v2-connection-message-storage spec §4.1）。若整体丢弃，位置列永远停在登录时的空值，名册只能
+// 回退到代理，按玩家寻址的消息会被投到代理并因无对应 handler 而失败。
+//
+// 为何先查再分流（而不是直接 upsert）：`RowsAffected` 在 upsert 下把「更新」也算作命中，
+// 会让去重计数恒为 0、丢掉「有多少条是重放」这一观测值（既有测试已锁定该语义）。
 func insertConnOpens(tx *gorm.DB, tableName string, rows []model.ConnDetail) (int, error) {
-	res := tx.Table(tableName).
-		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "conn_id"}}, DoNothing: true}).
-		CreateInBatches(&rows, connInsertBatchSize)
-	if res.Error != nil {
-		return 0, res.Error
+	if len(rows) == 0 {
+		return 0, nil
 	}
-	deduplicated := len(rows) - int(res.RowsAffected)
-	if deduplicated < 0 {
-		deduplicated = 0
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.ConnID)
 	}
-	return deduplicated, nil
+	var existing []string
+	if err := tx.Table(tableName).Where("conn_id IN ?", ids).Pluck("conn_id", &existing).Error; err != nil {
+		return 0, err
+	}
+	known := make(map[string]struct{}, len(existing))
+	for _, id := range existing {
+		known[id] = struct{}{}
+	}
+
+	var inserts, refreshes []model.ConnDetail
+	for _, r := range rows {
+		if _, ok := known[r.ConnID]; ok {
+			refreshes = append(refreshes, r)
+		} else {
+			inserts = append(inserts, r)
+		}
+	}
+
+	if len(inserts) > 0 {
+		res := tx.Table(tableName).
+			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "conn_id"}}, DoNothing: true}).
+			CreateInBatches(&inserts, connInsertBatchSize)
+		if res.Error != nil {
+			return 0, res.Error
+		}
+	}
+
+	// 位置刷新：只覆盖有值的列（补发的 open 未携后端时不该把已知位置抹成 NULL）
+	for i := range refreshes {
+		r := &refreshes[i]
+		updates := make(map[string]any, 3)
+		if r.FirstBackendServerID != "" {
+			updates["first_backend_server_id"] = r.FirstBackendServerID
+		}
+		if r.LastBackendServerID != "" {
+			updates["last_backend_server_id"] = r.LastBackendServerID
+		}
+		if r.BackendSwitchCount > 0 {
+			updates["backend_switch_count"] = r.BackendSwitchCount
+		}
+		if len(updates) == 0 {
+			continue
+		}
+		if err := tx.Table(tableName).Where("conn_id = ?", r.ConnID).Updates(updates).Error; err != nil {
+			return 0, err
+		}
+	}
+	return len(refreshes), nil
 }
 
 // upsertConnCloses 批量落 close：conn_id 冲突（open 行已在）即只更新断开相关列（opened_at/player 等 open 时段
@@ -370,7 +425,7 @@ func (r *ConnDetailRepository) ListOpenConnections(retentionDays int) ([]OpenCon
 		}
 		var rows []OpenConn
 		err := r.db.Table(name).
-			Select("conn_id", "namespace_id", "proxy_server_id", "player_uuid",
+			Select("conn_id", "namespace_id", "proxy_server_id", "player_uuid", "player_name",
 				"first_backend_server_id AS first_backend", "last_backend_server_id AS last_backend").
 			Where("status = ?", model.ConnStatusOpen).
 			Find(&rows).Error
