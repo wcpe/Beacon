@@ -34,6 +34,7 @@ Beacon 需要让外部 Agent 以机器身份完成远程观测和运维申请，
 ### 3.1 进程与依赖边界
 
 - 在现有 chi router 注册 `/admin/v2/mcp`。端点采用无状态（Stateless）Streamable HTTP（方向依据 MCP SEP-2567）：只接受 POST，GET 返回 405 并带 `Allow: POST`（DELETE 不再具备会话终止语义，故不注册进 MCP 路由，落通用管理路由后以 401 拒绝 MCP 凭据）；不读也不写 `Mcp-Session-Id`，每个请求使用带默认初始化参数的临时会话。客户端因而不需维护会话状态，服务端重启或长期空闲也不再使通道失效——此前会话空闲 5 分钟即失效，而客户端不会重发 `initialize`，通道会永久卡死。
+- 无状态端点与两类凭据（§4.4）天然配合：每请求独立鉴权、没有任何会话级凭据缓存，bearer 既可以是 OAuth 换取的短期 access token，也可以是客户端 secret 本身——两者都在该次请求内现查现比，因此吊销与轮换即时生效，不需要会话失效或凭据缓存清理机制。
 - MCP handler 只负责协议、token 验证与 `Principal` 注入；每条请求独立鉴权、独立处理，工具调用进入 application service，不经 loopback HTTP，不直接访问 repository/GORM/Agent 连接表。
 - 优先使用官方 MCP Go SDK 的稳定版本。若实施期依赖审查证明其 OAuth 原语不足，只允许增加一项已批准的成熟稳定 OAuth 库；禁止预发布依赖和重复功能依赖。
 - SDK 或 OAuth 库版本必须在实施计划中锁定并通过依赖与许可证检查，本规格阶段不改构建文件。
@@ -94,9 +95,29 @@ access token 使用高熵不透明随机值，库内只存哈希，至少记录 
 
 成功响应遵循 OAuth token response，`token_type=Bearer`，包含 `access_token`、`expires_in` 与实际 scope。认证失败统一返回协议错误，不区分 clientId 不存在、secret 错误、已吊销等内部原因，并按 clientId/来源维度限速。
 
+### 4.4 凭据形态：短期 access token 与客户端凭据直连
+
+MCP bearer 有两类形态，按前缀区分，服务端据此分派校验路径：
+
+| 形态 | 前缀 | 有效期 | 适用 |
+|---|---|---|---|
+| access token | `mct_` | 固定短周期（≤15 分钟） | 需要短期凭据的调用方；按 §4.3 换取 |
+| 客户端 secret（**客户端凭据直连**） | `mcs_` | 无自然过期，随吊销 / 轮换失效 | 长驻客户端（常驻 Agent 运行时、MCP 客户端进程） |
+
+**客户端凭据直连**：把创建 / 轮换响应中一次性返回的 `mcs_` secret 直接放进 `Authorization: Bearer`，不换取 token。目的是让长驻客户端不必自行实现 15 分钟续期循环，从而不再需要外部桥接进程代持并刷新凭据——凭据因此可以直连使用。
+
+约束与边界：
+
+- access token 的 15 分钟上限（§4.2）不变，两类形态**都不签发 refresh token**（§2.1 / §2.2 的约束不变）。
+- 直连路径每次请求按 `secret_hash` 现查现比：吊销（client 转 `revoked`）与轮换（改写 `secret_hash`、递增 `secret_version`）**天然即时生效**，无需额外失效逻辑，也不需要按 client 维护凭据缓存。
+- 失败口径与换 token 路径一致：前缀不合规、哈希不匹配、客户端已吊销统一回 `401`，不区分内部原因（防枚举探测）。
+- 直连凭据**不参与 audience 校验**（端点固定为 `/admin/v2/mcp`）；audience 精确比对只发生在 token 路径（§4.2、§4.3）。
+- 展示前缀 `secret_prefix` 只有 12 个字符、不足以定位唯一客户端，故服务端按前缀取候选集后逐个比对完整 secret 哈希；该长度由生成与校验两侧共用的同一常量固定，避免两侧写死而漂移。
+- **部署要求不变**：secret 直连时属长期凭据，公网仍必须经 TLS 反向代理（§6），内网明文直连仅限 `allow-insecure-internal` 场景。
+
 ## 5. Principal 与授权
 
-- token 验证成功后构造 `type=mcp`、`principalId=client_id`、profile、capability snapshot 与 traceId；客户端不能通过请求参数覆盖主体。
+- 两类凭据（§4.4）验证成功后都构造同一个 `type=mcp` 主体：`principalId=client_id`、profile、capability snapshot 与 traceId——直连 secret 与 access token 得到的主体完全等价，不因凭据形态获得额外能力；客户端不能通过请求参数覆盖主体。
 - `observer` 只有 FR-220 登记的读取能力。
 - `automation` 包含 observer、低风险领域写入和提交/查询/撤回本人审批申请能力。
 - 两种 profile 都没有 `approval.approve`、`approval.reject` 或任何等价能力；FR-206 服务层必须再次拒绝所有非 human 主体，不能只依赖工具隐藏。
@@ -145,6 +166,7 @@ access token 使用高熵不透明随机值，库内只存哈希，至少记录 
 
 - 创建/轮换只返回一次明文；secret/hash 均不进入通用审批载荷，哈希只在领域 pending change/active client；拒绝/撤回/过期 change 永不生效，worker 重试不生成第二份 secret。
 - Client Credentials 正常、错误 secret、错误 audience、错误 grant、scope 扩权、吊销和轮换旧版本覆盖。
+- 客户端凭据直连（§4.4）：正确 secret 放行且主体与客户端记录一致（profile / displayName）、已吊销拒绝、轮换后旧 secret 拒绝而新 secret 放行、前缀命中但哈希不匹配拒绝、非 `mcs_` 前缀的凭据仍走 access token 路径（不被直连分支吞掉）。
 - token 上限 15 分钟、过期、即时吊销、重启后验证与分批清理。
 - MCP bearer 调普通 REST、登录 token/API key 调 MCP 均被拒绝。
 - metadata 只发布 HTTPS 公网 resource 和 `/admin/v2/oauth/token`；不存在 `/api/*`、`/mcp` 别名。

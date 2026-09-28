@@ -318,6 +318,32 @@ mcp:
 
 **客户端侧对齐三要素**：直连部署下换 token 请求必须同时满足 `audience == public-base-url + /admin/v2/mcp`、`client_id/client_secret` 属于**该实例自己的库**（多套 Beacon 部署共存时最容易拿错别家的凭据，症状同样是 401 `invalid_client`）、以及 Host 命中白名单。三者任一不符都只回 401，需分别核对。
 
+### 9.2 客户端凭据直连（长驻客户端免自行续期）
+
+`/admin/v2/mcp` 的 bearer 接受两类凭据（形态与差异详见 [API](API.md) §MCP OAuth 公网入口）：
+
+- `mct_`：经 `POST /admin/v2/oauth/token` 换取的短期 access token（15 分钟）；
+- `mcs_`：客户端 secret 本身，直接当 bearer 使用（**客户端凭据直连**）。
+
+直连模式适合**长驻客户端**（常驻 Agent 运行时、MCP 客户端进程）：它不必自己实现 15 分钟续期循环，也就不再需要外部 stdio 桥接脚本代持并刷新凭据。用法就是把 `clientSecret` **原样**写进 `Authorization: Bearer`，不额外拼前缀、不加引号或换行。
+
+**运维要点**：
+
+- **直连凭据没有自然过期**，等同长期凭据——生产环境**必须经 HTTPS 反向代理**；`mcp.allow-insecure-internal: true` 的明文直连只用于内网 / 回环。凭据只放配置文件或密钥管理，不要写进日志、工单或截图。
+- **吊销与轮换即时生效**：直连路径每次请求按 `secret_hash` 现查现比（无缓存、无 TTL），吊销或轮换后无需重启、也无需等待窗口过期。应急处置优先用「管理台 → 系统 → MCP 客户端 → 吊销」。
+- 明文 secret 只在创建 / 轮换申请的那次 `202` 响应出现一次，遗失只能重新申请轮换（重新申请同时使旧 secret 失效）。
+- 直连路径**不校验 audience**（端点固定 `/admin/v2/mcp`，audience 精确比对只存在于 token 路径），故直连模式不会因 `audience` 写错而 401；token 路径的 audience 三要素对齐仍然照旧。
+
+**401 `ADMIN_UNAUTHORIZED` 排障顺序**（直连模式）：该路径不区分内部原因，日志只显示鉴权失败，需按下表逐项核对。
+
+| 常见原因 | 判别 / 处置 |
+|---|---|
+| 用了**已轮换掉的旧 secret** | 轮换批准后旧 secret 立即失效；重新申请轮换并向客户端换发新明文 |
+| 客户端**已被吊销** | 管理台 `/mcp-clients` 查状态；需先走「启用」审批后方可再次使用 |
+| secret **抄写不完整**（截断 / 掉字符 / 混入引号或换行） | 前缀仍可能对得上但哈希不匹配，症状与「secret 错」完全一样；对照客户端的 `secretPrefix` 前 12 位确认取的是哪一份明文 |
+| 凭据**取自别的实例** | 多套 Beacon 共存时最易发生：secret 必须来自目标实例自己的库（该症状在换 token 路径同样表现为 401） |
+| Host / 来源被门禁拦下 | 直连部署下仍需 Host 命中 `allowed-hosts`（见 §9.1）；此类 401 与凭据无关 |
+
 ## 10. 内部信任通道（机器注册，FR-222）
 
 单操作者内网部署下，外部管理平台（如 JianManager）批量创建实例后逐个走人工审批不可行（60 台 = 60 次审批）。`mcp.allow-machine-register` 提供一条**默认关闭**的内部信任通道：开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/data-plane/attach`（原名 `/beacon/v1/agent/register`，旧路径仍作兼容别名可用）提交的注册**直接创建 active 身份并绑定指定 serverId**，跳过人工审批。规格见 [internal-trust-channel.md](specs/internal-trust-channel.md)。

@@ -6,6 +6,12 @@
 
 ### 新增
 
+- **MCP bearer 支持客户端凭据直连（长驻客户端免自行续期）**：`/admin/v2/mcp` 此前只接受经 `POST /admin/v2/oauth/token` 换取的 `mct_` 短期 access token，而该 token 只有 15 分钟有效期——长驻客户端（常驻 Agent 运行时、MCP 客户端进程）必须自行实现续期循环，否则就得外挂 stdio 桥接脚本代持并刷新凭据。现在 bearer 增加第二类形态：客户端 secret（`mcs_`）可**直接**作为 bearer 使用，客户端因此不再需要续期逻辑，也不再需要桥接进程。
+  - **行为变化**：`Authorization: Bearer` 按前缀分派——`mcs_` 走客户端凭据直连校验，其余凭据（含 `mct_`）仍走原有 access token 校验，**token 路径未改一行**。直连凭据可反复使用、无 15 分钟窗口；前缀不合规 / 哈希不匹配 / 客户端已吊销统一回 `401`，不区分内部原因。
+  - **规范约束不变**：access token 有效期仍为 15 分钟，两类形态都**不签发 refresh token**；直连路径不参与 audience 校验（端点固定为 `/admin/v2/mcp`，该路径的 audience 精确比对只存在于 token 路径）。
+  - **安全边界**：直连模式下 secret 本身即长期凭据，其吊销与轮换**天然即时生效**——吊销（client 转 `revoked`）与轮换（改写 `secret_hash`、递增 `secret_version`）在下一次请求即被拒，无需缓存失效、也无需等待窗口过期。正因凭据不再自然过期，**生产环境必须经 HTTPS 反向代理**，明文直连仅限内网 / 回环（`mcp.allow-insecure-internal`）。明文 secret 仍只在创建 / 轮换响应中出现一次。
+  - **回归测试**：补 4 项用例（正确 secret 放行且主体与客户端记录一致、已吊销拒绝、轮换后旧 secret 拒绝而新 secret 放行、前缀命中但哈希不匹配与 `mct_` 形状 / 过短 / 空凭据一律拒绝）。规格见 [built-in-admin-v2-mcp-and-oauth](docs/specs/built-in-admin-v2-mcp-and-oauth.md) §4.4，接口见 [API](docs/API.md)，运维排障见 [OPERATIONS](docs/OPERATIONS.md) §9.2。
+
 ### 变更
 
 - **agent 数据面注册端点更名为 `/data-plane/attach`（FR-233，语义消歧）**：v1 的 `POST /beacon/v1/agent/register` 与 v2 的 `POST /beacon/v2/agent/register` **同名却不同职责**（v1 = 数据面挂载 + 机器注册直落；v2 = 身份状态机 pending→审批→active），在真机搭建时直接造成过接入误判（判定「功能重叠该退役一个」，并据此排查到错误方向）。现把 v1 端点更名为 `POST /beacon/v1/agent/data-plane/attach`，语义显式化为「**挂载数据面**」而非「注册身份」。
