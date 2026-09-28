@@ -31,13 +31,6 @@ type MCPHandler struct {
 	policy    *MCPProxyPolicy
 }
 
-// NewPublicMCPHandler 构造仅允许受信 TLS 反向代理转发的 MCP transport。
-func NewPublicMCPHandler(verifier MCPAccessTokenVerifier, policy *MCPProxyPolicy) *MCPHandler {
-	h := NewMCPHandler(verifier, policy.Audience())
-	h.policy = policy
-	return h
-}
-
 // NewPublicMCPHandlerWithTools 为公网 MCP resource 注入按主体隔离的显式工具目录。
 // disableLocalhostProtection 为 true 时关闭 SDK 的 DNS rebinding Host 校验（内网直连部署）。
 func NewPublicMCPHandlerWithTools(verifier MCPAccessTokenVerifier, policy *MCPProxyPolicy, tools MCPToolRegistrar, disableLocalhostProtection bool) *MCPHandler {
@@ -58,20 +51,6 @@ func NewPublicMCPHandlerWithTools(verifier MCPAccessTokenVerifier, policy *MCPPr
 // NewMCPHandler 构造空工具 MCP transport。未登记工具时不暴露任何领域写入能力。
 func NewMCPHandler(verifier MCPAccessTokenVerifier, audience string) *MCPHandler {
 	return newMCPHandler(verifier, audience, func(*http.Request) *mcp.Server { return newEmptyMCPServer() }, false)
-}
-
-// NewMCPHandlerWithTools 构造按 MCP 主体隔离工具发现的 transport。
-func NewMCPHandlerWithTools(verifier MCPAccessTokenVerifier, audience string, tools MCPToolRegistrar) *MCPHandler {
-	if tools == nil {
-		return NewMCPHandler(verifier, audience)
-	}
-	return newMCPHandler(verifier, audience, func(r *http.Request) *mcp.Server {
-		principal, ok := auth.FromContext(r.Context())
-		if !ok || principal.Kind != auth.PrincipalKindMCP {
-			return newEmptyMCPServer()
-		}
-		return tools.NewMCPServer(principal)
-	}, false)
 }
 
 // newMCPHandler 构造**无状态** transport；disableLocalhostProtection 为 true 时关闭 SDK 的
