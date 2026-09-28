@@ -1067,6 +1067,26 @@ MCP resource 固定为 `/admin/v2/mcp`，token 固定为 `POST /admin/v2/oauth/t
 
 token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审计记录的原因一致——三类失败各自成码，不合并成 `invalid_client`：缺 `client_id`/`client_secret`/`audience` 回 `400 invalid_request`（缺必填参数）；`scope` 超出该客户端 profile 允许范围回 `400 invalid_scope`；凭证错误、客户端不存在或已吊销统一回 `401 invalid_client`，且不区分内部原因以防枚举探测。
 
+### MCP bearer 的两类形态：access token 与客户端凭据直连
+
+`/admin/v2/mcp` 的 `Authorization: Bearer` 接受两类凭据，按前缀区分：
+
+| 凭据 | 前缀 | 来源 |
+|---|---|---|
+| access token | `mct_` | `POST /admin/v2/oauth/token` 以 Client Credentials 换取，短期且 audience-bound |
+| 客户端 secret（**客户端凭据直连**） | `mcs_` | 客户端创建 / 轮换响应中**仅出现一次**的 `clientSecret`，直接当 bearer 使用 |
+
+**客户端凭据直连**面向长驻客户端（常驻 Agent 运行时、MCP 客户端进程）：它不必再自行实现 15 分钟 access token 的续期循环，因而也不再需要外部桥接进程代持与刷新凭据——把 `clientSecret` 原样放进 `Authorization: Bearer` 即可，凭据可反复使用。
+
+与 token 路径的差异：
+
+- **无 15 分钟窗口**：直连凭据不消费 token 表、也不签发 token，每次请求按 `secret_hash` 现查现比；access token 的 15 分钟有效期语义不变。
+- **仍不签发 refresh token**：规范约束不变，两类形态都不引入 refresh token。
+- **吊销 / 轮换即时生效**：吊销（client 转 `revoked`）在下一次请求即被拒；轮换改写 `secret_hash` 并递增 `secret_version` 后，旧 secret 立即不可用、只有新 secret 生效，无需任何额外的失效或缓存清理逻辑。
+- **不参与 audience 校验**：直连凭据只证明客户端身份，端点固定为 `/admin/v2/mcp`；audience 精确比对只存在于 token 路径。
+- **校验失败口径一致**：前缀不合规、secret 不匹配、客户端已吊销一律回 `401` 且不区分内部原因（防枚举探测）。
+- **生产必须 HTTPS**：直连模式下 secret 本身即长期凭据（不再有 15 分钟自然过期），泄露即可长期使用，故**生产环境必须经 HTTPS 反向代理**；`mcp.allow-insecure-internal: true` 的明文直连仅限内网 / 回环部署（见 [OPERATIONS](OPERATIONS.md) §9）。
+
 当前 `automation` profile 还可发现显式审批工具：配置的删除与批量删除/启停、文件创建/导入/发布/回滚/删除/批量删除/启停、覆盖集发布/回滚/删除，以及资产预览和消息正文的审批申请。危险写入工具均只创建审批申请并返回 `{approvalRequestId,status}`；不会直接执行领域操作、构造 permit 或代理文件路径。资产预览与消息正文的消费工具仍核验原申请主体、冻结目标和一次性 grant，但响应固定只返回消费状态，绝不回吐敏感正文。`observer` 不可发现这些工具。
 
 **拓扑建树工具（FR-221）**：`automation` 另可发现九个低风险结构写工具——`beacon.topology.bc-clusters.create/update/delete`、`beacon.topology.regions.create/update/delete`、`beacon.topology.zones.create/update/delete`，语义与既有 `/admin/v2` HTTP 端点逐一对齐。与分配/换区等高风险动作**刻意不同**：建树按 FR-220 的「低风险按能力直执」原则**直接执行并写审计**，不产生审批票据。删除非空节点（大区下含小区、小区下含服务器、集群下含大区或已分配代理）按既有约束拒绝。`regions.create` 须 `parentId` = 所属 BC 集群 id，`zones.create` 须 `parentId` = 所属大区 id。`observer` 不可发现写工具。
@@ -1096,7 +1116,7 @@ token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审�
 - 必须携带 `Idempotency-Key` 头，缺失返回 `400 idempotency_key_required`；`reason` 必填，缺失返回 `400 reason_required`；仅人类主体可提审，机器主体返回 `403 human_only_operation`。三类失败给出**可区分的错误码**而非泛化 403——它们的处置方向完全不同（补请求头 / 补原因 / 换主体）。
 - 同键重放返回既有票据，此时 `clientSecret` **不返回**（明文只在首次生成时出现一次，遗失只能重新申请轮换）。
 - `readonly` 角色被写守卫拒绝。
-- 轮换批准后旧 secret 与已签发 token 即时失效；吊销后该客户端无法再换取 token。
+- 轮换批准后旧 secret 与已签发 token 即时失效（直连模式下旧 secret 同样立即不可用）；吊销后该客户端无法再换取 token，其直连 secret 与已签发 token 立即失效。
 
 `GET /admin/v2/mcp/config` 返回 MCP 入口的部署事实，**任何启用状态下都返回 200**（未启用时 `enabled=false`，供管理台展示配置指引而非报错）：
 
