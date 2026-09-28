@@ -18,7 +18,7 @@ Beacon 需要让外部 Agent 以机器身份完成远程观测和运维申请，
 - OAuth Client Credentials 的客户端生命周期、token 端点、resource metadata 与审计。
 - 固定 `observer`、`automation` 两种 profile，并映射 FR-206 的 `mcp` Principal 与 capability bundle。
 - 受信反向代理、公网基址、Host/Origin、限流、超时和请求体边界。
-- 为 FR-220 提供经过认证的 MCP session 与 tool registration 容器。
+- 为 FR-220 提供经过认证的 MCP tool registration 容器；端点本身无状态，不维护会话。
 
 ### 2.2 明确不做
 
@@ -33,8 +33,8 @@ Beacon 需要让外部 Agent 以机器身份完成远程观测和运维申请，
 
 ### 3.1 进程与依赖边界
 
-- 在现有 chi router 注册 `/admin/v2/mcp`，GET、POST、DELETE 等方法按稳定版 Streamable HTTP SDK 的协议要求处理。
-- MCP handler 只负责协议、token 验证、session 与 `Principal` 注入；工具调用进入 application service，不经 loopback HTTP，不直接访问 repository/GORM/Agent 连接表。
+- 在现有 chi router 注册 `/admin/v2/mcp`。端点采用无状态（Stateless）Streamable HTTP（方向依据 MCP SEP-2567）：只接受 POST，GET/DELETE 返回 405 并带 `Allow: POST`；不读也不写 `Mcp-Session-Id`，每个请求使用带默认初始化参数的临时会话。客户端因而不需维护会话状态，服务端重启或长期空闲也不再使通道失效——此前会话空闲 5 分钟即失效，而客户端不会重发 `initialize`，通道会永久卡死。
+- MCP handler 只负责协议、token 验证与 `Principal` 注入；每条请求独立鉴权、独立处理，工具调用进入 application service，不经 loopback HTTP，不直接访问 repository/GORM/Agent 连接表。
 - 优先使用官方 MCP Go SDK 的稳定版本。若实施期依赖审查证明其 OAuth 原语不足，只允许增加一项已批准的成熟稳定 OAuth 库；禁止预发布依赖和重复功能依赖。
 - SDK 或 OAuth 库版本必须在实施计划中锁定并通过依赖与许可证检查，本规格阶段不改构建文件。
 
@@ -106,13 +106,13 @@ access token 使用高熵不透明随机值，库内只存哈希，至少记录 
 
 - 部署必须显式配置唯一 `publicBaseURL`、可信代理来源范围与 MCP 是否启用；缺失、非 HTTPS 公网基址或请求未来自可信代理时 MCP 和 token endpoint 失败关闭。
 - 只有可信代理来源的标准转发 scheme/host 可参与公开 URL 校验；任意客户端伪造的 `X-Forwarded-*` 不得改变 audience、resource metadata 或审计来源。
-- 校验 Host、Origin、Content-Type、协议版本和 session 标识；设置请求体上限、最大并发、每客户端速率、读写/空闲超时。
+- 校验 Host、Origin、Content-Type 和协议版本；设置请求体上限、最大并发、每客户端速率、读写/空闲超时。
 - 反向代理负责 TLS 与必要的流式转发配置；Beacon 后端监听地址不得直接暴露公网。运维文档在实施期给出最小反代示例和验证命令。
 - CORS 不使用通配符；错误体、日志和指标标签不得包含 client_secret、access_token、Authorization 或完整敏感参数。
 
 ## 7. 审计与可观测性
 
-- 审计事件至少包括 `mcp.client.create_requested/created/rotate_requested/rotated/enabled/revoked`、`mcp.token.issued/denied`、`mcp.session.opened/closed`。
+- 审计事件至少包括 `mcp.client.create_requested/created/rotate_requested/rotated/enabled/revoked`、`mcp.token.issued/denied`。原列的 `mcp.session.opened/closed` 随端点无状态化取消：无会话即无生命周期事件（该项自规格起草起从未实现）。
 - token 成功签发只记录 clientId、profile、过期时间、来源摘要和 traceId；失败仅记录归一化原因，不记录 secret/token。
 - 指标按 endpoint、结果和 profile 聚合；clientId 不作为无界指标标签。认证失败日志按限速聚合，使用中文 WARN，不刷屏。
 - client 与 token 记录、审批申请和工具审计通过 principalId/traceId 可关联；删除历史审计不属于本 FR。
@@ -134,7 +134,7 @@ access token 使用高熵不透明随机值，库内只存哈希，至少记录 
 2. OAuth client/token 模型、迁移、repository、随机值与哈希服务。
 3. 客户端创建/轮换/启用审批 adapter、吊销止损动作和审计。
 4. token endpoint、metadata、audience 验证与 MCP Principal 中间件。
-5. `/admin/v2/mcp` Streamable HTTP session 与协议错误映射。
+5. `/admin/v2/mcp` Streamable HTTP 传输与协议错误映射。
 6. 可信代理、公网 URL、Host/Origin、限流、超时和脱敏门禁。
 7. 自动化测试、外部 MCP 客户端、反代和重启恢复验收。
 8. 实施期同步权威文档并完成安全复核。
@@ -149,13 +149,13 @@ access token 使用高熵不透明随机值，库内只存哈希，至少记录 
 - MCP bearer 调普通 REST、登录 token/API key 调 MCP 均被拒绝。
 - metadata 只发布 HTTPS 公网 resource 和 `/admin/v2/oauth/token`；不存在 `/api/*`、`/mcp` 别名。
 - 不可信代理头、错误 Host/Origin、超限 body、并发/速率/超时、错误脱敏覆盖。
-- `initialize`、session 生命周期和协议错误在稳定 SDK 支持的客户端矩阵通过。
+- `initialize`、无状态连续调用（不带 `Mcp-Session-Id`）和协议错误在稳定 SDK 支持的客户端矩阵通过。
 
 ### 10.2 真实环境验收
 
 - 使用 TLS 反向代理和独立 `observer`、`automation` 客户端各完成一次换令牌与 MCP 初始化。
 - 从公网只访问反代地址，后端直连被网络与应用门禁共同阻断。
-- 吊销客户端后，现有 session 的下一次受保护调用失败，新 token 无法签发。
+- 吊销客户端后，该客户端的下一次受保护调用失败，新 token 无法签发。
 - 轮换后旧 secret/token 失效，新 secret 只由申请响应展示一次。
 - 日志、审计、数据库抽查不出现明文 secret/token。
 
