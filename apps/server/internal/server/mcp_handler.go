@@ -3,7 +3,6 @@ package server
 import (
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -75,14 +74,19 @@ func NewMCPHandlerWithTools(verifier MCPAccessTokenVerifier, audience string, to
 	}, false)
 }
 
-// newMCPHandler 构造 transport；disableLocalhostProtection 为 true 时关闭 SDK 的
+// newMCPHandler 构造**无状态** transport；disableLocalhostProtection 为 true 时关闭 SDK 的
 // DNS rebinding Host 校验（内网直连部署由 MCPProxyPolicy 的 Host 白名单接管该职责）。
+//
+// 无状态（Stateless）语义：不读也不写 Mcp-Session-Id，每个请求使用带默认初始化参数的临时会话。
+// 为什么必须如此：会话一旦空闲失效（此前为 5 分钟），客户端再次调用会收到 session not found，
+// 而主流客户端（含 NarraFork 内置 HTTP 客户端）在会话失效后不会重发 initialize，通道因此
+// **永久卡死**、必须人工重连。SDK 的 Stateless 即 MCP 规范的无状态方向（SEP-2567）。
 func newMCPHandler(verifier MCPAccessTokenVerifier, audience string, factory func(*http.Request) *mcp.Server, disableLocalhostProtection bool) *MCPHandler {
 	return &MCPHandler{
 		audience: audience, verifier: verifier,
 		transport: mcp.NewStreamableHTTPHandler(factory, &mcp.StreamableHTTPOptions{
+			Stateless:                  true,
 			JSONResponse:               true,
-			SessionTimeout:             5 * time.Minute,
 			DisableLocalhostProtection: disableLocalhostProtection,
 		}),
 	}
