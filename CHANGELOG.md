@@ -18,9 +18,9 @@
 ### 修复
 
 - **MCP 通道在会话空闲后永久卡死（端点无状态化）**：`/admin/v2/mcp` 的 Streamable HTTP 传输此前配置了 5 分钟会话空闲超时。会话一旦失效，客户端再次调用会收到 session not found；而主流客户端（含 NarraFork 内置 HTTP 客户端）在会话失效后不会重发 `initialize`，通道因此永久卡死、只能人工重连。现端点改为**无状态**（方向依据 MCP SEP-2567）：不读也不写 `Mcp-Session-Id`，每个请求使用带默认初始化参数的临时会话，传输只接受 POST。
-  - **行为变化**：不再下发 `Mcp-Session-Id`；客户端携带的陈旧会话 id 被忽略而非据以拒绝；GET/DELETE 返回 `405` 并带 `Allow: POST`；服务端重启或长期空闲不再使通道失效。**鉴权、受众校验与工具可见性逐字不变**（无状态化不放宽任何安全检查）。
+  - **行为变化**：不再下发 `Mcp-Session-Id`；客户端携带的陈旧会话 id 被忽略而非据以拒绝；GET 返回 `405` 并带 `Allow: POST`（DELETE 不再具备会话终止语义，故不注册进 MCP 路由）；服务端重启或长期空闲不再使通道失效。**鉴权、受众校验与工具可见性逐字不变**（无状态化不放宽任何安全检查）。
   - **审计**：规格中原列的 `mcp.session.opened/closed` 随无状态化取消——无会话即无生命周期事件（该项自规格起草起从未实现）。
-  - **回归测试**：该端点的会话行为此前零测试覆盖，本次补 5 项断言（无会话头可连续调用、响应不下发会话 id、携带陈旧会话 id 不被拒、GET/DELETE 返回 405 且带 `Allow: POST`、缺 bearer 仍 401）。规格见 [built-in-admin-v2-mcp-and-oauth](docs/specs/built-in-admin-v2-mcp-and-oauth.md)。
+  - **回归测试**：该端点的会话行为此前零测试覆盖，本次补 5 项断言（无会话头可连续调用、响应不下发会话 id、携带陈旧会话 id 不被拒、GET、DELETE 在 handler 层返回 405 且带 `Allow: POST`、缺 bearer 仍 401）。规格见 [built-in-admin-v2-mcp-and-oauth](docs/specs/built-in-admin-v2-mcp-and-oauth.md)。
 - **按玩家寻址的跨服消息全部失败（真机 Lodestone e2e 发现）**：门面 `sendToPlayer(playerName, ...)` 面向调用方收的是**玩家名**，而控制面名册只按**玩家 UUID** 索引——agent 把名字原样填进 wire 的 `targetPlayerUuid`，两侧无人转换，结果所有按玩家寻址的消息（跨服私聊、切服结果回传等）都落 `failed / player_not_online`，即便该玩家明明在线。修复分两处：
   - **名册同时索引 UUID 与玩家名**（小写归一，UUID 优先）：`roster.Store` 加 `byName` 索引与 `ResolvePlayer`（先查 UUID、未命中回退按名）；连接摄入登记玩家名；名册重建的 `SELECT` 补 `player_name` 列并恢复名索引（**漏这处会让控制面一重启名索引即为空、缺陷复现**）。转换只能在控制面做——子服 agent 只有本服在线列表，看不到异服玩家，无法自行把名换成 UUID。
   - **名册的「当前所在服」改取 `last_backend`**：原先取 `first_backend`，而 open（玩家刚登入代理时发）尚不知后端、首后端要等 close 才上报，故名册长期只有代理——按玩家寻址的消息被投到代理、因无对应 handler 报 `no_handler_for_type`。现改为：agent 在玩家**进入 / 切换到**某子服时补发一条携当前位置的 open（复用既有 `kind`，不动 wire 枚举），存储层 open 冲突时**只刷新位置列**（有值才覆盖）而非整体丢弃。逐步切换本身仍不记流水（守既有会话行取舍）。
