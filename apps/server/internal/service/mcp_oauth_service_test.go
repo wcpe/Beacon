@@ -174,6 +174,119 @@ func TestMCPOAuthRejectsExpiredToken(t *testing.T) {
 	}
 }
 
+// seedMCPActiveClient 落一行 active 客户端，返回其一次性明文 secret（含入库展示前缀）。
+func seedMCPActiveClient(t *testing.T, repo *repository.MCPOAuthRepository, displayName, profile string) MCPClientSecret {
+	t.Helper()
+	secret, hash, err := NewMCPClientSecret()
+	if err != nil {
+		t.Fatalf("生成客户端 secret 失败: %v", err)
+	}
+	client := &model.MCPOAuthClient{ClientID: secret.ClientID, DisplayName: displayName, SecretHash: hash, SecretPrefix: secret.Prefix, Profile: profile, Status: model.MCPClientStatusActive, SecretVersion: 1, CreatedBy: "human:admin"}
+	if err := repo.CreateClient(client); err != nil {
+		t.Fatalf("创建测试客户端失败: %v", err)
+	}
+	return secret
+}
+
+// TestMCPOAuthVerifyClientSecretAcceptsActiveClient 覆盖「客户端凭据直连」的放行路径：
+// mcs_ 客户端 secret 可直接作为 bearer，主体按客户端记录构造，且凭据可反复使用
+// （不签发也不消费 token，故没有 15 分钟过期）。
+func TestMCPOAuthVerifyClientSecretAcceptsActiveClient(t *testing.T) {
+	svc, repo, _ := newMCPOAuthServiceTest(t)
+	secret := seedMCPActiveClient(t, repo, "长驻客户端", model.MCPClientProfileAutomation)
+	const audience = "https://beacon.example/admin/v2/mcp"
+	principal, err := svc.VerifyAccessToken(secret.Secret, audience)
+	if err != nil {
+		t.Fatalf("客户端 secret 直连应通过: %v", err)
+	}
+	if principal.Kind != auth.PrincipalKindMCP || principal.ID != secret.ClientID ||
+		principal.DisplayName != "长驻客户端" || principal.Role != model.MCPClientProfileAutomation {
+		t.Fatalf("直连主体应与客户端记录一致: %+v", principal)
+	}
+	if _, err := svc.VerifyAccessToken(secret.Secret, audience); err != nil {
+		t.Fatalf("直连凭据应可重复使用: %v", err)
+	}
+}
+
+// TestMCPOAuthVerifyClientSecretRejectsBadCredentials 表驱动覆盖拒绝路径：前缀命中但哈希不匹配、
+// 非 mcs_ 前缀（必须仍走 access token 路径而被拒）、短于前缀长度、空凭据。
+func TestMCPOAuthVerifyClientSecretRejectsBadCredentials(t *testing.T) {
+	svc, repo, _ := newMCPOAuthServiceTest(t)
+	secret := seedMCPActiveClient(t, repo, "只读", model.MCPClientProfileObserver)
+	const audience = "https://beacon.example/admin/v2/mcp"
+	// 先确认该前缀确实能命中候选行，否则「前缀对但 secret 错」会因候选为空而变成假通过。
+	candidates, err := repo.FindClientsBySecretPrefix(secret.Prefix)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("测试前置不成立：前缀应命中 1 个候选，实际 %d 个 err=%v", len(candidates), err)
+	}
+	cases := []struct {
+		name       string
+		credential string
+	}{
+		// 前缀与入库行一致、后缀不同：前缀能命中候选，但完整 secret 的哈希对不上。
+		{"前缀对但 secret 错", secret.Prefix + strings.Repeat("A", 43)},
+		// mct_ 形状的串不得被直连分支吞下，仍按 access token 查库后拒绝。
+		{"非 mcs_ 前缀仍走 token 路径", mcpTokenPrefix + strings.Repeat("B", 43)},
+		{"短于展示前缀长度", mcpSecretPrefix + "abc"},
+		{"空凭据", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := svc.VerifyAccessToken(tc.credential, audience); !errors.Is(err, apperr.ErrAdminUnauthorized) {
+				t.Fatalf("应回 401 拒绝，实际 %v", err)
+			}
+		})
+	}
+	// 拒绝错误凭据后合法 secret 仍可用，确认拒绝分支未破坏正常路径。
+	if _, err := svc.VerifyAccessToken(secret.Secret, audience); err != nil {
+		t.Fatalf("错误凭据被拒不应影响合法 secret: %v", err)
+	}
+}
+
+// TestMCPOAuthVerifyClientSecretRejectsRevokedClient 覆盖吊销对直连凭据即时生效：
+// client 转 revoked 后下一次校验立即拒绝，无需等待任何缓存或 TTL 到期。
+func TestMCPOAuthVerifyClientSecretRejectsRevokedClient(t *testing.T) {
+	svc, repo, db := newMCPOAuthServiceTest(t)
+	secret := seedMCPActiveClient(t, repo, "待吊销", model.MCPClientProfileAutomation)
+	const audience = "https://beacon.example/admin/v2/mcp"
+	if _, err := svc.VerifyAccessToken(secret.Secret, audience); err != nil {
+		t.Fatalf("吊销前直连应通过: %v", err)
+	}
+	if err := db.Model(&model.MCPOAuthClient{}).Where("client_id = ?", secret.ClientID).Update("status", model.MCPClientStatusRevoked).Error; err != nil {
+		t.Fatalf("模拟吊销失败: %v", err)
+	}
+	if _, err := svc.VerifyAccessToken(secret.Secret, audience); !errors.Is(err, apperr.ErrAdminUnauthorized) {
+		t.Fatalf("已吊销客户端的 secret 不应通过，实际 %v", err)
+	}
+}
+
+// TestMCPOAuthVerifyClientSecretRotationInvalidatesOldSecret 覆盖轮换对直连凭据即时生效。
+// 这里按 mcp_oauth_approval.go 的实际落库动作模拟轮换：改写 secret_hash 与 secret_prefix
+// 并递增 secret_version；旧 secret 随即失效，新 secret 生效且仍指向同一 client。
+func TestMCPOAuthVerifyClientSecretRotationInvalidatesOldSecret(t *testing.T) {
+	svc, repo, db := newMCPOAuthServiceTest(t)
+	old := seedMCPActiveClient(t, repo, "待轮换", model.MCPClientProfileObserver)
+	const audience = "https://beacon.example/admin/v2/mcp"
+	rotated, rotatedHash, err := NewMCPClientSecret()
+	if err != nil {
+		t.Fatalf("生成轮换 secret 失败: %v", err)
+	}
+	updates := map[string]any{"secret_hash": rotatedHash, "secret_prefix": rotated.Prefix, "secret_version": 2}
+	if err := db.Model(&model.MCPOAuthClient{}).Where("client_id = ?", old.ClientID).Updates(updates).Error; err != nil {
+		t.Fatalf("模拟轮换失败: %v", err)
+	}
+	if _, err := svc.VerifyAccessToken(old.Secret, audience); !errors.Is(err, apperr.ErrAdminUnauthorized) {
+		t.Fatalf("轮换后旧 secret 不应通过，实际 %v", err)
+	}
+	principal, err := svc.VerifyAccessToken(rotated.Secret, audience)
+	if err != nil {
+		t.Fatalf("轮换后新 secret 应通过: %v", err)
+	}
+	if principal.ID != old.ClientID || principal.Role != model.MCPClientProfileObserver {
+		t.Fatalf("新 secret 应指向同一 client 与其 profile: %+v", principal)
+	}
+}
+
 // TestMCPOAuthRequestCredentialChangeDistinguishesPreconditions 验证四类前置失败各自返回
 // 可区分的错误码，而不是合并成一个泛化 403。
 //

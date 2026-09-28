@@ -38,6 +38,17 @@ func (r *MCPOAuthRepository) FindClient(clientID string) (*model.MCPOAuthClient,
 	return &client, nil
 }
 
+// FindClientsBySecretPrefix 按展示前缀取候选客户端。
+// 前缀只有 12 个字符、不足以定唯一，故返回候选集，由调用方再比对完整 secret 哈希。
+// 客户端表规模很小（每个外部集成为一行），故等值查询不额外加索引。
+func (r *MCPOAuthRepository) FindClientsBySecretPrefix(prefix string) ([]model.MCPOAuthClient, error) {
+	var clients []model.MCPOAuthClient
+	if err := r.db.Where("secret_prefix = ?", prefix).Find(&clients).Error; err != nil {
+		return nil, err
+	}
+	return clients, nil
+}
+
 // ListClients 按创建倒序读取客户端元数据。
 func (r *MCPOAuthRepository) ListClients() ([]model.MCPOAuthClient, error) {
 	var clients []model.MCPOAuthClient
