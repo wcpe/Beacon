@@ -23,7 +23,10 @@ const (
 	mcpAccessTokenTTL = 15 * time.Minute
 	mcpClientIDPrefix = "mcp_"
 	mcpSecretPrefix   = "mcs_"
-	mcpTokenPrefix    = "mct_"
+	// mcpSecretPrefixLen 是入库展示前缀（secret_prefix）的长度：生成侧与校验侧共用同一常量，
+	// 避免两处各自写死长度后悄悄漂移（改一处即两侧同时生效）。
+	mcpSecretPrefixLen = 12
+	mcpTokenPrefix     = "mct_"
 )
 
 // MCPOAuthService 管理 MCP OAuth 的凭据和短期 bearer，不处理 HTTP 或 MCP 协议。
@@ -61,7 +64,7 @@ func NewMCPClientSecret() (MCPClientSecret, string, error) {
 	if err != nil {
 		return MCPClientSecret{}, "", err
 	}
-	return MCPClientSecret{ClientID: clientID, Secret: secret, Prefix: secret[:12]}, mcpHash(secret), nil
+	return MCPClientSecret{ClientID: clientID, Secret: secret, Prefix: secret[:mcpSecretPrefixLen]}, mcpHash(secret), nil
 }
 
 // IssueAccessToken 按已认证 client secret 签发 audience-bound 短期 token。
@@ -119,8 +122,19 @@ func (s *MCPOAuthService) auditTokenDenied(clientID, reason, clientIP string) {
 	_ = s.audit.Create(&model.AuditLog{Operator: "mcp:" + clientID, Action: "mcp.token.denied", TargetType: model.TargetTypeMCPClient, TargetRef: clientID, Detail: reason, Result: "fail", ClientIP: clientIP})
 }
 
-// VerifyAccessToken 校验 token、client 状态、secret version 与固定 audience。
+// VerifyAccessToken 校验 MCP bearer，接受两类凭据：
+//
+//   - `mcs_` 客户端 secret 直连：把客户端凭据本身当 bearer 使用（「客户端凭据直连」），
+//     供长驻客户端免去自行维护 15 分钟 access token 续期；见 VerifyClientSecret。
+//   - 其余凭据：走 OAuth 换取的 `mct_` 短期 access token 校验（token 本身、client 状态、
+//     secret version 与固定 audience 逐项核对），行为与既有实现逐字一致。
+//
+// 前缀判定只做分派，不放宽任何检查：`mcs_` 之外的串一律仍按 access token 校验，
+// 因此把 access token 交给本函数不会被直连分支吞下。
 func (s *MCPOAuthService) VerifyAccessToken(raw, audience string) (auth.Principal, error) {
+	if strings.HasPrefix(raw, mcpSecretPrefix) {
+		return s.VerifyClientSecret(raw)
+	}
 	if raw == "" || audience == "" {
 		return auth.Principal{}, apperr.ErrAdminUnauthorized
 	}
@@ -133,6 +147,37 @@ func (s *MCPOAuthService) VerifyAccessToken(raw, audience string) (auth.Principa
 		return auth.Principal{}, apperr.ErrAdminUnauthorized
 	}
 	return auth.MCPPrincipal(client.ClientID, client.DisplayName, client.Profile), nil
+}
+
+// VerifyClientSecret 校验「客户端凭据直连」形态的 bearer：调用方直接把 mcs_ 客户端 secret 当凭据发送。
+//
+// 这条路不签发 token、也不消费 token，因此没有 15 分钟过期，客户端不必自行续期（规范不变：
+// 仍不提供 refresh token）。吊销与轮换**天然即时生效**，无需任何额外失效逻辑：
+// 吊销把 client 置为 revoked 后候选被状态过滤；轮换改写 secret_hash / secret_prefix 并递增
+// secret_version 后，旧 secret 的哈希不再匹配任何候选行——两者都在下一次校验时立即拒绝。
+//
+// 失败原因统一收敛为 ErrAdminUnauthorized（不区分前缀不存在 / 哈希不匹配 / 客户端已吊销），
+// 与换 token 路径同样不泄露内部原因，防客户端枚举探测。
+func (s *MCPOAuthService) VerifyClientSecret(raw string) (auth.Principal, error) {
+	if !strings.HasPrefix(raw, mcpSecretPrefix) || len(raw) < mcpSecretPrefixLen {
+		return auth.Principal{}, apperr.ErrAdminUnauthorized
+	}
+	// 展示前缀只有 12 个字符、不足以定位唯一客户端，故先按前缀取候选集，再逐个比对完整 secret 哈希。
+	candidates, err := s.repo.FindClientsBySecretPrefix(raw[:mcpSecretPrefixLen])
+	if err != nil {
+		return auth.Principal{}, apperr.ErrAdminUnauthorized
+	}
+	hash := mcpHash(raw)
+	for i := range candidates {
+		client := candidates[i]
+		if client.Status != model.MCPClientStatusActive {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(client.SecretHash), []byte(hash)) == 1 {
+			return auth.MCPPrincipal(client.ClientID, client.DisplayName, client.Profile), nil
+		}
+	}
+	return auth.Principal{}, apperr.ErrAdminUnauthorized
 }
 
 // ListClients 返回脱敏客户端元数据；调用方不得把 secretHash 输出到边界外。
