@@ -33,7 +33,7 @@ Beacon 需要让外部 Agent 以机器身份完成远程观测和运维申请，
 
 ### 3.1 进程与依赖边界
 
-- 在现有 chi router 注册 `/admin/v2/mcp`。端点采用无状态（Stateless）Streamable HTTP（方向依据 MCP SEP-2567）：只接受 POST，GET/DELETE 返回 405 并带 `Allow: POST`；不读也不写 `Mcp-Session-Id`，每个请求使用带默认初始化参数的临时会话。客户端因而不需维护会话状态，服务端重启或长期空闲也不再使通道失效——此前会话空闲 5 分钟即失效，而客户端不会重发 `initialize`，通道会永久卡死。
+- 在现有 chi router 注册 `/admin/v2/mcp`。端点采用无状态（Stateless）Streamable HTTP（方向依据 MCP SEP-2567）：只接受 POST，GET 返回 405 并带 `Allow: POST`（DELETE 不再具备会话终止语义，故不注册进 MCP 路由，落通用管理路由后以 401 拒绝 MCP 凭据）；不读也不写 `Mcp-Session-Id`，每个请求使用带默认初始化参数的临时会话。客户端因而不需维护会话状态，服务端重启或长期空闲也不再使通道失效——此前会话空闲 5 分钟即失效，而客户端不会重发 `initialize`，通道会永久卡死。
 - MCP handler 只负责协议、token 验证与 `Principal` 注入；每条请求独立鉴权、独立处理，工具调用进入 application service，不经 loopback HTTP，不直接访问 repository/GORM/Agent 连接表。
 - 优先使用官方 MCP Go SDK 的稳定版本。若实施期依赖审查证明其 OAuth 原语不足，只允许增加一项已批准的成熟稳定 OAuth 库；禁止预发布依赖和重复功能依赖。
 - SDK 或 OAuth 库版本必须在实施计划中锁定并通过依赖与许可证检查，本规格阶段不改构建文件。
