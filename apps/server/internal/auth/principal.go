@@ -120,6 +120,17 @@ func SetMCPApprovalDecide(enabled bool) { mcpDecideCapability.Store(enabled) }
 // MCPApprovalDecideEnabled 报告 automation 客户端当前是否可执行审批决定。
 func MCPApprovalDecideEnabled() bool { return mcpDecideCapability.Load() }
 
+// mcpProductionMode 标记当前部署是否处于 MCP 生产模式（FR-237）。
+// 开启时 MCP 面隐藏 critical 风险等级的工具——即不可逆、影响控制面自身
+// 或可造成权限提升的那一档（理由见 specs/mcp-tool-risk-grading.md §3.3）。
+var mcpProductionMode atomic.Bool
+
+// SetMCPProductionMode 设置 MCP 生产模式（进程启动时按配置调用一次）。
+func SetMCPProductionMode(enabled bool) { mcpProductionMode.Store(enabled) }
+
+// MCPProductionModeEnabled 报告 MCP 生产模式当前是否开启。
+func MCPProductionModeEnabled() bool { return mcpProductionMode.Load() }
+
 // HasCapability 判断主体是否具备指定能力。
 func (p Principal) HasCapability(capability string) bool {
 	for _, c := range p.Capabilities {

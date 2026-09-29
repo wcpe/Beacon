@@ -61,6 +61,12 @@ type MCPConfig struct {
 	// 开启即把共享 token 升级为安全边界，故启动校验强制要求 agent-token 必须为强随机值（禁默认值）；
 	// 仅内网单操作者部署可开启，公网部署必须保持 false。
 	AllowMachineRegister bool `yaml:"allow-machine-register"`
+
+	// ProductionMode 生产模式（FR-237）：开启后 MCP 面隐藏 critical 风险等级的工具，
+	// 即不可逆（墓碑化删除）、影响控制面自身（自更新 / 系统设置）或可造成权限提升
+	// （凭据签发轮换、机器自批审批）的那一档；low / high 不受影响。
+	// 生产部署建议开启；默认 false，行为与既有完全一致。
+	ProductionMode bool `yaml:"production-mode"`
 }
 
 // agent 共享 token 的已知弱默认值：机器注册通道（FR-222）开启时启动校验一律拒绝它们。

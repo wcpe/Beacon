@@ -508,6 +508,9 @@ export const system = {
       machineRegister: 'Machine registration',
       machineRegisterOn: 'Enabled (registration skips manual approval)',
       machineRegisterOff: 'Disabled',
+      productionMode: 'Production mode',
+      productionModeOn: 'Enabled (irreversible and privilege-escalating tools hidden)',
+      productionModeOff: 'Disabled',
       restartHint:
         'These are startup settings: changing them requires editing the config file and restarting the control plane. The console is read-only.',
       disabledHint:

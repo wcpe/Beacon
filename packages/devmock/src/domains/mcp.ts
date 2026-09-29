@@ -85,6 +85,7 @@ function buildConfig(scenario: MockScenario): MCPConfigView {
       allowedHosts: [],
       allowApprovalDecide: false,
       allowMachineRegister: false,
+      productionMode: false,
       directMode: false,
     }
   }
@@ -96,6 +97,7 @@ function buildConfig(scenario: MockScenario): MCPConfigView {
     allowedHosts: [],
     allowApprovalDecide: true,
     allowMachineRegister: false,
+    productionMode: false,
     directMode: false,
   }
 }

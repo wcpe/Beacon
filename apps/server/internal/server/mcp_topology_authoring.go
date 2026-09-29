@@ -54,7 +54,7 @@ func (r *MCPToolRegistry) registerTopologyAuthoring(server *mcp.Server, principa
 	op := principal.AuditRef()
 
 	// ── BC 集群 ──
-	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.bc-clusters.create", Description: "新建 BC 集群（低风险结构操作，直接执行；须 namespaceId 或由观察范围唯一确定）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyCreateInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.topology.bc-clusters.create", Description: "新建 BC 集群（低风险结构操作，直接执行；须 namespaceId 或由观察范围唯一确定）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyCreateInput) (*mcp.CallToolResult, map[string]any, error) {
 		scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 		if !ok {
 			return mcpRejectedResultWithReason("观察范围无效")
@@ -73,7 +73,7 @@ func (r *MCPToolRegistry) registerTopologyAuthoring(server *mcp.Server, principa
 		}
 		return &mcp.CallToolResult{}, map[string]any{"id": cluster.ID, "name": cluster.Name, "code": cluster.Code}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.bc-clusters.update", Description: "改 BC 集群名或描述（code 不可改）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyUpdateInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.topology.bc-clusters.update", Description: "改 BC 集群名或描述（code 不可改）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyUpdateInput) (*mcp.CallToolResult, map[string]any, error) {
 		cluster, err := r.v2.UpdateBCCluster(service.UpdateDisplayResourceParams{
 			ID: in.ID, Name: in.Name, DisplayName: in.DisplayName, Description: in.Description,
 			Operator: op, ClientIP: "mcp",
@@ -83,7 +83,7 @@ func (r *MCPToolRegistry) registerTopologyAuthoring(server *mcp.Server, principa
 		}
 		return &mcp.CallToolResult{}, map[string]any{"id": cluster.ID, "name": cluster.Name, "code": cluster.Code}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.bc-clusters.delete", Description: "删除 BC 集群（含大区或已分配代理时拒绝）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.topology.bc-clusters.delete", Description: "删除 BC 集群（含大区或已分配代理时拒绝）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
 		if err := r.v2.DeleteBCCluster(service.DeleteNodeParams{ID: in.ID, Operator: op, ClientIP: "mcp"}); err != nil {
 			return mcpRejectedResultWithReason(mcpTopologyErrReason(err))
 		}
@@ -91,7 +91,7 @@ func (r *MCPToolRegistry) registerTopologyAuthoring(server *mcp.Server, principa
 	})
 
 	// ── 大区 ──
-	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.regions.create", Description: "新建大区（须 parentId = 所属 BC 集群 id）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyCreateInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.topology.regions.create", Description: "新建大区（须 parentId = 所属 BC 集群 id）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyCreateInput) (*mcp.CallToolResult, map[string]any, error) {
 		region, err := r.v2.CreateRegion(service.CreateRegionParams{
 			BCClusterID: in.ParentID, Name: in.Name, Code: in.Code,
 			DisplayName: in.DisplayName, Description: in.Description,
@@ -102,7 +102,7 @@ func (r *MCPToolRegistry) registerTopologyAuthoring(server *mcp.Server, principa
 		}
 		return &mcp.CallToolResult{}, map[string]any{"id": region.ID, "name": region.Name, "code": region.Code}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.regions.update", Description: "改大区名或描述（code 不可改）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyUpdateInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.topology.regions.update", Description: "改大区名或描述（code 不可改）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyUpdateInput) (*mcp.CallToolResult, map[string]any, error) {
 		region, err := r.v2.UpdateRegion(service.UpdateDisplayResourceParams{
 			ID: in.ID, Name: in.Name, DisplayName: in.DisplayName, Description: in.Description,
 			Operator: op, ClientIP: "mcp",
@@ -112,7 +112,7 @@ func (r *MCPToolRegistry) registerTopologyAuthoring(server *mcp.Server, principa
 		}
 		return &mcp.CallToolResult{}, map[string]any{"id": region.ID, "name": region.Name, "code": region.Code}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.regions.delete", Description: "删除大区（含小区时拒绝）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.topology.regions.delete", Description: "删除大区（含小区时拒绝）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
 		if err := r.v2.DeleteRegion(service.DeleteNodeParams{ID: in.ID, Operator: op, ClientIP: "mcp"}); err != nil {
 			return mcpRejectedResultWithReason(mcpTopologyErrReason(err))
 		}
@@ -120,7 +120,7 @@ func (r *MCPToolRegistry) registerTopologyAuthoring(server *mcp.Server, principa
 	})
 
 	// ── 小区 ──
-	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.zones.create", Description: "新建小区（须 parentId = 所属大区 id）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyCreateInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.topology.zones.create", Description: "新建小区（须 parentId = 所属大区 id）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyCreateInput) (*mcp.CallToolResult, map[string]any, error) {
 		zone, err := r.v2.CreateZone(service.CreateZoneParams{
 			RegionID: in.ParentID, Name: in.Name, Code: in.Code,
 			DisplayName: in.DisplayName, Description: in.Description,
@@ -131,7 +131,7 @@ func (r *MCPToolRegistry) registerTopologyAuthoring(server *mcp.Server, principa
 		}
 		return &mcp.CallToolResult{}, map[string]any{"id": zone.ID, "name": zone.Name, "code": zone.Code}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.zones.update", Description: "改小区名或描述（code 不可改）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyUpdateInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.topology.zones.update", Description: "改小区名或描述（code 不可改）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyUpdateInput) (*mcp.CallToolResult, map[string]any, error) {
 		zone, err := r.v2.UpdateZone(service.UpdateDisplayResourceParams{
 			ID: in.ID, Name: in.Name, DisplayName: in.DisplayName, Description: in.Description,
 			Operator: op, ClientIP: "mcp",
@@ -141,7 +141,7 @@ func (r *MCPToolRegistry) registerTopologyAuthoring(server *mcp.Server, principa
 		}
 		return &mcp.CallToolResult{}, map[string]any{"id": zone.ID, "name": zone.Name, "code": zone.Code}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.zones.delete", Description: "删除小区（含服务器时拒绝）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.topology.zones.delete", Description: "删除小区（含服务器时拒绝）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
 		if err := r.v2.DeleteZone(service.DeleteNodeParams{ID: in.ID, Operator: op, ClientIP: "mcp"}); err != nil {
 			return mcpRejectedResultWithReason(mcpTopologyErrReason(err))
 		}

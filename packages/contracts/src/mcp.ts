@@ -66,6 +66,13 @@ export interface MCPConfigView {
   allowApprovalDecide: boolean
   /** 是否允许受信内部调用方机器化注册 agent（FR-222，默认 false） */
   allowMachineRegister: boolean
+  /**
+   * MCP 生产模式（FR-237，启动项，默认 false）。
+   * 开启时 critical 风险等级的工具对 MCP 客户端完全不可发现——
+   * 即不可逆（永久删除）、影响控制面自身（自更新 / 系统设置）
+   * 与可提权（凭据签发轮换、机器自批审批）的那一档。
+   */
+  productionMode: boolean
   /** true = 内网明文直连（无 TLS 反代）；false = 经受信反向代理 */
   directMode: boolean
 }

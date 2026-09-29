@@ -12,6 +12,13 @@
   - **安全边界**：直连模式下 secret 本身即长期凭据，其吊销与轮换**天然即时生效**——吊销（client 转 `revoked`）与轮换（改写 `secret_hash`、递增 `secret_version`）在下一次请求即被拒，无需缓存失效、也无需等待窗口过期。正因凭据不再自然过期，**生产环境必须经 HTTPS 反向代理**，明文直连仅限内网 / 回环（`mcp.allow-insecure-internal`）。明文 secret 仍只在创建 / 轮换响应中出现一次。
   - **回归测试**：补 4 项用例（正确 secret 放行且主体与客户端记录一致、已吊销拒绝、轮换后旧 secret 拒绝而新 secret 放行、前缀命中但哈希不匹配与 `mct_` 形状 / 过短 / 空凭据一律拒绝）。规格见 [built-in-admin-v2-mcp-and-oauth](docs/specs/built-in-admin-v2-mcp-and-oauth.md) §4.4，接口见 [API](docs/API.md)，运维排障见 [OPERATIONS](docs/OPERATIONS.md) §9.2。
 
+- **MCP 工具风险分级真源与生产模式门禁（FR-236 / FR-237）**：MCP 的 78 个工具此前只有 `observer` / `automation` 两档 profile，**跨环境固定**——同一份 `automation` 凭据在测试与生产环境看到的工具完全一样；且工具清单是硬编码字符串，与既有 `OperationDescriptor` 的风险等级靠「工具名去前缀 ≈ operation kind」的**未声明隐式约定**耦合（实测 50 个映射里仅 5 个真符合该约定，其余为点号转下划线、复数转单数、词序反转乃至完全无关名）。
+  - **工具级风险目录（FR-236）**：新建 `mcpToolCatalog` 作为工具发现与门禁的**单一真源**（工具名为唯一键，登记风险等级、可见 profile、`RequireApprovalDecide` 与对应 operation kind，后者的显式化取代了上述隐式约定）。`MCPToolNames` 改为从目录派生、删除原 78 项字符串清单；新增泛型 helper `mcpAddTool` 包裹 SDK 注册（69 处调用点，覆盖全部 78 个工具），与 `MCPToolNames` **共用同一判定函数**，使「清单声明」与「真实注册」不可能漂移。
+  - **分级结果**：`critical` 10 项 / `high` 44 项 / `low` 24 项。有 operation kind 的工具其 MCP 面等级**不得低于**既有 descriptor（测试断言该不变量，保证 MCP 面只比人类管理台更严）；其中 9 项在 MCP 面**提级**为 `critical` 而**不改动既有 descriptor**（零回归）——依据是机器主体的可发现面应严于人类管理台。
+  - **生产模式（FR-237）**：新增 `mcp.production-mode` 启动项（默认 `false`，仅 yaml）。开启时 `critical` 档工具对客户端**完全不可发现**（表现为「工具不存在」而非「执行被拒」），`low` / `high` 不受影响；与 `mcp.allow-approval-decide` 正交但**优先**（生产模式下即使开启该开关，审批决定工具仍不可发现）。关闭时 `tools/list` 与既有**逐工具零差异**。`GET /admin/v2/mcp/config` 增加只读字段 `productionMode`，管理台客户端页同步展示。
+  - **附带收益**：automation 侧 78 个工具的完整定义实测约 22–26 KB（≈7,000–9,000 tokens 的会话级固定开销），生产模式隐藏 10 项可减少约 13%。
+  - **回归测试**：目录自洽（工具名非空唯一、等级取值合法）、**真实注册集合与目录派生集合双向一致**（经 `mcp.NewInMemoryTransports` 会话枚举，避开静态扫描漏掉 helper 注册的 15 个工具）、descriptor 不变量（含覆盖度下限 40 防断言空转）、生产模式两态差集精确等于 critical 集合（对 `allow-approval-decide` 两态各验一次）、observer 集合不受开关影响。规格见 [mcp-tool-risk-grading](docs/specs/mcp-tool-risk-grading.md) 与 [mcp-production-mode-gate](docs/specs/mcp-production-mode-gate.md)。
+
 ### 变更
 
 - **agent 数据面注册端点更名为 `/data-plane/attach`（FR-233，语义消歧）**：v1 的 `POST /beacon/v1/agent/register` 与 v2 的 `POST /beacon/v2/agent/register` **同名却不同职责**（v1 = 数据面挂载 + 机器注册直落；v2 = 身份状态机 pending→审批→active），在真机搭建时直接造成过接入误判（判定「功能重叠该退役一个」，并据此排查到错误方向）。现把 v1 端点更名为 `POST /beacon/v1/agent/data-plane/attach`，语义显式化为「**挂载数据面**」而非「注册身份」。

@@ -1,6 +1,25 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+// TestMCPConfigProductionModeDefaultsOffAndParsesYAML 验证生产模式开关（FR-237）：
+// 默认关闭（零值，行为与既有完全一致），且 yaml 键 production-mode 可被正确解析。
+func TestMCPConfigProductionModeDefaultsOffAndParsesYAML(t *testing.T) {
+	if Default().MCP.ProductionMode {
+		t.Fatal("MCP 生产模式必须默认关闭")
+	}
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("mcp:\n  production-mode: true\n"), &cfg); err != nil {
+		t.Fatalf("解析 mcp.production-mode 失败: %v", err)
+	}
+	if !cfg.MCP.ProductionMode {
+		t.Fatal("mcp.production-mode: true 未被解析为开启")
+	}
+}
 
 func TestMCPConfigEnabledRequiresHTTPSBaseAndTrustedProxy(t *testing.T) {
 	valid := validMCPConfigBase()
