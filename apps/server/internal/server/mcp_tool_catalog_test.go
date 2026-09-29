@@ -252,19 +252,34 @@ func buildApprovalRegistry() *authz.ApprovalRegistry {
 // 每个登记了 operation kind 的工具，其在 MCP 面的风险等级**不得低于**
 // 既有 OperationDescriptor 的等级。
 //
-// 该不变量保证 MCP 面只会比人类管理台更严，绝不更松——catalog 中若有
-// 工具被误降级，本测试失败。
+// 该不变量保证 MCP 面只会比人类管理台更严，绝不更松。为避免「kind 拼错即
+// 静默免检」，解析失败的 kind 必须落在显式豁免清单内，且核对数取**精确值**
+// ——新增 kind 未接入注册表时会失败而非悄悄放行。
 func TestMCPToolCatalogRiskNotBelowDescriptor(t *testing.T) {
 	registry := buildApprovalRegistry()
+
+	// 豁免清单：这些 kind 的注册函数需要 buildApprovalRegistry 未提供的依赖，
+	// 无法自动解析。**改动此清单必须人工核对 catalog 中对应工具的等级。**
+	exempt := map[string]bool{
+		// 注册函数需 *repository.MessageRepository 依赖，零值装配会整组静默跳过。
+		"message.payload.read": true,
+	}
+	// wantChecked 是「有 kind 的工具数 − 豁免数」的精确值。
+	const wantChecked = 49
+
 	checked := 0
+	exemptSeen := map[string]bool{}
 	for _, spec := range mcpToolCatalog {
 		if spec.OperationKind == "" {
 			continue
 		}
 		descriptor, ok := registry.Descriptor(spec.OperationKind)
 		if !ok {
-			// 该 kind 未被上述注册函数覆盖（依赖不全时整组跳过），交由
-			// 覆盖度下限断言兜底，此处不阻塞。
+			if !exempt[spec.OperationKind] {
+				t.Fatalf("工具 %s 的 operation kind %q 未解析到 descriptor——catalog 可能拼错，或审批注册装配已失效",
+					spec.Name, spec.OperationKind)
+			}
+			exemptSeen[spec.OperationKind] = true
 			continue
 		}
 		checked++
@@ -273,9 +288,63 @@ func TestMCPToolCatalogRiskNotBelowDescriptor(t *testing.T) {
 				spec.Name, spec.RiskLevel, spec.OperationKind, descriptor.RiskLevel)
 		}
 	}
-	// 覆盖度下限：防止注册函数整组静默跳过导致断言空转。
-	const minChecked = 40
-	if checked < minChecked {
-		t.Fatalf("仅核对了 %d 个工具的 descriptor 等级，低于下限 %d——注册装配可能已失效", checked, minChecked)
+	if checked != wantChecked {
+		t.Fatalf("已核对 %d 个工具的 descriptor 等级，期望 %d——新增或变更 kind 时必须同步核对并更新本值",
+			checked, wantChecked)
+	}
+	for kind := range exempt {
+		if !exemptSeen[kind] {
+			t.Fatalf("豁免项 %q 已不再出现，请从豁免清单移除", kind)
+		}
+	}
+}
+
+// TestMCPToolCatalogCoversEveryRegistrationAttempt 是「新增工具必须登记」的守护。
+//
+// 双向一致性断言看不见「代码新增工具、目录漏登记」——未登记工具既不在
+// MCPToolNames 里、也不会被注册，两侧同时缺失因而断言通过。本测试改为断言
+// 「运行时的注册尝试」全部命中目录（mcpAddTool 对未登记工具留痕），
+// 使漏登记以红灯暴露而非让工具静默消失。
+func TestMCPToolCatalogCoversEveryRegistrationAttempt(t *testing.T) {
+	t.Cleanup(func() {
+		auth.SetMCPProductionMode(false)
+		auth.SetMCPApprovalDecide(false)
+	})
+	// 两种门禁状态都跑，确保任何开关组合下都不会有工具因漏登记而消失。
+	for _, production := range []bool{false, true} {
+		auth.SetMCPProductionMode(production)
+		mcpResetUnregisteredAttempts()
+		registry := newFullMCPToolRegistry()
+		for _, profile := range []string{model.MCPClientProfileObserver, model.MCPClientProfileAutomation} {
+			_ = listRegisteredTools(t, registry, auth.MCPPrincipal("catalog-test", "覆盖门禁", profile))
+		}
+		if got := mcpUnregisteredSnapshot(); len(got) > 0 {
+			t.Fatalf("以下工具在运行时被注册但未登记入 mcpToolCatalog（production=%v）：%v", production, got)
+		}
+	}
+}
+
+// TestMCPProductionModeAppliesToRuntimeRegistration 验证生产模式不仅作用于
+// 清单侧（MCPToolNames），也作用于**运行时真实注册**——否则会出现
+// 「清单上隐藏、实际仍可调用」的错位。
+func TestMCPProductionModeAppliesToRuntimeRegistration(t *testing.T) {
+	t.Cleanup(func() {
+		auth.SetMCPProductionMode(false)
+		auth.SetMCPApprovalDecide(false)
+	})
+	auth.SetMCPApprovalDecide(true) // 与真机验收环境一致，使 approve/reject 参与比较
+	auth.SetMCPProductionMode(true)
+
+	registry := newFullMCPToolRegistry()
+	principal := auth.MCPPrincipal("catalog-test", "生产模式注册校验", model.MCPClientProfileAutomation)
+	registered := listRegisteredTools(t, registry, principal)
+	declared := sortedStrings(MCPToolNames(model.MCPClientProfileAutomation))
+	if !equalStringSets(registered, declared) {
+		t.Fatalf("生产模式下运行时注册集合与清单不一致\n注册 %v\n清单 %v", registered, declared)
+	}
+	for _, hidden := range criticalToolNames(true) {
+		if containsMCPTool(registered, hidden) {
+			t.Fatalf("生产模式下 critical 工具 %s 仍被注册", hidden)
+		}
 	}
 }

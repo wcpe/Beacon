@@ -1,6 +1,9 @@
 package server
 
 import (
+	"sort"
+	"sync"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
@@ -9,7 +12,8 @@ import (
 // MCP 工具风险等级：复用既有 authz.OperationDescriptor.RiskLevel 的取值体系
 // （low / high / critical），不引入新档位（FR-236）。
 const (
-	// MCPRiskLow 表示只读、无副作用，或仅操作申请者自身审批的工具。
+	// MCPRiskLow 表示只读、无副作用、仅操作申请者自身审批，或虽有写副作用
+	// 但已由领域守卫限界（如拓扑建树的非空拒绝）的工具。
 	MCPRiskLow = "low"
 	// MCPRiskHigh 表示会改变生产状态、但可通过后续操作回滚的工具；
 	// 本档工具多为「只创建审批申请」语义，本身不产生业务副作用。
@@ -187,12 +191,53 @@ func mcpToolDiscoverable(name string) bool {
 // mcpAddTool 是 MCP 工具的唯一注册入口（FR-236 / FR-237）。
 //
 // 与 SDK 的 mcp.AddTool 签名一致，但注册前先经 mcpToolDiscoverable 判定：
-// 未登记、当前不可见或已被生产模式收敛的工具不会进入 server 的工具集。
+// 已登记但当前不可见（生产模式收敛、审批决定开关关闭）的工具不会进入 server；
+// 未登记的工具同样不注册（fail-closed），并记入注册意图痕迹供覆盖测试捕获。
 // 本包内全部工具注册都必须走它，以保证「运行时真实注册的集合」与
 // 「MCPToolNames 声明的集合」由同一判定派生、不可能漂移。
 func mcpAddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[In, Out]) {
+	if _, registered := mcpToolSpecByName(tool.Name); !registered {
+		// fail-closed 不注册；同时留痕——否则「代码新增工具、目录漏登记」会
+		// 静默消失（清单与注册两侧同时缺失，双向一致性断言看不见），
+		// 与 ADR-0079「新增入口未分类时覆盖测试失败」的要求相悖。
+		mcpRecordUnregisteredAttempt(tool.Name)
+		return
+	}
 	if !mcpToolDiscoverable(tool.Name) {
 		return
 	}
 	mcp.AddTool(server, tool, handler)
+}
+
+// mcpUnregisteredAttempts 记录「运行时尝试注册、但未登记入目录」的工具名。
+//
+// 只由 mcpAddTool 写入、只由覆盖测试读取；生产路径不消费它，故仅是诊断痕迹。
+var (
+	mcpUnregisteredMu       sync.Mutex
+	mcpUnregisteredAttempts = map[string]struct{}{}
+)
+
+func mcpRecordUnregisteredAttempt(name string) {
+	mcpUnregisteredMu.Lock()
+	defer mcpUnregisteredMu.Unlock()
+	mcpUnregisteredAttempts[name] = struct{}{}
+}
+
+// mcpUnregisteredSnapshot 返回已记录的未登记工具名（排序后），供覆盖测试断言为空。
+func mcpUnregisteredSnapshot() []string {
+	mcpUnregisteredMu.Lock()
+	defer mcpUnregisteredMu.Unlock()
+	names := make([]string, 0, len(mcpUnregisteredAttempts))
+	for name := range mcpUnregisteredAttempts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// mcpResetUnregisteredAttempts 清空痕迹，供测试在枚举前取得干净起点。
+func mcpResetUnregisteredAttempts() {
+	mcpUnregisteredMu.Lock()
+	defer mcpUnregisteredMu.Unlock()
+	mcpUnregisteredAttempts = map[string]struct{}{}
 }

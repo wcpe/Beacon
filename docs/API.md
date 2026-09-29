@@ -1129,8 +1129,9 @@ token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审�
   "allowedHosts": [],
   "allowApprovalDecide": false,
   "allowMachineRegister": false,
+  "productionMode": false,
   "directMode": false
 }
 ```
 
-字段集合固定为上述八项。这些配置全部是**启动项**（改后须重启控制面），因此只提供读取、不提供写入端点。响应**绝不回显任何凭据**（如 agent 共享 token）；`directMode` 表示内网明文直连（无 TLS 反代），与 `MCPProxyPolicy` 的判定一致，未启用时恒为 `false`。
+字段集合固定为上述九项。这些配置全部是**启动项**（改后须重启控制面），因此只提供读取、不提供写入端点。响应**绝不回显任何凭据**（如 agent 共享 token）；`directMode` 表示内网明文直连（无 TLS 反代），与 `MCPProxyPolicy` 的判定一致，未启用时恒为 `false`；`productionMode` 开启时 MCP 面隐藏 `critical` 风险等级的工具（不可逆 / 影响控制面自身 / 可提权），工具对客户端表现为「不存在」而非「执行被拒」，详见 [mcp-production-mode-gate](specs/mcp-production-mode-gate.md)。

@@ -17,7 +17,7 @@
   - **分级结果**：`critical` 10 项 / `high` 44 项 / `low` 24 项。有 operation kind 的工具其 MCP 面等级**不得低于**既有 descriptor（测试断言该不变量，保证 MCP 面只比人类管理台更严）；其中 9 项在 MCP 面**提级**为 `critical` 而**不改动既有 descriptor**（零回归）——依据是机器主体的可发现面应严于人类管理台。
   - **生产模式（FR-237）**：新增 `mcp.production-mode` 启动项（默认 `false`，仅 yaml）。开启时 `critical` 档工具对客户端**完全不可发现**（表现为「工具不存在」而非「执行被拒」），`low` / `high` 不受影响；与 `mcp.allow-approval-decide` 正交但**优先**（生产模式下即使开启该开关，审批决定工具仍不可发现）。关闭时 `tools/list` 与既有**逐工具零差异**。`GET /admin/v2/mcp/config` 增加只读字段 `productionMode`，管理台客户端页同步展示。
   - **附带收益**：automation 侧 78 个工具的完整定义实测约 22–26 KB（≈7,000–9,000 tokens 的会话级固定开销），生产模式隐藏 10 项可减少约 13%。
-  - **回归测试**：目录自洽（工具名非空唯一、等级取值合法）、**真实注册集合与目录派生集合双向一致**（经 `mcp.NewInMemoryTransports` 会话枚举，避开静态扫描漏掉 helper 注册的 15 个工具）、descriptor 不变量（含覆盖度下限 40 防断言空转）、生产模式两态差集精确等于 critical 集合（对 `allow-approval-decide` 两态各验一次）、observer 集合不受开关影响。规格见 [mcp-tool-risk-grading](docs/specs/mcp-tool-risk-grading.md) 与 [mcp-production-mode-gate](docs/specs/mcp-production-mode-gate.md)。
+  - **回归测试**：目录自洽（工具名非空唯一、等级取值合法）、**真实注册集合与目录派生集合双向一致**（经 `mcp.NewInMemoryTransports` 会话枚举，避开静态扫描漏掉 helper 注册的 15 个工具）、descriptor 不变量（精确覆盖 + 显式豁免清单，防 kind 拼错后静默免检）、生产模式两态差集精确等于 critical 集合（对 `allow-approval-decide` 两态各验一次）、observer 集合不受开关影响；生产模式同样作用于**运行时注册**（防「清单隐藏、实际仍可调用」错位）；**新增工具漏登记即以红灯暴露**——`mcpAddTool` 对未登记工具留痕、覆盖测试断言该痕迹为空（变异验证：删除目录中任一项条目，测试立即失败并指名漏登记的工具）。规格见 [mcp-tool-risk-grading](docs/specs/mcp-tool-risk-grading.md) 与 [mcp-production-mode-gate](docs/specs/mcp-production-mode-gate.md)。
 
 ### 变更
 
