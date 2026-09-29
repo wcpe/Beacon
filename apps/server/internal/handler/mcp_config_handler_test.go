@@ -118,7 +118,7 @@ func TestMCPConfigHandlerResponseKeysAreExact(t *testing.T) {
 	}
 	want := []string{
 		"enabled", "publicBaseUrl", "trustedProxyCidrs", "allowInsecureInternal",
-		"allowedHosts", "allowApprovalDecide", "allowMachineRegister", "directMode",
+		"allowedHosts", "allowApprovalDecide", "allowMachineRegister", "productionMode", "directMode",
 	}
 	if len(raw) != len(want) {
 		t.Fatalf("字段数应为 %d，实际 %d：%v", len(want), len(raw), raw)

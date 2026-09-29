@@ -103,6 +103,13 @@ function EnabledRows({ data }: { data: MCPConfigView }) {
             : t('system.mcpClients.config.machineRegisterOff')}
         </span>
       </Row>
+      <Row label={t('system.mcpClients.config.productionMode')}>
+        <span className="text-sm text-ink-1">
+          {data.productionMode
+            ? t('system.mcpClients.config.productionModeOn')
+            : t('system.mcpClients.config.productionModeOff')}
+        </span>
+      </Row>
     </div>
   )
 }

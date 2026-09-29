@@ -115,6 +115,13 @@ func mcpApprovalDecideEnabled(cfg config.MCPConfig) bool {
 	return cfg.Enabled && cfg.AllowApprovalDecide
 }
 
+// mcpProductionModeEnabled 判定是否进入 MCP 生产模式（FR-237）：
+// 仅当 MCP 入口启用且显式开启 mcp.production-mode 时成立；
+// 与 mcpApprovalDecideEnabled 同口径抽出，避免 run 判定点越限。
+func mcpProductionModeEnabled(cfg config.MCPConfig) bool {
+	return cfg.Enabled && cfg.ProductionMode
+}
+
 func runApprovalWorker(ctx context.Context, worker *service.ApprovalWorker) {
 	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("审批执行器异常退出", "错误", err)
@@ -424,6 +431,8 @@ func run() error {
 	}
 	// automation 客户端的审批决定能力默认关闭；仅显式配置时开启（内网单操作者闭环）。
 	auth.SetMCPApprovalDecide(mcpApprovalDecideEnabled(cfg.MCP))
+	// MCP 生产模式（FR-237）：开启后隐藏 critical 风险等级的工具，默认关闭。
+	auth.SetMCPProductionMode(mcpProductionModeEnabled(cfg.MCP))
 	mcpToolRegistry := server.NewMCPToolRegistry(approvalService, apiKeyService, v2ControlPlaneService, settingsService)
 	mcpToolRegistry.SetConfigService(configService)
 	mcpToolRegistry.SetFileOverrideServices(fileService, overrideSetService)

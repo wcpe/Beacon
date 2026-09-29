@@ -8,11 +8,20 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
-func TestMCPReadToolsAreDiscoverableForBothProfiles(t *testing.T) {
+// TestMCPSharedToolsAreDiscoverableForBothProfiles 断言目录中所有「非 automation
+// 专属」工具对 observer 与 automation **都**可见。
+//
+// 期望集合直接取自 mcpToolCatalog，不再维护第二份只读工具名字符串清单——
+// 后者是重复真源，会与目录静默漂移。
+func TestMCPSharedToolsAreDiscoverableForBothProfiles(t *testing.T) {
 	for _, profile := range []string{model.MCPClientProfileObserver, model.MCPClientProfileAutomation} {
-		for _, name := range mcpReadToolNames {
-			if !containsMCPTool(MCPToolNames(profile), name) {
-				t.Fatalf("只读工具未对 profile 暴露: profile=%s tool=%s", profile, name)
+		names := MCPToolNames(profile)
+		for _, spec := range mcpToolCatalog {
+			if spec.AutomationOnly {
+				continue
+			}
+			if !containsMCPTool(names, spec.Name) {
+				t.Fatalf("两 profile 共用工具未暴露: profile=%s tool=%s", profile, spec.Name)
 			}
 		}
 	}

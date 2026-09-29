@@ -31,6 +31,9 @@ type mcpConfigView struct {
 	AllowedHosts          []string `json:"allowedHosts"`
 	AllowApprovalDecide   bool     `json:"allowApprovalDecide"`
 	AllowMachineRegister  bool     `json:"allowMachineRegister"`
+	// ProductionMode 报告当前是否处于 MCP 生产模式（FR-237，启动项）：
+	// 开启时 critical 风险等级的工具对 MCP 客户端完全不可发现。
+	ProductionMode bool `json:"productionMode"`
 	// DirectMode 为 true 表示内网明文直连（无 TLS 反代），与 NewMCPProxyPolicy 的判定口径一致。
 	DirectMode bool `json:"directMode"`
 }
@@ -48,6 +51,7 @@ func (h *MCPConfigHandler) Get(w http.ResponseWriter, _ *http.Request) {
 		AllowedHosts:          nonNilStrings(h.cfg.AllowedHosts),
 		AllowApprovalDecide:   h.cfg.AllowApprovalDecide,
 		AllowMachineRegister:  h.cfg.AllowMachineRegister,
+		ProductionMode:        h.cfg.ProductionMode,
 		DirectMode:            directMode(h.cfg),
 	})
 }
