@@ -37,21 +37,6 @@ func NewMCPReadServices(v2 *service.V2ControlPlaneService, topology *service.Top
 	return MCPReadServices{v2: v2, topology: topology, health: health, messages: messages, connections: connections, commands: commands, scheduling: scheduling, audits: audits, scope: scope}
 }
 
-var mcpReadToolNames = []string{
-	"beacon.metadata.namespaces.list",
-	"beacon.topology.snapshot.get",
-	"beacon.topology.zone-tree.get",
-	"beacon.topology.servers.list",
-	"beacon.metrics.health.list",
-	"beacon.metrics.summary.get",
-	"beacon.metrics.series.query",
-	"beacon.history.messages.list",
-	"beacon.history.connections.stats",
-	"beacon.history.commands.list",
-	"beacon.history.scheduling-decisions.list",
-	"beacon.audit.events.list",
-}
-
 type mcpPageInput struct {
 	mcpScopeInput
 	Page     int `json:"page,omitempty"`

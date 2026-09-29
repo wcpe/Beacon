@@ -283,7 +283,14 @@ func TestMCPToolCatalogRiskNotBelowDescriptor(t *testing.T) {
 			continue
 		}
 		checked++
-		if riskOrder(spec.RiskLevel) < riskOrder(descriptor.RiskLevel) {
+		got, want := riskOrder(spec.RiskLevel), riskOrder(descriptor.RiskLevel)
+		if got < 0 || want < 0 {
+			// 未知等级若被当作最低档比较，会让「descriptor 等级非法」静默读成
+			// 「不高于」而假通过——这里显式失败。
+			t.Fatalf("风险等级取值非法：工具 %s = %q，descriptor %s = %q",
+				spec.Name, spec.RiskLevel, spec.OperationKind, descriptor.RiskLevel)
+		}
+		if got < want {
 			t.Fatalf("工具 %s 的 MCP 风险等级 %s 低于其 operation %s 的 descriptor 等级 %s",
 				spec.Name, spec.RiskLevel, spec.OperationKind, descriptor.RiskLevel)
 		}
@@ -310,16 +317,23 @@ func TestMCPToolCatalogCoversEveryRegistrationAttempt(t *testing.T) {
 		auth.SetMCPProductionMode(false)
 		auth.SetMCPApprovalDecide(false)
 	})
-	// 两种门禁状态都跑，确保任何开关组合下都不会有工具因漏登记而消失。
+	// **两个开关的四种组合都要跑**：注册路径按 capability 分叉——
+	// registerApprovalDecision（approve / reject）仅在 allow-approval-decide
+	// 开启时才被调用，只跑单一状态会让那一组的注册路径从未执行，
+	// 于是「在那两个工具旁新增工具而不登记」同样会漏检。
 	for _, production := range []bool{false, true} {
-		auth.SetMCPProductionMode(production)
-		mcpResetUnregisteredAttempts()
-		registry := newFullMCPToolRegistry()
-		for _, profile := range []string{model.MCPClientProfileObserver, model.MCPClientProfileAutomation} {
-			_ = listRegisteredTools(t, registry, auth.MCPPrincipal("catalog-test", "覆盖门禁", profile))
-		}
-		if got := mcpUnregisteredSnapshot(); len(got) > 0 {
-			t.Fatalf("以下工具在运行时被注册但未登记入 mcpToolCatalog（production=%v）：%v", production, got)
+		for _, decide := range []bool{false, true} {
+			auth.SetMCPProductionMode(production)
+			auth.SetMCPApprovalDecide(decide)
+			mcpResetUnregisteredAttempts()
+			registry := newFullMCPToolRegistry()
+			for _, profile := range []string{model.MCPClientProfileObserver, model.MCPClientProfileAutomation} {
+				_ = listRegisteredTools(t, registry, auth.MCPPrincipal("catalog-test", "覆盖门禁", profile))
+			}
+			if got := mcpUnregisteredSnapshot(); len(got) > 0 {
+				t.Fatalf("以下工具在运行时被注册但未登记入 mcpToolCatalog（production=%v decide=%v）：%v",
+					production, decide, got)
+			}
 		}
 	}
 }
