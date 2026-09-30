@@ -6,15 +6,17 @@
 [![version](https://img.shields.io/github/v/release/wcpe/Beacon?label=version&color=blue&sort=semver)](https://github.com/wcpe/Beacon/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/wcpe/Beacon/total?label=downloads&color=brightgreen)](https://github.com/wcpe/Beacon/releases)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![Go](https://img.shields.io/github/go-mod/go-version/wcpe/Beacon?label=Go&logo=go&logoColor=white)](go.mod)
 [![CI](https://github.com/wcpe/Beacon/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/Beacon/actions/workflows/ci.yml)
 [![last commit](https://img.shields.io/github/last-commit/wcpe/Beacon/master?label=last%20commit)](https://github.com/wcpe/Beacon/commits/master)
+[![stars](https://img.shields.io/github/stars/wcpe/Beacon?label=stars&color=yellow)](https://github.com/wcpe/Beacon/stargazers)
+[![issues](https://img.shields.io/github/issues/wcpe/Beacon?label=issues)](https://github.com/wcpe/Beacon/issues)
 
 Beacon 把多个 **BungeeCord / Velocity 代理**与 **Bukkit / Paper 子服**串成可治理的集群：用独立 **Go 控制面**（内嵌 React 管理台，**单二进制同端口**）统一做身份绑定、区服分配、健康调度、跨服消息追踪、审计告警与灰度交付；游戏服只跑轻量 **Kotlin / TabooLib Agent**，业务插件只依赖本机 `agent-api`，禁止直连控制面。
 
 **控制面挂 ≠ 数据面挂**：Agent 持本地快照 fail-static，控制面不可用时按快照继续跑，不阻断玩家进服。
 
-> **发布状态**：当前公开 GA 为 GitHub Release `v1.2.0`（[releases](https://github.com/wcpe/Beacon/releases)）。在线更新只消费严格 `vX.Y.Z` GA，不把 RC 当作自动更新源。
+> **在线更新策略**：只消费严格 `vX.Y.Z` 正式 GA，RC 不进入自动更新候选。当前版本与产物见上方徽章与 [Releases](https://github.com/wcpe/Beacon/releases) 页——本文不写死版本号，避免每次发版都要改文档。
 
 ## 目录
 
@@ -24,6 +26,7 @@ Beacon 把多个 **BungeeCord / Velocity 代理**与 **Bukkit / Paper 子服**�
 - [架构一览](#架构一览)
 - [快速开始](#快速开始)
 - [文档](#文档)
+- [贡献](#贡献)
 - [许可](#许可)
 
 ---
@@ -124,6 +127,8 @@ pnpm --filter @beacon/ui-wiki dev
 
 ## 快速开始
 
+控制面为**单二进制**（内嵌管理台），Linux / macOS / Windows 均有构建产物，见 [Releases](https://github.com/wcpe/Beacon/releases)；Agent 为 Kotlin 插件 jar，放入 BC / Bukkit 插件目录即可。
+
 ### 1. 部署控制面
 
 ```bash
@@ -175,6 +180,17 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar → 
 | [docs/SDK.md](docs/SDK.md) | 业务插件接入 Agent API |
 | [SECURITY.md](SECURITY.md) | 安全边界 |
 | [CHANGELOG.md](CHANGELOG.md) | 更新日志 |
+
+---
+
+## 贡献
+
+欢迎提交 Issue 与 PR。动手前请先读 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)——含分支模型、提交信息规范、质量门与发版流程。
+
+- **缺陷与功能建议** → [Issues](https://github.com/wcpe/Beacon/issues)
+- **安全漏洞** → **请勿公开开 Issue**，按 [SECURITY.md](SECURITY.md) 私下报告
+- **本地验证**：构建见「快速开始 §4」；提交前请确保 `make lint` 与 `go test ./...` 全绿（CI 会跑更严格的全量门禁）
+- **变更与发版**：见 [CHANGELOG.md](CHANGELOG.md)；版本策略为「不可变 RC → 同提交原样晋级 GA」
 
 ---
 
