@@ -1,6 +1,6 @@
 # 控制面预置身份在审批时自动让位（FR-235）
 
-> 状态：开发中（实现完成，待真机验收）　·　关联 PRD：FR-235（增强 FR-222 / FR-141 / FR-139）　·　相关：[internal-trust-channel](internal-trust-channel.md)、[v2-agent-identity](v2-agent-identity.md)
+> 状态：开发中（真机验收通过，待发版；2026-09-30 于 20020 真控制面实测：造壳后真身份撞占转 `pending/server-id-occupied`，审批**显式传 `forceUnbindOccupier:false`** 仍自动让位成功（壳 `active→unbound`、真身份转 active）；两个**真身份**相争则审批 `failed / server_id_occupied`、防线不破；传 `true` 时强制解绑仍 `succeeded`；库中 11 空壳正确标记、11 真身份零误伤）　·　关联 PRD：FR-235（增强 FR-222 / FR-141 / FR-139）　·　相关：[internal-trust-channel](internal-trust-channel.md)、[v2-agent-identity](v2-agent-identity.md)
 
 ## 1. 背景
 
