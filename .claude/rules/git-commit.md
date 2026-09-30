@@ -94,23 +94,30 @@ feat: 加 zone 过滤，顺便修个长轮询 bug 并重构 merge
 feat(api): 加 discovery 端点（handler 还没接，编译不过）
 ```
 
-## 4. 其他约束
+## 4. 提交卫生与禁止入库内容（强制）
 
 - 禁止跳过 hooks（`--no-verify`）。禁止对已 push 的提交 `--amend`。
-- 提交前确认未包含 `.env` / 凭据 / 大型二进制。
+- **禁止入库的内容**（每次暂存前必须自检）：
+  - **隐私信息**：真实姓名、个人邮箱、手机号、住址、账号等个人可识别信息。
+  - **IP 与真实地址**：真实公网 / 内网 IP、真实主机名与域名——文档与示例一律用保留地址（`192.0.2.0/24`、`example.com`、`beacon.internal` 等占位符）。
+  - **密钥与凭据**：API key、token、密码、私钥、证书、含凭据的连接串（如带账号密码的 DSN）。
+  - **二进制与产物**：可执行文件、jar、编译产物、数据库文件、大型数据文件。
+  - **易朽过程稿**：见 §2.2（`.tmp/` 内的一切）。
+- 发现上述内容**已经入库**时：**立即报告**并给出清理方案（说明是否需重写历史、影响哪些提交），不得静默忽略或悄悄改掉。
 
-## 5. 集成只用 rebase / fast-forward（禁 merge 提交，强制）
+## 5. 集成方式：squash merge（强制）
 
-- **分支并入 master 必须保持线性历史**：先把特性分支 `rebase` 到最新 master，再 `git merge --ff-only`（fast-forward）并入。**禁止产生 merge 提交**——`git merge` 默认 no-ff 合并、`--no-ff`、`merge(scope):` 形式的合并提交一律不允许。
-- 并行 worktree 分支收尾同理：逐个 rebase 到 master 后 FF 并入；rebase 冲突**报告给用户、不强推**（不 `--force`、不丢提交）。
-- 本约束对**新并入**生效；历史中已存在的 merge 提交保留、不追溯重写。
+- **一切 PR 经 squash merge 并入 `master`**：即 GitHub 的 "Squash and merge"，把 PR 内的多个提交压成**单个**提交入 master。禁止 merge 提交、禁止 rebase-merge 保留多提交、禁止直推 `master`。
+- **合并标题必须带 PR 编号**：`<type>(<scope>): <中文描述> (#NN)`，`#NN` 为该 PR 的 GitHub 编号。标题其余部分沿用 §1.1。
+- **合并正文必须自行总结**：**禁止直接套用 PR 的 body 原文**。合并者须读 `git diff` 后用自己的话重写「这次 PR 改了什么」，语言与格式沿用 §1.2（中文、说清为什么改与改动要点、不逐行复述 diff）。
+- 本约束对**新并入**生效；历史中已存在的 merge 提交与多提交 PR 保留、不追溯重写。
 
 ## 6. 分支与 PR 合入（强制）
 
 - **一切变更经 PR 进 `master`**：禁止任何情形直推 `master`（单人期、发版提交同样经 PR）。本地允许 `dev` 等集成草稿分支，但进 `master` 仍走 PR。
 - **分支命名**：`feature/*`、`fix/*`、`refactor/*`、`hotfix/*`、`docs/*`、`chore/*`；短生命周期，一个 PR 只做一件事（粒度见 §3）。
-- **合入前同步**：先 `rebase` 到最新 `master`，再合入；线性历史与禁 merge 提交按 §5 执行（本节不重复）。
-- **禁压单提交**：多意图 PR 不得 `squash` 压成单提交，不得整版本一提交；按逻辑提交保留。
+- **合入前同步**：PR 分支须先 `rebase` 到最新 `master` 并确认 CI 全绿；实际并入由 GitHub 的 squash merge 完成（见 §5），无需本地 FF 合并。
+- **单一提交结果**：PR 内的多个提交在并入时压成**一个**（见 §5）；PR 内部仍保持逻辑提交粒度，便于 review。
 - **回滚**：优先 `git revert`；严禁 `force push` 到 `master`（`rebase` 冲突报告用户、不强推）。
 - **提交卫生**：严禁 `--no-verify`，严禁 `--amend` 已 push 提交（见 §4）。
 - **PR 标题**：沿用 §1 的 Conventional + 中文；自动发布说明只统计两 tag 间合并的 PR 标题，标题质量决定 Release 外观。
