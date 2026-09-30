@@ -17,7 +17,7 @@ type pingFunc func() error
 
 func (f pingFunc) Ping() error { return f() }
 
-// cpuStub 是 cpuSampler 的测试替身：按预置值返回进程 CPU 占比与可用性。
+// cpuStub 是 CPUSampler 的测试替身：按预置值返回进程 CPU 占比与可用性。
 type cpuStub struct {
 	percent   float64
 	available bool
