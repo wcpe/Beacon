@@ -19,9 +19,9 @@ type dbPinger interface {
 	Ping() error
 }
 
-// cpuSampler 是系统状态对进程 CPU 占比的窄依赖：返回 [0,100] 区间的占比与可用性。
+// CPUSampler 是系统状态对进程 CPU 占比的窄依赖：返回 [0,100] 区间的占比与可用性。
 // 真源由 gopsutilCPUSampler（基于 gopsutil process）实现，测试以替身覆盖可用 / 降级两态。
-type cpuSampler interface {
+type CPUSampler interface {
 	// Percent 返回自上次调用以来本进程的 CPU 占比及其是否可用；不可用时降级返回 (0, false)。
 	Percent() (float64, bool)
 }
@@ -98,14 +98,14 @@ type SystemService struct {
 	pinger         dbPinger
 	registry       *rt.Registry
 	samplerEnabled func() bool // 采样器是否启用：从设置 store 读、热生效（FR-61），反映 metric.enabled 当前值
-	cpu            cpuSampler
+	cpu            CPUSampler
 	now            func() time.Time // 便于测试注入时钟；默认 UTC now
 }
 
 // NewSystemService 构造服务。startedAt 由调用方在进程启动处记录并传入（统一为 UTC）。
 // samplerEnabled 为读取采样器启用状态的回调（FR-61：从设置 store 读 metric.enabled，热生效；nil 视为禁用）。
 // cpu 为进程 CPU% 采样器（生产由 NewGopsutilCPUSampler 提供并已预热，测试以替身注入）。
-func NewSystemService(version string, startedAt time.Time, pinger dbPinger, registry *rt.Registry, samplerEnabled func() bool, cpu cpuSampler) *SystemService {
+func NewSystemService(version string, startedAt time.Time, pinger dbPinger, registry *rt.Registry, samplerEnabled func() bool, cpu CPUSampler) *SystemService {
 	return &SystemService{
 		version:        version,
 		startedAt:      startedAt.UTC(),
@@ -119,7 +119,7 @@ func NewSystemService(version string, startedAt time.Time, pinger dbPinger, regi
 
 // NewGopsutilCPUSampler 暴露生产用 CPU 采样器构造，供进程启动处装配并预热基线。
 // 句柄创建失败时返回的采样器其 Percent 恒降级为 (0,false)，端点据此置 CPUAvailable=false。
-func NewGopsutilCPUSampler() cpuSampler {
+func NewGopsutilCPUSampler() CPUSampler {
 	return newGopsutilCPUSampler()
 }
 

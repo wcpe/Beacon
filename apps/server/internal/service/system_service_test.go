@@ -20,7 +20,7 @@ func samplerEnabledFn(enabled bool) func() bool {
 	return func() bool { return enabled }
 }
 
-// fakeCPUSampler 是 cpuSampler 测试替身：按预置值返回 CPU 占比与可用性。
+// fakeCPUSampler 是 CPUSampler 测试替身：按预置值返回 CPU 占比与可用性。
 type fakeCPUSampler struct {
 	percent   float64
 	available bool

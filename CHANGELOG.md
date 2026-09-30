@@ -30,6 +30,12 @@
 
 ### 修复
 
+- **golangci-lint 的 `exhaustruct` 禁用失效（工具链配置漂移）**：`.golangci.yml` 的 disable 列表列的是 `exhaustruct`，而 golangci-lint 自 **v2.13.0** 起把该 linter 拆成两个**并列条目**——旧的 `exhaustruct`（标记 Deprecated）与新的 `exhaustruct_v5`（`WithVersion(5)`）。`default: all` 会启用新条目，仅 disable 旧名因此失效：本地 v2.14.0 下暴露 **3232 个**存量问题（涉及 403 个文件，测试占 61%）。经核对，v2.12.2→v2.14.0 之间 builder 的唯一新增注册项即它，其余 disable 项均有效（未知 disable 名会硬报错，本地跑通即证明）。
+  - **修复**：`.golangci.yml` 补列 `exhaustruct_v5`，并把 CI 与 RC 两条流水线的 `golangci-lint-action` 版本从 `v2.12.2` 升到 `v2.14.0`——**两者必须成对**：只补 disable 会让 v2.12.2 因不认识该名而硬报 `unknown linters`。写法沿用仓库既有先例（`wsl`/`wsl_v5`、`gomodguard`/`gomodguard_v2` 均为新旧双列）。
+  - **顺带修一处既有告警**：升版后 `revive` 新报出 `service.NewGopsutilCPUSampler` 返回未导出接口（`unexported-return`）。按该规则的意图把 `cpuSampler` **导出**为 `CPUSampler`——接口语义与全部实现不变，调用方以 `:=` 推断类型故无需改动。
+  - **验证**：本地 v2.14.0 全量 `golangci-lint run ./...` 报 **0 issues**；`service` / `handler` 包测试全绿；`go vet`、`gofmt` 通过。
+
+
 - **MCP 通道在会话空闲后永久卡死（端点无状态化）**：`/admin/v2/mcp` 的 Streamable HTTP 传输此前配置了 5 分钟会话空闲超时。会话一旦失效，客户端再次调用会收到 session not found；而主流客户端（含 NarraFork 内置 HTTP 客户端）在会话失效后不会重发 `initialize`，通道因此永久卡死、只能人工重连。现端点改为**无状态**（方向依据 MCP SEP-2567）：不读也不写 `Mcp-Session-Id`，每个请求使用带默认初始化参数的临时会话，传输只接受 POST。
   - **行为变化**：不再下发 `Mcp-Session-Id`；客户端携带的陈旧会话 id 被忽略而非据以拒绝；GET 返回 `405` 并带 `Allow: POST`（DELETE 不再具备会话终止语义，故不注册进 MCP 路由）；服务端重启或长期空闲不再使通道失效。**鉴权、受众校验与工具可见性逐字不变**（无状态化不放宽任何安全检查）。
   - **审计**：规格中原列的 `mcp.session.opened/closed` 随无状态化取消——无会话即无生命周期事件（该项自规格起草起从未实现）。
