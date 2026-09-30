@@ -1,6 +1,6 @@
 # 功能规格：MCP 工具风险分级真源
 
-> 状态：开发中（真机验收通过，待发版）　·　关联 PRD：FR-236　·　分支：feature/mcp-tool-risk-grading
+> 状态：已交付@v1.3.0　·　关联 PRD：FR-236　·　分支：feature/mcp-tool-risk-grading
 
 ## 1. 背景与目标
 

@@ -1,6 +1,6 @@
 # agent 注册双端点语义消歧（FR-233）
 
-> 状态：开发中　·　关联 PRD：FR-233（增强 FR-222 / FR-139/140/141）　·　架构决策：[ADR-0084](../adr/0084-agent-registration-endpoint-disambiguation.md)
+> 状态：已交付@v1.3.0（2026-09-30 于 20020 真控制面实测：新路径 200 无 `Deprecation` 头、旧路径 200 带 `Deprecation: true` 与 `Link: rel="successor-version"`、两路径响应字段集合一致、缺/错 token 均 401、机器注册直落含 `machineRegistered`）　·　关联 PRD：FR-233（增强 FR-222 / FR-139/140/141）　·　架构决策：[ADR-0084](../adr/0084-agent-registration-endpoint-disambiguation.md)
 
 ## 0. 与另一者的分工（先说清本项不是什么）
 

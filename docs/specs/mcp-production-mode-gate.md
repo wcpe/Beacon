@@ -1,6 +1,6 @@
 # 功能规格：MCP 生产模式工具门禁
 
-> 状态：开发中（真机验收通过，待发版）　·　关联 PRD：FR-237　·　依赖：FR-236（风险分级真源）　·　分支：feature/mcp-production-mode-gate
+> 状态：已交付@v1.3.0　·　关联 PRD：FR-237　·　依赖：FR-236（风险分级真源）　·　分支：feature/mcp-production-mode-gate
 
 ## 1. 背景与目标
 
