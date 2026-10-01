@@ -18,9 +18,11 @@ interface NamespaceDetailPanelProps {
   onGrant: () => void
   // 请求收回某条信任（打开原因必填模态）
   onRevoke: (trust: NamespaceTrustItem) => void
+  // 请求轮换接入 token（打开破坏性二次确认，FR-238）
+  onRotate: () => void
 }
 
-export default function NamespaceDetailPanel({ item, trusts, onGrant, onRevoke }: NamespaceDetailPanelProps) {
+export default function NamespaceDetailPanel({ item, trusts, onGrant, onRevoke, onRotate }: NamespaceDetailPanelProps) {
   const { t } = useTranslation()
 
   const capabilityLabel = (cap: TrustCapability): string => {
@@ -101,6 +103,17 @@ export default function NamespaceDetailPanel({ item, trusts, onGrant, onRevoke }
           <LifecycleApprovalControl subject="namespace" id={item.id} stableID={item.code ?? item.name} lifecycle={item.lifecycle} />
         </div>
         <span className="text-xs text-ink-3">{item.lifecycle === 'tombstoned' ? '墓碑仅保留历史与审计，不能恢复。' : item.effectiveActive === false ? '当前不具备有效运行资格。' : '归档与恢复均需统一审批。'}</span>
+      </div>
+
+      {/* 接入 token 轮换（FR-238）：直执操作，破坏性二次确认由父页承载 */}
+      <div className="grid gap-2 rounded-lg border border-border bg-surface-1 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[13px] font-semibold text-ink-1">{t('system.namespaces.token.title')}</span>
+          <Button size="sm" variant="outline" className="h-7" onClick={onRotate}>
+            {t('system.namespaces.token.rotate')}
+          </Button>
+        </div>
+        <span className="text-xs text-ink-3">{t('system.namespaces.token.rotateHint')}</span>
       </div>
 
       {/* 互通信任关系（出向 / 入向） */}

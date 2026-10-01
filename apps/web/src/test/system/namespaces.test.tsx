@@ -134,4 +134,73 @@ describe('/namespaces 页', () => {
     })
     expect(screen.getAllByText('已收回').length).toBeGreaterThan(0)
   })
+
+  it('详情面板提供接入 token 轮换入口', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<NamespacesPage />)
+
+    const testRow = (await screen.findAllByText('test'))[0].closest('tr')
+    expect(testRow).not.toBeNull()
+    await user.click(testRow as HTMLElement)
+
+    expect(await screen.findByRole('button', { name: '轮换接入 token' })).toBeInTheDocument()
+    // 轮换前不出现任何破坏性确认弹窗
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('轮换接入 token 须手输 code 二次确认，成功后一次性展示新明文（写闭环）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<NamespacesPage />)
+
+    const testRow = (await screen.findAllByText('test'))[0].closest('tr')
+    expect(testRow).not.toBeNull()
+    await user.click(testRow as HTMLElement)
+    await user.click(await screen.findByRole('button', { name: '轮换接入 token' }))
+
+    // 破坏性确认：影响摘要显式说明旧 token 立即失效、新明文仅一次
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByText(/旧 token 在写入新哈希的那一刻起立即失效/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/全部 agent 在换用新 token 前，请求一律 401/)).toBeInTheDocument()
+
+    // 手输复述闸：未输入 / 输错均禁用确认
+    const phraseInput = () => within(dialog).getByLabelText('输入命名空间 code 以确认轮换')
+    expect(within(dialog).getByRole('button', { name: '确认轮换' })).toBeDisabled()
+    await user.type(phraseInput(), 'wrong')
+    expect(within(dialog).getByRole('button', { name: '确认轮换' })).toBeDisabled()
+
+    // 输对 code 放行 → 轮换结果复用一次性 token 弹窗展示新明文
+    await user.clear(phraseInput())
+    await user.type(phraseInput(), 'test')
+    expect(within(dialog).getByRole('button', { name: '确认轮换' })).toBeEnabled()
+    await user.click(within(dialog).getByRole('button', { name: '确认轮换' }))
+
+    const tokenDialog = await screen.findByRole('dialog')
+    expect(within(tokenDialog).getByText(/^nstk_/)).toBeInTheDocument()
+  })
+
+  it('轮换确认框取消则不发请求（二次确认可撤销）', async () => {
+    useScenario('normal')
+    let rotateCalls = 0
+    server.use(
+      http.post('/admin/v2/namespaces/:id/token/rotate', () => {
+        rotateCalls += 1
+        return HttpResponse.json({}, { status: 200 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<NamespacesPage />)
+
+    const testRow = (await screen.findAllByText('test'))[0].closest('tr')
+    expect(testRow).not.toBeNull()
+    await user.click(testRow as HTMLElement)
+    await user.click(await screen.findByRole('button', { name: '轮换接入 token' }))
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: '取消' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    expect(rotateCalls).toBe(0)
+  })
 })

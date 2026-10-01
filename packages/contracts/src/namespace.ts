@@ -38,7 +38,7 @@ export interface NamespaceLifecycleImpact {
   summary: string[]
 }
 
-/** 创建 namespace 的响应：一次性明文接入 token 只在此返回 */
+/** 创建 namespace 与接入 token 轮换（FR-238）的响应：一次性明文接入 token 只在此返回，关闭即不可再取 */
 export interface NamespaceCreated extends NamespaceItem {
   accessToken: string
 }
