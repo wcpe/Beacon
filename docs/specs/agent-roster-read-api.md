@@ -1,6 +1,10 @@
 # 功能规格：agent-api 玩家位置名册只读查询
 
-> 状态：草拟　·　关联 PRD：FR-31　·　决策：[ADR-0022](../adr/0022-agent-roster-read-api.md)（扩展 [ADR-0016](../adr/0016-agent-cross-server-messaging-middleware.md) 决策 5）　·　分支：feature/agent-roster-read-api
+> 状态：**未交付**（原「草拟」方案的设计前提已被 [ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 取代，待重定方案）　·　关联 PRD：FR-31　·　原决策：[ADR-0022](../adr/0022-agent-roster-read-api.md)（扩展 [ADR-0016](../adr/0016-agent-cross-server-messaging-middleware.md) 决策 5）
+>
+> **现状与冲突（2026-10-01 复核）**：本规格原设计为 agent 侧直读 Redis 名册（`HGETALL beacon:player-loc`），并要求「控制面零改动、不连 Redis、不持有名册」。而 [ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 决策 4 已把**名册权威迁至控制面**（依连接明细在内存维护玩家位置快照），agent 侧不再持有 Redis 名册——**本规格的设计前提因此作废**，下文第 2、3 节的 Redis 路径均不再成立。
+>
+> 代码现状为**半成品残留**：接口声明（`Discovery.roster` / `rosterInZone`）与 core 侧端口、组合逻辑（`RosterDirectory` / `DiscoveryView`）已在，但**适配器与装配均缺失**（`RedisPlayerRoster` 类已不存在，`RosterDirectoryHolder` 在生产装配中无注入），故两条查询恒返空。**是否重做待拍板**：若继续，需按 ADR-0063 改为「控制面新增名册读端点 + agent 侧新增 HTTP 适配器 + 补装配」；若不继续，应明确保留接口占位（守③层二进制兼容）并在规格标注为止。
 
 ## 1. 背景与目标
 
