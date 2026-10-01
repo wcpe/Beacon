@@ -17,7 +17,7 @@ public interface BeaconAgent {
     /**
      * 跨服消息中间件门面（FR-26）：定向 / RPC / 主题 / 按玩家寻址的通用传输。
      *
-     * <p>始终返回非 null；模块未开启或 Redis 未连上时其 {@link Messaging#isAvailable()} 为 false，
+     * <p>始终返回非 null；模块未开启或控制面不可达时其 {@link Messaging#isAvailable()} 为 false，
      * 业务插件据此优雅降级。</p>
      */
     Messaging messaging();
