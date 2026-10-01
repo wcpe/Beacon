@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/glebarez/sqlite v1.11.0
-	github.com/go-chi/chi/v5 v5.3.0
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
