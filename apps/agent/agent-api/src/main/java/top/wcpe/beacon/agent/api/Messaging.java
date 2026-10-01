@@ -3,12 +3,13 @@ package top.wcpe.beacon.agent.api;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 跨服消息中间件门面（FR-26 / ADR-0016）：对③层业务插件暴露与内容无关的通用传输。
+ * 跨服消息中间件门面（FR-26；传输层现行决策见 ADR-0063，取代 ADR-0016 的 Redis 数据面直连）：
+ * 对③层业务插件暴露与内容无关的通用传输。
  *
  * <p>四种模式：定向发送、请求-响应（RPC）、主题发布订阅、按玩家所在服寻址；外加按类型收消息。
  * 中间件只搬运、不理解业务语义；匹配 / 对战 / 存储 / 排行等游戏功能由业务插件自行实现。</p>
  *
- * <p><b>软依赖 + 降级</b>：模块未开启或 Redis 未连上时 {@link #isAvailable()} 为 false，
+ * <p><b>软依赖 + 降级</b>：模块未开启或控制面不可达时 {@link #isAvailable()} 为 false，
  * 发送类方法抛 {@link IllegalStateException}；业务插件应先判 {@link #isAvailable()} 再用，优雅降级。</p>
  *
  * <p><b>线程</b>：发送类方法可在任意线程调用（内部仅编码 + 投递）。收到消息的 handler 在中间件后台线程
@@ -19,11 +20,14 @@ import java.util.concurrent.CompletableFuture;
  */
 public interface Messaging {
 
-    /** 模块是否可用（已启用且 Redis 已连上）。业务侧据此优雅降级。 */
+    /** 模块是否可用（已启用且控制面可达）。业务侧据此优雅降级。 */
     boolean isAvailable();
 
     /**
-     * 定向发送（fire-and-forget，可靠送达）：写入目标服收件流，目标离线则上线后补收。
+     * 定向发送（fire-and-forget，在线尽力送达）：经控制面单跳中转投给目标服。
+     *
+     * <p><b>不做离线补投</b>（ADR-0063 决策 3）：目标离线即失败、无人取走则 TTL 到期即弃，
+     * 控制面不持久化待投。业务侧如需幂等，请按消息携带的标识自行去重。</p>
      *
      * @param targetServerId 目标子服 serverId
      * @param type           业务消息类型（目标按 {@link #on} 注册的同名处理器分发）
