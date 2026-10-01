@@ -12,6 +12,7 @@ import type {
   HealthWeightsConfig,
   HealthWeightsResponse,
   NamespaceCreated,
+  NamespaceItem,
   NamespaceListResponse,
   NamespaceTrustItem,
   NamespaceTrustListResponse,
@@ -192,6 +193,21 @@ export interface CreateNamespaceBody {
 /** 创建 namespace：响应含一次性明文接入 token（仅此一次可见）。 */
 export function createNamespace(body: CreateNamespaceBody): Promise<NamespaceCreated> {
   return request('POST', '/admin/v2/namespaces', body)
+}
+
+/**
+ * 编辑 namespace 的展示层字段（FR-239）：只开放 displayName 与 description。
+ * `code`（稳定业务标识）创建后不可变更，因此**不进入请求体**；若被显式提交且与现值不一致，
+ * 服务端返回 400 `IMMUTABLE_IDENTIFIER`（见 docs/specs/stable-business-identifiers-and-display-names.md）。
+ */
+export interface UpdateNamespaceBody {
+  displayName?: string
+  description?: string
+}
+
+/** 编辑 namespace：仅展示名与描述可改，稳定标识 code 保持只读。 */
+export function updateNamespace(id: number, body: UpdateNamespaceBody): Promise<NamespaceItem> {
+  return request('PATCH', `/admin/v2/namespaces/${String(id)}`, body)
 }
 
 /**

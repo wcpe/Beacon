@@ -529,7 +529,7 @@ export const system = {
     relationOutbound: '出向（本域可操作目标域）',
     relationInbound: '入向（来源域可操作本域）',
     noRelations: '该命名空间暂无信任关系，与其它域完全隔离',
-    // 创建
+    // 创建 / 编辑
     create: '创建命名空间',
     createTitle: '创建命名空间',
     codeLabel: '业务标识',
@@ -540,6 +540,13 @@ export const system = {
     descLabel: '描述（可选）',
     createConfirm: '创建',
     creating: '创建中…',
+    // 编辑展示名 / 描述（FR-239）：稳定业务标识只读
+    edit: '编辑',
+    editTitle: '编辑命名空间',
+    editDesc: '仅可修改显示名称与描述；业务标识是稳定标识，创建后不可变更。',
+    codeImmutableHint: '稳定业务标识创建后不可修改，用于系统寻址与审计追溯。',
+    save: '保存',
+    saving: '保存中…',
     // 一次性接入令牌
     tokenTitle: '命名空间已创建',
     tokenDesc: '这是唯一一次显示接入令牌，请复制并配置到该命名空间下代理端的配置文件，关闭后无法再次查看。',

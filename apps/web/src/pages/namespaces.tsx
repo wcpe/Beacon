@@ -34,6 +34,7 @@ import {
   grantTrust,
   revokeTrust,
   rotateNamespaceToken,
+  updateNamespace,
   type GrantTrustBody,
 } from '../api/system'
 import type { ApprovalTicket } from '../api/cluster'
@@ -46,6 +47,7 @@ import MasterDetail from '../features/shared/master-detail'
 import Pager from '../features/observability/pager'
 import GrantDialog from './namespaces/grant-dialog'
 import NamespaceDetailPanel from './namespaces/namespace-detail-panel'
+import NamespaceEditDialog from './namespaces/namespace-edit-dialog'
 import TokenDialog from './namespaces/token-dialog'
 
 const PAGE_SIZE = 15
@@ -80,6 +82,10 @@ export default function NamespacesPage() {
   // 轮换接入 token 态（FR-238）：破坏性二次确认；新明文复用 TokenDialog 一次性展示
   const [rotateTarget, setRotateTarget] = useState<NamespaceItem | null>(null)
   const [rotateError, setRotateError] = useState<string | null>(null)
+
+  // 编辑态（FR-239）：待编辑的 namespace（null = 弹窗关闭），code 只读不参与提交
+  const [editing, setEditing] = useState<NamespaceItem | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
 
   const query = useQuery({
     queryKey: ['namespaces', 'list', keyword, page],
@@ -174,6 +180,19 @@ export default function NamespacesPage() {
     },
     onError: (error) => {
       setRevokeError(messageOf(error))
+    },
+  })
+
+  // 编辑展示名 / 描述（FR-239）：稳定标识 code 不进请求体，保存后刷新列表使详情面板取到新值
+  const editMutation = useMutation({
+    mutationFn: ({ id, displayName, description }: { id: number; displayName: string; description: string }) =>
+      updateNamespace(id, { displayName, description }),
+    onSuccess: async () => {
+      await invalidateAll()
+      setEditing(null)
+    },
+    onError: (error) => {
+      setEditError(messageOf(error))
     },
   })
 
@@ -308,6 +327,10 @@ export default function NamespacesPage() {
                 setRotateError(null)
                 setRotateTarget(selected)
               }}
+              onEdit={() => {
+                setEditError(null)
+                setEditing(selected)
+              }}
             />
           ) : null
         }
@@ -384,6 +407,27 @@ export default function NamespacesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 编辑展示名 / 描述（FR-239）：code 只读展示，不可变 */}
+      <NamespaceEditDialog
+        open={editing !== null}
+        initialCode={editing?.code ?? editing?.name ?? ''}
+        initialDisplayName={editing?.displayName ?? editing?.name ?? ''}
+        initialDescription={editing?.description ?? ''}
+        pending={editMutation.isPending}
+        errorText={editError}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditing(null)
+          }
+        }}
+        onSubmit={(displayName, description) => {
+          if (editing) {
+            setEditError(null)
+            editMutation.mutate({ id: editing.id, displayName, description })
+          }
+        }}
+      />
 
       {/* 轮换接入 token（FR-238）：破坏性二次确认 + 手输 code 高摩擦防误触 */}
       <DestructiveConfirmDialog

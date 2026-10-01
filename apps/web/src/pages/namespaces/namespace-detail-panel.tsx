@@ -20,9 +20,11 @@ interface NamespaceDetailPanelProps {
   onRevoke: (trust: NamespaceTrustItem) => void
   // 请求轮换接入 token（打开破坏性二次确认，FR-238）
   onRotate: () => void
+  // 请求编辑展示名 / 描述（打开编辑弹窗，FR-239）
+  onEdit: () => void
 }
 
-export default function NamespaceDetailPanel({ item, trusts, onGrant, onRevoke, onRotate }: NamespaceDetailPanelProps) {
+export default function NamespaceDetailPanel({ item, trusts, onGrant, onRevoke, onRotate, onEdit }: NamespaceDetailPanelProps) {
   const { t } = useTranslation()
 
   const capabilityLabel = (cap: TrustCapability): string => {
@@ -85,9 +87,18 @@ export default function NamespaceDetailPanel({ item, trusts, onGrant, onRevoke, 
 
   return (
     <div className="grid gap-3 text-sm">
-      <div>
-        <div className="text-[15px] font-semibold text-ink-1">{item.displayName ?? item.name}</div>
-        <code className="text-xs text-ink-4">{item.code ?? item.name}</code>
+      {/* 概要头：展示名 + 稳定业务标识（只读说明不可变）+ 编辑入口（FR-239） */}
+      <div className="grid gap-1">
+        <div className="flex items-start justify-between gap-2">
+          <div className="grid gap-0.5">
+            <div className="text-[15px] font-semibold text-ink-1">{item.displayName ?? item.name}</div>
+            <code className="text-xs text-ink-4">{item.code ?? item.name}</code>
+          </div>
+          <Button size="sm" variant="outline" className="h-7" onClick={onEdit}>
+            {t('system.namespaces.edit')}
+          </Button>
+        </div>
+        <span className="text-[11px] text-ink-4">{t('system.namespaces.codeImmutableHint')}</span>
       </div>
 
       <Field label={t('system.namespaces.columns.description')} value={item.description || '-'} />
