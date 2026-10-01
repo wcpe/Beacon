@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom'
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Label, Textarea } from '@beacon/ui'
 import type { ApprovalRequest } from '@beacon/contracts'
 
+import { randomId } from '../../lib/random-id'
 import { fetchApprovalDetail } from '../../api/approvals'
 import { ApiClientError } from '../../api/http'
 
@@ -35,7 +36,7 @@ export default function DemoSensitiveAccessDialog({ open, onOpenChange, mode, ta
   const key = mode === 'demo' ? 'approvals.demo' : 'approvals.access'
   const createMutation = useMutation({
     mutationFn: () => {
-      idempotencyKey.current ??= crypto.randomUUID()
+      idempotencyKey.current ??= randomId()
       return createApproval(reason.trim(), idempotencyKey.current)
     },
     onSuccess: (approval) => {

@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import { Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label, Textarea } from '@beacon/ui'
 import type { LifecycleAction, LifecycleStatus, NamespaceLifecycleImpact, ServerLifecycleImpact } from '@beacon/contracts'
 
+import { randomId } from '../../lib/random-id'
 import { createLifecycleApprovalRequest } from '../../api/approvals'
 import { fetchServerLifecycleImpact } from '../../api/cluster'
 import { fetchNamespaceLifecycleImpact, fetchNamespacePermanentDeletionImpact } from '../../api/system'
@@ -119,7 +120,7 @@ function requestBody(subject: LifecycleSubject, id: number, action: LifecycleAct
 }
 
 function lifecycleIdempotencyKey(subject: LifecycleSubject, id: number, action: LifecycleAction): string {
-  return `${subject}-${String(id)}-${action}-${crypto.randomUUID()}`
+  return `${subject}-${String(id)}-${action}-${randomId()}`
 }
 
 function closeDialog(next: boolean, setOpen: (value: boolean) => void, setReason: (value: string) => void, setConfirmation: (value: string) => void, setTicketID: (value: string | null) => void) {

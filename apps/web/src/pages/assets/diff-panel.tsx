@@ -8,6 +8,7 @@ import { SplitSquareHorizontal } from 'lucide-react'
 import { Badge, Button, Input, Label, SectionHeader, Textarea } from '@beacon/ui'
 import type { ApprovalRequest } from '@beacon/contracts'
 
+import { randomId } from '../../lib/random-id'
 import { fetchApprovalDetail } from '../../api/approvals'
 import {
   assetReadCommandId,
@@ -46,7 +47,7 @@ export default function DiffPanel() {
 
   const createMutation = useMutation({
     mutationFn: async (): Promise<AssetPairReadApprovalResponse> => {
-      idempotencyKey.current ??= crypto.randomUUID()
+      idempotencyKey.current ??= randomId()
       return requestAssetPairReadApprovals(
         { serverId: leftServer.trim(), path: path.trim() },
         { serverId: rightServer.trim(), path: path.trim() },

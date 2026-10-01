@@ -20,6 +20,7 @@ import {
 } from '@beacon/ui'
 import type { ApiKeyItem } from '@beacon/contracts'
 
+import { randomId } from '../lib/random-id'
 import {
   ApiClientError,
   createApiKey,
@@ -76,7 +77,7 @@ export default function ApiKeysPage() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['api-keys'] })
 
   const createMutation = useMutation({
-    mutationFn: (body: CreateApiKeyBody) => createApiKey(body, crypto.randomUUID()),
+    mutationFn: (body: CreateApiKeyBody) => createApiKey(body, randomId()),
     onSuccess: async (ticket) => {
       await invalidate()
       setCreateOpen(false)

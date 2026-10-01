@@ -23,6 +23,7 @@ import {
 } from '@beacon/ui'
 import type { CreateMCPClientBody, MCPClientItem } from '@beacon/contracts'
 
+import { randomId } from '../lib/random-id'
 import {
   ApiClientError,
   createMcpClient,
@@ -85,7 +86,7 @@ export default function McpClientsPage() {
 
   // 申请创建：202 票据；clientSecret 只在首次响应出现
   const createMutation = useMutation({
-    mutationFn: (body: CreateMCPClientBody) => createMcpClient(body, crypto.randomUUID()),
+    mutationFn: (body: CreateMCPClientBody) => createMcpClient(body, randomId()),
     onSuccess: async (ticket) => {
       await invalidate()
       setCreateOpen(false)
@@ -104,7 +105,7 @@ export default function McpClientsPage() {
   // 申请轮换：批准后产出新明文
   const rotateMutation = useMutation({
     mutationFn: (vars: { row: MCPClientItem; reason: string }) =>
-      rotateMcpClient(vars.row.clientId, vars.reason, crypto.randomUUID()),
+      rotateMcpClient(vars.row.clientId, vars.reason, randomId()),
     onSuccess: async (ticket) => {
       await invalidate()
       setReasonAction(null)
@@ -122,7 +123,7 @@ export default function McpClientsPage() {
 
   const enableMutation = useMutation({
     mutationFn: (vars: { row: MCPClientItem; reason: string }) =>
-      enableMcpClient(vars.row.clientId, vars.reason, crypto.randomUUID()),
+      enableMcpClient(vars.row.clientId, vars.reason, randomId()),
     onSuccess: async (ticket) => {
       await invalidate()
       setReasonAction(null)
