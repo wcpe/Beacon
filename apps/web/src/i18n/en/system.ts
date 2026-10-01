@@ -518,6 +518,103 @@ export const system = {
       loadFail: 'Failed to load MCP config',
     },
   },
+  // MCP tool invocation audit trail (FR-241): list + detail; redacted summaries only, never argument bodies
+  mcpInvocations: {
+    mission:
+      'Tool invocation trail of external agents: filter by tool / client / result / risk level / reason / time with cursor paging; rejections and critical risk are visible at a glance',
+    listTitle: 'Tool invocation trail',
+    detailTitle: 'Invocation details',
+    selectHint: 'Select an invocation row on the left for the full field set and redacted summaries',
+    // Top summary: current page only — the backend returns no total (an exact cross-day count needs a full scan)
+    summary: {
+      rows: 'Rows on page',
+      rejected: 'Rejected on page',
+      critical: 'Critical risk on page',
+      fail: 'Failed on page',
+    },
+    // Filter dimensions (map 1:1 to the §3.7 query parameters; the six dimensions combine with AND)
+    filters: {
+      tool: 'Tool',
+      toolPlaceholder: 'Tool name (exact match)',
+      clientId: 'Client ID',
+      clientIdPlaceholder: 'clientId (exact match)',
+      result: 'Result',
+      riskLevel: 'Risk level',
+      reason: 'Reason',
+      window: 'Time range',
+    },
+    // Time range presets ('all' = no time bound, from/to omitted)
+    window: {
+      all: 'All time',
+      '1h': 'Last hour',
+      '6h': 'Last 6 hours',
+      '24h': 'Last 24 hours',
+      '7d': 'Last 7 days',
+      '30d': 'Last 30 days',
+    },
+    result: {
+      ok: 'Succeeded',
+      fail: 'Failed',
+      rejected: 'Rejected',
+    },
+    riskLevel: {
+      low: 'Low',
+      high: 'High',
+      critical: 'Critical',
+      unknown: 'Unregistered',
+    },
+    // Reason code labels (mirror the MCPInvocationReason contract enum; success is always an empty string)
+    reason: {
+      unknown_tool: 'Unknown tool',
+      production_mode: 'Production-mode rejection',
+      handler_rejected: 'Business rejection',
+      handler_error: 'Handler error',
+      input_required: 'Multi-round incomplete',
+      internal_error: 'Trail layer error',
+    },
+    columns: {
+      createdAt: 'Time',
+      toolName: 'Tool',
+      clientId: 'Client ID',
+      result: 'Result',
+      riskLevel: 'Risk level',
+      reason: 'Reason',
+      duration: 'Duration',
+    },
+    // Danger view (hard requirement of FR-241): rejections or critical risk at a glance
+    danger: {
+      view: 'Dangerous calls only',
+      hint:
+        'Narrows the current result set to calls that were rejected or carry critical risk; dangerous rows are highlighted in red',
+      empty: 'No rejected or critical-risk calls in the current result set',
+    },
+    empty: 'No tool invocations match the current filters',
+    loadFail: 'Failed to load the tool invocation trail',
+    // Inline placeholders and units
+    dash: '-',
+    durationMs: '{{count}} ms',
+    byteCount: '{{count}} bytes',
+    // Redaction notice (contract-level invariant): summaries are not bodies and the console cannot reveal arguments
+    digestNotice:
+      'The trail stores redacted summaries only: the target digest (targetDigest) joins allow-listed target identifier keys, and the argument key digest (argKeys) lists top-level argument keys (content-like keys keep only their byte size). Argument and result bodies are never stored and cannot be viewed here.',
+    fields: {
+      invocationId: 'Invocation ID',
+      createdAt: 'Invoked at',
+      toolName: 'Tool',
+      clientId: 'Client ID',
+      profile: 'Profile',
+      result: 'Result',
+      riskLevel: 'Risk level',
+      reason: 'Reason',
+      targetDigest: 'Target digest',
+      argKeys: 'Argument key digest',
+      argBytes: 'Argument bytes',
+      durationMs: 'Duration',
+      traceId: 'Trace ID',
+      clientIp: 'Client IP',
+      errorSummary: 'Error / rejection summary',
+    },
+  },
   namespaces: {
     title: 'Namespaces',
     isolationHint:
