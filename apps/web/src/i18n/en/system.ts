@@ -545,14 +545,24 @@ export const system = {
     relationOutbound: 'Outbound (this namespace may operate on the target)',
     relationInbound: 'Inbound (source may operate on this namespace)',
     noRelations: 'This namespace has no trust relations; fully isolated from others',
-    // Create
+    // Create / edit
     create: 'Create namespace',
     createTitle: 'Create namespace',
-    nameLabel: 'Name',
-    namePlaceholder: 'Globally unique, e.g. game-prod',
+    codeLabel: 'Business identifier',
+    codePlaceholder: 'Globally unique, e.g. game-prod',
+    codeHint: 'Cannot be changed after creation; used for system addressing.',
+    displayNameLabel: 'Display name',
+    displayNamePlaceholder: 'e.g. Game production',
     descLabel: 'Description (optional)',
     createConfirm: 'Create',
     creating: 'Creating…',
+    // Edit display name / description (FR-239): stable identifier stays read-only
+    edit: 'Edit',
+    editTitle: 'Edit namespace',
+    editDesc: 'Only the display name and description can change; the business identifier is stable and never changes after creation.',
+    codeImmutableHint: 'The stable business identifier cannot be changed after creation; it is used for addressing and audit tracing.',
+    save: 'Save',
+    saving: 'Saving…',
     // One-time join token
     tokenTitle: 'Namespace created',
     tokenDesc:

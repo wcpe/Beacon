@@ -1,4 +1,5 @@
-// /namespaces 页测试：常规渲染、空态引导、创建出一次性 token、收回信任后状态变化。
+// /namespaces 页测试：常规渲染、空态引导、创建出一次性 token、收回信任后状态变化、
+// 接入 token 轮换（FR-238）、展示名 / 描述编辑（FR-239）。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
@@ -202,5 +203,112 @@ describe('/namespaces 页', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
     expect(rotateCalls).toBe(0)
+  })
+
+  it('详情面板提供展示名编辑入口，且入口本身不弹窗（FR-239）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<NamespacesPage />)
+
+    const testRow = (await screen.findAllByText('test'))[0].closest('tr')
+    expect(testRow).not.toBeNull()
+    await user.click(testRow as HTMLElement)
+
+    expect(await screen.findByRole('button', { name: '编辑' })).toBeInTheDocument()
+    // 未点开前不产生任何模态
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('编辑弹窗中业务标识只读，并显式说明其不可变', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<NamespacesPage />)
+
+    const testRow = (await screen.findAllByText('test'))[0].closest('tr')
+    expect(testRow).not.toBeNull()
+    await user.click(testRow as HTMLElement)
+    await user.click(await screen.findByRole('button', { name: '编辑' }))
+
+    const dialog = await screen.findByRole('dialog')
+    // 稳定业务标识：只读，值即当前 code
+    const codeInput = within(dialog).getByLabelText('业务标识')
+    expect(codeInput).toHaveAttribute('readonly')
+    expect(codeInput).toHaveValue('test')
+    // UI 上说明不可变（改动会被服务端 IMMUTABLE_IDENTIFIER 拒绝）
+    expect(within(dialog).getByText(/创建后不可修改/)).toBeInTheDocument()
+    // 对照组：展示名可编辑
+    expect(within(dialog).getByLabelText('显示名称')).not.toHaveAttribute('readonly')
+  })
+
+  it('编辑保存后列表与详情面板同步显示新显示名与描述（写闭环）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<NamespacesPage />)
+
+    const testRow = (await screen.findAllByText('test'))[0].closest('tr')
+    expect(testRow).not.toBeNull()
+    await user.click(testRow as HTMLElement)
+    await user.click(await screen.findByRole('button', { name: '编辑' }))
+
+    const dialog = await screen.findByRole('dialog')
+    const displayName = within(dialog).getByLabelText('显示名称')
+    await user.clear(displayName)
+    await user.type(displayName, '测试主域')
+    const description = within(dialog).getByLabelText('描述（可选）')
+    await user.clear(description)
+    await user.type(description, '预发验证与回归专用')
+    await user.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    // 保存成功后弹窗关闭，重新拉取的列表与详情面板都取到新值
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+    expect((await screen.findAllByText('测试主域')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('预发验证与回归专用').length).toBeGreaterThan(0)
+    // 稳定业务标识保持原值不变
+    expect(screen.getAllByText('test').length).toBeGreaterThan(0)
+  })
+
+  it('编辑保存只提交展示层字段，稳定标识 code 不进请求体', async () => {
+    useScenario('normal')
+    const bodies: Record<string, unknown>[] = []
+    server.use(
+      http.patch('/admin/v2/namespaces/:id', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json(
+          {
+            id: 2,
+            name: 'test',
+            code: 'test',
+            displayName: '测试主域',
+            description: '预发验证与回归专用',
+            serverCount: 0,
+            bcClusterCount: 0,
+            activeTrustCount: 0,
+            createdAt: new Date(0).toISOString(),
+          },
+          { status: 200 },
+        )
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<NamespacesPage />)
+
+    const testRow = (await screen.findAllByText('test'))[0].closest('tr')
+    expect(testRow).not.toBeNull()
+    await user.click(testRow as HTMLElement)
+    await user.click(await screen.findByRole('button', { name: '编辑' }))
+
+    const dialog = await screen.findByRole('dialog')
+    const displayName = within(dialog).getByLabelText('显示名称')
+    await user.clear(displayName)
+    await user.type(displayName, '测试主域')
+    await user.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(bodies.length).toBe(1)
+    })
+    // 请求体仅含可变字段：code 从不参与提交，故不可能触发 IMMUTABLE_IDENTIFIER
+    expect(bodies[0]).toEqual({ displayName: '测试主域', description: '测试环境（预发验证）' })
   })
 })
