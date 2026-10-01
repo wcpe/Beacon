@@ -68,20 +68,20 @@
 | 域 | 阶段 | 对应 FR | 权威规格 | 端点数 |
 |---|---|---|---|---|
 | Agent 身份 | P1 · 0.21.x | FR-139/140/141 | [v2-agent-identity.md](specs/v2-agent-identity.md) §5 | 12 |
-| namespace 隔离 | P1 · 0.21.x | FR-142 | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5 | 9 |
+| namespace 隔离 | P1 · 0.21.x | FR-142 | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5 | 8 |
 | 区服权威 | P1 · 0.21.x | FR-142/143 | [v2-zone-authority.md](specs/v2-zone-authority.md) §5 | 25 |
 | 指标健康调度 | P4 · 0.24.x | FR-144/146/147/148 | [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5 | 14 |
-| 连接消息存储 | P5 · 0.25.x | FR-145/149/150 | [v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §5 | 13 |
+| 连接消息存储 | P5 · 0.25.x | FR-145/149/150 | [v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §5 | 14 |
 | 热冷归档 | P6 · 0.26.x | FR-151/152/153 | [v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md) §5 | 6 |
 | 配置中心 V2 | P7 · 0.27.x | FR-160/161 | [v2-config-center.md](specs/v2-config-center.md) §5 | 17 |
 | 文件资产 V2 | P8 · 0.28.x | FR-163/164 | [v2-file-assets.md](specs/v2-file-assets.md) §5 | 14 |
-| 交付编排 V2 | P9 · 0.29.x | FR-162/165/166/167/168/171 | [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5 | 26 |
+| 交付编排 V2 | P9 · 0.29.x | FR-162/165/166/167/168/171 | [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5 | 27 |
 | 审批中心 | P10 RC · v1.1.0 | FR-207/212 | [dangerous-operation-approval-core.md](specs/dangerous-operation-approval-core.md) §7 | 13 |
 | 生命周期：归档 / 永久删除 | P10 RC · v1.1.0 | FR-216/217/218 | [namespace-archive-and-restore.md](specs/namespace-archive-and-restore.md) §3.4 等 | 3 |
 | 大厅集群 | P10 RC · v1.1.0 | FR-199 | [lobby-cluster-authority.md](specs/lobby-cluster-authority.md) §3.4 | 2 |
 | BC 受管目录重同步 | P10 RC · v1.1.0 | FR-201 | [bc-managed-directory-resync.md](specs/bc-managed-directory-resync.md) §3.2 | 2 |
 
-当前表内合计 156 个端点（按各域小节登记的端点条数计，含 env / 标签 / 大厅迁移等子表）；其中 P1 基础三段（Agent 身份 / namespace 隔离 / 区服权威）共 46 个，第二版全量规划仍以各规格为准。
+当前表内合计 157 个端点（按各域小节登记的端点条数计，含 env / 标签 / 大厅迁移等子表）；其中 P1 基础三段（Agent 身份 / namespace 隔离 / 区服权威）共 45 个，第二版全量规划仍以各规格为准。
 
 ### Agent 身份（P1 · 0.21.x，真源 [v2-agent-identity.md](specs/v2-agent-identity.md) §5）
 
@@ -206,6 +206,7 @@ agent 面：
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | POST | `/beacon/v2/agent/connections/batch` | proxy 批量上报连接 open / close 事件 **【已实现·FR-145】** |
+| GET | `/beacon/v2/agent/player-roster` | 玩家位置名册只读查询（FR-31）：返回 `{namespace, count, players}`，**按鉴权身份只返回本域玩家**（强隔离；空名册为 `{}` 而非 404）；名册权威在控制面、由连接明细驱动 **【已实现·ADR-0063 决策 4】** |
 | POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player / **broadcast** 寻址，广播可选 `targetZone` 做 zone 级定向）；payload 接受 object / array / string / number / boolean / null；Agent 先按 JSON 编码后的 UTF-8 字节数执行 64KB 前置校验，控制面再按中转 / 保存文本执行 64KB 硬校验；`msgType` 非空且 UTF-8 编码 ≤64 字节（冒号合法） **【已实现·FR-149/180】** |
 | POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204）；payload 往返保持 JSON 类型，string 保持业务原文且不做二次 JSON 编码，object / array / number / boolean 以 JSON 文本中转，null 表示无 payload **【已实现·FR-149】** |
 | POST | `/beacon/v2/agent/messages/ack` | 批量回执投递结果 **【已实现·FR-149/150】** |

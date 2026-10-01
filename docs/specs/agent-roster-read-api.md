@@ -1,10 +1,13 @@
 # 功能规格：agent-api 玩家位置名册只读查询
 
-> 状态：**未交付**（原「草拟」方案的设计前提已被 [ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 取代，待重定方案）　·　关联 PRD：FR-31　·　原决策：[ADR-0022](../adr/0022-agent-roster-read-api.md)（扩展 [ADR-0016](../adr/0016-agent-cross-server-messaging-middleware.md) 决策 5）
+> 状态：**已实现（v2 方案）**　·　关联 PRD：FR-31　·　决策：[ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 决策 4（取代 ADR-0022 与 ADR-0016 的 Redis 名册方案）
 >
-> **现状与冲突（2026-10-01 复核）**：本规格原设计为 agent 侧直读 Redis 名册（`HGETALL beacon:player-loc`），并要求「控制面零改动、不连 Redis、不持有名册」。而 [ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 决策 4 已把**名册权威迁至控制面**（依连接明细在内存维护玩家位置快照），agent 侧不再持有 Redis 名册——**本规格的设计前提因此作废**，下文第 2、3 节的 Redis 路径均不再成立。
+> **v2 实现（本规格的有效设计，取代下文第 2、3 节的 Redis 路径）**：名册权威在**控制面**（依连接明细在内存维护玩家位置快照），agent 侧改为经 HTTP 读取：
 >
-> 代码现状为**半成品残留**：接口声明（`Discovery.roster` / `rosterInZone`）与 core 侧端口、组合逻辑（`RosterDirectory` / `DiscoveryView`）已在，但**适配器与装配均缺失**（`RedisPlayerRoster` 类已不存在，`RosterDirectoryHolder` 在生产装配中无注入），故两条查询恒返空。**是否重做待拍板**：若继续，需按 ADR-0063 改为「控制面新增名册读端点 + agent 侧新增 HTTP 适配器 + 补装配」；若不继续，应明确保留接口占位（守③层二进制兼容）并在规格标注为止。
+> - **控制面端点**：`GET /beacon/v2/agent/player-roster`，挂 agent 面鉴权中间件（`X-Beacon-Token` / `X-Beacon-Identity` / `X-Beacon-Boot`）；返回 `{namespace, count, players: {玩家名 → serverId}}`。**按鉴权身份过滤、只返回调用方所属 namespace 的玩家**——namespace 是强隔离边界，归属取自已鉴权身份、**不信任任何请求参数**；空名册返回 `players: {}`（非 null、非 404）。
+> - **agent 侧**：`agent-core` 的 `BeaconApiClient.playerRoster()` 取数；`agent-adapters` 的 `HttpRosterDirectory` 实现 `RosterDirectory` 端口（不可用 / 异常一律降级返空 Map、绝不抛）；两个平台壳层在**注册成功后**经 `RosterDirectoryHolder.set(...)` 注入、停止或身份撤销时 `reset()`。**Bukkit 与 Bungee 都装配**（业务插件两个平台都可能调用）。
+> - **zone 过滤在 agent 侧本地做**：`DiscoveryView.rosterInZone()` 用控制面权威的 zone→serverId 集合与名册求交（名册本身不携带 zone，沿用原设计取舍）。
+> - **历史说明**：下文第 2、3 节描述的是**原 Redis 方案**（agent 侧直读 `HGETALL beacon:player-loc`，且要求控制面零改动），其前提已被 ADR-0063 决策 4 取代，**仅作历史记录，不再是实现依据**。
 
 ## 1. 背景与目标
 
