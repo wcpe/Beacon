@@ -503,6 +503,102 @@ export const system = {
       loadFail: 'MCP 配置读取失败',
     },
   },
+  // MCP 工具调用流水（FR-241）：列表 + 详情；只读脱敏摘要，参数正文不入库也不可见
+  mcpInvocations: {
+    mission:
+      '外部 Agent 的工具调用流水：按工具 / 客户端 / 结果 / 风险等级 / 原因 / 时间筛选，游标分页；被拒与关键风险一眼可见',
+    listTitle: '工具调用流水',
+    detailTitle: '调用详情',
+    selectHint: '点击左侧调用行查看完整字段与脱敏摘要',
+    // 顶部汇总：均为**当前页**统计——后端不返回总数（跨日表精确总数需全扫），故不给出全局口径
+    summary: {
+      rows: '本页条数',
+      rejected: '本页被拒',
+      critical: '本页关键风险',
+      fail: '本页失败',
+    },
+    // 筛选维度（与服务端 §3.7 查询参数一一对应，六维全部按 AND 组合）
+    filters: {
+      tool: '工具名',
+      toolPlaceholder: '工具名（精确匹配）',
+      clientId: '客户端 ID',
+      clientIdPlaceholder: 'clientId（精确匹配）',
+      result: '结果',
+      riskLevel: '风险等级',
+      reason: '原因',
+      window: '时间范围',
+    },
+    // 时间范围预设（'all' = 不限时间，不传 from/to）
+    window: {
+      all: '全部时间',
+      '1h': '近 1 小时',
+      '6h': '近 6 小时',
+      '24h': '近 24 小时',
+      '7d': '近 7 天',
+      '30d': '近 30 天',
+    },
+    result: {
+      ok: '成功',
+      fail: '失败',
+      rejected: '被拒',
+    },
+    riskLevel: {
+      low: '低',
+      high: '高',
+      critical: '关键',
+      unknown: '未登记',
+    },
+    // 原因码中文标签（与契约 MCPInvocationReason 枚举一一对应；成功恒为空串不参与筛选）
+    reason: {
+      unknown_tool: '未登记工具',
+      production_mode: '生产模式拒执',
+      handler_rejected: '业务拒绝',
+      handler_error: '处理错误',
+      input_required: '多轮未完成',
+      internal_error: '流水层异常',
+    },
+    columns: {
+      createdAt: '时间',
+      toolName: '工具名',
+      clientId: '客户端 ID',
+      result: '结果',
+      riskLevel: '风险等级',
+      reason: '原因',
+      duration: '耗时',
+    },
+    // 危险操作视图（PRD FR-241 硬要求）：被拒或关键风险一眼可见
+    danger: {
+      view: '仅看危险操作',
+      hint: '在当前筛选结果内收窄为「被拒」或「关键风险（critical）」的调用；危险行整行标红',
+      empty: '当前筛选结果内没有被拒或关键风险调用',
+    },
+    empty: '当前条件下无工具调用流水',
+    loadFail: '工具调用流水加载失败',
+    // 行内展示占位与单位
+    dash: '-',
+    durationMs: '{{count}} ms',
+    byteCount: '{{count}} 字节',
+    // 脱敏口径说明（契约级不变量）：摘要不等于正文，页面无法查看参数原文
+    digestNotice:
+      '流水只记脱敏摘要：目标摘要（targetDigest）是白名单目标标识键的拼接，参数键摘要（argKeys）是顶层参数键名清单（内容类键只记字节数）。参数正文与结果正文都不入库，本页也无法查看。',
+    fields: {
+      invocationId: '调用 ID',
+      createdAt: '调用时间',
+      toolName: '工具名',
+      clientId: '客户端 ID',
+      profile: 'profile',
+      result: '结果',
+      riskLevel: '风险等级',
+      reason: '原因',
+      targetDigest: '目标摘要',
+      argKeys: '参数键摘要',
+      argBytes: '参数原文字节数',
+      durationMs: '耗时',
+      traceId: 'Trace ID',
+      clientIp: '客户端 IP',
+      errorSummary: '错误 / 拒绝摘要',
+    },
+  },
   namespaces: {
     title: '命名空间管理',
     isolationHint: '命名空间之间默认强隔离：调度、消息、代理端操作互不可见，仅在显式授予信任后单向放通。',

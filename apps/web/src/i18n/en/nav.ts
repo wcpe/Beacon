@@ -30,6 +30,7 @@ export const nav = {
   systemVersion: 'Version & updates',
   apiKeys: 'API keys',
   mcpClients: 'MCP clients',
+  mcpInvocations: 'MCP invocations',
   namespaces: 'Namespaces',
   envs: 'Environments',
 } as const

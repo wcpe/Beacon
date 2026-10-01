@@ -3,6 +3,7 @@
 // 后续页面 agent 只改 src/pages/ 下自己的页面文件与 src/i18n/ 下所属域资源文件，勿改本文件结构。
 import type { ComponentType } from 'react'
 import {
+  Activity,
   BellRing,
   Boxes,
   Cable,
@@ -36,6 +37,7 @@ import ApprovalNavBadge from './shell/approval-nav-badge'
 import ApprovalsPage from './pages/approvals'
 import ApiKeysPage from './pages/api-keys'
 import McpClientsPage from './pages/mcp-clients'
+import McpInvocationsPage from './pages/mcp-invocations'
 import AssetsPage from './pages/assets'
 import AuditsPage from './pages/audits'
 import ChangesPage from './pages/changes'
@@ -154,6 +156,12 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       { path: '/api-keys', titleKey: 'nav.apiKeys', icon: KeyRound, Component: ApiKeysPage },
       { path: '/mcp-clients', titleKey: 'nav.mcpClients', icon: Plug, Component: McpClientsPage },
+      {
+        path: '/mcp-invocations',
+        titleKey: 'nav.mcpInvocations',
+        icon: Activity,
+        Component: McpInvocationsPage,
+      },
       { path: '/namespaces', titleKey: 'nav.namespaces', icon: Globe, Component: NamespacesPage },
       { path: '/envs', titleKey: 'nav.envs', icon: Layers, Component: EnvsPage },
     ],

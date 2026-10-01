@@ -30,6 +30,7 @@ export const nav = {
   systemVersion: '版本与更新',
   apiKeys: '密钥',
   mcpClients: 'MCP 客户端',
+  mcpInvocations: 'MCP 调用流水',
   namespaces: '命名空间',
   envs: '环境',
 } as const
