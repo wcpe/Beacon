@@ -630,6 +630,14 @@ func run() error {
 	messageService := service.NewMessageService(messageRelay, playerRoster, v2ControlPlaneService, healthViewStore)
 	v2MessageHandler := handler.NewV2MessageHandler(messageService)
 
+	// MCP 工具调用流水（FR-240，见 mcp-invocation-audit.md §3.5）：middleware 在请求路径上只做
+	// 「生成 UUIDv7 + 解析参数顶层键 + 打包一行 + 非阻塞入队」（纯内存、无 DB IO），DB 写全在后台写入协程。
+	// 注意装配顺序：flusher 注册必须先于下方 asyncDailyWriter.Start（写入通道的 panic 守卫）。
+	mcpInvocationRepo := repository.NewMCPInvocationRepository(db)
+	service.RegisterFlusher(asyncDailyWriter, service.RouteKindMCPInvocation, mcpInvocationRepo.FlushDaily)
+	mcpInvocationService := service.NewMCPInvocationService(asyncDailyWriter, mcpInvocationRepo)
+	mcpInvocationHandler := handler.NewMCPInvocationHandler(mcpInvocationService)
+
 	// 连接明细 / 消息元数据 / payload 查看管理面查询装配（FR-145/149/150，见 §5.2）：复用 P5a 的
 	// connDetailRepo / messageRepo / auditRepo；查询侧请求 goroutine 可读 DB（读非采集面），但仍走
 	// 游标分页 + 逐表短路防全量扫描；payload 受控查看先写 message.payload.view 审计后返回内容。
@@ -646,6 +654,8 @@ func run() error {
 	mcpToolRegistry.SetSensitiveReadServices(assetPreviewService, messagePayloadService)
 	observationScopeResolver := service.NewObservationScopeResolver(repository.NewEnvRepository(db), nsRepo)
 	mcpToolRegistry.SetReadServices(server.NewMCPReadServices(v2ControlPlaneService, topologyService, healthQueryService, messageQueryService, connQueryService, commandObserveService, schedDecisionQueryService, auditService, observationScopeResolver))
+	// 工具调用流水写入方（FR-240）：装配在注册表构造之后、HTTP 对外之前；写入不阻塞调用主路径。
+	mcpToolRegistry.SetInvocationRecorder(mcpInvocationService)
 	v2HealthHandler.SetObservationScopeResolver(observationScopeResolver)
 	schedDecisionAdminHandler.SetObservationScopeResolver(observationScopeResolver)
 	auditHandler.SetObservationScopeResolver(observationScopeResolver)
@@ -725,7 +735,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, MCPInvocation: mcpInvocationHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

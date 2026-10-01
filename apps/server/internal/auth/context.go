@@ -9,6 +9,7 @@ const (
 	operatorKey ctxKey = iota
 	roleKey
 	principalKey
+	clientIPKey
 )
 
 // WithOperator 把认证后的操作者身份放入 context（由鉴权中间件调用）。
@@ -35,6 +36,21 @@ func WithRole(ctx context.Context, role string) context.Context {
 // 只读拒写由 server 中间件据此统一裁决，handler 不碰角色。
 func Role(ctx context.Context) string {
 	if v, ok := ctx.Value(roleKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// WithClientIP 把认证请求的客户端地址放入 context（由 MCP 入口在注入主体时一并注入，FR-240 §3.1）。
+//
+// 地址是**观测字段而非安全边界**（受信反代以 X-Forwarded-For 首段注入；直连部署下可能为空，空串照记）。
+func WithClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, clientIPKey, ip)
+}
+
+// ClientIPFromContext 从 context 取出客户端地址；不存在返回空串。
+func ClientIPFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(clientIPKey).(string); ok {
 		return v
 	}
 	return ""

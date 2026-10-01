@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -38,6 +40,58 @@ func existingDailyTablesInRange(db *gorm.DB, base string, fromMs, toMs int64) []
 		}
 	}
 	return tables
+}
+
+// existingDailyTablesListed 枚举 [fromMs,toMs] 覆盖的 UTC 日中**已存在**的日表名（新→旧），
+// 但走「列出全部表再按前缀 + 日期后缀过滤」而不是逐日 HasTable。
+//
+// 为什么需要它：时间窗可缺省（如 MCP 工具调用流水的列表端点）时，逐日枚举会从 1970 走到 2100
+// ——近 5 万次判存，纯属浪费。列出表是**一次**元数据查询，再按后缀过滤，语义与
+// existingDailyTablesInRange 完全一致（同样只判存不建表，绝不隐式产生空日表）。
+func existingDailyTablesListed(db *gorm.DB, base string, fromMs, toMs int64) []string {
+	if fromMs > toMs {
+		return nil
+	}
+	all, err := db.Migrator().GetTables()
+	if err != nil {
+		return nil
+	}
+	first, last := utcDayStart(fromMs), utcDayStart(toMs)
+	type ref struct {
+		name string
+		day  time.Time
+	}
+	refs := make([]ref, 0, 8)
+	for _, name := range all {
+		day, ok := dailyDayOf(base, name)
+		if !ok || day.Before(first) || day.After(last) {
+			continue
+		}
+		refs = append(refs, ref{name: name, day: day})
+	}
+	sort.Slice(refs, func(i, j int) bool { return refs[i].day.After(refs[j].day) })
+	names := make([]string, 0, len(refs))
+	for _, r := range refs {
+		names = append(names, r.name)
+	}
+	return names
+}
+
+// dailyDayOf 从日表名解析其 UTC 日（base_YYYYMMDD）；非本 base 的日表或后缀非法返回 (zero, false)。
+func dailyDayOf(base, table string) (time.Time, bool) {
+	prefix := base + "_"
+	if !strings.HasPrefix(table, prefix) {
+		return time.Time{}, false
+	}
+	suffix := table[len(prefix):]
+	if len(suffix) != 8 {
+		return time.Time{}, false
+	}
+	day, err := time.ParseInLocation("20060102", suffix, time.UTC)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return day, true
 }
 
 // fetchDailyOffsetPage 跨日表按数值 offset 游标分页取一页（newest→oldest），多取一行 peek 判是否还有下一页。

@@ -81,8 +81,9 @@ func TestSettingsListReturnsHotKeys(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("解析响应失败: %v", err)
 	}
-	if len(resp.Items) != 37 {
-		t.Fatalf("应列出 37 个热改项，实际 %d", len(resp.Items))
+	// 38 项：FR-240 新增 archive.retention-days.mcp-invocation（详见 settings_service_test.go 的口径说明）。
+	if len(resp.Items) != 38 {
+		t.Fatalf("应列出 38 个热改项，实际 %d", len(resp.Items))
 	}
 }
 

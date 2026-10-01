@@ -28,6 +28,9 @@ type MCPToolRegistry struct {
 	assets    *service.AssetPreviewService
 	messages  *service.MessagePayloadService
 	reads     MCPReadServices
+	// invocations 是工具调用流水写入方（FR-240，spec §3.1）；为 nil 时 middleware 不挂载，
+	// 既有单测与未装配路径零依赖、零行为变化。
+	invocations MCPInvocationRecorder
 }
 
 // NewMCPToolRegistry 构造 MCP 显式工具目录。
@@ -70,6 +73,11 @@ func (r *MCPToolRegistry) SetSensitiveReadServices(assets *service.AssetPreviewS
 // SetReadServices 接入 MCP 可公开的脱敏只读查询服务；不接 repository 或运行时内部对象。
 func (r *MCPToolRegistry) SetReadServices(reads MCPReadServices) { r.reads = reads }
 
+// SetInvocationRecorder 装配工具调用流水写入方（FR-240，spec §3.1）；装配期调用一次（与其它 Set* 同区）。
+//
+// rec 为 nil 即关闭流水——既有测试与不需要流水的部署无需改动调用点。
+func (r *MCPToolRegistry) SetInvocationRecorder(rec MCPInvocationRecorder) { r.invocations = rec }
+
 // MCPToolNames 返回 profile 可发现的固定工具名，供覆盖门禁验证。
 //
 // 名字与可见性一律从 mcpToolCatalog 派生，不再维护第二份字符串清单：
@@ -96,6 +104,12 @@ func MCPToolNames(profile string) []string {
 // NewMCPServer 仅登记当前主体被允许发现的固定工具。
 func (r *MCPToolRegistry) NewMCPServer(principal auth.Principal) *mcp.Server {
 	server := newEmptyMCPServer()
+	// 工具调用流水（FR-240，spec §3.1）：唯一挂载点，构造期即挂上。
+	// MCP server 是**每请求构造**的，故每个请求的实例都带 middleware、不存在跨请求共享状态；
+	// 也不必逐处改 78 个 mcpAddTool 调用点——middleware 在方法层，天然覆盖全部工具与未知工具。
+	if r != nil {
+		mcpAttachInvocationAudit(server, r.invocations)
+	}
 	if r == nil || r.approvals == nil || !principal.HasCapability(auth.CapabilityApprovalRead) {
 		return server
 	}

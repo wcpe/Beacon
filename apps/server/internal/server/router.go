@@ -50,6 +50,7 @@ type Handlers struct {
 	MCPOAuth          *handler.MCPOAuthHandler
 	MCPConfig         *handler.MCPConfigHandler
 	MCPProtocol       *MCPProtocolHandler
+	MCPInvocation     *handler.MCPInvocationHandler
 	Approval          *handler.ApprovalHandler
 	Command           *handler.CommandHandler
 	Browse            *handler.BrowseHandler
@@ -220,6 +221,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// MCP 未启用时也要能返回 enabled=false，供管理台展示配置指引而非报错。
 			if h.MCPConfig != nil {
 				r.Get("/mcp/config", h.MCPConfig.Get)
+			}
+			// MCP 工具调用流水查询端点（FR-240，见 spec §3.7）：六维过滤 + 游标分页列表 / invocationId 直查详情。
+			// 两个 GET 只读、走上面 adminAuthMiddleware + readonlyWriteGuard（readonly 可读、无新能力点），
+			// 查询行为自身不落审计（auditWriteMiddleware 只兜底写方法，与既有全部只读 GET 一致）。
+			if h.MCPInvocation != nil {
+				r.Get("/mcp/invocations", h.MCPInvocation.List)
+				r.Get("/mcp/invocations/{invocationId}", h.MCPInvocation.Detail)
 			}
 
 			// env 展示维度（FR-178，见 v2-zone-authority.md §5）：env 增删改 + 整体替换 env→namespace 映射。

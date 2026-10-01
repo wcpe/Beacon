@@ -47,3 +47,52 @@ func hex2(b byte) string {
 	const digits = "0123456789abcdef"
 	return string([]byte{digits[b>>4], digits[b&0x0f]})
 }
+
+// TestNewUUIDv7RoundTrip 校验生成 → 解析的往返一致：内嵌毫秒可还原、形态合规、版本与变体位正确。
+func TestNewUUIDv7RoundTrip(t *testing.T) {
+	ms := time.Date(2026, 7, 11, 4, 5, 6, 789, time.UTC).UnixMilli()
+	id := NewUUIDv7(ms)
+	if len(id) != 36 {
+		t.Fatalf("UUIDv7 文本长度=%d，期望 36: %q", len(id), id)
+	}
+	for i, c := range id {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				t.Fatalf("第 %d 位应为连字符，实际 %q: %q", i, c, id)
+			}
+			continue
+		}
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Fatalf("第 %d 位不是小写十六进制字符 %q: %q", i, c, id)
+		}
+	}
+	got, ok := TimeMsFromUUIDv7(id)
+	if !ok {
+		t.Fatalf("自生成 ID 应可解析: %q", id)
+	}
+	if got != ms {
+		t.Fatalf("内嵌毫秒往返不一致：期望 %d 实际 %d", ms, got)
+	}
+	// 版本号 7（第 7 字节高 4 位）与变体 10xx（第 9 字节高 2 位）。
+	if id[14] != '7' {
+		t.Fatalf("版本位应为 7，实际 %q: %q", id[14], id)
+	}
+	switch id[19] {
+	case '8', '9', 'a', 'b':
+	default:
+		t.Fatalf("变体位（第 9 字节高 2 位）应为 8/9/a/b，实际 %q: %q", id[19], id)
+	}
+}
+
+// TestNewUUIDv7Unique 校验同一毫秒内多次生成不重复（随机段保证唯一）。
+func TestNewUUIDv7Unique(t *testing.T) {
+	ms := time.Date(2026, 7, 11, 4, 5, 6, 0, time.UTC).UnixMilli()
+	seen := make(map[string]struct{}, 256)
+	for i := 0; i < 256; i++ {
+		id := NewUUIDv7(ms)
+		if _, dup := seen[id]; dup {
+			t.Fatalf("同一毫秒内生成了重复 ID: %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+}

@@ -110,7 +110,7 @@ func doArchiveJSON(t *testing.T, r chi.Router, method, target string, body any) 
 	return rec.Code, out
 }
 
-// TestArchiveOverviewContract 总览：target 四键 + 7 个域行逐键对齐 contracts；归档库可达 reachable=true。
+// TestArchiveOverviewContract 总览：target 四键 + 8 个域行逐键对齐 contracts；归档库可达 reachable=true。
 func TestArchiveOverviewContract(t *testing.T) {
 	r, _, _ := newArchiveRouter(t, "arch_overview")
 	code, body := doArchiveJSON(t, r, http.MethodGet, "/admin/v2/archive/overview", nil)
@@ -123,9 +123,11 @@ func TestArchiveOverviewContract(t *testing.T) {
 	if target["mode"] != store.ArchiveModeSameInstance || target["reachable"] != true {
 		t.Fatalf("target 形态不符: %v", target)
 	}
+	// 8 域：metric_sample / health_snapshot / sched_decision / conn_detail / msg_trace / msg_payload
+	// / mcp_invocation（FR-240 新增）/ audit。
 	domains, _ := body["domains"].([]any)
-	if len(domains) != 7 {
-		t.Fatalf("应 7 个归档域，实际 %d", len(domains))
+	if len(domains) != 8 {
+		t.Fatalf("应 8 个归档域，实际 %d", len(domains))
 	}
 	first, _ := domains[0].(map[string]any)
 	assertKeys(t, first, "domain", "retentionDays", "hotRows", "archiveRows", "expiredRows", "lastJob")
