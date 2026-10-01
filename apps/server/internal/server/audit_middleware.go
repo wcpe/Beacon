@@ -144,6 +144,8 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/namespaces":        {},
 	"PATCH /admin/v2/namespaces/{id}":  {},
 	"DELETE /admin/v2/namespaces/{id}": {},
+	// token 轮换（FR-238）：service 在事务内写 namespace.token-rotate 专项审计，故由本清单接管、不走兜底。
+	"POST /admin/v2/namespaces/{id}/token/rotate": {},
 	// BC 受管目录立即重同步（namespace / instance.bc-directory-resync）
 	"POST /admin/v2/namespaces/{id}/bc-directory-resyncs": {},
 	// 环境信任授予 / 撤销（namespace-trust.grant / revoke）

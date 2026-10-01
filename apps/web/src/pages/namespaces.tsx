@@ -11,6 +11,7 @@ import {
   AsyncSection,
   Button,
   DataTable,
+  DestructiveConfirmDialog,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -32,6 +33,7 @@ import {
   fetchTrusts,
   grantTrust,
   revokeTrust,
+  rotateNamespaceToken,
   type GrantTrustBody,
 } from '../api/system'
 import type { ApprovalTicket } from '../api/cluster'
@@ -74,6 +76,10 @@ export default function NamespacesPage() {
   const [grantTicket, setGrantTicket] = useState<ApprovalTicket | null>(null)
   const [revoking, setRevoking] = useState<NamespaceTrustItem | null>(null)
   const [revokeError, setRevokeError] = useState<string | null>(null)
+
+  // 轮换接入 token 态（FR-238）：破坏性二次确认；新明文复用 TokenDialog 一次性展示
+  const [rotateTarget, setRotateTarget] = useState<NamespaceItem | null>(null)
+  const [rotateError, setRotateError] = useState<string | null>(null)
 
   const query = useQuery({
     queryKey: ['namespaces', 'list', keyword, page],
@@ -168,6 +174,19 @@ export default function NamespacesPage() {
     },
     onError: (error) => {
       setRevokeError(messageOf(error))
+    },
+  })
+
+  // 轮换接入 token：成功后旧 token 已失效，新明文经 token 态交给 TokenDialog 展示一次
+  const rotateMutation = useMutation({
+    mutationFn: (id: number) => rotateNamespaceToken(id),
+    onSuccess: async (rotated) => {
+      await invalidateAll()
+      setRotateTarget(null)
+      setToken(rotated.accessToken)
+    },
+    onError: (error) => {
+      setRotateError(messageOf(error))
     },
   })
 
@@ -285,6 +304,10 @@ export default function NamespacesPage() {
                 setRevokeError(null)
                 setRevoking(tr)
               }}
+              onRotate={() => {
+                setRotateError(null)
+                setRotateTarget(selected)
+              }}
             />
           ) : null
         }
@@ -361,6 +384,36 @@ export default function NamespacesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 轮换接入 token（FR-238）：破坏性二次确认 + 手输 code 高摩擦防误触 */}
+      <DestructiveConfirmDialog
+        open={rotateTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRotateTarget(null)
+          }
+        }}
+        title={t('system.namespaces.token.rotateTitle', {
+          name: rotateTarget?.displayName ?? rotateTarget?.name ?? '',
+        })}
+        description={t('system.namespaces.token.rotateDesc')}
+        confirmLabel={t('system.namespaces.token.rotateConfirm')}
+        cancelLabel={t('system.common.cancel')}
+        impacts={[
+          t('system.namespaces.token.rotateImpactAgents'),
+          t('system.namespaces.token.rotateImpactOnce'),
+        ]}
+        confirmPhrase={rotateTarget?.code ?? rotateTarget?.name}
+        confirmPhraseLabel={(phrase) => t('system.namespaces.token.rotatePhraseLabel', { code: phrase })}
+        confirmPhraseAriaLabel={t('system.namespaces.token.rotatePhraseAria')}
+        pending={rotateMutation.isPending}
+        errorText={rotateError}
+        onConfirm={() => {
+          if (rotateTarget) {
+            rotateMutation.mutate(rotateTarget.id)
+          }
+        }}
+      />
 
       {/* 一次性接入 token */}
       <TokenDialog

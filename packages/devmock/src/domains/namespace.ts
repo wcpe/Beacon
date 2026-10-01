@@ -16,6 +16,9 @@ import { isoOffset, pseudoSha256 } from '../support'
 
 const TRUST_CAPABILITIES: readonly TrustCapability[] = ['schedule', 'message', 'agent_ops']
 
+// 各 namespace 的轮换次数（FR-238）：仅用于派生互不相同的一次性明文，与真实哈希无关。
+const tokenRotationSeq = new Map<number, number>()
+
 function namespaceName(id: number): string {
   return getClusterState().namespaces.find((ns) => ns.id === id)?.name ?? `ns-${String(id)}`
 }
@@ -139,6 +142,29 @@ export const namespaceHandlers: HttpHandler[] = [
     }
     if (body.description !== undefined) row.description = body.description
     return HttpResponse.json({ id: row.id, name: code, code, displayName: row.displayName ?? code, description: row.description, serverCount: 0, bcClusterCount: 0, activeTrustCount: 0, createdAt: row.createdAt })
+  }),
+
+  // 轮换接入 token（FR-238）：新明文仅本次响应返回一次；mock 按轮换序号派生，保证连续轮换得到不同 token。
+  mockPost('/admin/v2/namespaces/:id/token/rotate', (info) => {
+    const id = Number.parseInt(pathParam(info, 'id'), 10)
+    const row = getClusterState().namespaces.find((item) => item.id === id)
+    if (!row) return jsonError(404, 'namespace_not_found', 'namespace 不存在')
+    const code = row.code ?? row.name
+    const seq = (tokenRotationSeq.get(id) ?? 0) + 1
+    tokenRotationSeq.set(id, seq)
+    const rotated: NamespaceCreated = {
+      id: row.id,
+      name: code,
+      code,
+      displayName: row.displayName ?? code,
+      description: row.description,
+      serverCount: 0,
+      bcClusterCount: 0,
+      activeTrustCount: 0,
+      createdAt: row.createdAt,
+      accessToken: `nstk_${pseudoSha256(`token:${code}:${String(seq)}`).slice(0, 40)}`,
+    }
+    return HttpResponse.json(rotated)
   }),
 
   // 信任行列表（方向 / capability / status 过滤）

@@ -591,6 +591,20 @@ export const system = {
       revokeReasonPlaceholder: '例如：业务下线，不再需要跨域',
       revoked: '信任已收回',
     },
+    // 接入 token 轮换（FR-238）：旧 token 即刻失效，新明文仅此一次
+    token: {
+      title: '接入 token',
+      rotate: '轮换接入 token',
+      rotateHint: 'agent 接入本域所用凭据；轮换会立即作废旧 token，需在全部 agent 侧同步更换',
+      rotateTitle: '轮换「{{name}}」的接入 token？',
+      rotateDesc: '确认后将生成新的接入 token；旧 token 在写入新哈希的那一刻起立即失效，且无法恢复。',
+      rotateImpactAgents: '该命名空间下全部 agent 在换用新 token 前，请求一律 401',
+      rotateImpactOnce: '新 token 明文仅在轮换结果中展示一次，关闭后无法再次查看',
+      rotateConfirm: '确认轮换',
+      rotatePhraseLabel: '请手输「{{code}}」以确认轮换',
+      rotatePhraseAria: '输入命名空间 code 以确认轮换',
+      rotated: '接入 token 已轮换，请立即复制新 token',
+    },
   },
   // 环境展示维度（FR-178）：增删改 + 环境→命名空间映射
   envs: {

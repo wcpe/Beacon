@@ -194,6 +194,15 @@ export function createNamespace(body: CreateNamespaceBody): Promise<NamespaceCre
   return request('POST', '/admin/v2/namespaces', body)
 }
 
+/**
+ * 轮换 namespace 接入 token（FR-238）：响应与创建同形态，新明文**仅在本次响应中返回一次**；
+ * 写入新哈希的那一刻起旧 token 全部校验失败，该域所有 agent 在换用新 token 前请求一律 401。
+ * 属高风险直执操作，二次确认由前端承载。
+ */
+export function rotateNamespaceToken(id: number): Promise<NamespaceCreated> {
+  return request('POST', `/admin/v2/namespaces/${String(id)}/token/rotate`)
+}
+
 export interface TrustQuery {
   fromNamespaceId?: number
   toNamespaceId?: number

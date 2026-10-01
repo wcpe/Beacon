@@ -857,6 +857,7 @@ agent 面：
 | GET | `/admin/v2/namespaces` | namespace 列表 |
 | POST | `/admin/v2/namespaces` | 创建 namespace（返回一次性明文接入 token） |
 | DELETE | `/admin/v2/namespaces/{id}` | 旧删除入口已迁移，统一返回 `410 namespace_delete_migrated`，不触发任何硬删、副作用或隐式审批 |
+| POST | `/admin/v2/namespaces/{id}/token/rotate` | 轮换接入 token（FR-238）：新明文仅本次响应返回一次；旧 token 即刻失效，该域 agent 换用前一律 401 |
 | GET | `/admin/v2/namespace-trusts` | 互通信任行列表 |
 | POST | `/admin/v2/namespace-trusts` | 授予单向信任（新增或复活，原因必填） |
 | POST | `/admin/v2/namespace-trusts/{id}/revoke` | 收回信任（原因必填，即时生效） |

@@ -606,6 +606,20 @@ export const system = {
       revokeReasonPlaceholder: 'e.g. feature retired; cross-namespace access no longer needed',
       revoked: 'Trust revoked',
     },
+    // Access token rotation (FR-238): old token dies immediately, new plaintext shown once
+    token: {
+      title: 'Access token',
+      rotate: 'Rotate access token',
+      rotateHint: 'Credential agents use to join this namespace; rotation voids the old token at once and every agent must be updated',
+      rotateTitle: 'Rotate the access token of "{{name}}"?',
+      rotateDesc: 'A new access token will be issued; the old one stops validating the moment the new hash is written and cannot be recovered.',
+      rotateImpactAgents: 'Every agent in this namespace gets 401 until it switches to the new token',
+      rotateImpactOnce: 'The new token plaintext is shown once in the rotation result and cannot be viewed again',
+      rotateConfirm: 'Rotate token',
+      rotatePhraseLabel: 'Type "{{code}}" to confirm the rotation',
+      rotatePhraseAria: 'Type the namespace code to confirm rotation',
+      rotated: 'Access token rotated — copy the new token now',
+    },
   },
   // env display dimension (FR-178): CRUD + env→namespace mapping
   envs: {

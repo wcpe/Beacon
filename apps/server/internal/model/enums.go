@@ -530,9 +530,11 @@ const (
 	ActionSchedulingDrain   = "scheduling.drain"
 	ActionSchedulingUndrain = "scheduling.undrain"
 	// 环境（namespace）写操作（FR-7/FR-30；改名 / 删除补全见 FR-53）
-	ActionNamespaceCreate          = "namespace.create"
-	ActionNamespaceUpdate          = "namespace.update"
-	ActionNamespaceDelete          = "namespace.delete"
+	ActionNamespaceCreate = "namespace.create"
+	ActionNamespaceUpdate = "namespace.update"
+	ActionNamespaceDelete = "namespace.delete"
+	// ActionNamespaceTokenRotate 轮换 namespace 接入 token（FR-238）：新明文仅返回一次，旧 token 即时失效。
+	ActionNamespaceTokenRotate     = "namespace.token-rotate"
 	ActionNamespaceArchive         = "namespace.archive"
 	ActionNamespaceRestore         = "namespace.restore"
 	ActionNamespacePermanentDelete = "namespace.permanent_delete"

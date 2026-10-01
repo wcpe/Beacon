@@ -201,6 +201,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Post("/namespaces", h.V2.CreateNamespace)
 			r.Patch("/namespaces/{id}", h.V2.UpdateNamespace)
 			r.Delete("/namespaces/{id}", h.V2.DeleteNamespace)
+			r.Post("/namespaces/{id}/token/rotate", h.V2.RotateNamespaceToken)
 			r.Post("/namespaces/{id}/bc-directory-resyncs", h.V2.NamespaceDirectoryResync)
 			r.Get("/namespace-trusts", h.V2.ListNamespaceTrusts)
 			r.Post("/namespace-trusts", h.V2.GrantNamespaceTrust)
