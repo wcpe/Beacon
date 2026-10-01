@@ -1113,6 +1113,8 @@ token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审�
 | POST | `/admin/v2/mcp-clients/{clientId}/enable` | 申请重新启用已吊销客户端（`reason`），202 + 同形票据 |
 | POST | `/admin/v2/mcp-clients/{clientId}/revoke` | 立即吊销（止损，不等待审批），200 + `{ok:true}` |
 | GET | `/admin/v2/mcp/config` | MCP 入口部署配置只读视图（见下） |
+| GET | `/admin/v2/mcp/invocations` | MCP 工具调用流水（FR-240）：`tool` / `clientId` / `result` / `riskLevel` / `reason` / `from` / `to` 六维过滤 + `limit` / `cursor` 游标分页，返回 `{items, nextCursor}`（空串 = 末页）。参数只存脱敏摘要，正文不入库 |
+| GET | `/admin/v2/mcp/invocations/{invocationId}` | 单条流水详情（UUIDv7 直定日表，未命中或非法 ID 一律 404） |
 
 三个申请端点的硬约束：
 

@@ -72,7 +72,7 @@ packages/
 
 - **MySQL + GORM 可移植**（沿用）：遵 §3 建表约定，禁一切方言专有；MySQL 与 sqlite（E2E 基线）行为一致，可切 Postgres。
 - **热库 / 归档库双 database**（[v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md)）：热库存近期数据；到保留期由进程内归档器（goroutine 定时器，无外部调度组件）**先归档、行数 + 抽样哈希校验通过后、才删热库**。归档落同 MySQL 实例独立 database `beacon_archive`（同名同构建表），配置预留独立归档 DSN 可迁出；归档库不可达仅降级归档能力、不阻断控制面启动。冷查询默认只查热库，显式 `includeArchived=true` 才跨热 / 冷合并（挂各查询域端点）。
-- **日期后缀分表**：大流量时序数据一律 `<基名>_YYYYMMDD` 日表、首写当日按需建表（禁分区表语法）——指标域 `metric_sample` / `health_snapshot` / `sched_decision`（[v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §3），连接消息域 `conn_detail` / `msg_trace` / `msg_payload`（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §3.1，payload 与元数据分表、可按不同保留期归档）。跨表查询映射为日表集合逐表游标合并，强制时间窗 / 精确 ID 防全量扫描；配置版本等低频小表不分表、不归档。
+- **日期后缀分表**：大流量时序数据一律 `<基名>_YYYYMMDD` 日表、首写当日按需建表（禁分区表语法）——指标域 `metric_sample` / `health_snapshot` / `sched_decision`（[v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §3），连接消息域 `conn_detail` / `msg_trace` / `msg_payload`（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §3.1，payload 与元数据分表、可按不同保留期归档）、MCP 域 `mcp_invocation`（[mcp-invocation-audit.md](specs/mcp-invocation-audit.md) §3.2）。跨表查询映射为日表集合逐表游标合并，强制时间窗 / 精确 ID 防全量扫描；配置版本等低频小表不分表、不归档。
 - **真源切分**（沿用）：注册 / 在线 / 健康实时态的真源 = Go 进程内存（健康周期快照另入库仅供回放）；身份、区服权威、指标批、调度决策、连接消息、配置、变更单、审计等事实真源 = MySQL。两者不互为权威、不互相阻塞。
 - **写入纪律**：agent 批量上报走「请求线程只校验入有界内存队列即回 202、后台 worker 批量入库」，队列满 429 退避；禁请求主线程长耗时（PRD NFR）。
 
