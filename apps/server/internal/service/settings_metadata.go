@@ -70,11 +70,11 @@ const (
 	// MCP 工具调用是低频机器操作流水，取证窗口应与审计一致（FR-240，spec §3.8）。
 	archiveDefaultRetentionMCPInvocation = 180
 	archiveDefaultAutoEnabled            = true
-	archiveDefaultScheduleHourUTC         = 4
-	archiveDefaultBatchRows               = 1000
-	archiveDefaultBatchIntervalMs         = 200
-	archiveDefaultVerifySampleSize        = 100
-	archiveDefaultColdQueryMaxDays        = 31
+	archiveDefaultScheduleHourUTC        = 4
+	archiveDefaultBatchRows              = 1000
+	archiveDefaultBatchIntervalMs        = 200
+	archiveDefaultVerifySampleSize       = 100
+	archiveDefaultColdQueryMaxDays       = 31
 	// 保留期下限守卫：任何 retention-days.* 不得小于此值，防误配当天删光（spec §3.3）。
 	archiveMinRetentionDays = 7
 )

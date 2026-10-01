@@ -172,9 +172,9 @@ func TestMCPInvocationArgumentsNeverPersist(t *testing.T) {
 
 	canary := "SECRET-CANARY-9f3a1c"
 	arguments := map[string]any{
-		"path":           "/plugins/x.jar",  // A 档：目标标识（唯一允许存值的一档）
-		"namespace":      "prod",            // A 档
-		"idempotencyKey": "idem-0123456789", // B 档（含 key）：只记字节数
+		"path":           "/plugins/x.jar",                   // A 档：目标标识（唯一允许存值的一档）
+		"namespace":      "prod",                             // A 档
+		"idempotencyKey": "idem-0123456789",                  // B 档（含 key）：只记字节数
 		"content":        canary + strings.Repeat("X", 1200), // B 档（含 content）：只记字节数
 		"reason":         canary,                             // B 档（含 reason）：只记字节数
 		"opaqueFlag":     true,                               // C 档：只记裸键名
