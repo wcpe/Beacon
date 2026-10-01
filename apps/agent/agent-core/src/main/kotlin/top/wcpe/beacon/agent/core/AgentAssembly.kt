@@ -223,8 +223,8 @@ object AgentAssembly {
         val messagingHolder = le.messaging.messagingHolder
         val messagingRuntime = le.messaging.messagingRuntime
 
-        // 玩家位置名册只读端口持有者（FR-31）：装配期即建（早于消息模块启动），默认空名册降级；
-        // 壳层在消息模块就绪后注入 Redis 实现。
+        // 玩家位置名册只读端口持有者（FR-31）：装配期即建（早于注册），默认空名册降级；
+        // 壳层在**注册成功后**注入控制面 HTTP 名册适配器（未注册时名册端点回 401，提前注入无意义），停止时复位。
         val rosterDirectoryHolder = RosterDirectoryHolder(warn = adapter::warn)
         val discoveryView = DiscoveryView(apiClient, le.topologyWatchHub, rosterDirectoryHolder, identity)
         val beaconAgent =

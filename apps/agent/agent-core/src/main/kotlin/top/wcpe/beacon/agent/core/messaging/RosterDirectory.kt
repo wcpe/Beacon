@@ -4,11 +4,11 @@ package top.wcpe.beacon.agent.core.messaging
  * 玩家位置名册只读端口（FR-31）。
  *
  * **名册权威在控制面**（ADR-0063 决策 4，取代 ADR-0016 的 agent 侧 Redis 名册）：控制面依连接明细
- * 在内存维护玩家位置快照，agent 侧不再持有 Redis 名册，故本端口在 v2 装配下无实现注入（见
- * [RosterDirectoryHolder]，`snapshot()` 恒返空）。保留接口签名以守向后兼容。
+ * 在内存维护玩家位置快照，agent 侧不再持有 Redis 名册，本端口的实现是控制面 REST 的适配器
+ * （`HttpRosterDirectory`，装配见 [RosterDirectoryHolder] 与两个平台壳层）。
  *
  * 本端口供 [top.wcpe.beacon.agent.core.api.DiscoveryView] 全表读，组合控制面权威 zone 集做过滤；
- * 若后续按 ADR-0063 接回控制面名册，读取实现应在适配器、core 只依赖本抽象（守 ADR-0005）。
+ * 读取实现落在适配器、core 只依赖本抽象（守 ADR-0005）。
  *
  * 与既有 [PlayerLocator]（单个解析 resolveServerId）分立不合并：职责不同（全表读 vs 单个寻址）。
  *

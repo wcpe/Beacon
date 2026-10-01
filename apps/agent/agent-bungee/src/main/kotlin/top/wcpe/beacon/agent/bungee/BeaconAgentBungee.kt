@@ -12,6 +12,7 @@ import taboolib.common.platform.function.severe
 import taboolib.common.platform.function.submitAsync
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
+import top.wcpe.beacon.agent.adapters.HttpRosterDirectory
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
 import top.wcpe.beacon.agent.adapters.OkHttpBlobStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
@@ -41,6 +42,7 @@ import top.wcpe.beacon.agent.core.identity.ProxyListenerEndpoint
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.lifecycle.BootstrapRuntime
 import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
+import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.proxy.DirectorySyncLoopGate
 import top.wcpe.beacon.agent.core.proxy.InitialLobbyRouter
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
@@ -118,6 +120,9 @@ object BeaconAgentBungee : Plugin() {
 
     /** 跨服消息模块运行时（FR-149，HTTP 中转）；null 表示未装配。随注册自启，DISABLE 时 stop。 */
     private var messagingRuntime: MessagingRuntime? = null
+
+    /** 玩家名册持有者（FR-31）；null 表示无活跃运行时。Disable / 撤销时 reset 复位，避免业务插件读到已停用身份的名册。 */
+    private var rosterDirectoryHolder: RosterDirectoryHolder? = null
 
     /** 旧小区默认入口配置只兼容读取一次，不再参与 BC 首次大厅落脚。 */
     @Volatile
@@ -225,6 +230,8 @@ object BeaconAgentBungee : Plugin() {
         lifecycle = assembled.lifecycle
         // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
         messagingRuntime = assembled.messaging.messagingRuntime
+        // 玩家名册持有者（FR-31）：装配期已随 Discovery 门面创建，此处留引用供 DISABLE 复位。
+        rosterDirectoryHolder = assembled.messaging.rosterDirectoryHolder
         assembled.lifecycle.onRegistered {
             val binding = confirmedBinding ?: return@onRegistered
             deps.bindingSnapshot.write(identity, binding)
@@ -350,6 +357,11 @@ object BeaconAgentBungee : Plugin() {
             ProxyConnectionTracker(sink = { event -> if (connectionBuffer.add(event)) reporter.flushNow() })
         // 随注册成功启动上报循环（幂等；未注册前采集照常入缓冲，注册后补报）。
         assembled.lifecycle.onRegistered { reporter.start() }
+        // 玩家名册（FR-31）：注册成功后才注入控制面 HTTP 名册适配器——端点按 v2 鉴权身份圈定 namespace，
+        // 未注册时请求必被 401 拒绝，提前注入没有意义（代理侧业务插件与子服侧读的是同一份控制面权威名册）。
+        assembled.lifecycle.onRegistered {
+            assembled.messaging.rosterDirectoryHolder.set(HttpRosterDirectory(assembled.apiClient, identity))
+        }
     }
 
     private fun syncDirectoryLoop(
@@ -388,6 +400,9 @@ object BeaconAgentBungee : Plugin() {
         connectionReporter = null
         messagingRuntime?.stop()
         messagingRuntime = null
+        // 名册复位为未注入：停用后本机身份已失效（读取只会 401），持旧引用无意义，复位即让业务插件走降级。
+        rosterDirectoryHolder?.reset()
+        rosterDirectoryHolder = null
         proxyMetricsCache?.stop()
         proxyMetricsCache = null
         lifecycle?.shutdown()
