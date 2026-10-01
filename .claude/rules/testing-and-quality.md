@@ -8,7 +8,13 @@
 - **禁止**以注释、跳过、删除失败测试的方式让测试"通过"。
 - 改功能代码前先跑相关测试确保通过；新增 / 改业务逻辑同步加测试。
 
-### 1.1 测试分层（怎么分、在哪跑）
+### 1.1 合并后复验（强制）
+- **每个 PR 合入 master 后，必须把本地 master 同步到远端并复跑一次全量验证**，不得只以 PR 分支的 CI 绿灯作为「已验证」依据：CI 跑的是 PR 的合并态而非合并后的 master 本身，连续合入多个 PR 时仍可能存在交互。
+- 复验范围至少覆盖：`go build ./...` 与全量 `go test ./apps/server/...`、`golangci-lint` 与 `gofmt -l`、前端 `pnpm typecheck` / `lint` / `test`、以及发布产物构建（前端 `pnpm build` + 后端单二进制）。
+- **必须显式绕过构建缓存**（如 turbo `--force`），避免「缓存命中」被误读成「本次已验证」。
+- 复验不绿即视为该次合入未完成：优先前向提交修复，必要时 `git revert`，不得留待后续变更顺带处理。
+
+### 1.2 测试分层（怎么分、在哪跑）
 - **单元**：纯逻辑（尤其 `merge` 合并、`digest`）—— Go `testing` / Kotlin 测试，不连外部依赖，最快最多；前端组件与纯逻辑用 vitest + React Testing Library（jsdom，`cd web && pnpm test`）。
 - **集成**：控制面 + 真实 MySQL（测试库 / 容器）跑配置发布/解析/长轮询；agent 对接 mock 或真实 beacon。集成用例带 `//go:build integration` 标记与单测隔离：`go test ./...` **不含**集成（`internal/service` / `internal/server` 显示 no test files 属正常），`go test -tags=integration ./...` + `BEACON_TEST_DSN` 才跑（运行方式见 `docs/OPERATIONS.md` §8）——避免集成被静默 skip 误判为"全绿"。
 - **E2E**：跨平台纯 Go 入口 `go test -tags=e2e -timeout=30m ./apps/server/test/e2e/{directory,override,metrics}`（默认 sqlite、无需 docker，可选 mysql），自管控制面 + 真实 agent，跑关键时序（首次接入、发布热更、目录注入、三方覆盖，见 ARCHITECTURE 时序与 PRD §6）；CI 见 `.github/workflows/e2e.yml`，运行细节见 `docs/OPERATIONS.md` §7。
