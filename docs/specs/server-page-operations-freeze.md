@@ -15,7 +15,7 @@
 - 操作必须真实接后端：
   - 下线 / 取消下线：调用 `POST /instances/{serverId}/offline` 与 `DELETE /instances/{serverId}/offline`，必须二次确认、展示提交中 / 成功 / 失败。
   - 排空 / 取消排空：调用 `PUT /scheduling/drains` 与 `DELETE /scheduling/drains`，必须二次确认、展示提交中 / 成功 / 失败。
-  - 改派小区：复用现有改派对话框与 `PUT /zones/assignments` 能力，成功后刷新列表和详情。
+  - 改派小区：v1 的 `PUT /zones/assignments` 已迁移（恒 410 `zone_assignment_migrated`），改用第二版的换区流程 `POST /admin/v2/server-rezones`；成功后刷新列表和详情。
   - 强制重同步：调用 `POST /instances/{serverId}/resync`，展示命令 ID，并在详情里能看到该服务器最近命令记录。
   - Agent 日志：调用 `POST /instances/{serverId}/logs` 触发，再调用 `GET /instances/{serverId}/logs` 查看结果，不展示未脱敏原文之外的任何额外敏感信息。
   - 文件浏览：调用 `GET /instances/{serverId}/browse`，只读浏览 `plugins/`，支持目录列表与文本文件预览；二进制、越权、超时等失败必须给出明确状态。
