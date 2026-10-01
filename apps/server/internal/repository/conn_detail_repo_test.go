@@ -234,8 +234,11 @@ func TestConnFlushSameBatchOpenClose(t *testing.T) {
 func TestConnCloseOrphans(t *testing.T) {
 	db := openRepoSQLite(t, "conn_orphan")
 	repo := NewConnDetailRepository(db)
-	// 相对当前时间取基点：CloseOrphans 按回看天数扫日表，固定日期会随时间滑出窗口（日期腐化）
-	base := time.Now().UTC().Add(-time.Hour).UnixMilli()
+	// 基点取「UTC 昨天 12:00」：既在 CloseOrphans 的回看窗口（retentionDays=3）内，又天然规避 UTC 日界——
+	// base 与 base+60s 必落在同一张日表。原先取 now-1h，若运行时刻落在 23:59 前后，fresh 行会跨进次日表，
+	// 而断言只查 base 所在日表，表现为间歇性的 record not found。
+	now := time.Now().UTC()
+	base := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC).AddDate(0, 0, -1).UnixMilli()
 	old := openEvent(uuidV7At(base, "e5"), 1, "proxy-1", "old", base)               // 旧进程孤儿
 	fresh := openEvent(uuidV7At(base+60000, "e6"), 1, "proxy-1", "new", base+60000) // 新进程鲜活
 	if _, err := repo.FlushDaily([]model.ConnEvent{old, fresh}); err != nil {
