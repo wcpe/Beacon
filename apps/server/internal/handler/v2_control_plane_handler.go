@@ -278,6 +278,26 @@ func (h *V2ControlPlaneHandler) CreateNamespace(w http.ResponseWriter, r *http.R
 }
 
 // DeleteNamespace 处理 DELETE /admin/v2/namespaces/{id}：旧删除端点已迁移，禁止硬删。
+// RotateNamespaceToken 处理 POST /admin/v2/namespaces/{id}/token/rotate（FR-238）。
+//
+// 新明文 token **仅在本响应出现一次**；旧 token 自写入新哈希起即刻失效——该域全部 agent
+// 在换用新 token 前请求一律 401。二次确认由前端承载（本端点为直执管理操作，不额外加确认门）。
+func (h *V2ControlPlaneHandler) RotateNamespaceToken(w http.ResponseWriter, r *http.Request) {
+	id, err := uintURLParam(r, "id")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	ns, token, err := h.svc.RotateNamespaceToken(service.RotateNamespaceTokenParams{
+		ID: id, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, v2NamespaceResponse(ns, token))
+}
+
 func (h *V2ControlPlaneHandler) DeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	render.WriteError(w, r, apperr.ErrNamespaceDeleteMigrated)
 }

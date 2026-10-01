@@ -1420,6 +1420,48 @@ func (s *V2ControlPlaneService) UpdateNamespace(p UpdateDisplayResourceParams) (
 	return &ns, nil
 }
 
+// RotateNamespaceTokenParams 是轮换 namespace 接入 token 的参数。
+type RotateNamespaceTokenParams struct {
+	ID       uint
+	Operator string
+	ClientIP string
+}
+
+// RotateNamespaceToken 为指定 namespace 生成新接入 token，并立即使旧 token 失效。
+//
+// 语义与 [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §4.5 冻结的契约一致：
+// 新明文**仅在本次响应中返回一次**（库中仍只存 sha256）；旧 token 在写入新哈希的那一刻
+// 起全部校验失败——该域所有 agent 在换用新 token 前请求一律 401。轮换属高风险操作，
+// **二次确认由前端承载**（服务端不额外加确认门，保持与其他直执管理操作一致）。
+//
+// 归档态不做拦截：归档期间 agent 请求本就由下游 gate 失败关闭，而轮换常发生在
+// 「准备恢复」时点上，与 UpdateNamespace 的口径保持一致。
+func (s *V2ControlPlaneService) RotateNamespaceToken(p RotateNamespaceTokenParams) (*model.Namespace, string, error) {
+	if p.ID == 0 {
+		return nil, "", apperr.ErrInvalidParam
+	}
+	token, err := newAccessToken()
+	if err != nil {
+		return nil, "", err
+	}
+	var ns model.Namespace
+	if err := s.db.First(&ns, p.ID).Error; err != nil {
+		return nil, "", apperr.ErrNamespaceNotFound
+	}
+	detail := auditJSON(map[string]string{"code": ns.Code})
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		// 只更新哈希列：显式指定列名，避免 Save(&ns) 把并发期间的其他字段一并回写。
+		if err := tx.Model(&model.Namespace{}).Where("id = ?", ns.ID).
+			Update("access_token_hash", tokenHash(token)).Error; err != nil {
+			return err
+		}
+		return createAudit(tx, model.AuditLog{NamespaceCode: ns.Code, Operator: operatorOrSystem(p.Operator), Action: model.ActionNamespaceTokenRotate, TargetType: model.TargetTypeNamespace, TargetRef: ns.Code, Detail: detail, Result: model.ResultOK, ClientIP: p.ClientIP})
+	}); err != nil {
+		return nil, "", err
+	}
+	return &ns, token, nil
+}
+
 func (s *V2ControlPlaneService) UpdateBCCluster(p UpdateDisplayResourceParams) (*model.BCCluster, error) {
 	var item model.BCCluster
 	if err := loadForDisplayUpdate(s.db, p.ID, &item, apperr.ErrBCClusterNotFound); err != nil {
