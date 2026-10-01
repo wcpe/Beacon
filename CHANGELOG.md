@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 未发布
+
+### 新增
+
+- **namespace 接入 token 轮换（FR-238）**：规格 [v2-namespace-isolation](docs/specs/v2-namespace-isolation.md) §4.5 早已冻结 `POST /admin/v2/namespaces/{id}/token/rotate` 契约（新明文仅返回一次、旧 token 即刻失效），但端点一直未实现——凭据疑似泄露或需定期轮换时，运维只能重建 namespace。现补齐端点与管理台入口：轮换在事务内派生新 token、落 sha256 哈希并写 `namespace.token-rotate` 专项审计；旧哈希被覆盖的那一刻起旧 token 全部校验失败（失败关闭，无宽限期），该域所有 agent 在换用新 token 前请求一律 401。
+  - **管理台**：`/namespaces` 详情面板新增「接入 token」区块与轮换入口，二次确认明示「旧 token 立即失效、全部 agent 换用前 401」与「新明文仅展示一次」，并要求手输 namespace code 复述防误触；轮换结果复用既有一次性 token 弹窗，关闭即弃、不落前端存储。
+  - **测试**：集成测试覆盖新 token 可用、旧 token 401 与审计落库；组件测试覆盖轮换入口、手输复述闸（未输入 / 输错均禁用）、取消不发请求与成功弹明文（反向验证：去掉复述闸则用例失败）。
+
 ## 1.3.0（2026-09-30）
 
 ### 新增
