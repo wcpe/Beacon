@@ -223,6 +223,8 @@ func run() error {
 	revRepo := repository.NewConfigRevisionRepository(db, configCipher)
 	grayRepo := repository.NewConfigGrayRepository(db, configCipher)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
+	// 实例区服归属真源（server.zone_id）：注册回填与有效配置解析都读它；旧 zone_assignment 已退役
+	placementRepo := repository.NewServerPlacementRepository(db)
 	// 主动下线拒绝态（FR-49）：server_offline 仓库，供注册前查拒绝表与下线/取消下线落库
 	offlineRepo := repository.NewServerOfflineRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
@@ -291,7 +293,7 @@ func run() error {
 	// 可观测性指标（注册/健康 gauge 抓取时读内存注册表；发布/推送 counter 由事件处自增，见 ADR-0020）
 	metricsSet := metrics.New(registry)
 
-	instanceService := service.NewInstanceService(db, registry, assignRepo, offlineRepo, auditRepo, heartbeatInterval, ttl)
+	instanceService := service.NewInstanceService(db, registry, placementRepo, offlineRepo, auditRepo, heartbeatInterval, ttl)
 	// 机器注册通道（FR-222，见 specs/internal-trust-channel.md）：默认关闭；仅显式开启时，受信内部调用方
 	// （命中 X-Beacon-Token 共享 token，由 agentTokenMiddleware 判定并透传）经 v1 数据面挂载端点
 	// /beacon/v1/agent/data-plane/attach（FR-233 更名后的规范路径，见 ADR-0084；旧名
@@ -340,15 +342,15 @@ func run() error {
 	commandHub := longpoll.NewHub()
 	// 文件浏览结果（FR-110）：serverId 级唤醒 Hub，与命令待办独立；agent 回传浏览结果时唤醒等待中的 admin 请求。
 	// revRepo 注入供 per-server 有效配置变更时间线聚合该服覆盖链各 config 项的发布历史（FR-80）
-	effectiveService := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
-	// 发布影响面预览（FR-79）：registry（在线真源）+ assignRepo（zone 归属真源）求交算受影响在线子服
-	impactService := service.NewImpactService(registry, assignRepo, db)
+	effectiveService := service.NewEffectiveService(configRepo, placementRepo, grayRepo, revRepo, hub)
+	// 发布影响面预览（FR-79）：registry（在线真源）+ placementRepo（server.zone_id 归属真源）求交算受影响在线子服
+	impactService := service.NewImpactService(registry, placementRepo, db)
 	// 配置 admin 处理器持有 effectiveService 以支持有效配置只读预览（FR-22）+ 灰度 svc（FR-9）+ 影响面预览（FR-79）
 	configHandler := handler.NewConfigHandler(configService, effectiveService, configGrayService, impactService)
-	fileEffectiveService := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
+	fileEffectiveService := service.NewFileEffectiveService(fileRepo, placementRepo, fileHub)
 	// 三方覆盖集投递（FR-15）：复用 fileHub 唤醒集合（同属通道B），解析适用覆盖集 + 成员内容
-	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, assignRepo)
+	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, placementRepo, fileHub)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, placementRepo)
 	notifier.SetMetrics(metricsSet)
 	v2ControlPlaneService.SetChangeNotifier(notifier)
 	configService.SetNotifier(notifier)

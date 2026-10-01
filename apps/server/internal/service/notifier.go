@@ -2,6 +2,7 @@ package service
 
 import (
 	"log/slog"
+	"sort"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
@@ -15,21 +16,22 @@ type PushRecorder interface {
 }
 
 // ChangeNotifier 在配置/文件/指派变更（事务提交后）算最小受影响 serverId 集合并唤醒其 waiter。
-// 受影响集合：global→该 ns 全部；group→该 group（查内存）；zone→反查 DB 指派；server/改派→单 serverId。
+// 受影响集合：global→该 ns 全部；group→该 group（查内存）；zone→反查 DB 归属；server/改派→单 serverId。
 // 配置（通道A）与文件（通道B）各持一个独立 Hub，发布只唤醒对应通道的 waiter，互不触发无谓重算（见 ADR-0010）。
 type ChangeNotifier struct {
-	hub         *longpoll.Hub // 配置长轮询唤醒集合
-	fileHub     *longpoll.Hub // 文件长轮询唤醒集合（独立）
-	topologyHub *longpoll.Hub // 拓扑 watch 唤醒集合（namespace 级，FR-29）
-	commandHub  *longpoll.Hub // 命令待办唤醒集合（serverId 级，FR-39）
-	registry    *runtime.Registry
-	assignRepo  *repository.ZoneAssignmentRepository
-	metrics     PushRecorder // 可选，推送计数（见 ADR-0020）
+	hub           *longpoll.Hub // 配置长轮询唤醒集合
+	fileHub       *longpoll.Hub // 文件长轮询唤醒集合（独立）
+	topologyHub   *longpoll.Hub // 拓扑 watch 唤醒集合（namespace 级，FR-29）
+	commandHub    *longpoll.Hub // 命令待办唤醒集合（serverId 级，FR-39）
+	registry      *runtime.Registry
+	placementRepo *repository.ServerPlacementRepository
+	metrics       PushRecorder // 可选，推送计数（见 ADR-0020）
 }
 
 // NewChangeNotifier 构造唤醒器（hub 配置、fileHub 文件、topologyHub 拓扑、commandHub 命令待办，互相独立）。
-func NewChangeNotifier(hub, fileHub, topologyHub, commandHub *longpoll.Hub, registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository) *ChangeNotifier {
-	return &ChangeNotifier{hub: hub, fileHub: fileHub, topologyHub: topologyHub, commandHub: commandHub, registry: registry, assignRepo: assignRepo}
+// placementRepo 读新真源 server.zone_id（旧 zone_assignment 已退役，见 assignment_repo.go）。
+func NewChangeNotifier(hub, fileHub, topologyHub, commandHub *longpoll.Hub, registry *runtime.Registry, placementRepo *repository.ServerPlacementRepository) *ChangeNotifier {
+	return &ChangeNotifier{hub: hub, fileHub: fileHub, topologyHub: topologyHub, commandHub: commandHub, registry: registry, placementRepo: placementRepo}
 }
 
 // SetMetrics 注入推送计数器（启动时装配；未注入则不计数）。
@@ -117,15 +119,20 @@ func (n *ChangeNotifier) serverIDsInGroup(ns, group string) []string {
 	return ids
 }
 
-// serverIDsInZone 反查 DB 指派取某 (group, zone) 下的 serverId。
+// serverIDsInZone 反查 DB 归属取某 (group, zone) 下的 serverId（新真源 server.zone_id）。
+// 一次查询取全环境 serverId→归属映射后在内存筛选（与迁移前 List(ns, group, zone) 同为单查，无 N+1）；
+// 无归属实例不进映射，自然不命中任何 zone。结果排序后返回，保持与迁移前 SQL ORDER BY 同样的确定性。
 func (n *ChangeNotifier) serverIDsInZone(ns, group, zone string) ([]string, error) {
-	list, err := n.assignRepo.List(ns, group, zone)
+	byServer, err := n.placementRepo.FindByNamespace(ns)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(list))
-	for _, a := range list {
-		ids = append(ids, a.ServerID)
+	ids := make([]string, 0, len(byServer))
+	for serverID, p := range byServer {
+		if p.GroupCode == group && p.ZoneCode == zone {
+			ids = append(ids, serverID)
+		}
 	}
+	sort.Strings(ids)
 	return ids, nil
 }

@@ -114,7 +114,9 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/reverse-fetch/tasks/{id}/resolve":  {},
 	"POST /admin/v1/reverse-fetch/ignore-rules":        {},
 	"DELETE /admin/v1/reverse-fetch/ignore-rules/{id}": {},
-	// zone 分配（zone.assign / unassign）；v1 默认入口写端点已移除（ADR-0067，写走 v2）
+	// zone 分配：v1 指派写端点已迁移为 410（apperr.ErrZoneAssignmentMigrated，不再写退役表、也不自记审计），
+	// 保留登记仅因「/admin/v1 组下注册的写路由必须在本覆盖集合内」（见 TestAuditCoveredRoutesMatchRegisteredWriteRoutes）；
+	// v1 默认入口写端点已移除（ADR-0067，写走 v2 分配 / toggle）
 	"PUT /admin/v1/zones/assignments":    {},
 	"DELETE /admin/v1/zones/assignments": {},
 	// 流量调度（scheduling.drain / undrain）

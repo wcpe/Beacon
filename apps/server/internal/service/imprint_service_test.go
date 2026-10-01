@@ -19,7 +19,7 @@ func newImprintSvc(db *gorm.DB) *AgentCommandService {
 	auditRepo := repository.NewAuditLogRepository(db)
 	fileRepo := repository.NewFileObjectRepository(db)
 	fileSvc := NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
-	effSvc := NewFileEffectiveService(fileRepo, repository.NewZoneAssignmentRepository(db), nil)
+	effSvc := NewFileEffectiveService(fileRepo, repository.NewServerPlacementRepository(db), nil)
 	svc := NewAgentCommandService(db, cmdRepo, fileSvc, auditRepo)
 	svc.SetFileEffectiveService(effSvc)
 	return svc

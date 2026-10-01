@@ -531,7 +531,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 告警人工分级覆盖（FR-231）：升降级别 + 落审计。
 		r.Post("/alert-events/{id}/level", h.AlertEvent.OverrideLevel)
 
-		// zone 分配
+		// zone 分配：列表 / 汇总为只读端点，保留（读退役表 zone_assignment，生产恒空，仅历史回显）；
+		// 两个写端点已迁移，恒回 410 并引导改用 v2 分配 / 换区流程（归属唯一真源 = server.zone_id，
+		// 见 handler.ZoneHandler.Assign / Unassign）。保留路由而非删除，让旧客户端拿到明确的迁移指引。
 		r.Get("/zones/assignments", h.Zone.ListAssignments)
 		r.Put("/zones/assignments", h.Zone.Assign)
 		r.Delete("/zones/assignments", h.Zone.Unassign)

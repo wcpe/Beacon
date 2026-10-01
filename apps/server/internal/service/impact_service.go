@@ -18,39 +18,30 @@ type Impact struct {
 }
 
 // ImpactService 计算某 scope 覆盖到的在线子服集合（发布前只读预览，FR-79）。
-// 归属真源 = zone_assignment（DB，ADR-0004）；在线真源 = 内存注册表可用集合（online+degraded）。
+// 归属真源 = server 表的 zone_id（DB，ADR-0004 的 v2 形态）；在线真源 = 内存注册表可用集合（online+degraded）。
 // 二者求交得「此刻真正会收到这次变更的在线子服」，纯读、不落 DB、不参与发布决策。
 type ImpactService struct {
-	registry   *runtime.Registry
-	assignRepo *repository.ZoneAssignmentRepository
-	db         *gorm.DB
+	registry      *runtime.Registry
+	placementRepo *repository.ServerPlacementRepository
+	db            *gorm.DB
 }
 
 // NewImpactService 构造服务；第三个参数用于生命周期过滤，省略时保持旧调用兼容。
-func NewImpactService(registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository, db ...*gorm.DB) *ImpactService {
+// placementRepo 读新真源 server.zone_id（旧 zone_assignment 已退役，见 assignment_repo.go）。
+func NewImpactService(registry *runtime.Registry, placementRepo *repository.ServerPlacementRepository, db ...*gorm.DB) *ImpactService {
 	var lifecycleDB *gorm.DB
 	if len(db) > 0 {
 		lifecycleDB = db[0]
 	}
-	return &ImpactService{registry: registry, assignRepo: assignRepo, db: lifecycleDB}
-}
-
-// assignment 是某子服的权威归属（大区 / 小区）。
-type assignment struct {
-	group string
-	zone  string
+	return &ImpactService{registry: registry, placementRepo: placementRepo, db: lifecycleDB}
 }
 
 // Resolve 解析某 (namespace, scopeLevel, group, scopeTarget) 覆盖到的在线子服集合。
-// 一次性拉该环境全部 zone_assignment（避免逐实例查库的 N+1），再与注册表可用集合按 scope 求交。
+// 一次性拉该环境全部实例归属（避免逐实例查库的 N+1），再与注册表可用集合按 scope 求交。
 func (s *ImpactService) Resolve(ns, scopeLevel, group, scopeTarget string) (Impact, error) {
-	assigns, err := s.assignRepo.List(ns, "", "")
+	byServer, err := s.placementRepo.FindByNamespace(ns)
 	if err != nil {
 		return Impact{}, err
-	}
-	byServer := make(map[string]assignment, len(assigns))
-	for i := range assigns {
-		byServer[assigns[i].ServerID] = assignment{group: assigns[i].GroupCode, zone: assigns[i].ZoneCode}
 	}
 
 	instances := s.registry.List(runtime.Filter{Namespace: ns})
@@ -67,10 +58,10 @@ func (s *ImpactService) Resolve(ns, scopeLevel, group, scopeTarget string) (Impa
 		if !active[inst.ServerID] {
 			continue
 		}
-		// 归属以 DB 为权威；未指派回退 GroupHint、zone 为空（与 EffectiveService.Resolve 同口径）。
+		// 归属以 DB 为权威；无归属回退 GroupHint、zone 为空（与 EffectiveService.Resolve 同口径）。
 		instGroup, instZone := inst.GroupHint, ""
-		if a, ok := byServer[inst.ServerID]; ok {
-			instGroup, instZone = a.group, a.zone
+		if p, ok := byServer[inst.ServerID]; ok {
+			instGroup, instZone = p.GroupCode, p.ZoneCode
 		}
 		if scopeCovers(scopeLevel, group, scopeTarget, instGroup, instZone, inst.ServerID) {
 			affected = append(affected, inst.ServerID)

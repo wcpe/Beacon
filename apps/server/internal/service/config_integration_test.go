@@ -29,8 +29,9 @@ func newStack(t *testing.T) (*service.ConfigService, *service.EffectiveService, 
 	cr := repository.NewConfigItemRepository(db, noEncryptCipher())
 	rr := repository.NewConfigRevisionRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
-	asg := repository.NewZoneAssignmentRepository(db)
-	return service.NewConfigService(db, cr, rr, ar), service.NewEffectiveService(cr, asg, nil, rr, nil), db
+	// 有效配置解析读新真源 server.zone_id（旧 zone_assignment 已退役）
+	placementRepo := repository.NewServerPlacementRepository(db)
+	return service.NewConfigService(db, cr, rr, ar), service.NewEffectiveService(cr, placementRepo, nil, rr, nil), db
 }
 
 // TestConfigLifecycle 集成验证：建→发布→历史→回滚→diff→软删。

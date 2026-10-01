@@ -24,7 +24,9 @@ func newOfflineTestStack(t *testing.T) (*InstanceService, *runtime.Registry, *go
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.ServerOffline{}, &model.ServerDrain{}, &model.ZoneAssignment{}, &model.AuditLog{}); err != nil {
+	// 归属读新真源 server.zone_id，注册解析需 zone / region / bc_cluster 三表就位
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.ServerOffline{}, &model.ServerDrain{}, &model.ZoneAssignment{}, &model.AuditLog{},
+		&model.BCCluster{}, &model.Region{}, &model.Zone{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -32,7 +34,7 @@ func newOfflineTestStack(t *testing.T) (*InstanceService, *runtime.Registry, *go
 			_ = sqlDB.Close()
 		}
 	})
-	for _, tbl := range []string{"server", "namespace", "server_offline", "server_drain", "zone_assignment", "audit_log"} {
+	for _, tbl := range []string{"server", "namespace", "server_offline", "server_drain", "zone_assignment", "audit_log", "zone", "region", "bc_cluster"} {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
@@ -40,7 +42,7 @@ func newOfflineTestStack(t *testing.T) (*InstanceService, *runtime.Registry, *go
 	reg := runtime.NewRegistry()
 	svc := NewInstanceService(db,
 		reg,
-		repository.NewZoneAssignmentRepository(db),
+		repository.NewServerPlacementRepository(db),
 		repository.NewServerOfflineRepository(db),
 		repository.NewAuditLogRepository(db),
 		10*time.Second, 30*time.Second)

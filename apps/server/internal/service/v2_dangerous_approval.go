@@ -647,6 +647,11 @@ func (s *V2ControlPlaneService) RequestAssignServers(p AssignServersParams, prin
 }
 
 // RequestLegacyZoneAssignment 为 V1 zone 指派创建与 V2 同 operation 的审批请求。
+//
+// 【已退役 · 无生产调用方】V1 指派写端点 PUT /admin/v1/zones/assignments 已恒回 410
+// （apperr.ErrZoneAssignmentMigrated，见 handler.ZoneHandler.Assign），本方法不再被任何路由调用；
+// 保留仅为维持 v1 审批状态机的可验证性（v1_topology_approval_test.go）。
+// 新归属写入一律走 v2：RequestAssignServers / RequestRezoneServers。
 func (s *V2ControlPlaneService) RequestLegacyZoneAssignment(namespace, serverID, group, zone, note, operator, clientIP, idempotencyKey string, principal auth.Principal) (ApprovalTicketView, error) {
 	if s.legacyZone == nil || namespace == "" || serverID == "" || group == "" || zone == "" {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam
@@ -669,6 +674,9 @@ func (s *V2ControlPlaneService) RequestLegacyZoneAssignment(namespace, serverID,
 }
 
 // RequestLegacyZoneUnassign 为 V1 取消指派创建换区审批请求。
+//
+// 【已退役 · 无生产调用方】V1 取消指派写端点 DELETE /admin/v1/zones/assignments 已恒回 410
+// （同 RequestLegacyZoneAssignment）；取消 / 改派归属一律走 v2 换区（RequestRezoneServers）。
 func (s *V2ControlPlaneService) RequestLegacyZoneUnassign(namespace, serverID, reason, operator, clientIP, idempotencyKey string, principal auth.Principal) (ApprovalTicketView, error) {
 	if s.legacyZone == nil || namespace == "" || serverID == "" {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam

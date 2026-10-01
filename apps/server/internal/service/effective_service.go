@@ -32,31 +32,46 @@ type Effective struct {
 
 // EffectiveService 按 agent 身份解析有效配置（scope 覆盖链键级深合并）+ 长轮询挂起。
 type EffectiveService struct {
-	configRepo *repository.ConfigItemRepository
-	assignRepo *repository.ZoneAssignmentRepository
-	grayRepo   *repository.ConfigGrayRepository     // 可选，灰度叠加（FR-9）；nil 即无灰度行为
-	revRepo    *repository.ConfigRevisionRepository // 可选，per-server 变更时间线聚合历史版本（FR-80）；纯解析/长轮询路径可传 nil
-	hub        *longpoll.Hub
+	configRepo    *repository.ConfigItemRepository
+	placementRepo *repository.ServerPlacementRepository
+	grayRepo      *repository.ConfigGrayRepository     // 可选，灰度叠加（FR-9）；nil 即无灰度行为
+	revRepo       *repository.ConfigRevisionRepository // 可选，per-server 变更时间线聚合历史版本（FR-80）；纯解析/长轮询路径可传 nil
+	hub           *longpoll.Hub
 }
 
 // NewEffectiveService 构造服务。hub 仅长轮询用，纯解析场景可传 nil。
+// placementRepo 读新真源 server.zone_id（旧 zone_assignment 已退役，见 assignment_repo.go）。
 // grayRepo 可选：注入则在版本选择层叠加灰度（cohort 内 serverId 换灰度内容，FR-9，见 ADR-0021）；
 // 传 nil 则解析行为与无灰度时完全一致（向后兼容）。
 // revRepo 可选：注入则支持 per-server 变更时间线（FR-80）；agent 热路径不需要、可传 nil。
-func NewEffectiveService(configRepo *repository.ConfigItemRepository, assignRepo *repository.ZoneAssignmentRepository, grayRepo *repository.ConfigGrayRepository, revRepo *repository.ConfigRevisionRepository, hub *longpoll.Hub) *EffectiveService {
-	return &EffectiveService{configRepo: configRepo, assignRepo: assignRepo, grayRepo: grayRepo, revRepo: revRepo, hub: hub}
+func NewEffectiveService(configRepo *repository.ConfigItemRepository, placementRepo *repository.ServerPlacementRepository, grayRepo *repository.ConfigGrayRepository, revRepo *repository.ConfigRevisionRepository, hub *longpoll.Hub) *EffectiveService {
+	return &EffectiveService{configRepo: configRepo, placementRepo: placementRepo, grayRepo: grayRepo, revRepo: revRepo, hub: hub}
+}
+
+// resolvePlacement 解析某 (namespace, serverId) 的覆盖链归属 (group, zone)，读新真源 server.zone_id。
+// 有归属（已分配到小区）用权威 (大区 code, 小区 code)；无归属退回调用方传入的提示
+// （Resolve 传空 zoneHint，故 zone 为空），与迁移前「未指派」口径逐字一致。
+// serverId 为空表示「假想目标」（admin 预览未指定实例）：直接用传入提示，不查库。
+func (s *EffectiveService) resolvePlacement(ns, serverID, groupHint, zoneHint string) (string, string, error) {
+	if serverID == "" {
+		return groupHint, zoneHint, nil
+	}
+	placement, err := s.placementRepo.FindByServer(ns, serverID)
+	if err != nil {
+		return "", "", err
+	}
+	if placement == nil {
+		return groupHint, zoneHint, nil
+	}
+	return placement.GroupCode, placement.ZoneCode, nil
 }
 
 // Resolve 解析某 (namespace, serverId) 的有效配置：
-// 先按 zone_assignment 得 (group, zone)，未分配则 group=groupHint、zone 为空；再拉四层候选合并。
+// 先按新真源 server.zone_id 得 (group, zone)，无归属则 group=groupHint、zone 为空；再拉四层候选合并。
 func (s *EffectiveService) Resolve(ns, serverID, groupHint string) (Effective, error) {
-	group, zone := groupHint, ""
-	assign, err := s.assignRepo.FindByServer(ns, serverID)
+	group, zone, err := s.resolvePlacement(ns, serverID, groupHint, "")
 	if err != nil {
 		return Effective{}, err
-	}
-	if assign != nil {
-		group, zone = assign.GroupCode, assign.ZoneCode
 	}
 	return s.resolveLayers(ns, serverID, group, zone)
 }
@@ -213,18 +228,12 @@ type ProvenancedEffective struct {
 }
 
 // ResolveWithProvenance 解析某目标的有效配置并附逐键来源（admin 只读预览，见 ADR-0013）。
-// serverID 非空时优先按 zone_assignment 解出 (group,zone)；未指派则用传入的 groupHint/zoneHint。
+// serverID 非空时优先按新真源 server.zone_id 解出 (group,zone)；无归属则用传入的 groupHint/zoneHint。
 // 对同一解析出的 (group,zone)，合并内容与 md5 与 Resolve 一致（provenance 经平行纯函数计算，不改 agent 热路径）。
 func (s *EffectiveService) ResolveWithProvenance(ns, serverID, groupHint, zoneHint string) (ProvenancedEffective, error) {
-	group, zone := groupHint, zoneHint
-	if serverID != "" {
-		assign, err := s.assignRepo.FindByServer(ns, serverID)
-		if err != nil {
-			return ProvenancedEffective{}, err
-		}
-		if assign != nil {
-			group, zone = assign.GroupCode, assign.ZoneCode
-		}
+	group, zone, err := s.resolvePlacement(ns, serverID, groupHint, zoneHint)
+	if err != nil {
+		return ProvenancedEffective{}, err
 	}
 
 	candidates, err := s.configRepo.FindEffectiveCandidates(ns, group, zone, serverID)
@@ -301,20 +310,16 @@ type ConfigTimeline struct {
 }
 
 // ConfigTimeline 解析某 (namespace, serverId) 当前覆盖链涉及的全部 config 项的发布历史，按时间倒序汇总（FR-80）。
-// 覆盖链解析与有效配置 Resolve 同口径：按 zone_assignment（DB 权威，ADR-0004）解出 (group, zone)，未指派回退 groupHint / 空。
+// 覆盖链解析与有效配置 Resolve 同口径：按新真源 server.zone_id 解出 (group, zone)，无归属回退 groupHint / 空。
 // 取该链四层候选 config 项后，一次按 itemID 集合拉全部 config_revision（避免 N+1），每条标注其所属项的 scope 元信息。
 // 仅给元信息不含 content（要看内容走既有版本历史 / diff）。revRepo 未注入时返回错误（装配缺漏，不静默吞）。
 func (s *EffectiveService) ConfigTimeline(ns, serverID, groupHint string) (ConfigTimeline, error) {
 	if s.revRepo == nil {
 		return ConfigTimeline{}, apperr.ErrInternal
 	}
-	group, zone := groupHint, ""
-	assign, err := s.assignRepo.FindByServer(ns, serverID)
+	group, zone, err := s.resolvePlacement(ns, serverID, groupHint, "")
 	if err != nil {
 		return ConfigTimeline{}, err
-	}
-	if assign != nil {
-		group, zone = assign.GroupCode, assign.ZoneCode
 	}
 
 	candidates, err := s.configRepo.FindEffectiveCandidates(ns, group, zone, serverID)

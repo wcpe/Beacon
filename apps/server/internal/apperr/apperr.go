@@ -294,6 +294,10 @@ var (
 	ErrZoneNotAssignableToBC = New(http.StatusBadRequest, "ZONE_NOT_ASSIGNABLE_TO_BC", "zone 不可分配给 BC 代理实例")
 	// ErrZoneServerOnlineNonempty 服务器在线且有玩家，禁止变更其区归属（排空门硬闸，FR-71/ADR-0036）。
 	ErrZoneServerOnlineNonempty = New(http.StatusConflict, "ZONE_SERVER_ONLINE_NONEMPTY", "服务器在线且有玩家，禁止变更其区归属；请先排空（drain 或等玩家离开）后再操作")
+	// ErrZoneAssignmentMigrated V1 指派写端点（PUT/DELETE /admin/v1/zones/assignments）已迁移：其写的 zone_assignment
+	// 表已退役（归属唯一真源 = server.zone_id，读方全部改读新真源），继续写入会「成功返回但无人认」。
+	// 故写入口恒回 410 并引导改用 v2 分配 / 换区流程；只读端点（GET 列表 / 汇总 / 默认入口）保留不变。
+	ErrZoneAssignmentMigrated = New(http.StatusGone, "zone_assignment_migrated", "V1 指派写端点已迁移，请改用 V2 管理台的分配 / 换区流程（POST /admin/v2/server-assignments、POST /admin/v2/server-rezones）")
 	// ErrDrainNotFound 取消 drain 时该标记不存在（FR-10）。
 	ErrDrainNotFound = New(http.StatusNotFound, "DRAIN_NOT_FOUND", "drain 标记不存在")
 	// ErrInstanceOfflineRejected 实例已被主动下线，拒绝其注册接入（FR-49，区别于 NOT_REGISTERED / DUPLICATE_SERVER_ID）。

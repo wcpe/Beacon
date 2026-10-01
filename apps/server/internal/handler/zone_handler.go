@@ -1,12 +1,10 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
-	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -64,39 +62,19 @@ func (h *ZoneHandler) ListAssignments(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
 }
 
-// assignRequest 是新增/改派请求体（operator 由认证态派生，不接收手填）。
-type assignRequest struct {
-	Namespace string `json:"namespace"`
-	ServerID  string `json:"serverId"`
-	Group     string `json:"group"`
-	Zone      string `json:"zone"`
-	Note      string `json:"note"`
-}
-
-// Assign 处理 PUT /admin/v1/zones/assignments（兼容审批申请）。
+// Assign 处理 PUT /admin/v1/zones/assignments：V1 指派写端点已迁移，恒回 410。
+//
+// 【已退役】该端点经审批适配器把归属写进 zone_assignment 旧表，而归属的唯一真源已迁到
+// server.zone_id / bc_cluster_id / lobby_cluster_id（v2 分配路径写入），全部读方也已改读新真源；
+// 继续写入只会「成功返回但无人认」。故不再受理，改由 v2 管理台的分配 / 换区流程承担。
 func (h *ZoneHandler) Assign(w http.ResponseWriter, r *http.Request) {
-	var req assignRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
-		return
-	}
-	ticket, err := h.v2svc.RequestLegacyZoneAssignment(req.Namespace, req.ServerID, req.Group, req.Zone, req.Note, auth.Operator(r.Context()), clientIP(r), r.Header.Get("Idempotency-Key"), requestPrincipal(r))
-	if err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-	render.WriteJSON(w, http.StatusAccepted, ticket)
+	render.WriteError(w, r, apperr.ErrZoneAssignmentMigrated)
 }
 
-// Unassign 处理 DELETE /admin/v1/zones/assignments?namespace=&serverId=（兼容审批申请）。
+// Unassign 处理 DELETE /admin/v1/zones/assignments?namespace=&serverId=：V1 取消指派写端点已迁移，恒回 410。
+// 退役理由同 Assign：取消指派同样只动退役表，读方不会再据此变更归属。
 func (h *ZoneHandler) Unassign(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	ticket, err := h.v2svc.RequestLegacyZoneUnassign(q.Get("namespace"), q.Get("serverId"), q.Get("reason"), auth.Operator(r.Context()), clientIP(r), r.Header.Get("Idempotency-Key"), requestPrincipal(r))
-	if err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-	render.WriteJSON(w, http.StatusAccepted, ticket)
+	render.WriteError(w, r, apperr.ErrZoneAssignmentMigrated)
 }
 
 // defaultEntryView 是小区默认入口对外视图（FR-48；真源 v2 server.is_default_entry，ADR-0067）。

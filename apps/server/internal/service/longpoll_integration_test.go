@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/wcpe/Beacon/apps/server/internal/merge"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
@@ -17,22 +19,27 @@ import (
 )
 
 // longpollStack 装配带唤醒的配置/zone 服务 + 有效配置长轮询服务（共享 hub 与 registry）。
-func longpollStack(t *testing.T) (*service.ConfigService, *service.ZoneService, *service.EffectiveService, *runtime.Registry) {
+// 一并返回 notifier 与 db：按新真源改归属的用例需要 db 落 server.zone_id，并在改后显式触发
+// 提交后唤醒（真实改派路径由 v2 分配 / rezone 调同一 NotifyServer）。
+func longpollStack(t *testing.T) (*service.ConfigService, *service.ZoneService, *service.EffectiveService, *runtime.Registry, *service.ChangeNotifier, *gorm.DB) {
 	db := testDB(t)
 	cr := repository.NewConfigItemRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
+	// 配置生效解析与唤醒器的 zone 反查读新真源 server.zone_id（旧 zone_assignment 已退役）；
+	// v1 zone 服务保留（只读汇总 / 退役写路径仍走旧表）
+	placementRepo := repository.NewServerPlacementRepository(db)
 	reg := runtime.NewRegistry()
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
-	eff := service.NewEffectiveService(cr, asg, nil, nil, hub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, asg)
+	eff := service.NewEffectiveService(cr, placementRepo, nil, nil, hub)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, placementRepo)
 	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	cfg.SetNotifier(notifier)
 	zone := service.NewZoneService(db, asg, ar, reg)
 	zone.SetNotifier(notifier)
-	return cfg, zone, eff, reg
+	return cfg, zone, eff, reg, notifier, db
 }
 
 func createGlobal(t *testing.T, cfg *service.ConfigService, content string) {
@@ -63,7 +70,7 @@ func waitAsync(eff *service.EffectiveService, serverID, groupHint, md5 string, t
 
 // TestLongPollImmediateWhenChanged 当前 md5 与请求 md5 不同 → 立即返回（注册前已变不丢）。
 func TestLongPollImmediateWhenChanged(t *testing.T) {
-	cfg, _, eff, _ := longpollStack(t)
+	cfg, _, eff, _, _, _ := longpollStack(t)
 	createGlobal(t, cfg, "k: 1\n")
 
 	start := time.Now()
@@ -81,7 +88,7 @@ func TestLongPollImmediateWhenChanged(t *testing.T) {
 
 // TestLongPollTimeout304 无变更挂起到超时 → 返回 changed=false。
 func TestLongPollTimeout304(t *testing.T) {
-	cfg, _, eff, _ := longpollStack(t)
+	cfg, _, eff, _, _, _ := longpollStack(t)
 	createGlobal(t, cfg, "k: 1\n")
 	cur, _ := eff.Resolve("prod", "s1", "")
 
@@ -97,7 +104,7 @@ func TestLongPollTimeout304(t *testing.T) {
 
 // TestLongPollWakeOnPublish 挂起期间发布 → 被唤醒、重算、200。
 func TestLongPollWakeOnPublish(t *testing.T) {
-	cfg, _, eff, _ := longpollStack(t)
+	cfg, _, eff, _, _, _ := longpollStack(t)
 	createGlobal(t, cfg, "k: 1\n")
 	cur, _ := eff.Resolve("prod", "s1", "")
 
@@ -124,7 +131,7 @@ func TestLongPollWakeOnPublish(t *testing.T) {
 
 // TestLongPollOnlyAffected 发布只唤醒受影响：他组发布不唤醒、本组发布唤醒。
 func TestLongPollOnlyAffected(t *testing.T) {
-	cfg, _, eff, reg := longpollStack(t)
+	cfg, _, eff, reg, _, _ := longpollStack(t)
 	// s1 属 area1（注册进内存供 group 反查）
 	if _, err := reg.Register(&runtime.Instance{
 		Namespace: "prod", ServerID: "s1", GroupHint: "area1", ResolvedGroup: "area1", Address: "10.0.0.1:1",
@@ -162,8 +169,9 @@ func TestLongPollOnlyAffected(t *testing.T) {
 }
 
 // TestLongPollReassignHotPush 改派触发热推：被唤醒后按新 zone 重算下发。
+// 归属走新真源 server.zone_id（旧 zone_assignment 已退役），改派 = 改 zone_id + 提交后唤醒。
 func TestLongPollReassignHotPush(t *testing.T) {
-	cfg, zone, eff, _ := longpollStack(t)
+	cfg, _, eff, _, notifier, db := longpollStack(t)
 	mkZone := func(target, content string) {
 		if _, err := cfg.Create(service.CreateConfigParams{
 			Namespace: "prod", Group: "area1", DataID: "app.yml",
@@ -174,16 +182,14 @@ func TestLongPollReassignHotPush(t *testing.T) {
 	}
 	mkZone("zoneA", "z: \"A\"\n")
 	mkZone("zoneB", "z: \"B\"\n")
-	if _, err := service.AssignZoneForIntegrationTest(zone, "prod", "s1", "area1", "zoneA", "admin", "", ""); err != nil {
-		t.Fatalf("初始指派失败: %v", err)
-	}
+	seedServerZonePlacement(t, db, "prod", "s1", "area1", "zoneA")
 	cur, _ := eff.Resolve("prod", "s1", "area1")
 
 	ch := waitAsync(eff, "s1", "area1", cur.MD5, 3*time.Second)
 	time.Sleep(80 * time.Millisecond)
-	if _, err := service.AssignZoneForIntegrationTest(zone, "prod", "s1", "area1", "zoneB", "admin", "", ""); err != nil {
-		t.Fatalf("改派失败: %v", err)
-	}
+	// 改派 zoneB：先落新真源，再按真实改派路径的提交后时机显式唤醒目标 serverId
+	seedServerZonePlacement(t, db, "prod", "s1", "area1", "zoneB")
+	notifier.NotifyServer("prod", "s1")
 	select {
 	case r := <-ch:
 		if r.err != nil || !r.changed {

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/filetree"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -24,7 +26,7 @@ type fileStack struct {
 	cfgEff    *service.EffectiveService
 	reg       *runtime.Registry
 	fileRepo  *repository.FileObjectRepository
-	assign    *repository.ZoneAssignmentRepository
+	db        *gorm.DB
 	auditRepo *repository.AuditLogRepository
 }
 
@@ -35,19 +37,20 @@ func newFileStack(t *testing.T) fileStack {
 	frr := repository.NewFileRevisionRepository(db)
 	cr := repository.NewConfigItemRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
-	asg := repository.NewZoneAssignmentRepository(db)
+	// 配置生效解析与文件树 / 覆盖集 / 唤醒器都读新真源 server.zone_id（旧 zone_assignment 已退役）
+	placementRepo := repository.NewServerPlacementRepository(db)
 	reg := runtime.NewRegistry()
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
-	fileEff := service.NewFileEffectiveService(fr, asg, fileHub)
-	cfgEff := service.NewEffectiveService(cr, asg, nil, nil, hub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, asg)
+	fileEff := service.NewFileEffectiveService(fr, placementRepo, fileHub)
+	cfgEff := service.NewEffectiveService(cr, placementRepo, nil, nil, hub)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, placementRepo)
 	fileSvc := service.NewFileService(db, fr, frr, ar)
 	fileSvc.SetNotifier(notifier)
 	cfgSvc := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	cfgSvc.SetNotifier(notifier)
-	return fileStack{files: fileSvc, fileEff: fileEff, cfg: cfgSvc, cfgEff: cfgEff, reg: reg, fileRepo: fr, assign: asg, auditRepo: ar}
+	return fileStack{files: fileSvc, fileEff: fileEff, cfg: cfgSvc, cfgEff: cfgEff, reg: reg, fileRepo: fr, db: db, auditRepo: ar}
 }
 
 // registerS1 把 s1 注册进内存（供 group 反查唤醒）。
