@@ -128,6 +128,80 @@ func TestRosterReconnectKeepsNameIndexConsistent(t *testing.T) {
 	}
 }
 
+// TestRosterSnapshotByNamespaceIsolatesDomain 多 namespace 混装时快照只含本域条目（namespace 是强隔离边界）。
+func TestRosterSnapshotByNamespaceIsolatesDomain(t *testing.T) {
+	s := NewStore()
+	s.ApplyOpen(1, "uuid-alice", "Alice", "c1", "game-3")
+	s.ApplyOpen(2, "uuid-bob", "Bob", "c2", "game-5") // 异域玩家，绝不得出现在 ns1 快照
+	s.ApplyOpen(1, "uuid-steve", "Steve", "c3", "game-7")
+
+	got := s.SnapshotByNamespace(1)
+	if len(got) != 2 || got["Alice"] != "game-3" || got["Steve"] != "game-7" {
+		t.Fatalf("ns1 快照应只含本域 Alice→game-3 / Steve→game-7，实际 %v", got)
+	}
+	other := s.SnapshotByNamespace(2)
+	if len(other) != 1 || other["Bob"] != "game-5" {
+		t.Fatalf("ns2 快照应只含本域 Bob→game-5，实际 %v", other)
+	}
+	// 无人在线的 namespace 返回空（非 nil）map：序列化为 {}，agent 据此清空本地名册。
+	if empty := s.SnapshotByNamespace(9); empty == nil || len(empty) != 0 {
+		t.Fatalf("无人在线的 namespace 应返回空非 nil map，实际 %v", empty)
+	}
+}
+
+// TestRosterSnapshotExcludesAnonymous 无玩家名的条目不进快照——契约是按名寻址，匿名条目无从寻址。
+func TestRosterSnapshotExcludesAnonymous(t *testing.T) {
+	s := NewStore()
+	s.ApplyOpen(1, "uuid-noname", "", "c1", "game-3")
+	s.ApplyOpen(1, "uuid-alice", "Alice", "c2", "game-5")
+
+	got := s.SnapshotByNamespace(1)
+	if len(got) != 1 || got["Alice"] != "game-5" {
+		t.Fatalf("快照应只含具名条目 Alice→game-5，实际 %v", got)
+	}
+}
+
+// TestRosterSnapshotTracksRenameAndClose 改名 / 换服 / 迟到 close / 真 close 后快照与名索引一致（无幽灵条目）。
+func TestRosterSnapshotTracksRenameAndClose(t *testing.T) {
+	s := NewStore()
+	s.ApplyOpen(1, "uuid-steve", "Steve", "c1", "game-1")
+	s.ApplyOpen(1, "uuid-steve", "Steven", "c2", "game-7") // 改名 + 换服重连
+
+	got := s.SnapshotByNamespace(1)
+	if len(got) != 1 || got["Steven"] != "game-7" {
+		t.Fatalf("改名后快照应只含 Steven→game-7，实际 %v", got)
+	}
+	if _, stale := got["Steve"]; stale {
+		t.Fatalf("旧名 Steve 不应残留（否则会按旧名误判在线），实际 %v", got)
+	}
+
+	s.ApplyClose("uuid-steve", "c1") // 旧连接的迟到 close 不得摘除新条目
+	if got := s.SnapshotByNamespace(1); len(got) != 1 || got["Steven"] != "game-7" {
+		t.Fatalf("迟到 close 后快照应不变，实际 %v", got)
+	}
+	s.ApplyClose("uuid-steve", "c2")
+	if got := s.SnapshotByNamespace(1); len(got) != 0 {
+		t.Fatalf("close 后快照应清空，实际 %v", got)
+	}
+}
+
+// TestRosterSnapshotIsDetachedCopy 快照是脱离名册的独立副本：改快照不影响名册，名册后续变更不影响已取快照。
+func TestRosterSnapshotIsDetachedCopy(t *testing.T) {
+	s := NewStore()
+	s.ApplyOpen(1, "uuid-alice", "Alice", "c1", "game-3")
+
+	snap := s.SnapshotByNamespace(1)
+	snap["Ghost"] = "game-9" // 篡改快照不得回写名册
+	s.ApplyClose("uuid-alice", "c1")
+
+	if got := s.SnapshotByNamespace(1); len(got) != 0 {
+		t.Fatalf("名册应已清空（快照篡改不得回写），实际 %v", got)
+	}
+	if snap["Alice"] != "game-3" {
+		t.Fatalf("已取出的快照应保持取出时点内容，实际 %v", snap)
+	}
+}
+
 // TestRosterEmptyNameSkipped 空玩家名只登记 UUID 索引，不污染名索引（且不 panic）。
 func TestRosterEmptyNameSkipped(t *testing.T) {
 	s := NewStore()

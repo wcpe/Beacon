@@ -129,6 +129,32 @@ func (s *Store) ResolvePlayer(playerID string) (Location, bool) {
 	return e.Location, true
 }
 
+// SnapshotByNamespace 返回指定 namespace 的全量在线名册快照（玩家名 → 所在 serverId）。
+//
+// 供 agent 侧 roster() 门面取数（ADR-0063 决策 4：名册权威在控制面，agent 物理上看不到异服玩家）：
+// namespace 是强隔离边界，故**只返回本 namespace 的条目**；调用方归属由上层从已鉴权身份取来传入，
+// 本方法不接触任何请求参数。
+//
+// 只收**有玩家名**的条目（PlayerName != ""）：契约是按名寻址（玩家名 → serverId），连接明细未携带
+// 玩家名的条目无法被按名寻址，返回它们无意义。键为登录时的原始写法（保留大小写），与按名解析的
+// 大小写不敏感语义一致、不改变展示形态。
+//
+// 并发约定与其余方法相同：独立 RWMutex、锁内纯内存组装、**绝不碰 DB**；返回的是新建 map，
+// 调用方可自由持有 / 修改，之后的 ApplyOpen / ApplyClose 不会影响已取出的快照。
+// 无匹配条目时返回空（非 nil）map，便于直接序列化为 {}。
+func (s *Store) SnapshotByNamespace(namespaceID uint) map[string]string {
+	out := make(map[string]string)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, e := range s.byPlayer {
+		if e.NamespaceID != namespaceID || e.PlayerName == "" {
+			continue
+		}
+		out[e.PlayerName] = e.ServerID
+	}
+	return out
+}
+
 // RebuildEntry 是重建名册的一条输入（进程重启从 status=open 连接行读出）。
 type RebuildEntry struct {
 	PlayerUUID  string

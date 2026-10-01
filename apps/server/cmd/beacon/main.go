@@ -630,6 +630,12 @@ func run() error {
 	messageService := service.NewMessageService(messageRelay, playerRoster, v2ControlPlaneService, healthViewStore)
 	v2MessageHandler := handler.NewV2MessageHandler(messageService)
 
+	// P5a 装配点：玩家名册读端点（GET /beacon/v2/agent/player-roster，ADR-0063 决策 4）。
+	// 与连接采集 / 跨服消息共用同一份内存名册（单一真源）：返回调用方所属 namespace 的
+	// 「玩家名 → 所在 serverId」快照，供 agent 侧 roster() 门面取数并在本地做 zone / 服过滤；
+	// 只读内存、不建仓库不落库，故无需 flusher 注册（无写入通道顺序约束）。
+	v2RosterHandler := handler.NewV2RosterHandler(playerRoster)
+
 	// MCP 工具调用流水（FR-240，见 mcp-invocation-audit.md §3.5）：middleware 在请求路径上只做
 	// 「生成 UUIDv7 + 解析参数顶层键 + 打包一行 + 非阻塞入队」（纯内存、无 DB IO），DB 写全在后台写入协程。
 	// 注意装配顺序：flusher 注册必须先于下方 asyncDailyWriter.Start（写入通道的 panic 守卫）。
@@ -733,7 +739,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2Roster: v2RosterHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, MCPInvocation: mcpInvocationHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)

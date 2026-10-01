@@ -19,6 +19,7 @@ type Handlers struct {
 	V2Sched           *handler.V2SchedHandler
 	V2Connection      *handler.V2ConnectionHandler
 	V2Message         *handler.V2MessageHandler
+	V2Roster          *handler.V2RosterHandler
 	V2ConnectionAdmin *handler.V2ConnectionAdminHandler
 	V2MessageAdmin    *handler.V2MessageAdminHandler
 	V2Archive         *handler.V2ArchiveHandler
@@ -170,6 +171,12 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.With(agentV2ReportMiddleware(h.V2)).Post("/messages/poll", h.V2Message.Poll)
 				r.With(agentV2ReportMiddleware(h.V2)).Post("/messages/ack", h.V2Message.Ack)
 			}
+
+			// P5a 挂载点：玩家名册读端点（ADR-0063 决策 4）：与 /schedule/candidates 等同挂 token↔namespace +
+			// identity 鉴权中间件（未确认 403）。返回**调用方所属 namespace** 的在线名册（玩家名 → serverId），
+			// 供 agent 侧 roster() 门面取数并在本地做 zone / 服过滤；读全在控制面内存名册内完成、绝不碰 DB。
+			// 抽成函数注册（内部 nil 守卫），避免本 v2 agent 组内联 if 累加触发 nestif。
+			registerV2RosterAgentRoutes(r, h, h.V2)
 
 			// P8 挂载点：文件资产清单上报（FR-163，见 §5.1）：与指标 / 连接采集面同挂 token↔namespace +
 			// identity 鉴权中间件（未确认 403），注入权威身份归属清单；增量 / 全量分片入库走常规同步事务。
@@ -625,6 +632,20 @@ func deprecatedAgentRegister(next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Link", "<"+agentRegisterSuccessorPath+`>; rel="successor-version"`)
 		next(w, r)
 	}
+}
+
+// registerV2RosterAgentRoutes 注册玩家名册读端点（GET /beacon/v2/agent/player-roster，见 ADR-0063 决策 4）：
+// 与 /schedule/candidates 等 agent 数据面端点同挂 token↔namespace + identity 鉴权中间件（未确认 403），
+// 归属 namespace 一律以注入的权威身份为准、不读请求参数；名册读取全在内存名册内完成、绝不碰 DB。
+// V2Roster 未装配则跳过；抽成独立函数（内部 nil 守卫）使 /beacon/v2/agent 组不因内联 if 累加触发 nestif。
+//
+// authn 显式作参数（生产传 h.V2，本组已在 h.V2 != nil 之下）：路由测试据此注入桩身份，
+// 装配与生产完全同一条链路（真实路径 + 真实中间件 + 真实 handler），无需起 DB。
+func registerV2RosterAgentRoutes(r chi.Router, h Handlers, authn AgentV2ReportAuthenticator) {
+	if h.V2Roster == nil {
+		return
+	}
+	r.With(agentV2ReportMiddleware(authn)).Get("/player-roster", h.V2Roster.PlayerRoster)
 }
 
 // registerV2AssetsAgentRoutes 注册文件资产 agent 面清单上报（FR-163，见 §5.1）；V2Assets 未装配则跳过。
