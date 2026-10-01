@@ -48,6 +48,7 @@ const (
 	SettingArchiveRetentionMsgTrace       = "archive.retention-days.msg-trace"
 	SettingArchiveRetentionMsgPayload     = "archive.retention-days.msg-payload"
 	SettingArchiveRetentionAudit          = "archive.retention-days.audit"
+	SettingArchiveRetentionMCPInvocation  = "archive.retention-days.mcp-invocation"
 	SettingArchiveAutoEnabled             = "archive.auto-enabled"
 	SettingArchiveScheduleHourUTC         = "archive.schedule-hour-utc"
 	SettingArchiveBatchRows               = "archive.batch-rows"
@@ -66,7 +67,9 @@ const (
 	archiveDefaultRetentionMsgTrace       = 60
 	archiveDefaultRetentionMsgPayload     = 30
 	archiveDefaultRetentionAudit          = 180
-	archiveDefaultAutoEnabled             = true
+	// MCP 工具调用是低频机器操作流水，取证窗口应与审计一致（FR-240，spec §3.8）。
+	archiveDefaultRetentionMCPInvocation = 180
+	archiveDefaultAutoEnabled            = true
 	archiveDefaultScheduleHourUTC         = 4
 	archiveDefaultBatchRows               = 1000
 	archiveDefaultBatchIntervalMs         = 200
@@ -293,6 +296,11 @@ var settingsWhitelist = map[string]settingMeta{
 		min: archiveMinRetentionDays, max: 3650,
 		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionAudit) },
 	},
+	SettingArchiveRetentionMCPInvocation: {
+		valueType: model.SettingValueTypeInt, desc: "MCP 工具调用流水（mcp_invocation）热库保留天数；到期后归档并从热库删除",
+		min: archiveMinRetentionDays, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionMCPInvocation) },
+	},
 	SettingArchiveAutoEnabled: {
 		valueType: model.SettingValueTypeBool, desc: "是否每日自动执行归档任务；false 时仅手动触发",
 		defaultFromConfig: func(config.Config) string { return strconv.FormatBool(archiveDefaultAutoEnabled) },
@@ -338,7 +346,8 @@ var dangerousSettingKeys = map[string]struct{}{
 	SettingUpdateAutoCheckEnabled: {}, SettingUpdateCheckIntervalHours: {},
 	SettingArchiveRetentionMetricSample: {}, SettingArchiveRetentionHealthSnapshot: {}, SettingArchiveRetentionSchedDecision: {},
 	SettingArchiveRetentionConnDetail: {}, SettingArchiveRetentionMsgTrace: {}, SettingArchiveRetentionMsgPayload: {},
-	SettingArchiveRetentionAudit: {}, SettingArchiveAutoEnabled: {}, SettingArchiveScheduleHourUTC: {},
+	SettingArchiveRetentionAudit: {}, SettingArchiveRetentionMCPInvocation: {},
+	SettingArchiveAutoEnabled: {}, SettingArchiveScheduleHourUTC: {},
 }
 
 // SettingDangerous 返回设置是否已登记为高影响。

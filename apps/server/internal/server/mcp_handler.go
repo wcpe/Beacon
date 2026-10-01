@@ -99,5 +99,9 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
 		return
 	}
-	h.transport.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
+	ctx := auth.WithPrincipal(r.Context(), principal)
+	// 客户端地址注入（FR-240 §3.1）：与 token 端点同口径取受信反代注入的 X-Forwarded-For 首段，
+	// 供工具调用流水记录。地址是观测字段而非安全边界，直连部署下可取到空串。
+	ctx = auth.WithClientIP(ctx, trustedMCPClientIP(r))
+	h.transport.ServeHTTP(w, r.WithContext(ctx))
 }

@@ -42,7 +42,7 @@ type archiveDomain struct {
 	newModel func() any
 }
 
-// archiveDomains 是 §3.1 的域注册表（7 域，稳定顺序）：6 张日期后缀表 + audit 单表。
+// archiveDomains 是 §3.1 的域注册表（8 域，稳定顺序）：7 张日期后缀表 + audit 单表。
 var archiveDomains = []archiveDomain{
 	{
 		name: "metric_sample", baseTable: "metric_sample", form: archiveFormDaily,
@@ -73,6 +73,12 @@ var archiveDomains = []archiveDomain{
 		name: "msg_payload", baseTable: "msg_payload", form: archiveFormDaily,
 		pkColumn: "message_id", pkKind: archivePKString, retentionKey: SettingArchiveRetentionMsgPayload,
 		newModel: func() any { return &model.MsgPayload{} },
+	},
+	{
+		// MCP 工具调用流水（FR-240）：日表形态、UUIDv7 字符串主键，天然无半表状态，无需新机制。
+		name: "mcp_invocation", baseTable: "mcp_invocation", form: archiveFormDaily,
+		pkColumn: "invocation_id", pkKind: archivePKString, retentionKey: SettingArchiveRetentionMCPInvocation,
+		newModel: func() any { return &model.MCPInvocation{} },
 	},
 	{
 		name: "audit", baseTable: "audit_log", form: archiveFormSingle,

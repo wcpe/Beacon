@@ -339,6 +339,9 @@ var (
 	ErrConnectionNotFound = New(http.StatusNotFound, "connection_not_found", "连接不存在")
 	// ErrMessageNotFound 消息记录在保留窗内不存在（FR-149，spec §5.2；code 对齐 devmock）。
 	ErrMessageNotFound = New(http.StatusNotFound, "message_not_found", "消息不存在")
+	// ErrMCPInvocationNotFound 工具调用流水在保留窗内不存在（FR-240，spec §3.7）。
+	// 非法 ID 与不存在共用同一 code：不区分二者以防探测。
+	ErrMCPInvocationNotFound = New(http.StatusNotFound, "mcp_invocation_not_found", "工具调用流水不存在")
 	// ErrPayloadReasonRequired 查看 payload 未填原因或原因超长（≤255 字，FR-150，spec §4.4；code 对齐 devmock）。
 	ErrPayloadReasonRequired = New(http.StatusBadRequest, "missing_reason", "查看 payload 必须填写原因（≤255 字）")
 	// ErrAlertEventNotFound 告警事件不存在（处理目标缺失，FR-157，见 ADR-0064）。
