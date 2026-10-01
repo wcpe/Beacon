@@ -1,12 +1,15 @@
 package server
 
 import (
+	"context"
+	"log/slog"
 	"sort"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/render"
 )
 
 // MCP 工具风险等级：复用既有 authz.OperationDescriptor.RiskLevel 的取值体系
@@ -188,11 +191,134 @@ func mcpToolDiscoverable(name string) bool {
 	return true
 }
 
-// mcpAddTool 是 MCP 工具的唯一注册入口（FR-236 / FR-237）。
+// ── FR-242 执行面拒执 ──
+//
+// 发现面（mcpToolDiscoverable）只在**注册与清单期**隐藏 critical 工具：工具若因
+// 开关组合意外可见（注册发生在开关翻转之前），或客户端缓存了旧的工具列表，仍可
+// 被正常调用。执行面因此在**每次调用时独立再判一次**同一开关与同一份目录——
+// 与发现面同源（不引入第二真源），且不依赖「工具没被注册」这一事实本身。
+
+// mcpProductionModeRejectedReason 是执行面拒执的统一理由，与结果文本一起回给客户端。
+const mcpProductionModeRejectedReason = "生产模式已禁用 critical 风险等级工具"
+
+// mcpToolExecutionBlocked 判定工具在「被调用的此刻」是否必须被拒执（FR-242）。
+//
+// 与 mcpToolDiscoverable 共用同一开关（auth.MCPProductionModeEnabled）与同一份
+// mcpToolCatalog 风险等级，差别只在判定时机与职责：发现面决定「是否注册/是否进清单」，
+// 本判定决定「调用是否执行」。
+//
+// 刻意**不复用** mcpToolDiscoverable：它还会因 approval-decide 开关与「未登记」返回
+// false，套到执行面会让开关关闭时的行为与现状不一致（例如未登记工具即使在非生产模式
+// 下也会被拒执行）。执行面只对「生产模式 + critical」这一条负责。
+func mcpToolExecutionBlocked(name string) bool {
+	if !auth.MCPProductionModeEnabled() {
+		// 开关关闭：执行面一律放行，行为与 FR-242 之前逐项一致。
+		return false
+	}
+	spec, ok := mcpToolSpecByName(name)
+	if !ok {
+		// 未登记工具（风险等级未知）：注册面已 fail-closed 不注册；执行面若仍遇到
+		// （例如经其他路径进入 server），同样拒执——「未分级即可调用」会绕过整个分级体系。
+		return true
+	}
+	return spec.RiskLevel == MCPRiskCritical
+}
+
+// mcpGuardToolExecution 给工具 handler 包一层执行前判定（FR-242）。
+//
+// 只由 mcpAddTool 调用，故本包全部工具的调用路径都经过这里；被拒时原 handler
+// **完全不执行**（零副作用），只回可读的拒绝结果并留痕。
+//
+// 位置说明：SDK 在调用 handler 之前会先按输入 schema 校验参数，因此参数非法的调用
+// 会先得到协议侧的参数错误。那类调用本就到不了领域逻辑、不产生副作用，无需本条兜底；
+// 本层要挡的是「参数合法、工具本不该可调用」的调用。
+func mcpGuardToolExecution[In, Out any](name string, handler mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor[In, Out] {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		if !mcpToolExecutionBlocked(name) {
+			return handler(ctx, req, in)
+		}
+		principal, _ := auth.FromContext(ctx)
+		mcpRecordProductionModeRejection(ctx, name, principal)
+		return mcpToolErrorWithReason(mcpProductionModeRejectedReason + "：" + name), mcpEmptyToolOutput[Out](), nil
+	}
+}
+
+// mcpEmptyToolOutput 返回 Out 的「非 null」空值。
+//
+// 拒绝路径必须回非 null 的结构化输出：SDK 会把返回值序列化后按输出 schema 校验，
+// map 的 nil 零值会序列化成 JSON null，让一次已判定的业务拒绝升级为协议错误
+// （与 mcpRejectedResult 回空对象同理）。本包工具的输出类型当前均为 map[string]any。
+func mcpEmptyToolOutput[Out any]() Out {
+	var zero Out
+	if empty, ok := any(&zero).(*map[string]any); ok {
+		*empty = map[string]any{}
+	}
+	return zero
+}
+
+// mcpRejectionTrace 是一次被拒执调用的最小痕迹（工具名 + 调用主体 + 追踪号）。
+type mcpRejectionTrace struct {
+	Tool     string
+	ClientID string
+	Profile  string
+	TraceID  string
+}
+
+// mcpRejectionTraceLimit 限制进程内痕迹条数，避免长跑部署下无界增长。
+const mcpRejectionTraceLimit = 64
+
+var (
+	mcpRejectionMu   sync.Mutex
+	mcpRejectionLogs []mcpRejectionTrace
+)
+
+// mcpRecordProductionModeRejection 记录一次拒执：结构化日志（运行期可观测）+
+// 进程内痕迹（供测试与诊断读取）。两条都**不阻断主路径**，与兜底审计的旁路语义一致。
+//
+// 为什么不在此落库：本层（server 包）拿不到审计仓库——审计写入发生在各领域 service
+// 内，MCP 工具注册表只持有领域服务；MCP 侧的既有审计先例（mcp.token.denied）同样由
+// service 层持 audit 依赖写出。因此在库表意义上的「流水」留给 FR-240 的 tools/call
+// 流水（拒执即 result=rejected 的一行），本层先在唯一收口处留下可观测痕迹。
+func mcpRecordProductionModeRejection(ctx context.Context, name string, principal auth.Principal) {
+	level := "未登记"
+	if spec, ok := mcpToolSpecByName(name); ok {
+		level = spec.RiskLevel
+	}
+	traceID := render.TraceID(ctx)
+	slog.Warn("MCP 生产模式拒执工具调用",
+		"工具", name, "风险等级", level, "客户端", principal.ID, "profile", principal.Role,
+		"原因", mcpProductionModeRejectedReason, "traceId", traceID)
+	mcpRejectionMu.Lock()
+	defer mcpRejectionMu.Unlock()
+	if len(mcpRejectionLogs) >= mcpRejectionTraceLimit {
+		mcpRejectionLogs = mcpRejectionLogs[1:]
+	}
+	mcpRejectionLogs = append(mcpRejectionLogs, mcpRejectionTrace{
+		Tool: name, ClientID: principal.ID, Profile: principal.Role, TraceID: traceID,
+	})
+}
+
+// mcpRejectionsSnapshot 返回已记录的拒执痕迹副本（只读，供测试断言）。
+func mcpRejectionsSnapshot() []mcpRejectionTrace {
+	mcpRejectionMu.Lock()
+	defer mcpRejectionMu.Unlock()
+	return append([]mcpRejectionTrace(nil), mcpRejectionLogs...)
+}
+
+// mcpResetRejections 清空痕迹，供测试在断言前取得干净起点。
+func mcpResetRejections() {
+	mcpRejectionMu.Lock()
+	defer mcpRejectionMu.Unlock()
+	mcpRejectionLogs = nil
+}
+
+// mcpAddTool 是 MCP 工具的唯一注册入口（FR-236 / FR-237 / FR-242）。
 //
 // 与 SDK 的 mcp.AddTool 签名一致，但注册前先经 mcpToolDiscoverable 判定：
 // 已登记但当前不可见（生产模式收敛、审批决定开关关闭）的工具不会进入 server；
 // 未登记的工具同样不注册（fail-closed），并记入注册意图痕迹供覆盖测试捕获。
+// 注册成功后 handler 一律套上 mcpGuardToolExecution：发现面给不出的保证
+// （工具意外可见、客户端缓存旧清单）由执行面在调用时再判一次补齐。
 // 本包内全部工具注册都必须走它，以保证「运行时真实注册的集合」与
 // 「MCPToolNames 声明的集合」由同一判定派生、不可能漂移。
 func mcpAddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[In, Out]) {
@@ -206,7 +332,8 @@ func mcpAddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.Too
 	if !mcpToolDiscoverable(tool.Name) {
 		return
 	}
-	mcp.AddTool(server, tool, handler)
+	// 执行面兜底（FR-242）：注册面能挡住的这里不再挡，注册面挡不住的在调用时挡。
+	mcp.AddTool(server, tool, mcpGuardToolExecution(tool.Name, handler))
 }
 
 // mcpUnregisteredAttempts 记录「运行时尝试注册、但未登记入目录」的工具名。
