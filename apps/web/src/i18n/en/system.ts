@@ -74,6 +74,9 @@ export const system = {
       'archive.retention-days.msg-trace': 'Hot retention days for msg_trace',
       'archive.retention-days.msg-payload': 'Hot retention days for msg_payload',
       'archive.retention-days.audit': 'Hot retention days for audit',
+      'archive.retention-days.mcp-invocation': 'Hot retention days for mcp_invocation',
+      'archive.retention-days.alert-event':
+        'Hot retention days for alert_event (applies to resolved alerts only; unhandled alerts always stay hot)',
       'archive.auto-enabled': 'Run archive jobs daily automatically',
       'archive.schedule-hour-utc': 'Daily archive hour (UTC 0–23)',
       'archive.batch-rows': 'Archive batch row size',
@@ -199,6 +202,8 @@ export const system = {
       msg_trace: 'Message traces',
       msg_payload: 'Message payloads',
       audit: 'Audit',
+      mcp_invocation: 'MCP invocations',
+      alert_event: 'Alert events',
     },
   },
   health: {
@@ -488,6 +493,10 @@ export const system = {
       'This is the only time the plaintext secret is shown. Copy and store it securely; it cannot be viewed again after closing. If lost, request another rotation.',
     plaintextMissing:
       'This was a duplicate submission, so the server did not generate a new plaintext secret. Request another rotation to obtain one.',
+    // Shared actions of the one-time plaintext dialog (reused via plaintext-dialog)
+    copy: 'Copy',
+    copied: 'Copied',
+    plaintextClose: 'I have saved it',
     // Config card
     config: {
       title: 'MCP endpoint config',
@@ -747,6 +756,12 @@ export const system = {
     create: 'Create env',
     createTitle: 'Create env',
     editTitle: 'Edit env',
+    codeLabel: 'Business identifier',
+    codePlaceholder: 'e.g. prod / test',
+    codeHint: 'Cannot be changed after creation; used for system filtering.',
+    displayNameLabel: 'Display name',
+    displayNamePlaceholder: 'e.g. Production / Staging',
+    // Legacy naming superseded by codeLabel / displayNameLabel above; no code reads these two — kept only to avoid breaking stale external references
     nameLabel: 'Name',
     namePlaceholder: 'e.g. Production / Staging',
     descLabel: 'Description (optional)',
