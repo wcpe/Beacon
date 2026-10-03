@@ -26,7 +26,7 @@ func newOfflineTestStack(t *testing.T) (*InstanceService, *runtime.Registry, *go
 	}
 	// 归属读新真源 server.zone_id，注册解析需 zone / region / bc_cluster 三表就位
 	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.ServerOffline{}, &model.ServerDrain{}, &model.ZoneAssignment{}, &model.AuditLog{},
-		&model.BCCluster{}, &model.Region{}, &model.Zone{}); err != nil {
+		&model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.AlertEvent{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -34,7 +34,8 @@ func newOfflineTestStack(t *testing.T) (*InstanceService, *runtime.Registry, *go
 			_ = sqlDB.Close()
 		}
 	})
-	for _, tbl := range []string{"server", "namespace", "server_offline", "server_drain", "zone_assignment", "audit_log", "zone", "region", "bc_cluster"} {
+	// alert_event 一并迁移：主动下线会顺带自动消解该实例的未处理告警（FR-232），栈缺表会让每个下线用例刷 WARN。
+	for _, tbl := range []string{"server", "namespace", "server_offline", "server_drain", "zone_assignment", "audit_log", "zone", "region", "bc_cluster", "alert_event"} {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
