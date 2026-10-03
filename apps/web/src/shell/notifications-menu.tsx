@@ -1,4 +1,4 @@
-// 页眉通知（FR-195）：未处理告警角标 + 下拉预览；展示 i18n 状态流转；行内一键确认/已处理。
+// 页眉通知（FR-195）：未处理告警角标 + 下拉预览；展示 i18n 状态流转；行内一键标记已读 / 标记处理。
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
