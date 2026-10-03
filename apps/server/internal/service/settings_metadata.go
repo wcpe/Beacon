@@ -11,16 +11,19 @@ import (
 // 热改设置 key 常量（FR-61，见 ADR-0038）：白名单内的运维旋钮，真源在 DB store。
 // 启动 / 安全项（http-addr / database.* / auth.* / agent-token / git-export.*）绝不进 store、不出现在设置 API。
 const (
-	SettingHealthDegradedAfterSec   = "health.degraded-after-sec"
-	SettingHealthTTLSec             = "health.ttl-sec"
-	SettingHealthOfflineGraceSec    = "health.offline-grace-sec"
-	SettingHealthScanIntervalSec    = "health.scan-interval-sec"
-	SettingMetricEnabled            = "metric.enabled"
-	SettingMetricSampleIntervalSec  = "metric.sample-interval-sec"
-	SettingMetricRetentionHours     = "metric.retention-hours"
-	SettingLongpollMaxHoldMs        = "longpoll.max-hold-ms"
-	SettingAlertWebhookURL          = "alert.webhook-url"
-	SettingAlertWebhookTimeoutMs    = "alert.webhook-timeout-ms"
+	SettingHealthDegradedAfterSec  = "health.degraded-after-sec"
+	SettingHealthTTLSec            = "health.ttl-sec"
+	SettingHealthOfflineGraceSec   = "health.offline-grace-sec"
+	SettingHealthScanIntervalSec   = "health.scan-interval-sec"
+	SettingMetricEnabled           = "metric.enabled"
+	SettingMetricSampleIntervalSec = "metric.sample-interval-sec"
+	SettingMetricRetentionHours    = "metric.retention-hours"
+	SettingLongpollMaxHoldMs       = "longpoll.max-hold-ms"
+	SettingAlertWebhookURL         = "alert.webhook-url"
+	SettingAlertWebhookTimeoutMs   = "alert.webhook-timeout-ms"
+	// 失联孤儿告警自动关闭阈值（小时）：实例既不在运行时注册表、也不在 server 表活动目录，
+	// 且其未处理告警最近触发已超此时长，才被后台清理器自动消解（真机降噪，见 docs/specs/alert-dedup-and-auto-resolve.md）。
+	SettingAlertOrphanTimeoutHours  = "alert.orphan-timeout-hours"
 	SettingLogLevel                 = "log.level"
 	SettingReverseFetchMaxFileBytes = "reverse-fetch.max-file-bytes"
 	SettingUpdateProxyURL           = "update.proxy-url"
@@ -41,6 +44,8 @@ const (
 	SettingDeliveryDownloadConcurrency    = "delivery.download-concurrency"
 	SettingDeliveryCleanupIntervalMinutes = "delivery.cleanup-interval-minutes"
 	// 热冷归档策略键（FR-151，见 ADR-0066）：各域热库保留天数（≥7 守卫）+ 调度 / 批量 / 校验 / 冷查询参数。
+	// 注意 `archive.retention-days.alert-event` 只对**已处理**（status=resolved）告警生效：未处理告警是运维待办、
+	// 永不搬运（域注册表的 extraWhere 约束），调小该保留期不会让待办从热库消失。
 	SettingArchiveRetentionMetricSample   = "archive.retention-days.metric-sample"
 	SettingArchiveRetentionHealthSnapshot = "archive.retention-days.health-snapshot"
 	SettingArchiveRetentionSchedDecision  = "archive.retention-days.sched-decision"
@@ -49,6 +54,7 @@ const (
 	SettingArchiveRetentionMsgPayload     = "archive.retention-days.msg-payload"
 	SettingArchiveRetentionAudit          = "archive.retention-days.audit"
 	SettingArchiveRetentionMCPInvocation  = "archive.retention-days.mcp-invocation"
+	SettingArchiveRetentionAlertEvent     = "archive.retention-days.alert-event"
 	SettingArchiveAutoEnabled             = "archive.auto-enabled"
 	SettingArchiveScheduleHourUTC         = "archive.schedule-hour-utc"
 	SettingArchiveBatchRows               = "archive.batch-rows"
@@ -59,6 +65,7 @@ const (
 
 // 热冷归档策略键默认值（FR-151，spec §3.3；各域保留期默认以属主规格量级为准）。
 // 这些键无 config.yml 对应项、纯设置 store 项，默认值由此常量提供。
+// alert_event 与 audit / mcp-invocation 同档（180 天）：告警事件是运维处置留痕，追溯价值高。
 const (
 	archiveDefaultRetentionMetricSample   = 14
 	archiveDefaultRetentionHealthSnapshot = 30
@@ -69,6 +76,7 @@ const (
 	archiveDefaultRetentionAudit          = 180
 	// MCP 工具调用是低频机器操作流水，取证窗口应与审计一致（FR-240，spec §3.8）。
 	archiveDefaultRetentionMCPInvocation = 180
+	archiveDefaultRetentionAlertEvent    = 180
 	archiveDefaultAutoEnabled            = true
 	archiveDefaultScheduleHourUTC        = 4
 	archiveDefaultBatchRows              = 1000
@@ -81,6 +89,10 @@ const (
 
 // 并发身份冲突检测窗口默认值（FR-177，spec §4.5）：默认 10 分钟；无 config.yml 对应项、纯设置 store 项。
 const identityDefaultConflictWindowSec = 600
+
+// 失联孤儿告警自动关闭阈值默认值（小时）：无 store 值 / 值非法时的防御性回退口径。
+// 出厂默认与首启种子口径见 config.Default()（config.yml 的 alert.orphan-timeout-hours）。
+const alertOrphanTimeoutDefaultHours = 24
 
 // 交付数据面资源约束默认值（FR-165，spec §8 #4，见 ADR-0069）：初始值按 ADR 拍板，需按真机带宽 / 磁盘实测校准。
 // 容量按字节计（20 GiB），要求 64 位 int（控制面仅构建 amd64/arm64 目标）。
@@ -183,6 +195,11 @@ var settingsWhitelist = map[string]settingMeta{
 		valueType: model.SettingValueTypeInt, desc: "单次 webhook 请求超时（毫秒）",
 		min: 100, max: 60000,
 		defaultFromConfig: func(c config.Config) string { return strconv.Itoa(c.Alert.Webhook.TimeoutMs) },
+	},
+	SettingAlertOrphanTimeoutHours: {
+		valueType: model.SettingValueTypeInt, desc: "失联孤儿告警自动关闭阈值（小时）：实例不在运行时注册表、也不在 server 表活动目录，且未处理告警最近触发已超此时长才自动消解",
+		min: 1, max: 8760, // 1 小时 ~ 1 年
+		defaultFromConfig: func(c config.Config) string { return strconv.Itoa(c.Alert.OrphanTimeoutHours) },
 	},
 	SettingLogLevel: {
 		valueType: model.SettingValueTypeString, desc: "日志级别：ERROR / WARN / INFO / DEBUG",
@@ -301,6 +318,11 @@ var settingsWhitelist = map[string]settingMeta{
 		min: archiveMinRetentionDays, max: 3650,
 		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionMCPInvocation) },
 	},
+	SettingArchiveRetentionAlertEvent: {
+		valueType: model.SettingValueTypeInt, desc: "已处理告警事件（alert_event，status=resolved）热库保留天数；到期后归档并从热库删除（未处理告警是待办，始终留在热库）",
+		min: archiveMinRetentionDays, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionAlertEvent) },
+	},
 	SettingArchiveAutoEnabled: {
 		valueType: model.SettingValueTypeBool, desc: "是否每日自动执行归档任务；false 时仅手动触发",
 		defaultFromConfig: func(config.Config) string { return strconv.FormatBool(archiveDefaultAutoEnabled) },
@@ -343,10 +365,13 @@ var dangerousSettingKeys = map[string]struct{}{
 	SettingHealthDegradedAfterSec: {}, SettingHealthTTLSec: {}, SettingHealthOfflineGraceSec: {}, SettingHealthScanIntervalSec: {},
 	SettingMetricSampleIntervalSec: {}, SettingMetricRetentionHours: {}, SettingLongpollMaxHoldMs: {},
 	SettingAlertWebhookURL: {}, SettingAlertWebhookTimeoutMs: {}, SettingUpdateProxyURL: {}, SettingUpdateChannel: {},
-	SettingUpdateAutoCheckEnabled: {}, SettingUpdateCheckIntervalHours: {},
+	// 失联孤儿告警自动关闭阈值：调小会让「外部删除的实例告警」更快被自动消解（影响运维可见范围），
+	// 故与保留期类阈值同口径纳入高影响设置、改动走审批 + 审计。
+	SettingAlertOrphanTimeoutHours: {},
+	SettingUpdateAutoCheckEnabled:  {}, SettingUpdateCheckIntervalHours: {},
 	SettingArchiveRetentionMetricSample: {}, SettingArchiveRetentionHealthSnapshot: {}, SettingArchiveRetentionSchedDecision: {},
 	SettingArchiveRetentionConnDetail: {}, SettingArchiveRetentionMsgTrace: {}, SettingArchiveRetentionMsgPayload: {},
-	SettingArchiveRetentionAudit: {}, SettingArchiveRetentionMCPInvocation: {},
+	SettingArchiveRetentionAudit: {}, SettingArchiveRetentionMCPInvocation: {}, SettingArchiveRetentionAlertEvent: {},
 	SettingArchiveAutoEnabled: {}, SettingArchiveScheduleHourUTC: {},
 }
 

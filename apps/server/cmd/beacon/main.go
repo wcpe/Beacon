@@ -660,8 +660,10 @@ func run() error {
 	)
 	v2MessageAdminHandler.SetSensitiveAccessApproval(approvalService, sensitiveAccessGrants)
 	mcpToolRegistry.SetSensitiveReadServices(assetPreviewService, messagePayloadService)
+	// 告警事件能力（FR-157 / FR-229 的 MCP 面）：只读列表走 reads，单条 / 批量处置走 registry 直执服务。
+	mcpToolRegistry.SetAlertEventService(alertEventService)
 	observationScopeResolver := service.NewObservationScopeResolver(repository.NewEnvRepository(db), nsRepo)
-	mcpToolRegistry.SetReadServices(server.NewMCPReadServices(v2ControlPlaneService, topologyService, healthQueryService, messageQueryService, connQueryService, commandObserveService, schedDecisionQueryService, auditService, observationScopeResolver))
+	mcpToolRegistry.SetReadServices(server.NewMCPReadServices(v2ControlPlaneService, topologyService, healthQueryService, messageQueryService, connQueryService, commandObserveService, schedDecisionQueryService, auditService, alertEventService, observationScopeResolver))
 	// 工具调用流水写入方（FR-240）：装配在注册表构造之后、HTTP 对外之前；写入不阻塞调用主路径。
 	mcpToolRegistry.SetInvocationRecorder(mcpInvocationService)
 	v2HealthHandler.SetObservationScopeResolver(observationScopeResolver)
@@ -700,6 +702,14 @@ func run() error {
 	reverseFetchTaskSweeper := service.NewReverseFetchTaskSweeper(reverseFetchTaskService)
 	// 陈旧可逆账目后台清理（FR-116）：周期把创建超可撤回窗口仍 reversible 的账目标 expired 并清空反向快照瞬态。
 	reversibleOpSweeper := service.NewReversibleOperationSweeper(reversibleOpService)
+	// 失联孤儿告警后台清理（FR-232 降噪）：周期把「不在运行时注册表 + 不在 server 表活动目录 + 超阈值」的实例
+	// 未处理告警自动消解（处理外部删除实例留下的永久 open 告警）。在册实例即使离线再久也绝不会被自动关闭。
+	alertOrphanSweeper := service.NewAlertOrphanSweeper(
+		repository.NewAlertOrphanRepository(db),
+		repository.NewAlertEventRepository(db),
+		registry,
+		settingsService,
+	)
 
 	// git 单向导出镜像（FR-47，见 ADR-0030）：发布 / 回滚 / 改派提交后异步 best-effort 把源层导出 commit。
 	// 仅 enabled 时装配并接线触发器；git 仓是单向派生镜像、失败仅 WARN 不阻断发布。
@@ -808,6 +818,8 @@ func run() error {
 
 	// 启动陈旧可逆账目清理器（FR-116）：常驻 hygiene，把超可撤回窗口仍 reversible 的账目标 expired 并清空反向快照瞬态，随关停信号退出
 	go reversibleOpSweeper.Run(ctx)
+	// 启动失联孤儿告警清理器（FR-232 降噪）：常驻 hygiene，把外部删除实例的未处理告警自动消解，随关停信号退出
+	go alertOrphanSweeper.Run(ctx)
 	// P9 M2：交付中转 blob 清理器（FR-165，spec §4.5.4）：周期清终态超保留期 blob 与上传残留。
 	go deliveryBlobCleaner.Run(ctx)
 	// P9 M3：交付灰度编排推进器（FR-166，spec §4.1）：启动先按库内状态恢复 rolling / paused 单，再 ticker + 回执唤醒双驱动推进。

@@ -11,7 +11,7 @@ FR-5 的健康状态机只有 `online → lost → offline`，对"心跳开始�
 - 在 `online / lost / offline` 之外引入 **degraded**：心跳已变陈旧但尚未达 TTL → degraded（介于 online 与 lost 之间）。
 - 状态机推进顺序（纯按心跳年龄）：`online → degraded → lost → offline`；收到心跳即回 online（任意状态恢复）。
 - 阈值可配：`degraded-after-sec < ttl-sec < offline-grace-sec`，走控制面配置（`HealthConfig`），不硬编码。
-- 实例进入异常状态（degraded/lost/offline）时主动告警；恢复（→online）不告警（避免噪音）。
+- 实例进入**失联级**异常状态（`lost`/`offline`）时主动告警；恢复（→online）不告警（避免噪音）；`degraded` 属提示级、不单独告警（真机降噪，见 §3.3）。
 - degraded 视为**仍可用**：服务发现（`/beacon/v1/agent/discovery`）及由其派生的 BungeeCord 代理目录（FR-4）保留 `online + degraded`，直到 `lost/offline` 才摘除，避免亚健康实例被过早剔除。
 - 告警通道抽象为接口 `Alerter`；第一版实现两种：
   - **站内信（inbox）**：进程内环形缓存，管理台可读（`GET /admin/v1/alerts`）。
@@ -39,12 +39,13 @@ FR-5 的健康状态机只有 `online → lost → offline`，对"心跳开始�
 - `WebhookAlerter`：HTTP POST 告警 JSON，带超时；IO 在任何注册表锁之外（扫描器循环里调用）。
 
 ### 3.3 触发与装配
-- `HealthScanner` 持有 `*alert.Dispatcher`；每轮 `SweepExpired` 返回的变更实例中，凡新态属异常集合（degraded/lost/offline）即 `Dispatch` 一条告警；恢复到 online 不告警。
+- `HealthScanner` 持有 `*alert.Dispatcher`；每轮 `SweepExpired` 返回的变更实例中，凡新态属**失联级**异常集合（`lost`/`offline`）即 `Dispatch` 一条告警；恢复到 online 不告警。
+  - **`degraded` 不单独告警（真机降噪增补）**：`degraded` 是「心跳变陈旧但未达 TTL」的提示级态，一次网络抖动即让一批实例同时进入而刷屏，且随后要么自行恢复、要么转 `lost` 由后者再告警一次；故派发范围收窄为 `lost`/`offline`。`isAbnormal`（健康判定集合，含 degraded）**不被收窄**——它被别处复用的语义是健康判定而非告警范围。
 - `cmd/beacon/main.go` 按配置构造站内信 + webhook（webhook URL 空则不挂该通道），注入扫描器；新增 `AlertHandler` + `GET /admin/v1/alerts`。
 
 ### 3.4 配置（`internal/config`）
 - `HealthConfig` 增 `degraded-after-sec`（默认 15，介于心跳周期与 TTL 之间）。
-- 新增 `AlertConfig`：`inbox-capacity`（站内信容量，默认 200）、`webhook`（`url` 空=禁用、`timeout-ms`）。
+- 新增 `AlertConfig`：`inbox-capacity`（站内信容量，默认 200）、`webhook`（`url` 空=禁用、`timeout-ms`）、`orphan-timeout-hours`（失联孤儿告警自动关闭阈值，默认 24 小时、下界 1；热改项，真源在设置 store，见 [alert-dedup-and-auto-resolve](alert-dedup-and-auto-resolve.md) §3）。
 - 同步 `config.example.yml` 字段 + 中文注释。
 
 > 本 FR 引入"控制面告警通道可扩展抽象"这一新扩展点，记 [ADR-0019](../adr/0019-health-alert-channel-abstraction.md)。

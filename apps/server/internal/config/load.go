@@ -170,6 +170,10 @@ func (c Config) validate() error {
 			return fmt.Errorf("配置校验失败: 启用指标采样时 metric.retention-hours 须为正，实际 %d", c.Metric.RetentionHours)
 		}
 	}
+	// 失联孤儿告警自动关闭阈值须为正：0 / 负值会让「已超阈值」判据恒真，外部删除的实例告警当轮即被自动关闭（FR-232 降噪）
+	if c.Alert.OrphanTimeoutHours <= 0 {
+		return fmt.Errorf("配置校验失败: alert.orphan-timeout-hours 须为正（单位：小时），实际 %d", c.Alert.OrphanTimeoutHours)
+	}
 	if err := c.validateMCP(); err != nil {
 		return err
 	}

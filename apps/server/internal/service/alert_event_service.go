@@ -11,6 +11,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 )
@@ -196,8 +197,10 @@ func NewAlertEventService(db *gorm.DB, repo *repository.AlertEventRepository, au
 }
 
 // Record 落库一条告警事件；未显式指定处理状态时默认 open（新告警即待处理，FR-157）。
-// FR-232 收敛：health-transition 类按收敛键 (namespace, serverId, type, toStatus) 合并——存在未恢复行时
-// 只 occurrence_count+1、刷新 last_at、取最高级（不插新行、不把 acknowledged 回退 open）；否则插新行。
+// FR-232 收敛：health-transition 类按收敛键 **（namespace, serverId, type）** 合并——存在未恢复行时
+// 只 occurrence_count+1、刷新 last_at、取最高级、方向取最严重态（不插新行、不把 acknowledged 回退 open）；
+// 否则插新行。**收敛键不含方向**：同一实例的一次恶化链（degraded → lost → offline）只留 1 行，
+// 中间阶段不再各开一行（prod 实测 10 台实例下线由此从 30 条降到 10 条）。身份冲突等其它类型不参与收敛。
 // created_at 交由 GORM 全局 NowFunc 统一填 UTC（不在此设时间，保与全表一致）。
 func (s *AlertEventService) Record(e *model.AlertEvent) error {
 	if e.Status == "" {
@@ -207,7 +210,7 @@ func (s *AlertEventService) Record(e *model.AlertEvent) error {
 		e.OccurrenceCount = 1
 	}
 	if e.Type == model.AlertEventTypeHealthTransition {
-		existing, err := s.repo.FindUnresolvedByDedupKey(e.Namespace, e.ServerID, e.Type, e.ToStatus)
+		existing, err := s.repo.FindUnresolvedByDedupKey(e.Namespace, e.ServerID, e.Type)
 		if err == nil && existing != nil {
 			return s.mergeOccurrence(existing, e)
 		}
@@ -220,8 +223,10 @@ func (s *AlertEventService) Record(e *model.AlertEvent) error {
 	return s.repo.Create(e)
 }
 
-// mergeOccurrence 把再次触发的同类告警并入既有未恢复行（FR-232）：计数 +1、刷新 last_at、取最高级。
-// 状态保持不变（已 acknowledged 的条目再触发不回退 open）；人工覆盖过级别的条目不因自动合并改级。
+// mergeOccurrence 把再次触发的同类告警并入既有未恢复行（FR-232）：计数 +1、刷新 last_at、取最高级、
+// 方向只升不降、message / detail 取最新。
+// 状态保持不变（已 acknowledged 的条目再触发不回退 open）；人工覆盖过级别的条目不因自动合并改级；
+// created_at 保持首发时间不变（合并行是「进行中的同一个事件」，不是历史归档，故只刷新 last_at）。
 func (s *AlertEventService) mergeOccurrence(existing, incoming *model.AlertEvent) error {
 	now := time.Now().UTC()
 	existing.OccurrenceCount++
@@ -229,7 +234,31 @@ func (s *AlertEventService) mergeOccurrence(existing, incoming *model.AlertEvent
 	if existing.SeverityOverride == "" {
 		existing.Level = maxAlertLevel(existing.Level, incoming.Level)
 	}
+	// 方向取最严重态（degraded < lost < offline）：恶化链上只保留高水位，避免 offline 之后再来的
+	// 轻态（如心跳回光导致的 lost）把这行「降级」回更轻的方向，丢失该实例已下线这一信号。
+	if healthStatusSeverity(incoming.ToStatus) > healthStatusSeverity(existing.ToStatus) {
+		existing.ToStatus = incoming.ToStatus
+	}
+	// message / detail 取最新：收敛行展示的是该实例「此刻」的状态与上下文，而非首次触发的快照。
+	existing.Message = incoming.Message
+	existing.Detail = incoming.Detail
 	return s.repo.Save(existing)
+}
+
+// healthStatusSeverity 健康状态严重度排序权重（degraded < lost < offline）。
+// 用于收敛行方向维度的「只升不降」判定；未知 / 空值（含非健康类告警）视作最低（0），
+// 故旧行方向不会被空方向的新事件覆盖。
+func healthStatusSeverity(status string) int {
+	switch status {
+	case runtime.StatusOffline:
+		return 3
+	case runtime.StatusLost:
+		return 2
+	case runtime.StatusDegraded:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // maxAlertLevel 取两个级别中更高者（FR-231 合并时取最高级）；未知级别视作最低。

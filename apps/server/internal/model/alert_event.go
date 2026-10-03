@@ -12,13 +12,13 @@ type AlertEvent struct {
 	// 自增主键（GORM 抽象，不绑方言自增）
 	ID uint `gorm:"primaryKey;autoIncrement"`
 	// 事件类型（health-transition 等，落 VARCHAR + 应用层校验）；与 created_at 组成复合索引支撑按类型 + 时间过滤
-	Type string `gorm:"column:type;size:32;not null;index:idx_alert_event_type,priority:1;index:idx_alert_event_dedup,priority:4"`
+	Type string `gorm:"column:type;size:32;not null;index:idx_alert_event_type,priority:1;index:idx_alert_event_dedup_v2,priority:3"`
 	// 严重级别（info/warning/critical，落 VARCHAR + 应用层校验）
 	Level string `gorm:"column:level;size:16;not null;index:idx_alert_event_level"`
 	// 涉及实例 serverId（可空，如非实例维度的事件）
-	ServerID string `gorm:"column:server_id;size:128;index:idx_alert_event_dedup,priority:1"`
+	ServerID string `gorm:"column:server_id;size:128;index:idx_alert_event_dedup_v2,priority:1"`
 	// 涉及环境编码（可空，如全局事件）
-	Namespace string `gorm:"column:namespace;size:64;index:idx_alert_event_namespace;index:idx_alert_event_dedup,priority:2"`
+	Namespace string `gorm:"column:namespace;size:64;index:idx_alert_event_namespace;index:idx_alert_event_dedup_v2,priority:2"`
 	// 人读摘要文案（如「lobby-1 online → lost」）
 	Message string `gorm:"column:message;size:512;not null"`
 	// 结构化详情（json 文本，含状态前后 / 地址等上下文）
@@ -39,8 +39,12 @@ type AlertEvent struct {
 	HandleNote string `gorm:"column:handle_note;size:512;not null;default:''"`
 
 	// 以下为收敛 / 防堆积字段（FR-232）：同类未恢复告警只保留 1 行并计数，避免抖动场景堆上千条。
-	// ToStatus 是该告警指向的目标状态（health-transition 的 to 态），作为收敛键的方向维度，避免 lost/offline 并成一行丢方向。
-	ToStatus string `gorm:"column:to_status;size:32;not null;default:'';index:idx_alert_event_dedup,priority:3"`
+	// 收敛键为 (namespace, server_id, type)——**刻意不含方向**：同一实例的一次健康恶化链
+	// （degraded → lost → offline）只留 1 行，行内 ToStatus 记该链**见过的最高严重度**（只升不降），
+	// 中间阶段不再各开一行（prod 实测 10 台实例下线因此从 30 条降到 10 条）。
+	// 收敛查询走复合索引 idx_alert_event_dedup_v2 = (server_id, namespace, type)；
+	// 旧索引 idx_alert_event_dedup 曾把本列作为方向维度，升级时由 store.Open 显式清理（见 store.db）。
+	ToStatus string `gorm:"column:to_status;size:32;not null;default:''"`
 	// OccurrenceCount 是合并计数：未恢复期间重复触发只递增本值，不插新行（首发为 1）。
 	OccurrenceCount int `gorm:"column:occurrence_count;not null;default:1"`
 	// LastAt 是最近一次触发时刻（首发等于 CreatedAt）；列表据此展示「最后 14:32」。

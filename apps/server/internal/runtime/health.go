@@ -98,12 +98,20 @@ func (s *HealthScanner) scanIntervalDur() time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
-// dispatchAlerts 对进入异常态（degraded/lost/offline）的变更触发告警；恢复 online 不告警（避免噪音，FR-28）。
+// dispatchAlerts 对进入**失联级**异常态（lost/offline）的变更触发告警；恢复 online 不告警（避免噪音，FR-28）。
+// degraded 是提示级（心跳陈旧但未达 TTL，一次网络抖动即会刷出多条）不单独告警（真机降噪）：
+// 过滤放在本函数内而非 isAbnormal —— isAbnormal 的语义是「健康判定异常」，仍被别处复用，
+// 收窄它会把与告警无关的健康判定一并改掉。
 // 恢复 online 的自动消解（FR-232）不在此处：恢复由心跳 / 重注册直接置位、不经本 Sweep 输出，
 // 故其收敛触发挂在 InstanceService.Register / Heartbeat（真正的恢复写点），见该处注释。
 func (s *HealthScanner) dispatchAlerts(ctx context.Context, changed []*Instance) {
 	for _, inst := range changed {
 		if !isAbnormal(inst.Status) {
+			continue
+		}
+		// degraded 不告警（真机降噪）：它只是心跳变陈旧的提示，随后要么自行恢复、要么转 lost 由后者告警，
+		// 单独派发只会产生「degraded 抖动刷屏」的噪音（FR-232 收敛也救不了跨实例的多条）。
+		if inst.Status == StatusDegraded {
 			continue
 		}
 		s.dispatcher.Dispatch(ctx, alert.Alert{

@@ -16,6 +16,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
 // NamespaceLifecycleParams 是环境生命周期提审所需的操作者上下文。
@@ -309,6 +310,15 @@ func (s *V2ControlPlaneService) applyNamespaceLifecycle(payload namespaceLifecyc
 			return err
 		}
 	}
+	if operation == authz.OperationNamespaceArchive || operation == authz.OperationNamespacePermanentDelete {
+		note := "环境已归档，自动消解"
+		if operation == authz.OperationNamespacePermanentDelete {
+			note = "环境已永久删除，自动消解"
+		}
+		if err := autoResolveNamespaceAlerts(s.db, payload.Namespace.Code, note); err != nil {
+			return err
+		}
+	}
 	if err := createAudit(s.db, namespaceLifecycleAudit(payload, permit, operation)); err != nil {
 		return err
 	}
@@ -316,6 +326,18 @@ func (s *V2ControlPlaneService) applyNamespaceLifecycle(payload namespaceLifecyc
 		s.scheduleRuntimeNamespaceEviction(currentNamespace.Code, currentImpact)
 	}
 	return nil
+}
+
+// autoResolveNamespaceAlerts 在环境被归档 / 永久删除时自动消解其下**全部**未处理告警（FR-232 生命周期触发点）。
+// 环境消失后其下实例一起消失，这些告警不可能再由「实例恢复 online」消解，故必须在此关闭，否则永久滞留 open。
+// alert_event.namespace 存的是 namespace code，快照上已有该值，无需像 server 路径那样再解析主键。
+func autoResolveNamespaceAlerts(db *gorm.DB, namespaceCode, note string) error {
+	if namespaceCode == "" {
+		// 无 code 无从定位告警归属；放行空串会误伤 namespace 列为空的行。
+		return nil
+	}
+	_, err := repository.NewAlertEventRepository(db).AutoResolveByNamespace(namespaceCode, time.Now().UTC(), note)
+	return err
 }
 
 func updateNamespaceLifecycle(db *gorm.DB, payload namespaceLifecyclePayload, permit authz.Permit, operation string, now time.Time) error {
@@ -410,6 +432,11 @@ func (s *V2ControlPlaneService) applyServerPermanentDelete(payload serverLifecyc
 	}
 	now := time.Now().UTC()
 	if err := tombstoneServer(s.db, current, payload, permit, now); err != nil {
+		return err
+	}
+	// 实例永久删除是除 updateServerLifecycle 之外的第二条落地路径，此处同样要关闭其未处理告警，
+	// 否则 tombstone 掉的实例告警会永远停在 open（同一 helper，不另立实现在两条路径上漂移）。
+	if err := autoResolveServerAlerts(s.db, current.NamespaceID, current.ServerID, "实例已永久删除，自动消解"); err != nil {
 		return err
 	}
 	return createAudit(s.db, serverLifecycleAudit(payload, permit, authz.OperationServerPermanentDelete))

@@ -140,6 +140,10 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	if err := backfillLegacyAlertStatus(db); err != nil {
 		return nil, err
 	}
+	// 告警收敛索引换代（FR-232 恶化链合并）：旧索引把 to_status 当方向维度，新收敛键不再含它。
+	if err := dropLegacyAlertDedupIndex(db); err != nil {
+		return nil, err
+	}
 	return db, nil
 }
 
@@ -237,6 +241,27 @@ func backfillMachineRegisteredIdentitySources(db *gorm.DB) error {
 	if res.RowsAffected > 0 {
 		slog.Info("回填控制面预置身份来源为 machine_registered", "行数", res.RowsAffected)
 	}
+	return nil
+}
+
+// dropLegacyAlertDedupIndex 清理告警收敛的旧复合索引 idx_alert_event_dedup（FR-232 恶化链合并）。
+//
+// 背景：该索引原为 (server_id, namespace, to_status, type)，把方向 to_status 当收敛维度；恶化链合并后
+// 收敛键改为 (server_id, namespace, type)，新索引名为 idx_alert_event_dedup_v2。GORM AutoMigrate 对索引
+// 只增不删、且**同名索引不做列比对与重建**（实测：表中已有同名索引时直接跳过），故旧索引必须在此显式移除——
+// 否则它会作为无用索引长期拖慢 alert_event 写入（每次合并都要回写 to_status）。
+//
+// 安全：只 DROP INDEX，不删列、不动任何行（to_status 列保留，历史行仍可读）。HasIndex 判存保证幂等：
+// 新库 / 已升级库上该索引不存在时静默跳过；万一旧版本二进制回退运行，AutoMigrate 会按旧模型重建它，无数据风险。
+func dropLegacyAlertDedupIndex(db *gorm.DB) error {
+	const legacyIndex = "idx_alert_event_dedup"
+	if !db.Migrator().HasIndex(&model.AlertEvent{}, legacyIndex) {
+		return nil
+	}
+	if err := db.Migrator().DropIndex(&model.AlertEvent{}, legacyIndex); err != nil {
+		return fmt.Errorf("移除旧告警收敛索引 %s 失败: %w", legacyIndex, err)
+	}
+	slog.Info("已移除旧告警收敛索引（收敛键不再含 to_status）", "索引", legacyIndex)
 	return nil
 }
 

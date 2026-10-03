@@ -171,14 +171,16 @@ func TestListCoversAllHotKeys(t *testing.T) {
 	if len(views) != len(settingsWhitelist) {
 		t.Fatalf("List 应覆盖全部 %d 个热改项，实际 %d", len(settingsWhitelist), len(views))
 	}
-	// 38 项 = ADR-0038 的 12 项 + FR-98 新增 update.proxy-url + FR-101 新增 update 渠道/自动检查/检查周期 3 项
+	// 40 项 = ADR-0038 的 12 项 + FR-98 新增 update.proxy-url + FR-101 新增 update 渠道/自动检查/检查周期 3 项
 	// + FR-116 新增 undo.window-hours（配置操作可撤回时间窗）+ FR-151 新增 13 个 archive.* 策略键（见 ADR-0066）
 	// + FR-177 新增 identity.conflict-window-sec（并发身份冲突检测窗口）
 	// + FR-162 新增 delivery.approver-separation-enabled（变更单审批职责分离开关）。
 	// + FR-165 新增 5 项交付数据面参数（blob 保留 / 容量 / 上传下载并发 / 清理间隔）。
 	// + FR-240 新增 archive.retention-days.mcp-invocation（MCP 工具调用流水保留期）。
-	if len(views) != 38 {
-		t.Fatalf("热改白名单应为 38 项，实际 %d", len(views))
+	// + FR-232 新增 alert.orphan-timeout-hours（失联孤儿告警自动关闭阈值，真机降噪）。
+	// + 新增 archive.retention-days.alert-event（告警事件表纳入归档域，仅归档 resolved 行）。
+	if len(views) != 40 {
+		t.Fatalf("热改白名单应为 40 项，实际 %d", len(views))
 	}
 	for _, v := range views {
 		if v.IsStartup {

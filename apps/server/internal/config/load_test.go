@@ -190,3 +190,22 @@ func TestMetricDisabledSkipsValidation(t *testing.T) {
 		t.Fatalf("关闭采样时不应校验采样参数，却报错: %v", err)
 	}
 }
+
+// TestValidateRejectsBadAlertOrphanTimeout 失联孤儿告警自动关闭阈值须为正：
+// 0 / 负值会让「已超阈值」判据恒真，外部删除的实例告警当轮即被自动关闭（FR-232 降噪）。
+func TestValidateRejectsBadAlertOrphanTimeout(t *testing.T) {
+	setAuthEnv(t)
+	base := Default()
+	base.Auth.Password = "p"
+	base.Auth.Secret = "s"
+	if base.Alert.OrphanTimeoutHours != 24 {
+		t.Fatalf("默认阈值应为 24 小时，实际 %d", base.Alert.OrphanTimeoutHours)
+	}
+	for _, hours := range []int{0, -1} {
+		cfg := base
+		cfg.Alert.OrphanTimeoutHours = hours
+		if err := cfg.validate(); err == nil {
+			t.Fatalf("阈值 %d 应导致校验失败，却通过了", hours)
+		}
+	}
+}
