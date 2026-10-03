@@ -8,6 +8,7 @@ export const COMMAND_TYPES = [
   'ingest-plugins',
   'tail-logs',
   'resync-config',
+  'bc-directory-resync',
   'fs-browse',
   'file-sync-source',
   'file-sync-apply',

@@ -8,6 +8,7 @@ import { Badge } from '@beacon/ui'
 import type { AuditItem } from '@beacon/contracts'
 
 import JsonDetail from '../../features/observability/json-detail'
+import { auditActionLabel } from '../../features/observability/audit-action-label'
 
 interface AuditDetailPanelProps {
   // 展示的审计行
@@ -21,7 +22,7 @@ export default function AuditDetailPanel({ item }: AuditDetailPanelProps) {
       {/* 动作 / 目标类型：中文标签（未映射经 defaultValue 回退原始枚举） */}
       <Field
         label={t('observability.audits.columns.action')}
-        value={t(`observability.audits.action.${item.action}`, { defaultValue: item.action })}
+        value={auditActionLabel(t, item.action)}
       />
       <Field label={t('observability.audits.columns.time')} value={new Date(item.createdAt).toLocaleString()} />
       <Field label={t('observability.audits.columns.operator')} value={item.operator} />

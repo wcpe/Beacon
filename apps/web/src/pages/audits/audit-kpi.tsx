@@ -9,6 +9,7 @@ import { Activity, CircleCheck, CircleX, ListTree, ScrollText, TrendingUp } from
 import { AsyncSection, CardGridSkeleton, KpiCard, type KpiTone } from '@beacon/ui'
 
 import { fetchAuditAnalytics } from '../../api/observability'
+import { auditActionLabel } from '../../features/observability/audit-action-label'
 
 export default function AuditKpi() {
   const { t } = useTranslation()
@@ -25,7 +26,8 @@ export default function AuditKpi() {
     const byAction = data?.byAction ?? []
     // 成功率：无记录时以「—」表示不可计算，不显示误导性的 0%
     const okRate = total === 0 ? '—' : `${((ok / total) * 100).toFixed(1)}%`
-    // 最高频动作：按 count 降序取首项；动作在表格中显示为原始 key，故这里直接透传并保留计数
+    // 最高频动作：按 count 降序取首项；动作经 auditActionLabel 映射为本地化文案
+    // （未映射回退原始枚举，避免卡片直接渲染裸 i18n key 或英文枚举）
     const top = byAction.length === 0 ? null : byAction.reduce((a, b) => (b.count > a.count ? b : a))
     return [
       { key: 'total', value: total, icon: ScrollText, tone: 'brand' },
@@ -35,13 +37,13 @@ export default function AuditKpi() {
       { key: 'actionKinds', value: byAction.length, icon: ListTree, tone: byAction.length > 0 ? 'brand' : 'off' },
       {
         key: 'topAction',
-        value: top?.action ?? '—',
+        value: top ? auditActionLabel(t, top.action) : '—',
         icon: Activity,
         tone: top ? 'brand' : 'off',
         meta: top ? `×${String(top.count)}` : undefined,
       },
     ]
-  }, [query.data])
+  }, [query.data, t])
 
   return (
     <AsyncSection
