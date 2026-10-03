@@ -33,6 +33,7 @@ func newFullMCPToolRegistry() *MCPToolRegistry {
 		overrides: &service.OverrideSetService{},
 		assets:    &service.AssetPreviewService{},
 		messages:  &service.MessagePayloadService{},
+		alerts:    &service.AlertEventService{},
 		reads: MCPReadServices{
 			v2:          &service.V2ControlPlaneService{},
 			topology:    &service.TopologyService{},
@@ -42,6 +43,7 @@ func newFullMCPToolRegistry() *MCPToolRegistry {
 			commands:    &service.CommandObserveService{},
 			scheduling:  &service.SchedDecisionQueryService{},
 			audits:      &service.AuditService{},
+			alertEvents: &service.AlertEventService{},
 		},
 	}
 }

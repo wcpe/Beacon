@@ -60,10 +60,11 @@ FR-219 只建立经过认证的 MCP transport 和机器主体。要让外部 Age
 | `beacon.topology.*.list/get` | 权威归属、身份摘要、在线/健康/可调度事实 | 不回传 secret/token、绑定快照明文 |
 | `beacon.metrics.*.query` | 当前指标与历史趋势 | 限时间窗、序列数和分页，不做无界导出 |
 | `beacon.history.*.query` | 连接、消息元数据、命令/变更历史 | payload、实时内容与敏感明文除外 |
+| `beacon.alerts.events.list` | 告警事件摘要（处理状态、收敛计数、处理留痕、人工改级标记） | 只读、分页、按状态/级别/环境/实例/时间过滤；**不回传 detail**（含状态前后与实例地址上下文） |
 | `beacon.audit.events.list/get` | 脱敏审计 | 只读、分页、按主体/目标/时间过滤 |
 | `beacon.approvals.own.list/get` | 本 MCP client 自己提交的申请与结果 | 不能读取无权申请；结果继续脱敏 |
 
-当前已登记的第一批只读工具为 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list` 与 `beacon.audit.events.list`。它们同时对 `observer` 与 `automation` 可发现；连接不提供单连接明细，消息不提供 payload、玩家标识或 hop 原文，命令不提供结果正文，审计不提供 detail 与客户端地址。
+当前已登记的第一批只读工具为 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list`、`beacon.alerts.events.list` 与 `beacon.audit.events.list`。它们同时对 `observer` 与 `automation` 可发现；连接不提供单连接明细，消息不提供 payload、玩家标识或 hop 原文，命令不提供结果正文，告警不提供 detail，审计不提供 detail 与客户端地址。
 
 “数据库元数据”指经 query service 暴露的领域元数据，不是 SQL 或表结构浏览器。所有列表必须有服务端上限和游标/分页，禁止一次加载 1000+ 资源或大时间窗历史。
 
@@ -77,6 +78,13 @@ FR-219 只建立经过认证的 MCP transport 和机器主体。要让外部 Age
 - 吊销凭据/信任、禁用身份、暂停或取消运行中任务等 FR-207 定义的止损动作。
 
 是否 direct 由领域 operation descriptor 决定，MCP 不自行根据方法名或参数猜测。止损动作仍需原因、capability 和强审计；恢复、重新启用或扩大影响必须走审批。
+
+**告警处置工具（直接执行 + 同事务写审计，无审批票据）**：`beacon.alerts.events.handle`（单条）与 `beacon.alerts.events.batch-handle`（按筛选批量）把管理台已直执的告警处置能力补到 MCP 面——此前 MCP 没有任何告警工具，实例被归档 / 永久删除后遗留的 `open` 告警无法经 MCP 清理。二者与 HTTP 面 `POST /admin/v1/alert-events/{id}/handle` / `POST /admin/v1/alert-events/handle` 语义一致，故**不创建审批申请**（`mcpToolCatalog` 的 `OperationKind` 留空），风险等级取 `high`：批量由 service 收敛为「一条 UPDATE 且只影响 `status='open'` 的行」、与审计同事务，因此幂等；单条状态可再改，属可逆；但关闭告警会隐藏故障信号、改变生产可见状态，故不与只读工具同档。
+
+- 目标状态白名单在 MCP 层先行判定：仅 `acknowledged` / `resolved`，其余（含缺省空串）拒绝，不依赖 service 层报错。
+- 处理说明（`note`）**必填**，去空白后为空即拒绝——批量会改多行，无原因不可追溯。
+- 批量工具必先把调用者的观测范围解析成筛选条件（`Scoped` + namespace 集合），**不允许越过观察范围**改行；范围外行与已非 `open` 行一律不被触碰。
+- 两个工具仅 `automation` 可发现；`observer` 只能读 `beacon.alerts.events.list`。
 
 ### 4.3 危险操作工具族
 
