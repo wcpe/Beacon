@@ -73,7 +73,7 @@ func (a mcpOAuthApprovalAdapter) ExecuteInTx(tx *gorm.DB, req authz.ApprovalRequ
 	if err := tx.Create(receipt).Error; err != nil {
 		return nil, err
 	}
-	return nil, a.svc.audit.WithTx(tx).Create(mcpAudit(p.ClientID, "mcp.client."+change.ChangeType+".applied", "ok", p.ClientIP))
+	return nil, a.svc.audit.WithTx(tx).Create(mcpAudit(p.ClientID, "mcp.client."+change.ChangeType+".applied", model.ResultOK, p.ClientIP))
 }
 
 func (a mcpOAuthApprovalAdapter) loadPendingChange(tx *gorm.DB, req authz.ApprovalRequest, permit authz.Permit) (mcpClientChangePayload, *model.MCPOAuthClientChange, error) {

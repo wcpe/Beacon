@@ -109,7 +109,7 @@ func (s *MCPOAuthService) IssueAccessTokenFrom(clientID, clientSecret, audience,
 	if err := s.repo.CreateAccessToken(stored); err != nil {
 		return "", 0, auth.Principal{}, err
 	}
-	if err := s.audit.Create(mcpAudit(client.ClientID, "mcp.token.issued", "ok", clientIP)); err != nil {
+	if err := s.audit.Create(mcpAudit(client.ClientID, "mcp.token.issued", model.ResultOK, clientIP)); err != nil {
 		return "", 0, auth.Principal{}, err
 	}
 	return token, mcpAccessTokenTTL, auth.MCPPrincipal(client.ClientID, client.DisplayName, client.Profile), nil
@@ -119,7 +119,7 @@ func (s *MCPOAuthService) auditTokenDenied(clientID, reason, clientIP string) {
 	if s.audit == nil {
 		return
 	}
-	_ = s.audit.Create(&model.AuditLog{Operator: "mcp:" + clientID, Action: "mcp.token.denied", TargetType: model.TargetTypeMCPClient, TargetRef: clientID, Detail: reason, Result: "fail", ClientIP: clientIP})
+	_ = s.audit.Create(&model.AuditLog{Operator: "mcp:" + clientID, Action: "mcp.token.denied", TargetType: model.TargetTypeMCPClient, TargetRef: clientID, Detail: reason, Result: model.ResultFail, ClientIP: clientIP})
 }
 
 // VerifyAccessToken 校验 MCP bearer，接受两类凭据：
@@ -217,7 +217,7 @@ func (s *MCPOAuthService) RevokeClient(clientID string, principal auth.Principal
 		if !ok {
 			return apperr.ErrMCPClientNotFound
 		}
-		return s.audit.WithTx(tx).Create(&model.AuditLog{Operator: principal.AuditRef(), Action: "mcp.client.revoked", TargetType: model.TargetTypeMCPClient, TargetRef: clientID, Result: "ok", ClientIP: clientIP})
+		return s.audit.WithTx(tx).Create(&model.AuditLog{Operator: principal.AuditRef(), Action: "mcp.client.revoked", TargetType: model.TargetTypeMCPClient, TargetRef: clientID, Result: model.ResultOK, ClientIP: clientIP})
 	})
 }
 

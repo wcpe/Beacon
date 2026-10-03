@@ -216,3 +216,147 @@ func TestAuditListFilterByOperator(t *testing.T) {
 		t.Fatalf("空过滤应返回全量 3 条，实际 %d", all)
 	}
 }
+
+// seedResult 追加一条指定 result 的审计（用于成功/失败筛选测试）。
+func seedResult(t *testing.T, r *AuditLogRepository, operator, result string, at time.Time) {
+	t.Helper()
+	if err := r.Create(&model.AuditLog{
+		NamespaceCode: "prod", Operator: operator, Action: model.ActionConfigPublish,
+		TargetType: model.TargetTypeConfig, TargetRef: "prod/__GLOBAL__/app.yml@global:",
+		Result: result, CreatedAt: at,
+	}); err != nil {
+		t.Fatalf("写审计失败: %v", err)
+	}
+}
+
+// TestAuditListFilterByResult 验证「按成功/失败筛选」：result=ok / result=fail 各自只回对应记录，
+// 空值不过滤，且能与既有过滤维度（operator）AND 叠加。
+func TestAuditListFilterByResult(t *testing.T) {
+	r := NewAuditLogRepository(newAuditTestDB(t))
+	base := time.Date(2026, 6, 19, 10, 0, 0, 0, time.UTC)
+	seedResult(t, r, "alice", model.ResultOK, base)
+	seedResult(t, r, "bob", model.ResultFail, base.Add(time.Minute))
+	seedResult(t, r, "alice", model.ResultOK, base.Add(2*time.Minute))
+	seedResult(t, r, "bob", model.ResultFail, base.Add(3*time.Minute))
+
+	// result=ok → 2 条且全为 ok
+	items, total, err := r.List(AuditFilter{Result: model.ResultOK, Page: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("result=ok 应 2 条，实际 total=%d len=%d", total, len(items))
+	}
+	for _, it := range items {
+		if it.Result != model.ResultOK {
+			t.Fatalf("result=ok 结果集含非 ok 记录：%q", it.Result)
+		}
+	}
+
+	// result=fail → 2 条且全为 fail
+	fails, failTotal, err := r.List(AuditFilter{Result: model.ResultFail, Page: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	if failTotal != 2 || len(fails) != 2 {
+		t.Fatalf("result=fail 应 2 条，实际 total=%d len=%d", failTotal, len(fails))
+	}
+	for _, it := range fails {
+		if it.Result != model.ResultFail {
+			t.Fatalf("result=fail 结果集含非 fail 记录：%q", it.Result)
+		}
+	}
+
+	// 与 operator 叠加：alice 的两条均为 ok → alice & fail 应 0 条
+	_, both, err := r.List(AuditFilter{Operator: "alice", Result: model.ResultFail, Page: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("叠加查询失败: %v", err)
+	}
+	if both != 0 {
+		t.Fatalf("operator=alice & result=fail 应 0 条，实际 %d", both)
+	}
+
+	// 空 result 不过滤 → 全量 4 条
+	_, all, err := r.List(AuditFilter{Page: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	if all != 4 {
+		t.Fatalf("空 result 应返回全量 4 条，实际 %d", all)
+	}
+}
+
+// TestAuditStreamFilterByResult 验证导出流（Stream）与列表同口径复用 result 过滤：
+// 分批拉取结果只含目标结果集，且不因分批丢失记录。
+func TestAuditStreamFilterByResult(t *testing.T) {
+	r := NewAuditLogRepository(newAuditTestDB(t))
+	base := time.Date(2026, 6, 19, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		seedResult(t, r, "alice", model.ResultOK, base.Add(time.Duration(i)*time.Minute))
+	}
+	for i := 0; i < 2; i++ {
+		seedResult(t, r, "alice", model.ResultFail, base.Add(time.Duration(i+10)*time.Minute))
+	}
+
+	var got []model.AuditLog
+	if err := r.Stream(AuditFilter{Result: model.ResultFail}, 1, func(batch []model.AuditLog) error {
+		got = append(got, batch...)
+		return nil
+	}); err != nil {
+		t.Fatalf("Stream 失败: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Stream result=fail 应覆盖 2 条，实际 %d", len(got))
+	}
+	for _, it := range got {
+		if it.Result != model.ResultFail {
+			t.Fatalf("Stream result=fail 结果含非 fail 记录：%q", it.Result)
+		}
+	}
+}
+
+// TestAuditListColdFilterByResult 验证冷查询（热 + 归档并表）同样复用 result 过滤：
+// 两侧各造 ok/fail，result=fail 只回失败记录，不把另一侧的结果混入。
+func TestAuditListColdFilterByResult(t *testing.T) {
+	hotDB, arcDB := openRepoSQLite(t, "audit_cold_result_hot"), openRepoSQLite(t, "audit_cold_result_arc")
+	for _, db := range []*gorm.DB{hotDB, arcDB} {
+		if err := db.AutoMigrate(&model.AuditLog{}); err != nil {
+			t.Fatalf("迁移 audit_log 失败: %v", err)
+		}
+	}
+	repo := NewAuditLogRepository(hotDB)
+	repo.SetArchiveDB(arcDB)
+	arc := NewAuditLogRepository(arcDB)
+
+	base := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	// 冷查询并表按主键 id 去重保热侧，跨库造数须给互不相同的主键（真实环境 id 全局自增）
+	seedResultByID(t, repo, 1, model.ResultOK, base)
+	seedResultByID(t, repo, 2, model.ResultFail, base.Add(time.Minute))
+	seedResultByID(t, arc, 101, model.ResultOK, base.Add(-time.Minute))
+	seedResultByID(t, arc, 102, model.ResultFail, base.Add(-2*time.Minute))
+
+	items, _, err := repo.ListCold(AuditFilter{Result: model.ResultFail}, "", 10)
+	if err != nil {
+		t.Fatalf("冷查询失败: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("冷查询 result=fail 应 2 条（热 1 + 冷 1），实际 %d", len(items))
+	}
+	for _, it := range items {
+		if it.Result != model.ResultFail {
+			t.Fatalf("冷查询 result=fail 结果含非 fail 记录：%q", it.Result)
+		}
+	}
+}
+
+// seedResultByID 造一条指定主键与结果的审计（冷查询跨库造数用，避免两侧主键撞车被去重）。
+func seedResultByID(t *testing.T, r *AuditLogRepository, id uint, result string, at time.Time) {
+	t.Helper()
+	if err := r.Create(&model.AuditLog{
+		ID: id, NamespaceCode: "prod", Operator: "alice", Action: model.ActionConfigPublish,
+		TargetType: model.TargetTypeConfig, TargetRef: "prod/__GLOBAL__/app.yml@global:",
+		Result: result, CreatedAt: at,
+	}); err != nil {
+		t.Fatalf("写审计失败: %v", err)
+	}
+}

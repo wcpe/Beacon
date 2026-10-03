@@ -158,6 +158,6 @@ func (c *DeliveryBlobCleaner) recordAudit(deleted int, freed int64) {
 		TargetType: model.TargetTypeDeliveryBlob,
 		TargetRef:  deliveryBlobSweepRef,
 		Detail:     string(detail),
-		Result:     "success",
+		Result:     model.ResultOK,
 	})
 }
