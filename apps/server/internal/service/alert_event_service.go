@@ -197,10 +197,11 @@ func NewAlertEventService(db *gorm.DB, repo *repository.AlertEventRepository, au
 }
 
 // Record 落库一条告警事件；未显式指定处理状态时默认 open（新告警即待处理，FR-157）。
-// FR-232 收敛：health-transition 类按收敛键 **（namespace, serverId, type）** 合并——存在未恢复行时
-// 只 occurrence_count+1、刷新 last_at、取最高级、方向取最严重态（不插新行、不把 acknowledged 回退 open）；
-// 否则插新行。**收敛键不含方向**：同一实例的一次恶化链（degraded → lost → offline）只留 1 行，
-// 中间阶段不再各开一行（prod 实测 10 台实例下线由此从 30 条降到 10 条）。身份冲突等其它类型不参与收敛。
+// FR-232 收敛：health-transition 与 identity-conflict 两类按收敛键 **（namespace, serverId, type）** 合并——
+// 存在未恢复行时只 occurrence_count+1、刷新 last_at、取最高级、方向取最严重态、message / detail 取最新
+// （不插新行、不把 acknowledged 回退 open）；否则插新行。**收敛键不含方向**：同一实例的一次恶化链
+// （degraded → lost → offline）只留 1 行，中间阶段不再各开一行（prod 实测 10 台实例下线由此从 30 条降到 10 条）；
+// 同一实例反复检出并发身份冲突同样只留 1 行（见 convergesOnRecord 的取舍）。
 // created_at 交由 GORM 全局 NowFunc 统一填 UTC（不在此设时间，保与全表一致）。
 func (s *AlertEventService) Record(e *model.AlertEvent) error {
 	if e.Status == "" {
@@ -209,7 +210,7 @@ func (s *AlertEventService) Record(e *model.AlertEvent) error {
 	if e.OccurrenceCount <= 0 {
 		e.OccurrenceCount = 1
 	}
-	if e.Type == model.AlertEventTypeHealthTransition {
+	if convergesOnRecord(e.Type) {
 		existing, err := s.repo.FindUnresolvedByDedupKey(e.Namespace, e.ServerID, e.Type)
 		if err == nil && existing != nil {
 			return s.mergeOccurrence(existing, e)
@@ -223,10 +224,32 @@ func (s *AlertEventService) Record(e *model.AlertEvent) error {
 	return s.repo.Create(e)
 }
 
+// convergesOnRecord 返回该告警类型是否参与 FR-232 收敛（命中则先按收敛键查未恢复行，见 Record）。
+// 目前两类参与：
+//   - health-transition：同一实例的一次恶化链只留 1 行（prod 实测 30 条 → 10 条）；
+//   - identity-conflict：同一实例在未处置期间反复检出并发双实例只留 1 行——旧行为「一次冲突一行」让
+//     同一台机器互相顶替刷屏，待办数随检测往复无界增长。
+//
+// identity-conflict 的取舍：其 detail 每次带的是**当时**那组 boot 冲突明细，合并后只保留最近一次，
+// 行内 occurrence_count 表达「检出过 N 次」；逐次历史改由 identity 域审计（identity.conflict_detected，
+// 每次检测一条、target_ref=identityId）追溯——审计不记 boot 明细，逐次 boot 明细本就不落库
+// （identity.conflict_peers 每次覆盖，只存最近一组）。
+// 其余类型（publish-fail / backend-unreachable 等预置枚举）不收敛，仍逐条留痕。
+func convergesOnRecord(typ string) bool {
+	switch typ {
+	case model.AlertEventTypeHealthTransition, model.AlertEventTypeIdentityConflict:
+		return true
+	default:
+		return false
+	}
+}
+
 // mergeOccurrence 把再次触发的同类告警并入既有未恢复行（FR-232）：计数 +1、刷新 last_at、取最高级、
 // 方向只升不降、message / detail 取最新。
 // 状态保持不变（已 acknowledged 的条目再触发不回退 open）；人工覆盖过级别的条目不因自动合并改级；
 // created_at 保持首发时间不变（合并行是「进行中的同一个事件」，不是历史归档，故只刷新 last_at）。
+// 方向维度对 identity-conflict 是空操作：该类型不写 to_status（恒为空串，严重度 0），
+// 故「只升不降」比较对新旧两行都不成立、不会清掉既有行方向——无需按类型分支。
 func (s *AlertEventService) mergeOccurrence(existing, incoming *model.AlertEvent) error {
 	now := time.Now().UTC()
 	existing.OccurrenceCount++

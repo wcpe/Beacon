@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/bootwatch"
 )
 
@@ -278,5 +280,69 @@ func TestResolveConflictKeepsWinnerLoserStays409(t *testing.T) {
 	db.Model(&model.AuditLog{}).Where("action = ?", model.ActionIdentityConflictResolve).Count(&count)
 	if count != 1 {
 		t.Fatalf("应写 1 条 conflict_resolved 审计，实际 %d", count)
+	}
+}
+
+// TestConflictAuditPerOccurrenceAndAlertConverges 端到端串起两层（sink 用真 AlertEventService，
+// 与 cmd/beacon/main.go 的装配一致），锁定两件事：
+//   - **逐次可追溯**：每检出一次并发冲突写一条 `identity.conflict_detected` 审计（target_ref=identityId）——
+//     这是告警收敛后回溯「冲突检出过几次、各在何时」的唯一来源（告警行只留最近一次 boot 明细）；
+//   - **告警收敛**：同一实例在未处置期间反复检出只留 1 行 alert_event（occurrence_count 计数、
+//     detail 取最近一次冲突的 boot 明细），即 Record 的 identity-conflict 收敛语义在真实链路上生效。
+func TestConflictAuditPerOccurrenceAndAlertConverges(t *testing.T) {
+	db, svc, _ := newConflictTestService(t)
+	if err := db.AutoMigrate(&model.AlertEvent{}); err != nil {
+		t.Fatalf("迁移 alert_event 失败: %v", err)
+	}
+	alertSvc := NewAlertEventService(db, repository.NewAlertEventRepository(db), repository.NewAuditLogRepository(db))
+	svc.SetConflictWatch(bootwatch.New(), func() time.Duration { return 10 * time.Minute }, alertSvc)
+
+	token := setupConflict(t, svc) // 第 1 次检出：A→B→A 往复
+
+	// 处置保留 A（清往复历史、B 记落败）→ 再让新 boot C 顶替 → A 重新注册再次往复 → 第 2 次检出。
+	if _, err := svc.applyResolveAgentIdentityConflict(conflictTestIdentity, ResolveConflictParams{
+		KeepBootID: "boot-A", Reason: "保留原主实例，复现再次检出", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("处置应成功，实际 %v", err)
+	}
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: conflictTestIdentity, ServerID: "lobby-1",
+		Kind: model.ServerKindBackend, BootID: "boot-C", Addr: "10.0.0.3:25565",
+	}); err != nil {
+		t.Fatalf("副本 C 注册失败: %v", err)
+	}
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: conflictTestIdentity, ServerID: "lobby-1",
+		Kind: model.ServerKindBackend, BootID: "boot-A", Addr: "10.0.0.1:25565",
+	}); !errors.Is(err, apperr.ErrIdentityConflict) {
+		t.Fatalf("再次往复应转 conflict，实际 %v", err)
+	}
+
+	// 逐次可追溯：两次检出 → 两条 conflict_detected 审计（一条不合并、不丢）。
+	var audits int64
+	db.Model(&model.AuditLog{}).
+		Where("action = ? AND target_ref = ?", model.ActionIdentityConflict, conflictTestIdentity).Count(&audits)
+	if audits != 2 {
+		t.Fatalf("每次检出应各写 1 条 conflict_detected 审计，实际 %d", audits)
+	}
+
+	// 告警收敛：两条检出只留 1 行、计数 2、detail 取最近一次（含第 2 次检出的 boot-C）。
+	var rows []model.AlertEvent
+	db.Where("type = ? AND server_id = ?", model.AlertEventTypeIdentityConflict, "lobby-1").Find(&rows)
+	if len(rows) != 1 {
+		t.Fatalf("同实例反复检出应收敛为 1 行告警，实际 %d 行", len(rows))
+	}
+	got := rows[0]
+	if got.OccurrenceCount != 2 {
+		t.Fatalf("occurrence_count 应为 2，实际 %d", got.OccurrenceCount)
+	}
+	if got.ToStatus != "" || got.Status != model.AlertEventStatusOpen {
+		t.Fatalf("身份冲突行应为无方向、待处理，实际 to_status=%q status=%q", got.ToStatus, got.Status)
+	}
+	if !strings.Contains(got.Detail, `"bootId":"boot-C"`) {
+		t.Fatalf("detail 应取最近一次检出的 boot 明细（含 boot-C），实际 %s", got.Detail)
+	}
+	if !strings.Contains(got.Message, conflictTestIdentity) {
+		t.Fatalf("message 应为最近一次检出文案（含 identityId），实际 %s", got.Message)
 	}
 }

@@ -681,16 +681,206 @@ func TestFR232ConvergenceIsScopedPerServerAndType(t *testing.T) {
 	if health.Type != model.AlertEventTypeHealthTransition || health.ToStatus != runtime.StatusOffline || health.OccurrenceCount != 2 {
 		t.Fatalf("health 行不得被其它类型事件触碰，实际 %+v", health)
 	}
-	if s1Rows[1].Type != model.AlertEventTypeIdentityConflict || s1Rows[1].OccurrenceCount != 1 || s1Rows[1].ToStatus != "" {
-		t.Fatalf("identity-conflict 应自成一独立行，实际 %+v", s1Rows[1])
+	conflict := s1Rows[1]
+	if conflict.Type != model.AlertEventTypeIdentityConflict || conflict.OccurrenceCount != 1 || conflict.ToStatus != "" {
+		t.Fatalf("identity-conflict 应自成一独立行，实际 %+v", conflict)
 	}
-	// 收敛当前**仅对 health-transition 生效**（既有实现边界，本次未扩大）：身份冲突重复触发仍各成一行，
-	// 因其每次都可能带着不同的 boot 冲突明细，合并会丢上下文。
+	// 类型隔离的另一半：identity-conflict 自身也收敛（见 TestFR232IdentityConflictConvergesToOneRow），
+	// 但**只并进自己那一行**——收敛键含 type 就是为了这个；合并一旦跨类型打宽，健康恶化行的方向 / 文案
+	// 会被身份冲突覆盖成另一件事。
 	record(model.AlertEventTypeIdentityConflict, "s1", "", "并发身份冲突：s1（再次检出）")
-	var conflictCount int64
-	db.Model(&model.AlertEvent{}).Where("type = ? AND server_id = ?", model.AlertEventTypeIdentityConflict, "s1").Count(&conflictCount)
-	if conflictCount != 2 {
-		t.Fatalf("身份冲突不参与收敛，应 2 行，实际 %d", conflictCount)
+	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Order("id").Find(&s1Rows)
+	if len(s1Rows) != 2 {
+		t.Fatalf("同键 identity-conflict 应并入既有行、不新开，实际 %d 行", len(s1Rows))
+	}
+	if s1Rows[0].ID != health.ID || s1Rows[0].OccurrenceCount != 2 ||
+		s1Rows[0].ToStatus != runtime.StatusOffline || s1Rows[0].Message != health.Message {
+		t.Fatalf("health 行不得被 identity-conflict 的合并触碰，实际 %+v", s1Rows[0])
+	}
+	if s1Rows[1].ID != conflict.ID || s1Rows[1].OccurrenceCount != 2 || s1Rows[1].Message != "并发身份冲突：s1（再次检出）" {
+		t.Fatalf("identity-conflict 应并入自己那 1 行（计数 2、文案取最新），实际 %+v", s1Rows[1])
+	}
+}
+
+// TestFR232IdentityConflictConvergesToOneRow 身份冲突纳入收敛（FR-232）：同一实例在未处置期间反复检出
+// 并发双实例（同 identityId 交替 bootId）**只保留 1 行**——旧行为「一次冲突一行」让同一台机器互相顶替刷屏，
+// 待办数随检测往复无界增长。合并语义与 health-transition 一致：计数累计、last_at 刷新、level 取最高、
+// message / detail 取**最新一次**、created_at 保持首发；to_status 仍为空串（该类型不写方向）。
+// 取舍：合并后单条 boot 冲突明细只留最近一次，逐次历史由 identity.conflict_detected 审计追溯
+// （见 TestConflictAuditPerOccurrenceAndAlertConverges）。
+func TestFR232IdentityConflictConvergesToOneRow(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	readRows := func() []model.AlertEvent {
+		t.Helper()
+		var rows []model.AlertEvent
+		db.Where("namespace = ? AND server_id = ?", "prod", "s1").Order("id").Find(&rows)
+		return rows
+	}
+	repeats := []struct{ level, message, detail string }{
+		{model.AlertLevelWarning, "并发身份冲突：s1 检出交替 bootId（identityId id-1，boot-a/boot-b）", `{"identityId":"id-1","peers":[{"bootId":"boot-a"},{"bootId":"boot-b"}]}`},
+		{model.AlertLevelCritical, "并发身份冲突：s1 检出交替 bootId（identityId id-1，boot-a/boot-c）", `{"identityId":"id-1","peers":[{"bootId":"boot-a"},{"bootId":"boot-c"}]}`},
+		{model.AlertLevelCritical, "并发身份冲突：s1 检出交替 bootId（identityId id-1，boot-b/boot-d）", `{"identityId":"id-1","peers":[{"bootId":"boot-b"},{"bootId":"boot-d"}]}`},
+	}
+	for i, r := range repeats {
+		if err := svc.Record(&model.AlertEvent{
+			Type: model.AlertEventTypeIdentityConflict, Level: r.level,
+			Namespace: "prod", ServerID: "s1", Message: r.message, Detail: r.detail,
+		}); err != nil {
+			t.Fatalf("第 %d 次冲突触发失败: %v", i+1, err)
+		}
+	}
+	rows := readRows()
+	if len(rows) != 1 {
+		t.Fatalf("同键身份冲突应收敛为 1 行，实际 %d 行", len(rows))
+	}
+	got := rows[0]
+	if got.OccurrenceCount != 3 {
+		t.Fatalf("计数应累计 3 次检出，实际 %d", got.OccurrenceCount)
+	}
+	if got.Detail != repeats[2].detail {
+		t.Fatalf("detail 应取最后一次冲突明细，实际 %q", got.Detail)
+	}
+	if got.Message != repeats[2].message {
+		t.Fatalf("message 应取最后一次冲突，实际 %q", got.Message)
+	}
+	if got.Level != model.AlertLevelCritical {
+		t.Fatalf("级别应取最高（critical > warning），实际 %q", got.Level)
+	}
+	if got.ToStatus != "" {
+		t.Fatalf("身份冲突不写方向，to_status 应恒为空串，实际 %q", got.ToStatus)
+	}
+	if got.Status != model.AlertEventStatusOpen {
+		t.Fatalf("未被处理时状态应保持 open，实际 %q", got.Status)
+	}
+
+	// created_at 保持首发时间、last_at 刷新为最近一次：先记下首发行，再触发一次比对。
+	var first model.AlertEvent
+	if err := db.First(&first, got.ID).Error; err != nil {
+		t.Fatalf("回读失败: %v", err)
+	}
+	if got.LastAt == nil {
+		t.Fatalf("last_at 应被刷新")
+	}
+	if err := svc.Record(&model.AlertEvent{
+		Type: model.AlertEventTypeIdentityConflict, Level: model.AlertLevelCritical,
+		Namespace: "prod", ServerID: "s1", Message: "并发身份冲突：s1（第 4 次）",
+	}); err != nil {
+		t.Fatalf("第 4 次冲突触发失败: %v", err)
+	}
+	last := readRows()
+	if len(last) != 1 {
+		t.Fatalf("仍应收敛为 1 行，实际 %d 行", len(last))
+	}
+	if last[0].ID != first.ID || !last[0].CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("created_at 应保持首发时间 %v（id=%d），实际 id=%d created_at=%v",
+			first.CreatedAt, first.ID, last[0].ID, last[0].CreatedAt)
+	}
+	if last[0].LastAt == nil || first.LastAt == nil || last[0].LastAt.Before(*first.LastAt) {
+		t.Fatalf("last_at 应随最近一次触发前进：上一次 %v，实际 %v", first.LastAt, last[0].LastAt)
+	}
+	if last[0].OccurrenceCount != 4 {
+		t.Fatalf("计数应继续递增为 4，实际 %d", last[0].OccurrenceCount)
+	}
+}
+
+// TestFR232IdentityConflictConvergesScopedPerServerAndNamespace 收敛键的边界：不同实例、不同 namespace
+// 的身份冲突**不得互相合并**——一台机器的冲突合并进另一台的行，会让运维只看到其中一台的 boot 明细而
+// 误以为另一台已处置，比不收敛更危险。断言对照行在目标触发前后逐字段不变。
+func TestFR232IdentityConflictConvergesScopedPerServerAndNamespace(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	trigger := func(ns, serverID, message string) {
+		t.Helper()
+		if err := svc.Record(&model.AlertEvent{
+			Type: model.AlertEventTypeIdentityConflict, Level: model.AlertLevelCritical,
+			Namespace: ns, ServerID: serverID, Message: message,
+			Detail: `{"identityId":"id-` + ns + `-` + serverID + `"}`,
+		}); err != nil {
+			t.Fatalf("触发 %s/%s 失败: %v", ns, serverID, err)
+		}
+	}
+	// 对照组：同 namespace 的另一台 + 同 serverId 的另一 namespace，各一行
+	trigger("prod", "s2", "并发身份冲突：prod/s2")
+	trigger("dev", "s1", "并发身份冲突：dev/s1")
+	const scoped = "(namespace = ? AND server_id = ?) OR (namespace = ? AND server_id = ?)"
+	var before []model.AlertEvent
+	db.Where(scoped, "prod", "s2", "dev", "s1").Order("id").Find(&before)
+	if len(before) != 2 {
+		t.Fatalf("对照组应 2 行，实际 %d", len(before))
+	}
+
+	// prod/s1 连检出 3 次 → 只影响自己这一行
+	for i := 0; i < 3; i++ {
+		trigger("prod", "s1", "并发身份冲突：prod/s1")
+	}
+
+	var after []model.AlertEvent
+	db.Where(scoped, "prod", "s2", "dev", "s1").Order("id").Find(&after)
+	if len(after) != 2 {
+		t.Fatalf("对照组行数不应变化，实际 %d 行", len(after))
+	}
+	for i := range after {
+		if after[i].ID != before[i].ID || after[i].OccurrenceCount != before[i].OccurrenceCount ||
+			after[i].Message != before[i].Message || after[i].Detail != before[i].Detail ||
+			after[i].Status != before[i].Status {
+			t.Fatalf("不同实例 / 不同 namespace 不得互相合并：触发前 %+v，触发后 %+v", before[i], after[i])
+		}
+	}
+	var target model.AlertEvent
+	if err := db.Where("namespace = ? AND server_id = ?", "prod", "s1").First(&target).Error; err != nil {
+		t.Fatalf("回读 prod/s1 失败: %v", err)
+	}
+	if target.OccurrenceCount != 3 || target.ID == before[0].ID || target.ID == before[1].ID {
+		t.Fatalf("prod/s1 应自成一收敛行（计数 3），实际 %+v", target)
+	}
+}
+
+// TestFR232IdentityConflictStatusNotReopenedAndResolvedRestartsRow 身份冲突合并行的状态机边界
+// （与 health-transition 同口径）：已 `acknowledged` 的行再检出冲突**不回退 `open`**、只累计计数并取最新文案；
+// 已 `resolved` 的行不参与合并，同键再检出**另起一行**（旧行是一个已闭事件，新行是新事件）。
+func TestFR232IdentityConflictStatusNotReopenedAndResolvedRestartsRow(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	trigger := func(message string) {
+		t.Helper()
+		if err := svc.Record(&model.AlertEvent{
+			Type: model.AlertEventTypeIdentityConflict, Level: model.AlertLevelCritical,
+			Namespace: "prod", ServerID: "s1", Message: message,
+		}); err != nil {
+			t.Fatalf("触发失败: %v", err)
+		}
+	}
+	trigger("并发身份冲突：s1（首发）")
+	var first model.AlertEvent
+	if err := db.Where("namespace = ? AND server_id = ?", "prod", "s1").First(&first).Error; err != nil {
+		t.Fatalf("回读失败: %v", err)
+	}
+	if _, err := svc.Handle(first.ID, "acknowledge", "", "alice", ""); err != nil {
+		t.Fatalf("acknowledge 失败: %v", err)
+	}
+	trigger("并发身份冲突：s1（再次检出）")
+	var acknowledged model.AlertEvent
+	db.First(&acknowledged, first.ID)
+	if acknowledged.Status != model.AlertEventStatusAcknowledged {
+		t.Fatalf("已确认行不应回退 open，实际 %q", acknowledged.Status)
+	}
+	if acknowledged.OccurrenceCount != 2 || acknowledged.Message != "并发身份冲突：s1（再次检出）" {
+		t.Fatalf("已确认行仍应合并计数并取最新文案，实际 %+v", acknowledged)
+	}
+
+	if _, err := svc.Handle(first.ID, "resolve", "", "alice", ""); err != nil {
+		t.Fatalf("resolve 失败: %v", err)
+	}
+	trigger("并发身份冲突：s1（消解后再检出）")
+	var rows []model.AlertEvent
+	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Order("id").Find(&rows)
+	if len(rows) != 2 {
+		t.Fatalf("已 resolved 后同键再检出应另起一行，实际 %d 行", len(rows))
+	}
+	if rows[0].Status != model.AlertEventStatusResolved || rows[0].OccurrenceCount != 2 {
+		t.Fatalf("旧行应保持 resolved 且计数不再变动，实际 %+v", rows[0])
+	}
+	if rows[1].Status != model.AlertEventStatusOpen || rows[1].OccurrenceCount != 1 ||
+		rows[1].Message != "并发身份冲突：s1（消解后再检出）" {
+		t.Fatalf("新行应为 open、计数 1、记新文案，实际 %+v", rows[1])
 	}
 }
 
