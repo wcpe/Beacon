@@ -1,5 +1,5 @@
-// 告警详情面板内容（非模态右侧列）：单条告警全字段 + 处理写闭环（确认 / 标记已处理）在面板内完成。
-// 待处理态展示确认 / 标记已处理表单（resolved 备注必填），已处理态展示处理人 / 时间 / 备注 + 互跳。
+// 告警详情面板内容（非模态右侧列）：单条告警全字段 + 处理写闭环（标记已读 / 标记处理）在面板内完成。
+// 待处理态展示标记已读 / 标记处理表单（resolved 备注必填），已处理态展示处理人 / 时间 / 备注 + 互跳。
 // message 为人读摘要；detail 用 JsonDetail 键值可视化（非 JSON 则原文）。
 // FR-230：内嵌「该服近期状态」与「该服告警时间线」，供 5 秒内判断「已过去 / 需立刻处理」。
 import { useEffect, useState } from 'react'
@@ -18,7 +18,7 @@ import {
 } from '../../features/observability/alert-transition'
 import JsonDetail from '../../features/observability/json-detail'
 
-// 处理意图：确认或标记已处理
+// 处理意图：标记已读或标记处理
 export type HandleIntent = 'acknowledged' | 'resolved'
 
 // 告警级别 → 状态药丸语义 variant
@@ -153,7 +153,7 @@ export default function AlertDetailPanel({
         keyPrefix="observability.alertEvents.detailKeys"
       />
 
-      {/* 已处理 / 已确认态：展示处理人 / 时间 / 备注 */}
+      {/* 已处理 / 已读态：展示处理人 / 时间 / 备注 */}
       {item.handledBy !== null && (
         <>
           <Field label={t('observability.alertEvents.handledBy')} value={item.handledBy} />
@@ -172,7 +172,7 @@ export default function AlertDetailPanel({
       {/* FR-230：该服近期状态 + 该服告警时间线（数据实时取健康真源与 alert_event，不复制存储） */}
       <AlertContextSection eventId={item.id} />
 
-      {/* 待处理态：面板内处理写闭环（确认无需备注，标记已处理备注必填） */}
+      {/* 待处理态：面板内处理写闭环（标记已读无需备注，标记处理备注必填） */}
       {isOpen && (
         <div className="grid gap-2 border-t border-border pt-3">
           <Label htmlFor="alert-handle-note">{t('observability.alertEvents.note')}</Label>
@@ -190,6 +190,7 @@ export default function AlertDetailPanel({
               size="sm"
               variant="outline"
               disabled={pending}
+              title={t('observability.alertEvents.actions.acknowledgeHint')}
               onClick={() => {
                 onHandle('acknowledged', note.trim())
               }}
@@ -199,6 +200,7 @@ export default function AlertDetailPanel({
             <Button
               size="sm"
               disabled={pending || note.trim() === ''}
+              title={t('observability.alertEvents.actions.resolveHint')}
               onClick={() => {
                 onHandle('resolved', note.trim())
               }}
