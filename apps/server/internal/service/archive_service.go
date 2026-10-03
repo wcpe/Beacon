@@ -441,7 +441,8 @@ func (s *ArchiveService) expandItems(job *model.ArchiveJob) ([]model.ArchiveJobI
 		// 单表：按 发生时间 < cutoff 的区间；无到期行 → skipped。
 		rangeTo := cutoff
 		var cnt int64
-		if err := s.hotDB.Table(d.baseTable).Where(d.timeColumn+" < ?", rangeTo).Count(&cnt).Error; err != nil {
+		if err := applyDomainFilter(s.hotDB.Table(d.baseTable), d).
+			Where(d.timeColumn+" < ?", rangeTo).Count(&cnt).Error; err != nil {
 			return nil, err
 		}
 		phase := model.ArchiveItemPending
@@ -576,13 +577,15 @@ func (s *ArchiveService) snapshotCutoffs(now time.Time) map[string]string {
 // ---- 纯函数辅助 ----
 
 // domainRowCount 统计某域行数：daily 汇总各日表（cutoff 非空只数到期日表），single 数区间行。
+// 一并施加域的附加行过滤（extraWhere）：overview 的 hotRows / archivedRows / expiredRows 三栏
+// 与归档实际可搬运集合同口径，否则「到期量」会包含永不归档的待办行。
 func domainRowCount(db *gorm.DB, dom archiveDomain, cutoff *time.Time) (int64, error) {
 	if dom.form == archiveFormSingle {
 		// 单表可能尚未在该库建（如归档库首次运行前），判存避免「no such table」噪声。
 		if !db.Migrator().HasTable(dom.baseTable) {
 			return 0, nil
 		}
-		q := db.Table(dom.baseTable)
+		q := applyDomainFilter(db.Table(dom.baseTable), dom)
 		if cutoff != nil {
 			q = q.Where(dom.timeColumn+" < ?", *cutoff)
 		}
@@ -609,7 +612,7 @@ func domainRowCount(db *gorm.DB, dom archiveDomain, cutoff *time.Time) (int64, e
 	var total int64
 	for _, t := range tables {
 		var n int64
-		if err := db.Table(t).Count(&n).Error; err != nil {
+		if err := applyDomainFilter(db.Table(t), dom).Count(&n).Error; err != nil {
 			return 0, err
 		}
 		total += n

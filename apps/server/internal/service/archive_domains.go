@@ -40,9 +40,18 @@ type archiveDomain struct {
 	retentionKey string
 	// 建归档表用的空模型指针（提供 GORM 迁移的列定义）
 	newModel func() any
+	// extraWhere 是附加行过滤（可选，空串=不过滤）：只归档该域中**适合归档**的行，
+	// 语义为「本域的业务待办必须留在热库」。当前仅 alert_event 使用（`status = 'resolved'`：
+	// 未处理告警是运维待办，搬走会让待办从热库消失）。
+	//
+	// 安全约定：值必须是**代码内常量**、绝不接受任何外部输入（无用户可控拼接 → 无注入面）。
+	// 该条件必须施加在**全部行选择路径**上（搬运 SELECT、热库删除 SELECT、校验 / 预估计数、
+	// 区间下界、抽样主键集），否则会出现「按 A 集合搬运、按 B 集合删除」的静默数据丢失。
+	// 应用点集中见 applyDomainFilter；域内计数见 domainRowCount 与 expandItems。
+	extraWhere string
 }
 
-// archiveDomains 是 §3.1 的域注册表（8 域，稳定顺序）：7 张日期后缀表 + audit 单表。
+// archiveDomains 是 §3.1 的域注册表（9 域，稳定顺序）：7 张日期后缀表 + 2 张单表（audit / alert_event）。
 var archiveDomains = []archiveDomain{
 	{
 		name: "metric_sample", baseTable: "metric_sample", form: archiveFormDaily,
@@ -86,6 +95,24 @@ var archiveDomains = []archiveDomain{
 		retentionKey: SettingArchiveRetentionAudit,
 		newModel:     func() any { return &model.AuditLog{} },
 	},
+	{
+		// 告警事件表此前只增不减（FR-89 留痕表），纳入归档域后由保留期收敛体量；追加在末尾，不动既有顺序语义。
+		name: "alert_event", baseTable: "alert_event", form: archiveFormSingle,
+		pkColumn: "id", pkKind: archivePKInt, timeColumn: "created_at",
+		retentionKey: SettingArchiveRetentionAlertEvent,
+		newModel:     func() any { return &model.AlertEvent{} },
+		// 只归档已处理的行：未处理（open / acknowledged）告警是运维待办，必须留在热库让运维看到。
+		extraWhere: "status = 'resolved'",
+	},
+}
+
+// applyDomainFilter 施加域的附加行过滤（extraWhere，空串为恒等）：**所有**行选择路径都必须经此收口
+// （搬选取数 / 删除选取 / 计行 / 下界 / 抽样），保证「搬运集合 ≡ 删除集合」。
+func applyDomainFilter(q *gorm.DB, dom archiveDomain) *gorm.DB {
+	if dom.extraWhere != "" {
+		q = q.Where(dom.extraWhere)
+	}
+	return q
 }
 
 // archiveDomainByName 按名查域描述；未知返回 (zero, false)。

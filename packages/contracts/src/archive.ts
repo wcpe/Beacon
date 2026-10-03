@@ -11,6 +11,8 @@ export type ArchiveDomainName =
   | 'msg_trace'
   | 'msg_payload'
   | 'audit'
+  | 'mcp_invocation'
+  | 'alert_event'
 
 export type ArchiveJobMode = 'dry_run' | 'execute'
 export type ArchiveJobStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelling' | 'cancelled'

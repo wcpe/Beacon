@@ -73,6 +73,9 @@ export const system = {
       'archive.retention-days.msg-trace': '消息元数据（msg_trace）热库保留天数；到期后归档并从热库删除',
       'archive.retention-days.msg-payload': '消息 payload（msg_payload）热库保留天数；到期后归档并从热库删除',
       'archive.retention-days.audit': '审计记录（audit）热库保留天数；到期后归档并从热库删除',
+      'archive.retention-days.mcp-invocation': 'MCP 调用流水（mcp_invocation）热库保留天数；到期后归档并从热库删除',
+      'archive.retention-days.alert-event':
+        '告警事件（alert_event）热库保留天数；到期后归档并从热库删除，仅作用于已处理（status=resolved）的告警，未处理告警是待办、始终留在热库',
       'archive.auto-enabled': '是否每日自动执行归档任务；false 时仅手动触发',
       'archive.schedule-hour-utc': '每日自动执行归档任务的 UTC 整点（0~23）',
       'archive.batch-rows': '归档单批搬运 / 删除行数（越大越快、对主库压力越大）',
@@ -195,6 +198,8 @@ export const system = {
       msg_trace: '消息链路',
       msg_payload: '消息载荷',
       audit: '审计',
+      mcp_invocation: 'MCP 调用流水',
+      alert_event: '告警事件',
     },
   },
   health: {

@@ -202,7 +202,7 @@ describe('场景切换与重置', () => {
 })
 
 describe('Legacy 运维设置契约', () => {
-  it('返回服务端白名单对应的 37 项设置并包含新增 8 项', async () => {
+  it('返回服务端白名单对应的 40 项设置并包含新增 8 项', async () => {
     const { status, json } = await callJson('GET', '/admin/v1/settings')
     const items = (json as { items: { key: string }[] }).items
     const keys = new Set(items.map((item) => item.key))
@@ -218,7 +218,7 @@ describe('Legacy 运维设置契约', () => {
     ]
 
     expect(status).toBe(200)
-    expect(items).toHaveLength(37)
+    expect(items).toHaveLength(40)
     for (const key of newlySyncedKeys) {
       expect(keys.has(key), `缺少设置项 ${key}`).toBe(true)
     }

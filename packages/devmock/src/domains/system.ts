@@ -27,7 +27,7 @@ interface SystemState {
 
 const DAY = 86_400_000
 
-// Legacy 热改项白名单（docs/API.md 运维设置 37 项）
+// Legacy 热改项白名单（40 项，与后端 settingsWhitelist 逐键对齐）
 const SETTING_SEEDS: [string, string, SettingItem['valueType'], string][] = [
   ['health.degraded-after-sec', '15', 'int', '超过多少秒未心跳降级 degraded'],
   ['health.ttl-sec', '30', 'int', '超过多少秒未心跳判失联'],
@@ -39,6 +39,8 @@ const SETTING_SEEDS: [string, string, SettingItem['valueType'], string][] = [
   ['longpoll.max-hold-ms', '30000', 'int', '长轮询最大挂起毫秒'],
   ['alert.webhook-url', '', 'string', '告警 webhook 地址（空 = 不推送）'],
   ['alert.webhook-timeout-ms', '3000', 'int', '告警 webhook 超时毫秒'],
+  // 既有漂移补齐：后端 settingsWhitelist 有此项、mock 此前遗漏（config.yml 默认 24 小时）
+  ['alert.orphan-timeout-hours', '24', 'int', '失联孤儿告警自动关闭阈值（小时）'],
   ['log.level', 'INFO', 'string', '日志级别（ERROR|WARN|INFO|DEBUG）'],
   ['reverse-fetch.max-file-bytes', '1048576', 'int', '反向抓取单文件上限（字节）'],
   ['update.proxy-url', '', 'string', '更新出站代理（含凭据回显脱敏）'],
@@ -60,6 +62,8 @@ const SETTING_SEEDS: [string, string, SettingItem['valueType'], string][] = [
   ['archive.retention-days.msg-trace', '60', 'int', '消息链路热库保留天数（下限 7）'],
   ['archive.retention-days.msg-payload', '30', 'int', '消息载荷热库保留天数（下限 7）'],
   ['archive.retention-days.audit', '180', 'int', '审计日志热库保留天数（下限 7）'],
+  ['archive.retention-days.mcp-invocation', '180', 'int', 'MCP 调用流水热库保留天数（下限 7）'],
+  ['archive.retention-days.alert-event', '180', 'int', '告警事件热库保留天数（仅已处理告警，下限 7）'],
   ['archive.auto-enabled', 'true', 'bool', '是否启用每日自动归档'],
   ['archive.schedule-hour-utc', '4', 'int', '每日自动归档触发时刻（UTC 小时，0-23）'],
   ['archive.batch-rows', '1000', 'int', '归档搬迁每批行数（1-100000）'],

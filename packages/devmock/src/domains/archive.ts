@@ -25,6 +25,10 @@ const ALL_DOMAINS: readonly ArchiveDomainName[] = [
   'msg_trace',
   'msg_payload',
   'audit',
+  // FR-240：MCP 工具调用流水（日表形态，与后端注册表一致）
+  'mcp_invocation',
+  // 告警事件：单表形态，后端只归档 status='resolved' 的行
+  'alert_event',
 ]
 
 const RETENTION: Record<ArchiveDomainName, number> = {
@@ -35,6 +39,9 @@ const RETENTION: Record<ArchiveDomainName, number> = {
   msg_trace: 60,
   msg_payload: 30,
   audit: 180,
+  // mcp_invocation / alert_event 默认值与后端一致（180 天：取证与追溯价值高）
+  mcp_invocation: 180,
+  alert_event: 180,
 }
 
 interface ArchiveState {

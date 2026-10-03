@@ -88,7 +88,8 @@ make release-verify-ga \
 - 健康探针：`GET /admin/v1/namespaces`（只读、无副作用）。
 - 日志：beacon 容器内中文分级日志（ERROR/WARN/INFO/DEBUG）。
 - 重点关注：实例失联告警、重复 serverId 告警、配置漂移告警。
-- 健康分级与告警（FR-28）：实例按心跳陈旧度推进 `online → degraded → lost → offline`（阈值见 `config.yml` 的 `health.degraded-after-sec`/`ttl-sec`/`offline-grace-sec`，须满足 degraded < ttl < offline，错序启动即报错）。进入异常态（degraded/lost/offline）主动告警，恢复 online 不告警。告警通道：**站内信**（`GET /admin/v1/alerts` 读最近 N 条，N=`alert.inbox-capacity`，进程内、控制面重启清零）+ **webhook**（配置 `alert.webhook.url` 后向其 POST 告警 JSON，留空则仅站内信）。
+- 健康分级与告警（FR-28）：实例按心跳陈旧度推进 `online → degraded → lost → offline`（阈值见 `config.yml` 的 `health.degraded-after-sec`/`ttl-sec`/`offline-grace-sec`，须满足 degraded < ttl < offline，错序启动即报错）。**只有失联级（`lost` / `offline`）主动告警**：`degraded` 是「心跳变陈旧但未达 TTL」的提示级态，一次网络抖动就会让一批实例同时进入而刷屏，故不单独告警（真机降噪），真要失联会随后转 `lost` 照常告警；恢复 `online` 也不告警。告警通道：**站内信**（`GET /admin/v1/alerts` 读最近 N 条，N=`alert.inbox-capacity`，进程内、控制面重启清零）+ **webhook**（配置 `alert.webhook.url` 后向其 POST 告警 JSON，留空则仅站内信）。
+- 告警自动消解：实例**恢复 `online`**、被**归档 / 永久删除**，以及实例被**外部删除**（压测实例用完即删等，控制面收不到删除信号）三类情况都会把未处理告警置为 `resolved` 并记 `handled_by=system`，管理台据此区分系统自动消解与人工处理，无需人工清待办。外部删除这一类由后台清理器兜底，**四项判据同时成立**才关闭：有未处理告警、不在运行时注册表、**不在 `server` 表活动目录（`lifecycle = active`）**、且最近触发已超 `alert.orphan-timeout-hours`（默认 24h，可在设置页热改）。**在册实例即使离线很久也不会被自动关闭**（运维必须看到）；排查「告警凭空变成已处理」时先看 `handle_note`（自动消解文案）与控制面日志「失联孤儿告警已自动消解」。
 
 ### 3.1 SSE 推送流经反向代理 / Docker（FR-24，[ADR-0015](adr/0015-sse-server-push-transport.md)）
 agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→agent 推送。若在 beacon 前放反向代理（nginx 等），须保证流不被缓冲、不被空闲超时切断：
