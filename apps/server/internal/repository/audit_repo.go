@@ -19,6 +19,8 @@ type AuditFilter struct {
 	Action         string
 	TargetType     string
 	TargetRef      string
+	// Result 按审计结果过滤（model.ResultOK / model.ResultFail）；空则不过滤
+	Result string
 	// detail 列子串关键字检索（LIKE，FR-84）；空则不过滤
 	DetailKeyword string
 	From          time.Time
@@ -102,6 +104,10 @@ func applyFilter(q *gorm.DB, f AuditFilter) *gorm.DB {
 		// 精确等值会导致输入 lobby-1 筛不到 realhost/lobby-1。转义后 LIKE，% / _ 当字面字符。
 		q = q.Where("target_ref LIKE ? ESCAPE ?", "%"+likeEscape(f.TargetRef)+"%", likeEscapeChar)
 	}
+	if f.Result != "" {
+		// 结果等值过滤（ok / fail）。取值白名单在 handler 层校验，此处只做标准 SQL 等值匹配
+		q = q.Where("result = ?", f.Result)
+	}
 	if f.DetailKeyword != "" {
 		// detail 子串检索：转义后 LIKE，ESCAPE 用占位符（驱动按方言安全引用），使 % / _ 当字面字符匹配
 		q = q.Where("detail LIKE ? ESCAPE ?", "%"+likeEscape(f.DetailKeyword)+"%", likeEscapeChar)
@@ -167,6 +173,8 @@ func auditColdKey(row model.AuditLog) coldCursor {
 
 // ScanForAnalytics 取窗口内审计的聚合投影行（仅 created_at/result/action 三列、按时间升序）。
 // 只复用 Namespace/From/To 过滤，日分桶与计数交由 service 在 Go 侧做（禁方言日期函数，保可移植）。
+// 刻意不套用 Result 过滤：聚合结果本身即按 ok/fail 拆分（Total/OKCount/FailCount），
+// 若先按 result 过滤会让另两个计数恒为 0 而自相矛盾。
 func (r *AuditLogRepository) ScanForAnalytics(f AuditFilter) ([]AuditAnalyticsRow, error) {
 	q := r.db.Model(&model.AuditLog{})
 	if f.Scoped {

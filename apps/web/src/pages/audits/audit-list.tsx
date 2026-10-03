@@ -1,6 +1,6 @@
-// 审计列表（主列）：吸顶工具条（关键词 / 目标 + 操作人 / 动作 / 目标类型筛选 + 导出）+ 自区滚动列表 + 吸底分页。
+// 审计列表（主列）：吸顶工具条（关键词 / 目标 + 操作人 / 动作 / 目标类型 / 结果筛选 + 导出）+ 自区滚动列表 + 吸底分页。
 // 行点击回调交父级用右侧非模态详情面板承载；选中行高亮。导出按钮在吸顶工具区始终可见。
-// 筛选初值消费 URL 查询参数（targetRef/action/operator/targetType），承接 /commands、/alert-events、
+// 筛选初值消费 URL 查询参数（targetRef/action/operator/targetType/result），承接 /commands、/alert-events、
 // 连接消息查询面等页的互跳链接（FR-157，含 action=message.payload.view 定位 payload 查看审计）；
 // 页内变更筛选不回写 URL（最简策略）。
 
@@ -30,6 +30,7 @@ import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes, useEnvScopePending } f
 function messageOf(error: unknown): string {
   return error instanceof ApiClientError ? error.message : String(error)
 }
+import { auditActionLabel } from '../../features/observability/audit-action-label'
 import FilterSelect from '../../features/observability/filter-select'
 import ListCard from '../../features/shared/list-card'
 import Pager from '../../features/observability/pager'
@@ -132,10 +133,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
   // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
   const envPending = useEnvScopePending()
   // 审计动作中文标签：有映射用中文，未映射经 defaultValue 回退原始枚举（防裸 key 同时不挡未知动作）
-  const actionLabel = useCallback(
-    (action: string): string => t(`observability.audits.action.${action}`, { defaultValue: action }),
-    [t],
-  )
+  const actionLabel = useCallback((action: string): string => auditActionLabel(t, action), [t])
   // 目标类型中文标签：有映射用中文，未映射回退原文
   const targetTypeLabel = useCallback(
     (targetType: string): string =>
@@ -147,6 +145,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
   const [operator, setOperator] = useState(() => initialParam(searchParams, 'operator'))
   const [action, setAction] = useState(() => initialParam(searchParams, 'action'))
   const [targetType, setTargetType] = useState(() => initialParam(searchParams, 'targetType'))
+  const [result, setResult] = useState(() => initialParam(searchParams, 'result'))
   const [targetRef, setTargetRef] = useState(() => searchParams.get('targetRef') ?? '')
   const [keyword, setKeyword] = useState('')
   const [page, setPage] = useState(1)
@@ -171,12 +170,13 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
       operator: operator === 'all' ? undefined : operator,
       action: action === 'all' ? undefined : action,
       targetType: targetType === 'all' ? undefined : targetType,
+      result: result === 'all' ? undefined : result,
       targetRef: targetRef.trim() === '' ? undefined : targetRef.trim(),
       detailKeyword: keyword.trim() === '' ? undefined : keyword.trim(),
       from: span === undefined ? undefined : new Date(to - span).toISOString(),
       to: span === undefined ? undefined : new Date(to).toISOString(),
     }
-  }, [operator, action, targetType, targetRef, keyword, windowKey])
+  }, [operator, action, targetType, result, targetRef, keyword, windowKey])
 
   const onExport = async (format: 'csv' | 'json') => {
     setExportError(null)
@@ -204,6 +204,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
       operator,
       action,
       targetType,
+      result,
       targetRef,
       keyword,
       windowKey,
@@ -227,6 +228,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
             action: action === 'all' ? undefined : action,
             // 目标类型 / 目标为真后端原生查询参数（audit_handler.go List），走服务端过滤
             targetType: targetType === 'all' ? undefined : targetType,
+            result: result === 'all' ? undefined : result,
             targetRef: targetRef.trim() === '' ? undefined : targetRef.trim(),
             detailKeyword: keyword.trim() === '' ? undefined : keyword.trim(),
             from: span === undefined ? undefined : new Date(to - span).toISOString(),
@@ -376,14 +378,14 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           }}
         />
         <FilterSelect
-          label={t('observability.audits.filterTargetType')}
-          value={targetType}
-          options={withCurrent(TARGET_TYPES, targetType).map((v) => ({
-            value: v,
-            label: targetTypeLabel(v),
-          }))}
+          label={t('observability.audits.filterResult')}
+          value={result}
+          options={[
+            { value: 'ok', label: t('observability.audits.result.ok') },
+            { value: 'fail', label: t('observability.audits.result.fail') },
+          ]}
           onChange={(value) => {
-            setTargetType(value)
+            setResult(value)
             resetPaging()
           }}
         />

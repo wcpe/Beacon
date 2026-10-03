@@ -59,7 +59,11 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	page, _ := strconv.Atoi(q.Get("page"))
 	size, _ := strconv.Atoi(q.Get("size"))
-	filter := auditScopeFilter(q, scope)
+	filter, err := auditScopeFilter(q, scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	filter.Page, filter.Size = page, size
 	items, total, err := h.svc.List(filter)
 	if err != nil {
@@ -78,7 +82,11 @@ func (h *AuditHandler) listCold(w http.ResponseWriter, r *http.Request, q url.Va
 		return
 	}
 	size, _ := strconv.Atoi(q.Get("size"))
-	filter := auditScopeFilter(q, scope)
+	filter, err := auditScopeFilter(q, scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	filter.From, filter.To = from, to
 	page, err := h.svc.ListCold(filter, q.Get("cursor"), size)
 	if err != nil {
@@ -112,23 +120,45 @@ func timeMs(t time.Time) int64 {
 }
 
 // auditExportFilter 从查询串提取与 List 同口径的过滤（不含分页，导出全量，FR-84）。
-func auditExportFilter(q url.Values) repository.AuditFilter {
+// result 参数（成功/失败筛选）在此做白名单校验：非法取值返回 400，避免脏值透传到查询层。
+func auditExportFilter(q url.Values) (repository.AuditFilter, error) {
+	result := q.Get("result")
+	if !isValidAuditResult(result) {
+		return repository.AuditFilter{}, apperr.ErrInvalidParam
+	}
 	return repository.AuditFilter{
 		Namespace:     q.Get("namespace"),
 		Operator:      q.Get("operator"),
 		Action:        q.Get("action"),
 		TargetType:    q.Get("targetType"),
 		TargetRef:     q.Get("targetRef"),
+		Result:        result,
 		DetailKeyword: q.Get("detailKeyword"),
 		From:          parseRFC3339(q.Get("from")),
 		To:            parseRFC3339(q.Get("to")),
+	}, nil
+}
+
+// isValidAuditResult 校验 result 查询参数：仅空（不过滤）、ok、fail 三种取值合法（见 model.ResultOK / ResultFail）。
+// 只认枚举字面量，大小写与别名（success/failed/error 等）一律拒绝，避免筛选口径与 KPI 聚合口径分叉。
+func isValidAuditResult(v string) bool {
+	switch v {
+	case "", model.ResultOK, model.ResultFail:
+		return true
+	default:
+		return false
 	}
 }
 
-func auditScopeFilter(q url.Values, scope service.ObservationScope) repository.AuditFilter {
-	filter := auditExportFilter(q)
+// auditScopeFilter 在导出过滤基础上叠加观测范围（List / 冷查询 / 导出 / 聚合共用同一提取入口，
+// 保证三处入口的 result 校验与过滤口径一致，不漏入口）。
+func auditScopeFilter(q url.Values, scope service.ObservationScope) (repository.AuditFilter, error) {
+	filter, err := auditExportFilter(q)
+	if err != nil {
+		return repository.AuditFilter{}, err
+	}
 	filter.NamespaceCodes, filter.Scoped = scope.NamespaceCodes, !scope.All
-	return filter
+	return filter, nil
 }
 
 // Export 处理 GET /admin/v1/audits/export（复用 List 过滤，流式输出 CSV/JSON，FR-84）。
@@ -144,16 +174,21 @@ func (h *AuditHandler) Export(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = "csv"
 	}
-	// 写头前先校验 format（仅 csv/json），非法直接 400，不污染响应。
+	// 写头前先校验 format（仅 csv/json）与过滤参数（result 白名单），非法直接 400，不污染响应。
 	contentType, ext, ok := exportContentType(format)
 	if !ok {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	filter, err := auditScopeFilter(q, scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	filename := "audit-export-" + time.Now().UTC().Format("20060102-150405") + "." + ext
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-	if err := h.svc.Export(auditScopeFilter(q, scope), format, w); err != nil {
+	if err := h.svc.Export(filter, format, w); err != nil {
 		// 响应头已发送，无法再改状态码，仅记录错误日志（旁路）。
 		slog.Error("审计导出写出失败", "格式", format, "错误", err)
 	}
@@ -196,6 +231,8 @@ type auditAnalyticsView struct {
 
 // Analytics 处理 GET /admin/v1/audits/analytics（窗口内审计活动聚合，FR-73）。
 // 仅解析 namespace/from/to，缺省与 92 天上限校验在 service 层（超限返 400）。
+// result 参数沿用公共提取函数的白名单校验（非法值 400），但聚合本身不按结果过滤：
+// 返回值里 okCount / failCount 已是结果维度拆分，再按 result 过滤会让另一侧恒为 0。
 func (h *AuditHandler) Analytics(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	scope, err := resolveObservationScope(r, h.scope)
@@ -203,7 +240,11 @@ func (h *AuditHandler) Analytics(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	filter := auditScopeFilter(q, scope)
+	filter, err := auditScopeFilter(q, scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	filter.From, filter.To = parseRFC3339(q.Get("from")), parseRFC3339(q.Get("to"))
 	res, err := h.svc.Analytics(filter)
 	if err != nil {

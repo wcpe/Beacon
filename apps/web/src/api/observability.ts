@@ -47,6 +47,8 @@ export interface AuditQuery {
   targetType?: string
   targetRef?: string
   detailKeyword?: string
+  // 结果（成功 / 失败）：'ok' | 'fail'，其它值不过滤
+  result?: string
   // 时间范围（RFC3339）；冷查询强制必填且跨度 ≤ 冷查询上限
   from?: string
   to?: string
@@ -153,7 +155,7 @@ export interface HandleAlertBody {
   note?: string
 }
 
-/** 处理告警事件（确认 / 标记已处理）：写闭环，返回更新后的行 */
+/** 处理告警事件（标记已读 / 标记处理）：写闭环，返回更新后的行 */
 export function handleAlertEvent(id: number, body: HandleAlertBody): Promise<AlertEventItem> {
   return request('POST', `/admin/v1/alert-events/${String(id)}/handle`, body)
 }

@@ -215,6 +215,7 @@ export const observabilityHandlers: HttpHandler[] = [
     const targetType = queryStr(url, 'targetType')
     const targetRef = queryStr(url, 'targetRef')
     const detailKeyword = queryStr(url, 'detailKeyword')
+    const result = queryStr(url, 'result')
     const fromMs = queryTimeMs(url, 'from')
     const toMs = queryTimeMs(url, 'to')
     const rows = getObservabilityState().audits.filter((row) => {
@@ -235,6 +236,10 @@ export const observabilityHandlers: HttpHandler[] = [
         return false
       }
       if (detailKeyword !== null && !row.detail.includes(detailKeyword)) {
+        return false
+      }
+      // 结果过滤：只认 ok / fail 精确匹配；'all' 与缺省等价于不过滤
+      if ((result === 'ok' || result === 'fail') && row.result !== result) {
         return false
       }
       return inWindow(row.createdAt, fromMs, toMs)
