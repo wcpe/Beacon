@@ -98,7 +98,7 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
-	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(db, repository.NewNamespaceRepository(db), assignRepo, configRepo, fileRepo, repository.NewFileOverrideSetRepository(db), registry, auditRepo))
+	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(db, repository.NewNamespaceRepository(db), placementRepo, configRepo, fileRepo, repository.NewFileOverrideSetRepository(db), registry, auditRepo))
 	revRepo := repository.NewConfigRevisionRepository(db, cipher)
 	cfgSvc := service.NewConfigService(db, configRepo, revRepo, auditRepo)
 	cfgSvc.SetPendingChangeCipher(cipher)

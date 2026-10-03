@@ -97,3 +97,24 @@ func (r *ServerPlacementRepository) FindByNamespace(ns string) (map[string]Serve
 	}
 	return out, nil
 }
+
+// CountAssignedByNamespace 统计某环境下「已分配到小区」的实例数（新真源 server.zone_id）。
+//
+// 供环境删除守卫判「是否仍有区服归属在用」。口径与 FindByNamespace 一致：只计 zone_id 非空的行，
+// 仅挂 BC 集群 / 仅入大厅集群 / 未指派的实例不计入（与 v1 时代 zone_assignment 的业务含义相同）。
+// 环境不存在或没有任何归属时返回 0，不报错（守卫只看计数）。
+func (r *ServerPlacementRepository) CountAssignedByNamespace(ns string) (int64, error) {
+	if ns == "" {
+		return 0, nil
+	}
+	var n int64
+	err := r.db.Table("server").
+		Joins("JOIN namespace ON namespace.id = server.namespace_id").
+		Joins("JOIN zone ON zone.id = server.zone_id").
+		Where("namespace.code = ?", ns).
+		Count(&n).Error
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}

@@ -23,7 +23,7 @@ type instanceCounter interface {
 type NamespaceService struct {
 	db           *gorm.DB
 	repo         *repository.NamespaceRepository
-	assignRepo   *repository.ZoneAssignmentRepository
+	assignRepo   *repository.ServerPlacementRepository
 	configRepo   *repository.ConfigItemRepository
 	fileRepo     *repository.FileObjectRepository
 	overrideRepo *repository.FileOverrideSetRepository
@@ -31,11 +31,11 @@ type NamespaceService struct {
 	auditRepo    *repository.AuditLogRepository
 }
 
-// NewNamespaceService 构造服务。assignRepo/configRepo/fileRepo/overrideRepo/instances 供删除守卫查在用数据。
+// NewNamespaceService 构造服务。assignRepo（新真源归属计数）/configRepo/fileRepo/overrideRepo/instances 供删除守卫查在用数据。
 func NewNamespaceService(
 	db *gorm.DB,
 	repo *repository.NamespaceRepository,
-	assignRepo *repository.ZoneAssignmentRepository,
+	assignRepo *repository.ServerPlacementRepository,
 	configRepo *repository.ConfigItemRepository,
 	fileRepo *repository.FileObjectRepository,
 	overrideRepo *repository.FileOverrideSetRepository,
@@ -168,14 +168,17 @@ func (s *NamespaceService) Delete(code, operator, clientIP string) error {
 	return nil
 }
 
-// guardDeletable 检查环境是否仍有在用数据：依次查实例 / zone 指派 / 配置 / 文件树 / 覆盖集，命中即返对应业务错误。
+// guardDeletable 检查环境是否仍有在用数据：依次查实例 / 区服归属 / 配置 / 文件树 / 覆盖集，命中即返对应业务错误。
 // 文件树（通道B）与覆盖集（FR-15）同属 namespace 维度的「配置数据」，未清空即硬删会留下孤儿行，
 // 之后同 code 重建环境会令其静默重新归属并下发，故一并纳入守卫（FR-53）。
+//
+// 「区服归属」一项读新真源 server.zone_id（v1 的 zone_assignment 表已退役、生产恒 0 行，
+// 继续读它会让本条守卫静默失效）；它与前一条的在线实例检查互补：实例离线后仍可能留有归属。
 func (s *NamespaceService) guardDeletable(code string) error {
 	if s.instances.CountByNamespace(code) > 0 {
 		return apperr.ErrNamespaceHasInstances
 	}
-	assignments, err := s.assignRepo.CountByNamespace(code)
+	assignments, err := s.assignRepo.CountAssignedByNamespace(code)
 	if err != nil {
 		return err
 	}

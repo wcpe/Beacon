@@ -38,6 +38,8 @@ func newNamespaceTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(
 		&model.Namespace{}, &model.AuditLog{}, &model.ZoneAssignment{}, &model.ConfigItem{},
 		&model.FileObject{}, &model.FileOverrideSet{}, &model.LobbyCluster{},
+		// 删除守卫的「区服归属」一项读新真源（server.zone_id），需迁移整条层级链路
+		&model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.Server{},
 	); err != nil {
 		t.Fatalf("迁移表结构失败: %v", err)
 	}
@@ -50,7 +52,7 @@ func newNamespaceService(db *gorm.DB, counter instanceCounter) *NamespaceService
 	return NewNamespaceService(
 		db,
 		repository.NewNamespaceRepository(db),
-		repository.NewZoneAssignmentRepository(db),
+		repository.NewServerPlacementRepository(db),
 		repository.NewConfigItemRepository(db, nil),
 		repository.NewFileObjectRepository(db),
 		repository.NewFileOverrideSetRepository(db),
@@ -67,6 +69,33 @@ func seedNamespace(t *testing.T, svc *NamespaceService, code, name string) {
 	t.Helper()
 	if _, err := svc.Create(code, name, "seed", "10.0.0.1"); err != nil {
 		t.Fatalf("预置环境 %q 应成功，实际 %v", code, err)
+	}
+}
+
+// seedServerZonePlacement 按新真源（server.zone_id）预置一条区服归属，供删除守卫②用例构造权威状态。
+// 旧 zone_assignment 表已退役、生产恒 0 行 —— 守卫继续读它等于静默失效，故用例必须种整条链路：
+// namespace → bc_cluster → region（大区 code）→ zone（小区 code）→ server.zone_id。
+func seedServerZonePlacement(t *testing.T, db *gorm.DB, nsCode, serverID string) {
+	t.Helper()
+	var ns model.Namespace
+	if err := db.Where("code = ?", nsCode).First(&ns).Error; err != nil {
+		t.Fatalf("取环境 %q 失败: %v", nsCode, err)
+	}
+	cluster := model.BCCluster{NamespaceID: ns.ID, Code: "bc1", Name: "bc1"}
+	if err := db.Create(&cluster).Error; err != nil {
+		t.Fatalf("建 BC 集群失败: %v", err)
+	}
+	region := model.Region{BCClusterID: cluster.ID, Code: "gA", Name: "gA"}
+	if err := db.Create(&region).Error; err != nil {
+		t.Fatalf("建大区失败: %v", err)
+	}
+	zone := model.Zone{RegionID: region.ID, Code: "z1", Name: "z1"}
+	if err := db.Create(&zone).Error; err != nil {
+		t.Fatalf("建小区失败: %v", err)
+	}
+	server := model.Server{NamespaceID: ns.ID, ServerID: serverID, Kind: model.ServerKindBackend, ZoneID: &zone.ID}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatalf("建 server 行（zone_id 归属）失败: %v", err)
 	}
 }
 
@@ -231,15 +260,12 @@ func TestNamespaceDeleteBlockedByInstances(t *testing.T) {
 	}
 }
 
-// TestNamespaceDeleteBlockedByAssignments 守卫②：该环境下有未软删 zone 指派则禁删（专门错误）。
+// TestNamespaceDeleteBlockedByAssignments 守卫②：该环境下仍有区服归属（新真源 server.zone_id）则禁删（专门错误）。
 func TestNamespaceDeleteBlockedByAssignments(t *testing.T) {
 	db := newNamespaceTestDB(t)
 	svc := newNamespaceService(db, emptyCounter())
 	seedNamespace(t, svc, "prod", "生产")
-	if _, err := repository.NewZoneAssignmentRepository(db).
-		Upsert("prod", "srv-1", "gA", "z1", ""); err != nil {
-		t.Fatalf("预置 zone 指派失败: %v", err)
-	}
+	seedServerZonePlacement(t, db, "prod", "srv-1")
 
 	err := svc.Delete("prod", "alice", "10.0.0.5")
 	if !errors.Is(err, apperr.ErrNamespaceHasAssignments) {
