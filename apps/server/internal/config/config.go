@@ -154,6 +154,9 @@ type AlertConfig struct {
 	InboxCapacity int `yaml:"inbox-capacity"`
 	// webhook 告警通道配置
 	Webhook WebhookConfig `yaml:"webhook"`
+	// 失联孤儿告警自动关闭阈值（小时）：实例既不在运行时注册表、也不在 server 表活动目录（生命周期非 active），
+	// 且其未处理告警的最近触发已超此时长，才由后台清理器自动消解。热改项首启种子（真源在设置 store，FR-61）
+	OrphanTimeoutHours int `yaml:"orphan-timeout-hours"`
 }
 
 // WebhookConfig 是 webhook 告警通道配置。
@@ -238,6 +241,8 @@ func Default() Config {
 		Alert: AlertConfig{
 			InboxCapacity: 200,
 			Webhook:       WebhookConfig{URL: "", TimeoutMs: 3000},
+			// 默认 24 小时：给「实例被外部删除后又被重新纳管」留出一个完整观察窗（FR-232 降噪）。
+			OrphanTimeoutHours: 24,
 		},
 		Metric: MetricConfig{
 			Enabled:           true,

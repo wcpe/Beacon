@@ -72,9 +72,10 @@ health:
   # 后台健康扫描周期（秒）。热改项首启种子
   scan-interval-sec: 5
 
-# 健康告警：实例进入 degraded/lost/offline 时主动告警，通道可扩展（站内信 + webhook，见 docs/adr/0019）
-# 注：webhook.url / webhook.timeout-ms 为热改项（首启种子，FR-61），改后走设置页 / 设置 API 即热生效、免重启；
-# inbox-capacity 是启动项（环形缓存容量，进程内固定）、改后须重启。
+# 健康告警：实例进入 lost/offline 时主动告警（degraded 属提示级、不单独告警，见 FR-28 真机降噪），
+# 通道可扩展（站内信 + webhook，见 docs/adr/0019）
+# 注：webhook.url / webhook.timeout-ms / orphan-timeout-hours 为热改项（首启种子，FR-61），改后走设置页 /
+# 设置 API 即热生效、免重启；inbox-capacity 是启动项（环形缓存容量，进程内固定）、改后须重启。
 alert:
   # 站内信保留的最近告警条数（进程内环形缓存，控制面重启清零）。启动项：改后须重启
   inbox-capacity: 200
@@ -84,6 +85,12 @@ alert:
     url: ""
     # 单次 webhook 请求超时（毫秒）。热改项首启种子
     timeout-ms: 3000
+  # 失联孤儿告警自动关闭阈值（小时），默认 24（即 1 天）、下界 1。热改项首启种子
+  # 含义：某实例既不在这台控制面的运行时注册表里、也不在 server 表的活动目录里（lifecycle 非 active，
+  # 即已被外部删除且控制面收不到删除信号），且它未处理的告警最近一次触发已超过此时长，才由后台清理器
+  # 自动标为「系统自动消解」（handled_by=system + 固定说明），避免压测实例用完即删后告警永久滞留。
+  # 安全红线：仍在 server 表活动目录（active）的真实实例，即使离线再久也绝不会被自动关闭。
+  orphan-timeout-hours: 24
 
 # 负载指标看板：按间隔对在线实例采样落库形成历史趋势，并按保留期清理过期样本（FR-32，见 docs/adr/0023）
 # 注：本段 enabled / sample-interval-sec / retention-hours 全为热改项（首启种子，FR-61），改后走设置页 /

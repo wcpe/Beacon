@@ -151,13 +151,16 @@ func (r *AlertEventRepository) HandleBatch(f AlertEventFilter, status, handledBy
 	return res.RowsAffected, nil
 }
 
-// FindUnresolvedByDedupKey 按收敛键查最近一条「未恢复」（status != resolved）告警（FR-232）。
+// FindUnresolvedByDedupKey 按收敛键 (namespace, server_id, type) 查最近一条「未恢复」（status != resolved）告警（FR-232）。
 // 命中则走合并计数；未命中（含已 resolved 的旧行）→ 视为该键当前无未恢复行，由调用方插新行。
-func (r *AlertEventRepository) FindUnresolvedByDedupKey(namespace, serverID, typ, toStatus string) (*model.AlertEvent, error) {
+// **收敛键刻意不含 to_status**：同一实例的一次健康恶化链（degraded → lost → offline）只留 1 行，
+// 中间阶段不再各开一行；行内 to_status 由 service.mergeOccurrence 按「只升不降」刷新为最严重态。
+// 该查询由复合索引 idx_alert_event_dedup_v2 = (server_id, namespace, type) 覆盖。
+func (r *AlertEventRepository) FindUnresolvedByDedupKey(namespace, serverID, typ string) (*model.AlertEvent, error) {
 	var e model.AlertEvent
 	err := r.db.
-		Where("namespace = ? AND server_id = ? AND type = ? AND to_status = ? AND status <> ?",
-			namespace, serverID, typ, toStatus, model.AlertEventStatusResolved).
+		Where("namespace = ? AND server_id = ? AND type = ? AND status <> ?",
+			namespace, serverID, typ, model.AlertEventStatusResolved).
 		Order("id DESC").First(&e).Error
 	if err != nil {
 		return nil, err
@@ -170,6 +173,24 @@ func (r *AlertEventRepository) FindUnresolvedByDedupKey(namespace, serverID, typ
 func (r *AlertEventRepository) AutoResolveByServer(namespace, serverID string, now time.Time, note string) (int64, error) {
 	res := r.db.Model(&model.AlertEvent{}).
 		Where("namespace = ? AND server_id = ? AND status <> ?", namespace, serverID, model.AlertEventStatusResolved).
+		Updates(map[string]any{
+			"status":      model.AlertEventStatusResolved,
+			"handled_by":  model.AutoResolveOperator,
+			"handled_at":  now,
+			"handle_note": note,
+		})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// AutoResolveByNamespace 把某环境（namespace code）下**全部**实例的未恢复告警批量置为 resolved（FR-232 环境归档 / 永久删除自动消解）：
+// 一条 UPDATE，仅影响 status != resolved 的行；handled_by 记 system、note 标明自动消解，使 UI 可区分人机处理。返回受影响行数。
+// namespace 入参是 namespace **code**（与 alert_event.namespace 列同源），不是主键 id。
+func (r *AlertEventRepository) AutoResolveByNamespace(namespace string, now time.Time, note string) (int64, error) {
+	res := r.db.Model(&model.AlertEvent{}).
+		Where("namespace = ? AND status <> ?", namespace, model.AlertEventStatusResolved).
 		Updates(map[string]any{
 			"status":      model.AlertEventStatusResolved,
 			"handled_by":  model.AutoResolveOperator,

@@ -13,6 +13,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 )
 
@@ -443,7 +444,7 @@ func TestResolveAlertRoleAndOverrideLevel(t *testing.T) {
 	}
 }
 
-// TestFR232ConvergenceAndAutoResolve 校验 FR-232：同键收敛计数、已处理不回退、取最高级、方向区分、恢复自动消解。
+// TestFR232ConvergenceAndAutoResolve 校验 FR-232：同键收敛计数、已处理不回退、取最高级、恶化链合并不分行、恢复自动消解。
 func TestFR232ConvergenceAndAutoResolve(t *testing.T) {
 	svc, db := newAlertEventService(t)
 	trigger := func(level, toStatus string) {
@@ -488,20 +489,24 @@ func TestFR232ConvergenceAndAutoResolve(t *testing.T) {
 		t.Fatalf("合并应取最高级 critical，实际 %q", one.Level)
 	}
 
-	// 不同方向（to_status）不合并：新增 offline 方向 → s1 变 2 行
+	// 方向更严重（lost → offline）不新开行：仍在同一行内升到最严重态，计数继续递增。
+	// 旧实现把 to_status 计入收敛键，这里会另开一行（恶化链被拆成多行刷屏）。
 	trigger(model.AlertLevelCritical, "offline")
 	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Find(&rows)
-	if len(rows) != 2 {
-		t.Fatalf("不同 to_status 应分别成行，实际 %d", len(rows))
+	if len(rows) != 1 {
+		t.Fatalf("方向恶化应并入同一行，实际 %d 行", len(rows))
+	}
+	if rows[0].ID != one.ID || rows[0].ToStatus != runtime.StatusOffline || rows[0].OccurrenceCount != 7 {
+		t.Fatalf("恶化应同行升向且计数递增，实际 %+v", rows[0])
 	}
 
-	// 恢复自动消解：两条未恢复行全部 resolved、handled_by=system
+	// 恢复自动消解：该实例只剩这 1 行未恢复告警
 	n, err := svc.AutoResolveAlerts("prod", "s1")
 	if err != nil {
 		t.Fatalf("自动消解失败: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("应消解 2 行，实际 %d", n)
+	if n != 1 {
+		t.Fatalf("应消解 1 行，实际 %d", n)
 	}
 	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Find(&rows)
 	for _, r := range rows {
@@ -513,8 +518,179 @@ func TestFR232ConvergenceAndAutoResolve(t *testing.T) {
 	// 消解后再触发同键 → 视为新事件，另起一行
 	trigger(model.AlertLevelWarning, "lost")
 	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Find(&rows)
-	if len(rows) != 3 {
+	if len(rows) != 2 {
 		t.Fatalf("已 resolved 后同键再触发应新起一行，实际 %d", len(rows))
+	}
+}
+
+// TestFR232HealthDeteriorationChainConvergesToOneRow 校验 FR-232 恶化链合并：同一实例的一次健康恶化
+// （degraded → lost → offline）只留 1 行——收敛键 (namespace, serverId, type) **不含方向**，中间阶段
+// 不再各开一行（prod 实测 10 台实例下线由此从 30 条降到 10 条）。合并取最严重：to_status 只升不降、
+// level 取最高、message 取最新，created_at 保持首发时间，occurrence_count 累计跳数。
+func TestFR232HealthDeteriorationChainConvergesToOneRow(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	chain := []struct{ toStatus, level, message string }{
+		{runtime.StatusDegraded, model.AlertLevelInfo, "s1 online → degraded"},
+		{runtime.StatusLost, model.AlertLevelWarning, "s1 degraded → lost"},
+		{runtime.StatusOffline, model.AlertLevelWarning, "s1 lost → offline"},
+	}
+	readRows := func() []model.AlertEvent {
+		t.Helper()
+		var rows []model.AlertEvent
+		db.Where("namespace = ? AND server_id = ?", "prod", "s1").Order("id").Find(&rows)
+		return rows
+	}
+
+	// 第一跳：degraded 起一条新行，记下 id 与首发时间作后续基准
+	if err := svc.Record(&model.AlertEvent{
+		Type: model.AlertEventTypeHealthTransition, Level: chain[0].level,
+		ToStatus: chain[0].toStatus, Namespace: "prod", ServerID: "s1", Message: chain[0].message,
+	}); err != nil {
+		t.Fatalf("触发 %s 失败: %v", chain[0].toStatus, err)
+	}
+	first := readRows()
+	if len(first) != 1 {
+		t.Fatalf("首发应 1 行，实际 %d", len(first))
+	}
+	if first[0].ToStatus != runtime.StatusDegraded || first[0].OccurrenceCount != 1 {
+		t.Fatalf("首发行应 to_status=degraded、计数 1，实际 %+v", first[0])
+	}
+
+	// 后续两跳：每跳后都断言仍只有 1 行——中间阶段各开一行正是本次要修掉的噪音来源
+	for i, stage := range chain[1:] {
+		if err := svc.Record(&model.AlertEvent{
+			Type: model.AlertEventTypeHealthTransition, Level: stage.level,
+			ToStatus: stage.toStatus, Namespace: "prod", ServerID: "s1", Message: stage.message,
+		}); err != nil {
+			t.Fatalf("触发 %s 失败: %v", stage.toStatus, err)
+		}
+		if rows := readRows(); len(rows) != 1 {
+			t.Fatalf("恶化链第 %d 跳后应收敛为 1 行，实际 %d 行", i+2, len(rows))
+		}
+	}
+
+	got := readRows()[0]
+	if got.ID != first[0].ID {
+		t.Fatalf("恶化链必须更新同一行：首发 id=%d，现在 id=%d", first[0].ID, got.ID)
+	}
+	if !got.CreatedAt.Equal(first[0].CreatedAt) {
+		t.Fatalf("created_at 应保持首发时间 %v，实际 %v", first[0].CreatedAt, got.CreatedAt)
+	}
+	if got.ToStatus != runtime.StatusOffline {
+		t.Fatalf("方向应取最严重态 offline，实际 %q", got.ToStatus)
+	}
+	if got.OccurrenceCount != 3 {
+		t.Fatalf("计数应累计 3 跳，实际 %d", got.OccurrenceCount)
+	}
+	if got.Level != model.AlertLevelWarning {
+		t.Fatalf("级别应取最高（warning > info），实际 %q", got.Level)
+	}
+	if got.Message != chain[2].message {
+		t.Fatalf("message 应取最新一跳，实际 %q", got.Message)
+	}
+	if got.Status != model.AlertEventStatusOpen {
+		t.Fatalf("未被处理时状态应保持 open，实际 %q", got.Status)
+	}
+}
+
+// TestFR232HealthStatusNeverDowngrades 方向只升不降：同一收敛行先到 offline，之后再来更轻的 lost
+// 不得把方向降回轻态（否则「该实例已下线」这一信号会被一次回光心跳抹掉）；级别与计数照常取最高 / 递增。
+func TestFR232HealthStatusNeverDowngrades(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	trigger := func(level, toStatus, message string) {
+		t.Helper()
+		if err := svc.Record(&model.AlertEvent{
+			Type: model.AlertEventTypeHealthTransition, Level: level,
+			ToStatus: toStatus, Namespace: "prod", ServerID: "s1", Message: message,
+		}); err != nil {
+			t.Fatalf("触发 %s 失败: %v", toStatus, err)
+		}
+	}
+	trigger(model.AlertLevelWarning, runtime.StatusOffline, "s1 lost → offline")
+	trigger(model.AlertLevelCritical, runtime.StatusLost, "s1 offline → lost")
+
+	var rows []model.AlertEvent
+	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Find(&rows)
+	if len(rows) != 1 {
+		t.Fatalf("同键应仍为 1 行，实际 %d", len(rows))
+	}
+	got := rows[0]
+	if got.ToStatus != runtime.StatusOffline {
+		t.Fatalf("方向不得回落：应保持 offline，实际 %q", got.ToStatus)
+	}
+	if got.Level != model.AlertLevelCritical {
+		t.Fatalf("级别与方向独立：应取最高 critical，实际 %q", got.Level)
+	}
+	if got.OccurrenceCount != 2 {
+		t.Fatalf("计数应递增为 2，实际 %d", got.OccurrenceCount)
+	}
+	// message 取最新一次触发（反映「此刻发生了什么」），故在方向不回落时它会与 to_status 不同步——
+	// 这是刻意取舍：行内 to_status 记最严重态供筛选 / 判级，message 记最近一跳供人读。
+	if got.Message != "s1 offline → lost" {
+		t.Fatalf("message 应取最新一跳，实际 %q", got.Message)
+	}
+}
+
+// TestFR232ConvergenceIsScopedPerServerAndType 收敛键的两个边界：不同实例、不同类型都不得互相合并
+// （合并逻辑一旦打宽，会把无关告警吞进同一行，比不收敛更危险）。
+func TestFR232ConvergenceIsScopedPerServerAndType(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	record := func(typ, serverID, toStatus, message string) {
+		t.Helper()
+		if err := svc.Record(&model.AlertEvent{
+			Type: typ, Level: model.AlertLevelWarning,
+			ToStatus: toStatus, Namespace: "prod", ServerID: serverID, Message: message,
+		}); err != nil {
+			t.Fatalf("触发失败: %v", err)
+		}
+	}
+	// 先落 s2 一行并快照，供后面断言「另一实例的行未被触碰」
+	record(model.AlertEventTypeHealthTransition, "s2", runtime.StatusLost, "s2 online → lost")
+	var s2Before model.AlertEvent
+	if err := db.Where("namespace = ? AND server_id = ?", "prod", "s2").First(&s2Before).Error; err != nil {
+		t.Fatalf("回读 s2 失败: %v", err)
+	}
+
+	// s1 连跳两跳 → 自己收敛成 1 行
+	record(model.AlertEventTypeHealthTransition, "s1", runtime.StatusDegraded, "s1 online → degraded")
+	record(model.AlertEventTypeHealthTransition, "s1", runtime.StatusOffline, "s1 degraded → offline")
+
+	// 另一实例的行一个字段都不该变（计数 / 方向 / 文案 / 状态）
+	var s2After model.AlertEvent
+	if err := db.First(&s2After, s2Before.ID).Error; err != nil {
+		t.Fatalf("回读 s2 失败: %v", err)
+	}
+	if s2After.OccurrenceCount != 1 || s2After.ToStatus != s2Before.ToStatus ||
+		s2After.Message != s2Before.Message || s2After.Status != s2Before.Status {
+		t.Fatalf("不同实例不得互相合并：s2 触发前 %+v，触发后 %+v", s2Before, s2After)
+	}
+	var total int64
+	db.Model(&model.AlertEvent{}).Count(&total)
+	if total != 2 {
+		t.Fatalf("应 s1 / s2 各 1 行，实际 %d 行", total)
+	}
+
+	// 不同类型不合并：s1 再来 identity-conflict → 与 health-transition 各成一行，且互不覆盖
+	record(model.AlertEventTypeIdentityConflict, "s1", "", "并发身份冲突：s1")
+	var s1Rows []model.AlertEvent
+	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Order("id").Find(&s1Rows)
+	if len(s1Rows) != 2 {
+		t.Fatalf("不同类型应各成一行，实际 %d 行", len(s1Rows))
+	}
+	health := s1Rows[0]
+	if health.Type != model.AlertEventTypeHealthTransition || health.ToStatus != runtime.StatusOffline || health.OccurrenceCount != 2 {
+		t.Fatalf("health 行不得被其它类型事件触碰，实际 %+v", health)
+	}
+	if s1Rows[1].Type != model.AlertEventTypeIdentityConflict || s1Rows[1].OccurrenceCount != 1 || s1Rows[1].ToStatus != "" {
+		t.Fatalf("identity-conflict 应自成一独立行，实际 %+v", s1Rows[1])
+	}
+	// 收敛当前**仅对 health-transition 生效**（既有实现边界，本次未扩大）：身份冲突重复触发仍各成一行，
+	// 因其每次都可能带着不同的 boot 冲突明细，合并会丢上下文。
+	record(model.AlertEventTypeIdentityConflict, "s1", "", "并发身份冲突：s1（再次检出）")
+	var conflictCount int64
+	db.Model(&model.AlertEvent{}).Where("type = ? AND server_id = ?", model.AlertEventTypeIdentityConflict, "s1").Count(&conflictCount)
+	if conflictCount != 2 {
+		t.Fatalf("身份冲突不参与收敛，应 2 行，实际 %d", conflictCount)
 	}
 }
 

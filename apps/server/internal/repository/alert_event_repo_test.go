@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -141,5 +142,123 @@ func TestAlertEventListPagination(t *testing.T) {
 	// 时间倒序 c,b,a → 第 2 页（size=1）为 b
 	if items[0].ServerID != "b" {
 		t.Fatalf("第 2 页应为 b，实际 %s", items[0].ServerID)
+	}
+}
+
+// TestAlertEventFindUnresolvedByDedupKey 收敛查询按 (namespace, server_id, type) 命中最近一条未恢复行，
+// **不看 to_status**（恶化链合并：degraded → lost → offline 是同一行的三个跳，不是三行）；
+// 只有 resolved 行时视为未命中（ErrRecordNotFound），由调用方插新行。
+func TestAlertEventFindUnresolvedByDedupKey(t *testing.T) {
+	r := newAlertEventTestDB(t)
+	mk := func(typ, ns, serverID, toStatus, status string) *model.AlertEvent {
+		t.Helper()
+		e := &model.AlertEvent{
+			Type: typ, Level: model.AlertLevelWarning, Namespace: ns, ServerID: serverID,
+			ToStatus: toStatus, Status: status, Message: "m", OccurrenceCount: 1,
+		}
+		if err := r.Create(e); err != nil {
+			t.Fatalf("落库失败: %v", err)
+		}
+		return e
+	}
+	mk(model.AlertEventTypeHealthTransition, "prod", "s1", "lost", model.AlertEventStatusOpen)
+	latest := mk(model.AlertEventTypeHealthTransition, "prod", "s1", "offline", model.AlertEventStatusAcknowledged)
+	otherServer := mk(model.AlertEventTypeHealthTransition, "prod", "s2", "lost", model.AlertEventStatusOpen)
+	otherType := mk(model.AlertEventTypeIdentityConflict, "prod", "s1", "", model.AlertEventStatusOpen)
+
+	got, err := r.FindUnresolvedByDedupKey("prod", "s1", model.AlertEventTypeHealthTransition)
+	if err != nil {
+		t.Fatalf("收敛查询失败: %v", err)
+	}
+	if got.ID != latest.ID {
+		t.Fatalf("应命中该键最近一条未恢复行 id=%d，实际 id=%d（方向不同的更早行 %d 也在同键内）",
+			latest.ID, got.ID, latest.ID-1)
+	}
+
+	// 边界：环境 / 实例 / 类型任一不同都不命中
+	for _, tc := range []struct{ ns, serverID, typ string }{
+		{"dev", "s1", model.AlertEventTypeHealthTransition},
+		{"prod", "s3", model.AlertEventTypeHealthTransition},
+		{"prod", "s1", model.AlertEventTypePublishFail},
+	} {
+		if _, err := r.FindUnresolvedByDedupKey(tc.ns, tc.serverID, tc.typ); !errors.Is(err, gorm.ErrRecordNotFound) {
+			t.Fatalf("(%s,%s,%s) 应未命中，实际 %v", tc.ns, tc.serverID, tc.typ, err)
+		}
+	}
+	// 其它实例 / 类型的行仍在（未被误合并或误消解）
+	var n int64
+	r.db.Model(&model.AlertEvent{}).Where("id IN ?", []uint{otherServer.ID, otherType.ID}).Count(&n)
+	if n != 2 {
+		t.Fatalf("其它实例 / 类型的行应保留，实际 %d 行", n)
+	}
+
+	// 该键全部 resolved 后 → 视为未命中，供调用方插新行
+	r.db.Model(&model.AlertEvent{}).Where("namespace = ? AND server_id = ?", "prod", "s1").
+		Update("status", model.AlertEventStatusResolved)
+	if _, err := r.FindUnresolvedByDedupKey("prod", "s1", model.AlertEventTypeHealthTransition); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("已 resolved 后应未命中，实际 %v", err)
+	}
+}
+
+// TestAlertEventAutoResolveByNamespace 环境级自动消解（FR-232 环境归档 / 永久删除触发点）：
+// 一条 UPDATE 关闭该环境**全部**未恢复行（含无实例的集群级行），且不越出 namespace 边界。
+func TestAlertEventAutoResolveByNamespace(t *testing.T) {
+	r := newAlertEventTestDB(t)
+	now := time.Date(2026, 6, 20, 8, 0, 0, 0, time.UTC)
+	mk := func(ns, serverID, status string) *model.AlertEvent {
+		t.Helper()
+		e := &model.AlertEvent{
+			Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning,
+			Namespace: ns, ServerID: serverID, Message: "m", Status: status,
+		}
+		if err := r.Create(e); err != nil {
+			t.Fatalf("落库失败: %v", err)
+		}
+		return e
+	}
+	open := mk("prod", "s1", model.AlertEventStatusOpen)
+	acknowledged := mk("prod", "s2", model.AlertEventStatusAcknowledged)
+	clusterLevel := mk("prod", "", model.AlertEventStatusOpen)
+	otherNamespace := mk("dev", "s1", model.AlertEventStatusOpen)
+	alreadyResolved := mk("prod", "s3", model.AlertEventStatusResolved)
+
+	const note = "环境已归档，自动消解"
+	n, err := r.AutoResolveByNamespace("prod", now, note)
+	if err != nil {
+		t.Fatalf("AutoResolveByNamespace 失败: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("应消解该环境 3 行未恢复告警（含集群级），实际 %d", n)
+	}
+	for _, want := range []*model.AlertEvent{open, acknowledged, clusterLevel} {
+		var got model.AlertEvent
+		if err := r.db.First(&got, want.ID).Error; err != nil {
+			t.Fatalf("回读告警 %d 失败: %v", want.ID, err)
+		}
+		if got.Status != model.AlertEventStatusResolved || got.HandledBy != model.AutoResolveOperator || got.HandledAt == nil || got.HandleNote != note {
+			t.Fatalf("告警 %d 应被自动消解（resolved / handled_by=system / note=%q），实际 %+v", want.ID, note, got)
+		}
+	}
+
+	// 防误伤：另一个环境的告警不得被关闭。
+	var untouched model.AlertEvent
+	if err := r.db.First(&untouched, otherNamespace.ID).Error; err != nil {
+		t.Fatalf("回读告警失败: %v", err)
+	}
+	if untouched.Status != model.AlertEventStatusOpen || untouched.HandledBy != "" || untouched.HandledAt != nil {
+		t.Fatalf("另一环境告警不应被触碰，实际 %+v", untouched)
+	}
+	// 已 resolved 行不参与 UPDATE（不得被重写处理痕迹）。
+	var kept model.AlertEvent
+	if err := r.db.First(&kept, alreadyResolved.ID).Error; err != nil {
+		t.Fatalf("回读告警失败: %v", err)
+	}
+	if kept.Status != model.AlertEventStatusResolved || kept.HandledBy != "" || kept.HandledAt != nil {
+		t.Fatalf("已 resolved 行不应被改写，实际 %+v", kept)
+	}
+
+	// 幂等：无未恢复行时 0 行受影响且不报错。
+	if again, err := r.AutoResolveByNamespace("prod", now.Add(time.Minute), note); err != nil || again != 0 {
+		t.Fatalf("重复执行应 0 行受影响且不报错，n=%d err=%v", again, err)
 	}
 }

@@ -8,7 +8,7 @@ FR-28（[ADR-0019](../adr/0019-health-alert-channel-abstraction.md)）的健康�
 
 ## 2. 需求（要什么）
 
-- 把既有告警事件（当前真实触发点：健康流转 degraded/lost/offline）**额外持久化**一条 `alert_event`，与 FR-28 通道并存。
+- 把既有告警事件（当前真实触发点：健康流转 `lost`/`offline`；`degraded` 属提示级、不单独告警，见 [health-grading-and-alerting](health-grading-and-alerting.md) §3.3）**额外持久化**一条 `alert_event`，与 FR-28 通道并存。
 - 新增只读列表端点，支持按 **类型 / 级别 / namespace / 时间范围** 过滤 + 分页（时间倒序）。
 - 管理台新增「事件」页（路由 `/alert-events`，侧栏导航）：信息流时间线 + 上述过滤。
 - 范围内：持久化既有告警事件 + 列表 + UI 信息流；可移植 GORM；落库失败不阻断告警 / 健康扫描。
@@ -44,7 +44,7 @@ FR-28（[ADR-0019](../adr/0019-health-alert-channel-abstraction.md)）的健康�
 
 ## 5. 验收标准
 
-- 实例进入异常态（degraded/lost/offline）后，`alert_event` 表落一条对应事件（type=health-transition、level 按状态），经 `GET /admin/v1/alert-events` 可查回。
+- 实例进入失联级异常态（`lost`/`offline`）后，`alert_event` 表落一条对应事件（type=health-transition、level 按状态），经 `GET /admin/v1/alert-events` 可查回。
 - 列表端点按 type / level / namespace / from / to 过滤 + 分页正确，时间倒序。
 - 落库失败仅 WARN、不阻断健康扫描与其它告警通道。
 - 真 MySQL 集成：建表（无方言）、落库、过滤、健康流转触发持久化全绿。
@@ -52,5 +52,5 @@ FR-28（[ADR-0019](../adr/0019-health-alert-channel-abstraction.md)）的健康�
 
 ## 6. 风险 / 待定
 
-- 保留期清理本期不做（事件稀疏、量级小）；将来量级需要时按 metric_sample 范式补清理后台（新 ADR / 增强 FR）。
+- 保留期清理（**已落地为归档域**）：`alert_event` 现登记为热冷归档域（见 [v2-hot-cold-archive.md](v2-hot-cold-archive.md) §3.1），保留期键 `archive.retention-days.alert-event`（默认 180 天，与 `audit` 同档：告警属运维处置留痕）。**约束：只归档 `status = 'resolved'` 的行**——未处理告警是运维待办，必须留在热库（该过滤由域注册表的 `extraWhere` 承载，见 v2-hot-cold-archive.md §3.1「附加行过滤」）。
 - 真机浏览器验证留「待真机浏览器验」。
