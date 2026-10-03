@@ -29,12 +29,14 @@ type MCPReadServices struct {
 	commands    *service.CommandObserveService
 	scheduling  *service.SchedDecisionQueryService
 	audits      *service.AuditService
+	// alertEvents 供告警事件只读列表（只走 List 查询，处理动作在 mcp_alert_tools.go 的写工具组）。
+	alertEvents *service.AlertEventService
 	scope       *service.ObservationScopeResolver
 }
 
 // NewMCPReadServices 构造 MCP 只读服务集合；仅允许调用方传入应用查询服务。
-func NewMCPReadServices(v2 *service.V2ControlPlaneService, topology *service.TopologyService, health *service.HealthQueryService, messages *service.MessageQueryService, connections *service.ConnQueryService, commands *service.CommandObserveService, scheduling *service.SchedDecisionQueryService, audits *service.AuditService, scope *service.ObservationScopeResolver) MCPReadServices {
-	return MCPReadServices{v2: v2, topology: topology, health: health, messages: messages, connections: connections, commands: commands, scheduling: scheduling, audits: audits, scope: scope}
+func NewMCPReadServices(v2 *service.V2ControlPlaneService, topology *service.TopologyService, health *service.HealthQueryService, messages *service.MessageQueryService, connections *service.ConnQueryService, commands *service.CommandObserveService, scheduling *service.SchedDecisionQueryService, audits *service.AuditService, alertEvents *service.AlertEventService, scope *service.ObservationScopeResolver) MCPReadServices {
+	return MCPReadServices{v2: v2, topology: topology, health: health, messages: messages, connections: connections, commands: commands, scheduling: scheduling, audits: audits, alertEvents: alertEvents, scope: scope}
 }
 
 type mcpPageInput struct {
@@ -127,6 +129,19 @@ type mcpAuditListInput struct {
 	TargetType string `json:"targetType,omitempty"`
 	From       string `json:"from,omitempty"`
 	To         string `json:"to,omitempty"`
+}
+
+type mcpAlertEventListInput struct {
+	mcpScopeInput
+	mcpPageInput
+	Namespace string `json:"namespace,omitempty"`
+	ServerID  string `json:"serverId,omitempty"`
+	Type      string `json:"type,omitempty"`
+	Level     string `json:"level,omitempty"`
+	// Status 非空时按处理状态过滤（open / acknowledged / resolved）。
+	Status string `json:"status,omitempty"`
+	From   string `json:"from,omitempty"`
+	To     string `json:"to,omitempty"`
 }
 
 // registerReadTools 登记 observer 与 automation 共用的显式只读工具。所有返回值在此投影，绝不透传敏感实体。
@@ -228,6 +243,19 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, mcpAuditHistoryView(items, total), nil
+		})
+	}
+	if r.reads.alertEvents != nil {
+		mcpAddTool(server, &mcp.Tool{Name: "beacon.alerts.events.list", Description: "分页读取告警事件摘要，不含结构化详情（detail）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAlertEventListInput) (*mcp.CallToolResult, map[string]any, error) {
+			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
+			if !ok {
+				return mcpRejectedResult()
+			}
+			items, total, err := r.reads.alertEvents.List(repository.AlertEventFilter{Namespace: in.Namespace, NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All, ServerID: in.ServerID, Type: in.Type, Level: in.Level, Status: in.Status, From: mcpParseTime(in.From), To: mcpParseTime(in.To), Page: in.Page, Size: in.PageSize})
+			if err != nil {
+				return mcpRejectedResult()
+			}
+			return &mcp.CallToolResult{}, mcpAlertEventHistoryView(items, total), nil
 		})
 	}
 }
@@ -519,4 +547,43 @@ func mcpAuditHistoryView(items []model.AuditLog, total int64) map[string]any {
 		views = append(views, map[string]any{"id": item.ID, "namespace": item.NamespaceCode, "operator": item.Operator, "action": item.Action, "targetType": item.TargetType, "targetRef": item.TargetRef, "result": item.Result, "createdAt": item.CreatedAt.UTC().Format(time.RFC3339)})
 	}
 	return map[string]any{"items": views, "total": total}
+}
+
+// mcpAlertEventHistoryView 投影告警事件摘要（处理状态 / 收敛计数 / 处理留痕 / 人工改级标记）。
+//
+// **绝不透传 detail 字段**：该列是结构化 json 文本，含状态前后与实例地址等敏感上下文——
+// 与审计 detail、消息 payload 同属「只给元数据、不给正文」的既有只读工具硬约束。
+// 人读摘要（message）与收敛计数足以支撑运维定位，无正文需求。
+func mcpAlertEventHistoryView(items []model.AlertEvent, total int64) map[string]any {
+	views := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		views = append(views, map[string]any{
+			"id": item.ID, "type": item.Type, "level": item.Level, "status": item.Status,
+			"serverId": item.ServerID, "namespace": item.Namespace, "message": item.Message,
+			"createdAt":        item.CreatedAt.UTC().Format(time.RFC3339),
+			"lastAt":           mcpNullableTime(item.LastAt),
+			"occurrenceCount":  item.OccurrenceCount,
+			"handledBy":        mcpNullableString(item.HandledBy),
+			"handledAt":        mcpNullableTime(item.HandledAt),
+			"handleNote":       mcpNullableString(item.HandleNote),
+			"severityOverride": mcpNullableString(item.SeverityOverride),
+		})
+	}
+	return map[string]any{"items": views, "total": total}
+}
+
+// mcpNullableString 把空串映射为 null（对齐契约 string | null）。
+func mcpNullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// mcpNullableTime 把 nil 映射为 null，其余按 RFC3339（UTC）输出（对齐契约 string | null）。
+func mcpNullableTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
 }

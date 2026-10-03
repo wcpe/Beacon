@@ -64,6 +64,9 @@ var mcpToolCatalog = []mcpToolSpec{
 	{Name: "beacon.history.commands.list", RiskLevel: MCPRiskLow},
 	{Name: "beacon.history.scheduling-decisions.list", RiskLevel: MCPRiskLow},
 	{Name: "beacon.audit.events.list", RiskLevel: MCPRiskLow},
+	// 告警事件摘要读取：只读、分页、按状态 / 级别 / 环境 / 实例 / 时间过滤，
+	// 且**不透传 detail**（该列含状态前后与地址上下文），故定 low。
+	{Name: "beacon.alerts.events.list", RiskLevel: MCPRiskLow},
 
 	// ── 审批自助：撤回自己提交的申请，仅影响自身 ──
 	{Name: "beacon.approvals.own.withdraw", RiskLevel: MCPRiskLow, AutomationOnly: true},
@@ -141,6 +144,16 @@ var mcpToolCatalog = []mcpToolSpec{
 
 	// ── Agent 命令 ──
 	{Name: "beacon.agent.server.resync", RiskLevel: MCPRiskHigh, AutomationOnly: true, OperationKind: "agent.command.resync"},
+
+	// ── 告警处置：直接执行 + 同事务写审计，无审批票据（OperationKind 留空）──
+	//
+	// 定级依据：告警处理是运维元数据的直接变更，与 HTTP 面
+	// `POST /admin/v1/alert-events/{id}/handle` 语义一致（管理台可直执）；批量路径单条 UPDATE、
+	// 只影响 status='open' 的行、与审计同事务，故幂等；单条状态可再改，属可逆。
+	// 因此不引入审批票据（OperationKind 留空）。但等级取 high 而非 low：关闭告警会隐藏故障信号、
+	// 改变生产可见的运维状态，与只读工具不可同档。
+	{Name: "beacon.alerts.events.handle", RiskLevel: MCPRiskHigh, AutomationOnly: true},
+	{Name: "beacon.alerts.events.batch-handle", RiskLevel: MCPRiskHigh, AutomationOnly: true},
 
 	// ── 系统：控制面自更新与高影响设置 ──
 	{Name: "beacon.system.update.apply", RiskLevel: MCPRiskCritical, AutomationOnly: true, OperationKind: "system.update.apply"},
