@@ -63,8 +63,8 @@ func TestAgentRESTFlow(t *testing.T) {
 		t.Fatalf("发现应返回 1 个在线实例，实际 %v", disc["instances"])
 	}
 
-	// 指派 zone 后重新注册 → 回填 zoneA、assigned true
-	assignZoneForTest(t, ts, "prod", "lobby-1", "area1", "zoneA", "集成测试指派")
+	// 落新真源归属（server.zone_id）后重新注册 → 回填 zoneA、assigned true
+	seedServerZoneForTest(t, ts, "prod", "lobby-1", "area1", "zoneA")
 	code, re := doJSON(t, http.MethodPost, reg, map[string]any{
 		"namespace": "prod", "serverId": "lobby-1", "address": "10.0.0.1:25565"})
 	if code != http.StatusOK || re["resolvedZone"] != "zoneA" || re["assigned"] != true {

@@ -69,7 +69,7 @@ type RecoverySink interface {
 type InstanceService struct {
 	db                   *gorm.DB
 	registry             *runtime.Registry
-	assignRepo           *repository.ZoneAssignmentRepository
+	placementRepo        *repository.ServerPlacementRepository
 	offlineRepo          *repository.ServerOfflineRepository
 	auditRepo            *repository.AuditLogRepository
 	heartbeatInterval    time.Duration
@@ -83,10 +83,10 @@ type InstanceService struct {
 	machineRegisterAllowed bool
 }
 
-// NewInstanceService 构造服务。
-func NewInstanceService(db *gorm.DB, registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository, offlineRepo *repository.ServerOfflineRepository, auditRepo *repository.AuditLogRepository, heartbeatInterval, ttl time.Duration) *InstanceService {
+// NewInstanceService 构造服务。placementRepo 读新真源 server.zone_id（旧 zone_assignment 已退役）。
+func NewInstanceService(db *gorm.DB, registry *runtime.Registry, placementRepo *repository.ServerPlacementRepository, offlineRepo *repository.ServerOfflineRepository, auditRepo *repository.AuditLogRepository, heartbeatInterval, ttl time.Duration) *InstanceService {
 	return &InstanceService{
-		db: db, registry: registry, assignRepo: assignRepo, offlineRepo: offlineRepo, auditRepo: auditRepo,
+		db: db, registry: registry, placementRepo: placementRepo, offlineRepo: offlineRepo, auditRepo: auditRepo,
 		heartbeatInterval: heartbeatInterval, ttl: ttl,
 	}
 }
@@ -158,7 +158,7 @@ func (s *InstanceService) notifyTopology(ns string) {
 	}
 }
 
-// Register 注册实例：按 zone_assignment 解析回填 (group, zone)，写内存注册表，记审计。
+// Register 注册实例：按新真源 server.zone_id 解析回填 (group, zone)，写内存注册表，记审计。
 // 受信内部调用方（FR-222 机器注册通道）的注册额外直落 active 身份并绑定 serverId，见 machineRegisterIfTrusted。
 func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 	if p.Namespace == "" || p.ServerID == "" {
@@ -184,13 +184,15 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 		s.audit(p.Namespace, model.ActionInstanceRegister, p.ServerID, "agent", model.ResultFail, p.ClientIP)
 		return nil, apperr.ErrInstanceOfflineRejected
 	}
+	// 归属解析（新真源 server.zone_id）：有归属则 Assigned=true 并回填权威大区/小区，
+	// 无归属（未分配 / 仅分到 BC 集群 / 仅入大厅）退回 agent 提示的 GroupHint 且 zone 为空。
 	group, zone, assigned := p.GroupHint, "", false
-	assign, err := s.assignRepo.FindByServer(p.Namespace, p.ServerID)
+	placement, err := s.placementRepo.FindByServer(p.Namespace, p.ServerID)
 	if err != nil {
 		return nil, err
 	}
-	if assign != nil {
-		group, zone, assigned = assign.GroupCode, assign.ZoneCode, true
+	if placement != nil {
+		group, zone, assigned = placement.GroupCode, placement.ZoneCode, true
 	}
 
 	inst := &runtime.Instance{

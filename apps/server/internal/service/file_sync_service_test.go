@@ -460,7 +460,7 @@ func newFileSyncTestService(t *testing.T) (*FileSyncService, *gorm.DB, *runtime.
 	}
 	reg := runtime.NewRegistry()
 	auditRepo := repository.NewAuditLogRepository(db)
-	instSvc := NewInstanceService(db, reg, repository.NewZoneAssignmentRepository(db),
+	instSvc := NewInstanceService(db, reg, repository.NewServerPlacementRepository(db),
 		repository.NewServerOfflineRepository(db), auditRepo, 10*time.Second, 30*time.Second)
 	cmdRepo := repository.NewAgentCommandRepository(db)
 	svc := NewFileSyncService(db, repository.NewFileSyncRepository(db), instSvc, auditRepo, NewFileSyncEventHub())

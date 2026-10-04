@@ -16,14 +16,13 @@ import (
 )
 
 // TestZoneReassignEffectiveRecompute 集成验证：改派后有效配置重算正确。
+// 归属走新真源 server.zone_id（旧 zone_assignment 已退役），改派 = 把 zone_id 改指另一小区。
 func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	db := testDB(t)
 	cr := repository.NewConfigItemRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
-	asg := repository.NewZoneAssignmentRepository(db)
 	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
-	eff := service.NewEffectiveService(cr, asg, nil, nil, nil)
-	zone := service.NewZoneService(db, asg, ar, runtime.NewRegistry())
+	eff := service.NewEffectiveService(cr, repository.NewServerPlacementRepository(db), nil, nil, nil)
 
 	create := func(group, scope, target, content string) {
 		if _, err := cfg.Create(service.CreateConfigParams{
@@ -47,19 +46,15 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 		return parsed.(map[string]any)["zoneval"].(string), res.MD5
 	}
 
-	// 指派 zoneA → 含 A
-	if _, err := service.AssignZoneForIntegrationTest(zone, "prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
-		t.Fatalf("指派失败: %v", err)
-	}
+	// 落区 zoneA → 含 A
+	seedServerZonePlacement(t, db, "prod", "lobby-1", "area1", "zoneA")
 	valA, md5A := zoneval("lobby-1")
 	if valA != "A" {
-		t.Fatalf("指派 zoneA 后应解析出 A，实际 %s", valA)
+		t.Fatalf("落区 zoneA 后应解析出 A，实际 %s", valA)
 	}
 
 	// 改派 zoneB → 重算为 B，且整体 md5 变化
-	if _, err := service.AssignZoneForIntegrationTest(zone, "prod", "lobby-1", "area1", "zoneB", "admin", "", ""); err != nil {
-		t.Fatalf("改派失败: %v", err)
-	}
+	seedServerZonePlacement(t, db, "prod", "lobby-1", "area1", "zoneB")
 	valB, md5B := zoneval("lobby-1")
 	if valB != "B" {
 		t.Fatalf("改派 zoneB 后应重算为 B，实际 %s", valB)

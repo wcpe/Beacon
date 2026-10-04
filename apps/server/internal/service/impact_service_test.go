@@ -13,8 +13,8 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
 
-// newImpactTestStack 装配影响面预览测试栈（内存 sqlite 存 zone_assignment + 共享注册表），不依赖 MySQL。
-func newImpactTestStack(t *testing.T) (*ImpactService, *runtime.Registry, *repository.ZoneAssignmentRepository) {
+// newImpactTestStack 装配影响面预览测试栈（内存 sqlite 存归属真源 server.zone_id + 共享注册表），不依赖 MySQL。
+func newImpactTestStack(t *testing.T) (*ImpactService, *runtime.Registry, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -22,7 +22,7 @@ func newImpactTestStack(t *testing.T) (*ImpactService, *runtime.Registry, *repos
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.ZoneAssignment{}); err != nil {
+	if err := db.AutoMigrate(&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.Server{}, &model.ServerTag{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -30,12 +30,14 @@ func newImpactTestStack(t *testing.T) (*ImpactService, *runtime.Registry, *repos
 			_ = sqlDB.Close()
 		}
 	})
-	if err := db.Exec("DELETE FROM zone_assignment").Error; err != nil {
-		t.Fatalf("清表失败: %v", err)
+	// 归属真源改为 server.zone_id 后，测试栈必须自备区服结构表；逐表清空避免共享内存库的残留串台。
+	for _, table := range []string{"server", "zone", "region", "bc_cluster", "server_tag", "namespace"} {
+		if err := db.Exec("DELETE FROM " + table).Error; err != nil {
+			t.Fatalf("清表 %s 失败: %v", table, err)
+		}
 	}
-	assignRepo := repository.NewZoneAssignmentRepository(db)
 	reg := runtime.NewRegistry()
-	return NewImpactService(reg, assignRepo), reg, assignRepo
+	return NewImpactService(reg, repository.NewServerPlacementRepository(db)), reg, db
 }
 
 // regInstance 注册一个在线实例（指定角色无关，仅看归属与状态）。
@@ -93,7 +95,7 @@ func TestImpactExcludesArchivedServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.ZoneAssignment{}); err != nil {
+	if err := db.AutoMigrate(&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.Server{}, &model.ServerTag{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -114,7 +116,7 @@ func TestImpactExcludesArchivedServers(t *testing.T) {
 	reg := runtime.NewRegistry()
 	regImpactInst(t, reg, "prod", "active", "g1")
 	regImpactInst(t, reg, "prod", "archived", "g1")
-	svc := NewImpactService(reg, repository.NewZoneAssignmentRepository(db), db)
+	svc := NewImpactService(reg, repository.NewServerPlacementRepository(db), db)
 	imp, err := svc.Resolve("prod", model.ScopeGlobal, "", "")
 	if err != nil || imp.Total != 1 || len(imp.Affected) != 1 || imp.Affected[0] != "active" {
 		t.Fatalf("影响面应仅包含 active，实际 total=%d affected=%v err=%v", imp.Total, imp.Affected, err)
@@ -123,13 +125,11 @@ func TestImpactExcludesArchivedServers(t *testing.T) {
 
 // TestImpactGroupByAssignment group 层按 DB 归属解析大区命中。
 func TestImpactGroupByAssignment(t *testing.T) {
-	svc, reg, assignRepo := newImpactTestStack(t)
-	regImpactInst(t, reg, "prod", "s1", "hintX") // 已指派 → 用 DB 大区 g1
-	regImpactInst(t, reg, "prod", "s2", "g1")    // 未指派 → 回退 GroupHint=g1
-	regImpactInst(t, reg, "prod", "s3", "g2")    // 未指派 → GroupHint=g2，不中
-	if _, err := assignRepo.Upsert("prod", "s1", "g1", "z1", ""); err != nil {
-		t.Fatalf("指派失败: %v", err)
-	}
+	svc, reg, db := newImpactTestStack(t)
+	regImpactInst(t, reg, "prod", "s1", "hintX") // 已有归属 → 用 DB 大区 g1
+	regImpactInst(t, reg, "prod", "s2", "g1")    // 无归属 → 回退 GroupHint=g1
+	regImpactInst(t, reg, "prod", "s3", "g2")    // 无归属 → GroupHint=g2，不中
+	seedServerPlacement(t, db, "prod", "s1", "g1", "z1")
 
 	imp, err := svc.Resolve("prod", model.ScopeGroup, "g1", "")
 	if err != nil {
@@ -140,15 +140,15 @@ func TestImpactGroupByAssignment(t *testing.T) {
 	}
 }
 
-// TestImpactZone zone 层须大区+小区都匹配（归属来自 DB）。
+// TestImpactZone zone 层须大区+小区都匹配（归属来自 DB 新真源 server.zone_id）。
 func TestImpactZone(t *testing.T) {
-	svc, reg, assignRepo := newImpactTestStack(t)
+	svc, reg, db := newImpactTestStack(t)
 	regImpactInst(t, reg, "prod", "s1", "g1")
 	regImpactInst(t, reg, "prod", "s2", "g1")
 	regImpactInst(t, reg, "prod", "s3", "g1")
-	mustAssign(t, assignRepo, "prod", "s1", "g1", "z1")
-	mustAssign(t, assignRepo, "prod", "s2", "g1", "z2") // 小区不同
-	mustAssign(t, assignRepo, "prod", "s3", "g1", "z1")
+	mustAssign(t, db, "prod", "s1", "g1", "z1")
+	mustAssign(t, db, "prod", "s2", "g1", "z2") // 小区不同
+	mustAssign(t, db, "prod", "s3", "g1", "z1")
 
 	imp, err := svc.Resolve("prod", model.ScopeZone, "g1", "z1")
 	if err != nil {
@@ -201,9 +201,8 @@ func TestImpactDegradedCountedLostExcluded(t *testing.T) {
 	}
 }
 
-func mustAssign(t *testing.T, repo *repository.ZoneAssignmentRepository, ns, serverID, group, zone string) {
+// mustAssign 按新真源（server.zone_id）落一条归属，供影响面用例驱动 DB 权威归属。
+func mustAssign(t *testing.T, db *gorm.DB, ns, serverID, group, zone string) {
 	t.Helper()
-	if _, err := repo.Upsert(ns, serverID, group, zone, ""); err != nil {
-		t.Fatalf("指派 %s 失败: %v", serverID, err)
-	}
+	seedServerPlacement(t, db, ns, serverID, group, zone)
 }

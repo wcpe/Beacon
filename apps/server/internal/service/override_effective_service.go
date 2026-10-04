@@ -26,32 +26,33 @@ type EffectiveOverride struct {
 // OverrideEffectiveService 按 agent 身份解析适用覆盖集（FR-15 投递）+ override 长轮询挂起。
 // 复用文件长轮询的 Hub（override 投递与文件树同属通道B，唤醒集合共用 fileHub）。
 type OverrideEffectiveService struct {
-	setRepo    *repository.FileOverrideSetRepository
-	fileRepo   *repository.FileObjectRepository
-	assignRepo *repository.ZoneAssignmentRepository
-	hub        *longpoll.Hub
+	setRepo       *repository.FileOverrideSetRepository
+	fileRepo      *repository.FileObjectRepository
+	placementRepo *repository.ServerPlacementRepository
+	hub           *longpoll.Hub
 }
 
 // NewOverrideEffectiveService 构造服务。hub 仅长轮询用，纯解析场景可传 nil。
+// placementRepo 读新真源 server.zone_id（旧 zone_assignment 已退役，见 assignment_repo.go）。
 func NewOverrideEffectiveService(
 	setRepo *repository.FileOverrideSetRepository,
 	fileRepo *repository.FileObjectRepository,
-	assignRepo *repository.ZoneAssignmentRepository,
+	placementRepo *repository.ServerPlacementRepository,
 	hub *longpoll.Hub,
 ) *OverrideEffectiveService {
-	return &OverrideEffectiveService{setRepo: setRepo, fileRepo: fileRepo, assignRepo: assignRepo, hub: hub}
+	return &OverrideEffectiveService{setRepo: setRepo, fileRepo: fileRepo, placementRepo: placementRepo, hub: hub}
 }
 
 // Resolve 解析某 (namespace, serverId) 适用的覆盖集：
-// 先按 zone_assignment 得 (group, zone)，未分配则 group=groupHint、zone 为空；再拉四层候选整集覆盖。
+// 先按新真源 server.zone_id 得 (group, zone)，无归属则 group=groupHint、zone 为空；再拉四层候选整集覆盖。
 func (s *OverrideEffectiveService) Resolve(ns, serverID, groupHint string) (EffectiveOverride, error) {
 	group, zone := groupHint, ""
-	assign, err := s.assignRepo.FindByServer(ns, serverID)
+	placement, err := s.placementRepo.FindByServer(ns, serverID)
 	if err != nil {
 		return EffectiveOverride{}, err
 	}
-	if assign != nil {
-		group, zone = assign.GroupCode, assign.ZoneCode
+	if placement != nil {
+		group, zone = placement.GroupCode, placement.ZoneCode
 	}
 	candidates, err := s.setRepo.FindEffectiveSets(ns, group, zone, serverID)
 	if err != nil {
@@ -84,12 +85,12 @@ func (s *OverrideEffectiveService) Resolve(ns, serverID, groupHint string) (Effe
 // agent 只用 setName + 相对 path，不接触内部 setID；不存在返回 (nil, nil)。
 func (s *OverrideEffectiveService) MemberContent(ns, serverID, groupHint, setName, path string) (*filetree.EffectiveFile, error) {
 	group, zone := groupHint, ""
-	assign, err := s.assignRepo.FindByServer(ns, serverID)
+	placement, err := s.placementRepo.FindByServer(ns, serverID)
 	if err != nil {
 		return nil, err
 	}
-	if assign != nil {
-		group, zone = assign.GroupCode, assign.ZoneCode
+	if placement != nil {
+		group, zone = placement.GroupCode, placement.ZoneCode
 	}
 	candidates, err := s.setRepo.FindEffectiveSets(ns, group, zone, serverID)
 	if err != nil {

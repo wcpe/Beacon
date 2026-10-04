@@ -14,8 +14,8 @@ func TestSchedulingRESTFlow(t *testing.T) {
 	drainURL := ts.URL + "/admin/v1/scheduling/drains"
 	placeURL := ts.URL + "/admin/v1/scheduling/placement"
 
-	// 先指派 zone（DB 权威），再注册实例 → 注册时解析出 ResolvedZone=zoneA，成为落位候选
-	assignZoneForTest(t, ts, "prod", "sched-1", "area1", "zoneA", "集成测试指派")
+	// 先落新真源归属（server.zone_id），再注册实例 → 注册时解析出 ResolvedZone=zoneA，成为落位候选
+	seedServerZoneForTest(t, ts, "prod", "sched-1", "area1", "zoneA")
 	code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/register", map[string]any{
 		"namespace": "prod", "serverId": "sched-1", "role": "bukkit", "group": "area1", "address": "10.0.0.8:25565",
 	})

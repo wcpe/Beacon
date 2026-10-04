@@ -17,7 +17,7 @@
   - agent `config.yml` 的 `identity` 段（含中文注释，提示 zone 由控制面指派、勿在此配）；
   - run 脚本的 env 片段（`BEACON_AGENT_IDENTITY_NAMESPACE/SERVER_ID/GROUP_HINT/ADDRESS`，FR-41 覆盖）。
   - 复制按钮用既有 `navigator.clipboard` 范式 + 成功 / 失败提示。
-- 可选「预建 zone 指派」：在向导内填目标小区（zone），调既有 `PUT /admin/v1/zones/assignments`（`assignZone`）预先把 serverId 指派进 (group, zone)，使新服一上线即归属正确小区、不经「未分配」中间态。
+- 可选「预建 zone 指派」：在向导内填目标小区（zone），经**第二版分配端点** `POST /admin/v2/server-assignments`（v1 的 `PUT /admin/v1/zones/assignments` 已迁移、恒 410 `zone_assignment_migrated`）预先把 serverId 指派进 (group, zone)，使新服一上线即归属正确小区、不经「未分配」中间态。
   - 仅 bukkit 角色可预建指派（与后端校验一致：BC 代理不进 zone 指派，FR-8/FR-35/FR-71）。
   - 留空 zone 则跳过指派，仅给出配置片段。
 - 范围内：纯前端向导 + 复用既有端点（查重 `listInstances`、指派 `assignZone`、环境下拉 `listNamespaces`）。

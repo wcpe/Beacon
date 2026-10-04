@@ -1,6 +1,13 @@
 # 功能规格：agent-api 玩家位置名册只读查询
 
-> 状态：草拟　·　关联 PRD：FR-31　·　决策：[ADR-0022](../adr/0022-agent-roster-read-api.md)（扩展 [ADR-0016](../adr/0016-agent-cross-server-messaging-middleware.md) 决策 5）　·　分支：feature/agent-roster-read-api
+> 状态：**已实现（v2 方案）**　·　关联 PRD：FR-31　·　决策：[ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 决策 4（取代 ADR-0022 与 ADR-0016 的 Redis 名册方案）
+>
+> **v2 实现（本规格的有效设计，取代下文第 2、3 节的 Redis 路径）**：名册权威在**控制面**（依连接明细在内存维护玩家位置快照），agent 侧改为经 HTTP 读取：
+>
+> - **控制面端点**：`GET /beacon/v2/agent/player-roster`，挂 agent 面鉴权中间件（`X-Beacon-Token` / `X-Beacon-Identity` / `X-Beacon-Boot`）；返回 `{namespace, count, players: {玩家名 → serverId}}`。**按鉴权身份过滤、只返回调用方所属 namespace 的玩家**——namespace 是强隔离边界，归属取自已鉴权身份、**不信任任何请求参数**；空名册返回 `players: {}`（非 null、非 404）。
+> - **agent 侧**：`agent-core` 的 `BeaconApiClient.playerRoster()` 取数；`agent-adapters` 的 `HttpRosterDirectory` 实现 `RosterDirectory` 端口（不可用 / 异常一律降级返空 Map、绝不抛）；两个平台壳层在**注册成功后**经 `RosterDirectoryHolder.set(...)` 注入、停止或身份撤销时 `reset()`。**Bukkit 与 Bungee 都装配**（业务插件两个平台都可能调用）。
+> - **zone 过滤在 agent 侧本地做**：`DiscoveryView.rosterInZone()` 用控制面权威的 zone→serverId 集合与名册求交（名册本身不携带 zone，沿用原设计取舍）。
+> - **历史说明**：下文第 2、3 节描述的是**原 Redis 方案**（agent 侧直读 `HGETALL beacon:player-loc`，且要求控制面零改动），其前提已被 ADR-0063 决策 4 取代，**仅作历史记录，不再是实现依据**。
 
 ## 1. 背景与目标
 

@@ -10,6 +10,19 @@ import (
 )
 
 // ZoneAssignmentRepository 提供 zone_assignment 表的数据访问。
+//
+// 【已退役 · 仅历史数据与 Legacy 兼容读，新写入请勿再用】
+//
+// 实例区服归属的唯一真源是 server 表的 zone_id / bc_cluster_id / lobby_cluster_id（见 model.Server，
+// 经 v2 分配路径 applyAssignment 写入，POST /admin/v2/server-assignments）。
+//
+// 本仓库访问的 zone_assignment 表仅由 v1 旧写路径（service/zone_service.go 的 applyAssignInTx，
+// 其对外入口 ZoneService.Assign 已恒返回 FORBIDDEN）写入，生产上恒 0 行。任何读取方读本表都会把
+// 全部实例解析成「未分配」，故读方已在本次迁移全部改读 ServerPlacementRepository；新代码要读归属
+// 请一律使用 ServerPlacementRepository.FindByServer。
+//
+// 保留本仓库的目的仅为：历史数据留存、Legacy 兼容读（zone_service.go 的只读汇总 / 审批回显）
+// 与测试构造。禁止新增调用方，禁止在此新增写方法。
 type ZoneAssignmentRepository struct {
 	db *gorm.DB
 }
@@ -25,6 +38,9 @@ func (r *ZoneAssignmentRepository) WithTx(tx *gorm.DB) *ZoneAssignmentRepository
 }
 
 // FindByServer 解析某 serverId 在某环境的未软删归属；未指派返回 (nil, nil)。
+//
+// 【已退役】读方请改用 ServerPlacementRepository.FindByServer（读 server 表真源）。
+// 本方法在生产上恒返回 (nil, nil)（表恒 0 行），仅保留供 Legacy 兼容读与测试。
 func (r *ZoneAssignmentRepository) FindByServer(ns, serverID string) (*model.ZoneAssignment, error) {
 	var a model.ZoneAssignment
 	err := r.db.Where("namespace_code = ? AND server_id = ? AND deleted_at = ?",
@@ -39,6 +55,9 @@ func (r *ZoneAssignmentRepository) FindByServer(ns, serverID string) (*model.Zon
 }
 
 // Upsert 新增或改派某 serverId 的归属（按 (ns, serverId) 唯一）。
+//
+// 【已退役 · 新写入请勿再用】改派归属请走 v2 路径（V2ControlPlaneService.applyAssignment 写
+// server.zone_id / bc_cluster_id）。本方法只被 v1 旧路径调用，生产上无调用方。
 func (r *ZoneAssignmentRepository) Upsert(ns, serverID, group, zone, note string) (*model.ZoneAssignment, error) {
 	existing, err := r.FindByServer(ns, serverID)
 	if err != nil {

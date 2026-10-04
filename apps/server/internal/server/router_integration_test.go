@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,10 +18,13 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/handler"
 	"github.com/wcpe/Beacon/apps/server/internal/metrics"
+	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
@@ -51,9 +55,11 @@ var testAlertInbox *alert.InboxAlerter
 var testHealthViews *healthview.Store
 
 // integrationTestServer 保存测试路由及其审批执行器，供危险操作走完整审批链路。
+// db 暴露测试库句柄，供用例直接落新真源（server.zone_id）归属状态。
 type integrationTestServer struct {
 	*httptest.Server
 	approval *service.ApprovalService
+	db       *gorm.DB
 }
 
 // newTestServer 装配真实路由与 DB-backed 服务（不启用 agent token）；未设 BEACON_TEST_DSN 则跳过。
@@ -84,6 +90,8 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	}
 	auditRepo := repository.NewAuditLogRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
+	// 实例注册回填与配置生效解析读新真源 server.zone_id（旧 zone_assignment 已退役）
+	placementRepo := repository.NewServerPlacementRepository(db)
 	configRepo := repository.NewConfigItemRepository(db, cipher)
 	fileRepo := repository.NewFileObjectRepository(db)
 	registry := runtime.NewRegistry()
@@ -96,17 +104,17 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	cfgSvc.SetPendingChangeCipher(cipher)
 	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
 	fileSvc.SetPendingChangeCipher(cipher)
-	instSvc := service.NewInstanceService(db, registry, assignRepo, repository.NewServerOfflineRepository(db), auditRepo, 10*time.Second, 30*time.Second)
+	instSvc := service.NewInstanceService(db, registry, placementRepo, repository.NewServerOfflineRepository(db), auditRepo, 10*time.Second, 30*time.Second)
 	// 机器注册通道（FR-222）：默认关闭；显式开启时受信内部调用方（共享 token）的注册直落 active。
 	instSvc.SetMachineRegisterAllowed(allowMachineRegister)
 	zoneSvc := service.NewZoneService(db, assignRepo, auditRepo, registry)
 	grayRepo := repository.NewConfigGrayRepository(db, cipher)
-	effSvc := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
+	effSvc := service.NewEffectiveService(configRepo, placementRepo, grayRepo, revRepo, hub)
 	graySvc := service.NewConfigGrayService(db, cfgSvc, configRepo, grayRepo, auditRepo)
 	cfgSvc.SetGrayService(graySvc)
-	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
+	fileEffSvc := service.NewFileEffectiveService(fileRepo, placementRepo, fileHub)
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
-	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
+	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, placementRepo, fileHub)
 	ovrSetSvc := service.NewOverrideSetService(db, overrideSetRepo, repository.NewFileOverrideSetRevisionRepository(db), fileRepo, auditRepo)
 	ovrSetSvc.SetPendingChangeCipher(cipher)
 	schedSvc := service.NewSchedulingService(db, repository.NewServerDrainRepository(db), auditRepo, registry)
@@ -114,7 +122,7 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	apiKeySvc.SetCredentialCipher(cipher)
 	testAlertInbox = alert.NewInboxAlerter(16)
 	commandHub := longpoll.NewHub()
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, assignRepo)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, placementRepo)
 	metricsSet := metrics.New(registry)
 	notifier.SetMetrics(metricsSet)
 	cfgSvc.SetNotifier(notifier)
@@ -211,7 +219,7 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 		V2:               v2Handler,
 		V2Metrics:        v2MetricsHandler,
 		V2Assets:         handler.NewV2AssetsHandler(assetSvc),
-		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc, service.NewImpactService(registry, assignRepo, db)),
+		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc, service.NewImpactService(registry, placementRepo, db)),
 		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, settingsSvc),
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),
 		Agent:            handler.NewAgentHandler(instSvc, effSvc, settingsSvc),
@@ -239,7 +247,7 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	}, agentToken, authn, apiKeySvc, auditRepo)
 	ts := httptest.NewServer(router)
 	adminToken = loginForToken(t, ts.URL)
-	return &integrationTestServer{Server: ts, approval: approvalSvc}
+	return &integrationTestServer{Server: ts, approval: approvalSvc, db: db}
 }
 
 // approveAndRun 以另一位 human/full 审批人完成申请，再同步驱动一次 worker。
@@ -364,39 +372,104 @@ func compactIdempotencyKey(key string) string {
 	return "it-" + hex.EncodeToString(sum[:16])
 }
 
-// assignZoneForTest 让旧 V1 指派兼容路由也覆盖申请、审批和执行三段链路。
-func assignZoneForTest(t *testing.T, ts *integrationTestServer, namespace, serverID, group, zone, note string) {
+// seedServerZoneForTest 按新真源落区服归属：建/取 namespace → bc_cluster → region（大区 code）→ zone
+// （小区 code），并把该 server 行的 zone_id 指过去（server 行不存在则按 backend 新建）。
+// 旧 zone_assignment 已退役（生产恒 0 行），V1 指派写接口已迁移为 410，故需要「归属驱动读取」
+// 或「归属驱动写入」的用例必须直接落新真源（写入侧用例改走 v2 分配 / 换区端点）。
+func seedServerZoneForTest(t *testing.T, ts *integrationTestServer, namespace, serverID, regionCode, zoneCode string) {
 	t.Helper()
-	ensureActiveNamespaceForTest(t, ts, namespace)
-	requestAndApplyApproval(t, ts, http.MethodPut, "/admin/v1/zones/assignments", t.Name()+"-assign-"+serverID, map[string]any{
-		"namespace": namespace, "serverId": serverID, "group": group, "zone": zone, "note": note,
-	})
-}
+	ns := ensureNamespaceRowForTest(t, ts, namespace)
+	cluster := ensureBCClusterForTest(t, ts, ns.ID)
+	region := ensureRegionForTest(t, ts, cluster.ID, regionCode)
+	zone := ensureZoneForTest(t, ts, region.ID, zoneCode)
 
-// ensureActiveNamespaceForTest 为依赖生命周期真源的 V1 兼容动作准备 active namespace。
-func ensureActiveNamespaceForTest(t *testing.T, ts *integrationTestServer, namespace string) {
-	t.Helper()
-	code, listed := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/namespaces", nil)
-	if code != http.StatusOK {
-		t.Fatalf("查询环境应 200，实际 %d：%v", code, listed)
-	}
-	for _, raw := range asSlice(listed["items"]) {
-		item, ok := raw.(map[string]any)
-		if ok && item["code"] == namespace {
-			return
+	var server model.Server
+	err := ts.db.Where("namespace_id = ? AND server_id = ?", ns.ID, serverID).First(&server).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		server = model.Server{NamespaceID: ns.ID, ServerID: serverID, Kind: model.ServerKindBackend}
+		if err := ts.db.Create(&server).Error; err != nil {
+			t.Fatalf("建 server 行失败: %v", err)
 		}
+	} else if err != nil {
+		t.Fatalf("读取 server 行失败: %v", err)
 	}
-	code, created := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/namespaces", map[string]any{"code": namespace, "name": namespace})
-	if code != http.StatusCreated {
-		t.Fatalf("创建活动环境应 201，实际 %d：%v", code, created)
+	zoneID := zone.ID
+	server.ZoneID = &zoneID
+	if err := ts.db.Save(&server).Error; err != nil {
+		t.Fatalf("写入 server.zone_id 失败: %v", err)
 	}
 }
 
-// unassignZoneForTest 让旧 V1 取消指派兼容路由也覆盖审批执行链路。
-func unassignZoneForTest(t *testing.T, ts *integrationTestServer, namespace, serverID, reason string) {
+// ensureNamespaceRowForTest 取或建 namespace 行（归属解析经 namespace.code 关联）。
+func ensureNamespaceRowForTest(t *testing.T, ts *integrationTestServer, code string) *model.Namespace {
 	t.Helper()
-	path := "/admin/v1/zones/assignments?namespace=" + namespace + "&serverId=" + serverID + "&reason=" + reason
-	requestAndApplyApproval(t, ts, http.MethodDelete, path, t.Name()+"-unassign-"+serverID, nil)
+	var ns model.Namespace
+	err := ts.db.Where("code = ?", code).First(&ns).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		ns = model.Namespace{Code: code, Name: code, Lifecycle: model.NamespaceLifecycleActive}
+		if err := ts.db.Create(&ns).Error; err != nil {
+			t.Fatalf("建 namespace 失败: %v", err)
+		}
+		return &ns
+	}
+	if err != nil {
+		t.Fatalf("读取 namespace 失败: %v", err)
+	}
+	return &ns
+}
+
+// ensureBCClusterForTest 取或建该 namespace 下的 BC 集群行。
+func ensureBCClusterForTest(t *testing.T, ts *integrationTestServer, namespaceID uint) *model.BCCluster {
+	t.Helper()
+	var cluster model.BCCluster
+	err := ts.db.Where("namespace_id = ? AND code = ?", namespaceID, "bc1").First(&cluster).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		cluster = model.BCCluster{NamespaceID: namespaceID, Code: "bc1", Name: "bc1"}
+		if err := ts.db.Create(&cluster).Error; err != nil {
+			t.Fatalf("建 BC 集群失败: %v", err)
+		}
+		return &cluster
+	}
+	if err != nil {
+		t.Fatalf("读取 BC 集群失败: %v", err)
+	}
+	return &cluster
+}
+
+// ensureRegionForTest 取或建大区行。
+func ensureRegionForTest(t *testing.T, ts *integrationTestServer, clusterID uint, code string) *model.Region {
+	t.Helper()
+	var region model.Region
+	err := ts.db.Where("bc_cluster_id = ? AND code = ?", clusterID, code).First(&region).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		region = model.Region{BCClusterID: clusterID, Code: code, Name: code}
+		if err := ts.db.Create(&region).Error; err != nil {
+			t.Fatalf("建大区失败: %v", err)
+		}
+		return &region
+	}
+	if err != nil {
+		t.Fatalf("读取大区失败: %v", err)
+	}
+	return &region
+}
+
+// ensureZoneForTest 取或建小区行。
+func ensureZoneForTest(t *testing.T, ts *integrationTestServer, regionID uint, code string) *model.Zone {
+	t.Helper()
+	var zone model.Zone
+	err := ts.db.Where("region_id = ? AND code = ?", regionID, code).First(&zone).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		zone = model.Zone{RegionID: regionID, Code: code, Name: code}
+		if err := ts.db.Create(&zone).Error; err != nil {
+			t.Fatalf("建小区失败: %v", err)
+		}
+		return &zone
+	}
+	if err != nil {
+		t.Fatalf("读取小区失败: %v", err)
+	}
+	return &zone
 }
 
 // approveAgentIdentityForTest 以显式 serverId 提交身份确认，避免测试夹具绕过审批边界。
@@ -575,11 +648,12 @@ func TestConfigRESTFlow(t *testing.T) {
 
 // TestAuditClientIPRecorded 复现并守护缺陷：经 HTTP 的审计操作必须把来源 IP 写入 audit_log.client_ip。
 // 此前 config / zone / instance 审计均未从请求提取来源 IP，client_ip 恒空、前端"来源 IP"列恒为 -。
+// 归属写入自 v1 指派迁移后走 v2 分配路径（POST /admin/v2/server-assignments），审计动作随之变为 server.assign。
 func TestAuditClientIPRecorded(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	const wantIP = "203.0.113.7"
-	createV2NamespaceToken(t, ts.URL, "prod")
+	nsID, nsToken := createNamespaceV2(t, ts.URL, "prod")
 
 	// 经 X-Forwarded-For 指定来源 IP 发起一次请求并返回状态码（admin 端携带登录令牌）。
 	doWithIP := func(method, url string, body any) int {
@@ -612,10 +686,16 @@ func TestAuditClientIPRecorded(t *testing.T) {
 	}); code != http.StatusCreated {
 		t.Fatalf("建配置应 201，实际 %d", code)
 	}
-	// ② zone.assign（admin 侧）
-	registerOnline(t, ts.URL, "prod", "ip-s1", "area1")
-	requestAndApplyApprovalWithHeaders(t, ts, http.MethodPut, "/admin/v1/zones/assignments", t.Name()+"-zone-ip", map[string]string{"X-Forwarded-For": wantIP}, map[string]any{
-		"namespace": "prod", "serverId": "ip-s1", "group": "area1", "zone": "zoneA", "note": "来源地址审计",
+	// ② server.assign（admin 侧，v2 分配路径经审批适配器执行并自记审计）
+	const identityID = "cccccccc-3333-4333-8333-cccccccccccc"
+	registerAgentV2(t, ts.URL, nsToken, identityID, "ip-s1", "backend")
+	approveAgentIdentityForTest(t, ts, identityID, "ip-s1")
+	clusterID := createAuthorityNode(t, ts.URL, "/admin/v2/bc-clusters", map[string]any{"namespaceId": nsID, "name": "bc-ip"})
+	regionID := createAuthorityNode(t, ts.URL, "/admin/v2/regions", map[string]any{"bcClusterId": clusterID, "name": "r-ip"})
+	zoneID := createAuthorityNode(t, ts.URL, "/admin/v2/zones", map[string]any{"regionId": regionID, "name": "z-ip"})
+	rowID := serverRowID(t, ts.URL, nsID, "ip-s1")
+	requestAndApplyApprovalWithHeaders(t, ts, http.MethodPost, "/admin/v2/server-assignments", t.Name()+"-server-assign", map[string]string{"X-Forwarded-For": wantIP}, map[string]any{
+		"serverIds": []uint{rowID}, "target": map[string]any{"kind": "zone", "id": zoneID}, "isDefaultEntry": false, "reason": "来源地址审计",
 	})
 	// ③ instance.register（agent 侧；来源 IP = agent 连接地址）
 	if code := doWithIP(http.MethodPost, ts.URL+"/beacon/v1/agent/register", map[string]any{
@@ -625,18 +705,23 @@ func TestAuditClientIPRecorded(t *testing.T) {
 	}
 
 	// 三类审计的 clientIp 都应被写为来源 IP。
-	for _, action := range []string{"config.create", "zone.assign", "instance.register"} {
-		code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action="+action, nil)
+	// v2 归属审计不带 namespace 维度（server.assign 只记 targetRef = server 行 id），故该条只按 action 过滤。
+	for _, tc := range []struct{ action, query string }{
+		{"config.create", "?namespace=prod&action=config.create"},
+		{"server.assign", "?action=server.assign"},
+		{"instance.register", "?namespace=prod&action=instance.register"},
+	} {
+		code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits"+tc.query, nil)
 		if code != http.StatusOK {
-			t.Fatalf("查 %s 审计应 200，实际 %d", action, code)
+			t.Fatalf("查 %s 审计应 200，实际 %d", tc.action, code)
 		}
 		items, _ := audits["items"].([]any)
 		if len(items) == 0 {
-			t.Fatalf("应有 %s 审计，实际无", action)
+			t.Fatalf("应有 %s 审计，实际无", tc.action)
 		}
 		first, _ := items[0].(map[string]any)
 		if got, _ := first["clientIp"].(string); got != wantIP {
-			t.Fatalf("%s 审计 clientIp 应为 %q，实际 %q（来源 IP 未写入）", action, wantIP, got)
+			t.Fatalf("%s 审计 clientIp 应为 %q，实际 %q（来源 IP 未写入）", tc.action, wantIP, got)
 		}
 	}
 }

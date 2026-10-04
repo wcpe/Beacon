@@ -21,8 +21,8 @@ import top.wcpe.beacon.agent.core.messaging.RosterDirectory
  * AgentLifecycle 收到 topology-changed 事件后扇出回调。未启用推送流（回退态）时 watch 返回不可用 no-op 句柄。
  *
  * 名册只读查询（FR-31）：roster() 全表读 [rosterDirectory]，rosterInZone() 用控制面权威
- * zone→serverId 集 ∩ 名册过滤。名册权威在控制面（ADR-0063 决策 4），当前 v2 未装配名册实现，
- * 故两条查询恒返空 Map（降级语义：绝不抛）。
+ * zone→serverId 集 ∩ 名册过滤。名册权威在控制面（ADR-0063 决策 4），实现由壳层在注册成功后
+ * 注入（控制面 HTTP 适配器）；未就绪时两条查询返空 Map（降级语义：绝不抛）。
  *
  * @param rosterDirectory 玩家位置名册只读端口（装配期注入持有者；未装配实现时其 snapshot 返空）
  */

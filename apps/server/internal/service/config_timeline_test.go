@@ -13,9 +13,9 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/secret"
 )
 
-// newTimelineTestStack 装配变更时间线测试栈（内存 sqlite 存 config_item / config_revision / zone_assignment），
+// newTimelineTestStack 装配变更时间线测试栈（内存 sqlite 存 config_item / config_revision / 区服归属真源），
 // 不依赖 MySQL；复用 ConfigService 走真实发布路径以产生 config_revision 历史。
-func newTimelineTestStack(t *testing.T) (*ConfigService, *EffectiveService, *repository.ZoneAssignmentRepository) {
+func newTimelineTestStack(t *testing.T) (*ConfigService, *EffectiveService, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -23,7 +23,8 @@ func newTimelineTestStack(t *testing.T) (*ConfigService, *EffectiveService, *rep
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.ConfigItem{}, &model.ConfigRevision{}, &model.ZoneAssignment{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.ConfigItem{}, &model.ConfigRevision{}, &model.AuditLog{},
+		&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.Server{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -31,7 +32,7 @@ func newTimelineTestStack(t *testing.T) (*ConfigService, *EffectiveService, *rep
 			_ = sqlDB.Close()
 		}
 	})
-	for _, tbl := range []string{"config_item", "config_revision", "zone_assignment", "audit_log"} {
+	for _, tbl := range []string{"config_item", "config_revision", "audit_log", "server", "zone", "region", "bc_cluster", "namespace"} {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
@@ -40,10 +41,9 @@ func newTimelineTestStack(t *testing.T) (*ConfigService, *EffectiveService, *rep
 	cr := repository.NewConfigItemRepository(db, cipher)
 	rr := repository.NewConfigRevisionRepository(db, cipher)
 	ar := repository.NewAuditLogRepository(db)
-	asg := repository.NewZoneAssignmentRepository(db)
 	cfg := NewConfigService(db, cr, rr, ar)
-	eff := NewEffectiveService(cr, asg, nil, rr, nil)
-	return cfg, eff, asg
+	eff := NewEffectiveService(cr, repository.NewServerPlacementRepository(db), nil, rr, nil)
+	return cfg, eff, db
 }
 
 // mkConfig 在指定层建一条配置项（首发 version=1）。
@@ -62,11 +62,9 @@ func mkConfig(t *testing.T, cfg *ConfigService, group, scope, target, dataID, co
 
 // TestConfigTimelineMultiLayerSortedDesc 四层均有发布时，时间线汇总全部版本且按时间倒序，且各条标注其 scope。
 func TestConfigTimelineMultiLayerSortedDesc(t *testing.T) {
-	cfg, eff, asg := newTimelineTestStack(t)
-	// 指派 lobby-1 → area1/zoneA，使其覆盖链含全部四层
-	if _, err := asg.Upsert("prod", "lobby-1", "area1", "zoneA", ""); err != nil {
-		t.Fatalf("指派失败: %v", err)
-	}
+	cfg, eff, db := newTimelineTestStack(t)
+	// 按新真源（server.zone_id）落归属：lobby-1 → area1/zoneA，使其覆盖链含全部四层
+	seedServerPlacement(t, db, "prod", "lobby-1", "area1", "zoneA")
 
 	g := mkConfig(t, cfg, model.GlobalGroupCode, model.ScopeGlobal, "", "mysql.yml", "pool: 1\n", "alice")
 	mkConfig(t, cfg, "area1", model.ScopeGroup, "", "mysql.yml", "pool: 2\n", "bob")

@@ -54,6 +54,7 @@
 
 ### 3.3 架构/契约
 - 无新表、无 REST 契约变更（路径/字段不变）。`docs/API.md` 在 `PUT /zones/assignments` 处补一句"在线非空服改区返 409 `ZONE_SERVER_ONLINE_NONEMPTY`（排空门）"。ARCHITECTURE zone 章节补一句改派排空门。
+  - **后续变更（2026-10-02）**：v1 指派写端点已迁移，`PUT` / `DELETE /admin/v1/zones/assignments` 恒返回 `410 zone_assignment_migrated`（排空门语义现由第二版换区流程 `POST /admin/v2/server-rezones` 承载）；该只读端点仍可用。
 
 ## 4. 任务拆分
 - [ ] 后端：`apperr` 加错误码 + `ZoneService.Assign/Unassign` 排空门与同值 no-op + helper

@@ -44,10 +44,8 @@ func findFileProv(files []service.EffectiveFileWithProvenance, path string) (ser
 func TestFileResolveWithProvenance(t *testing.T) {
 	s := newFileStack(t)
 
-	// 指派 s1 → area1/zoneA，使 server 层覆盖参与解析
-	if _, err := s.assign.Upsert("prod", "s1", "area1", "zoneA", ""); err != nil {
-		t.Fatalf("建指派失败: %v", err)
-	}
+	// 按新真源落 s1 → area1/zoneA 归属，使 zone 层覆盖参与解析（旧 zone_assignment 已退役）
+	seedServerZonePlacement(t, s.db, "prod", "s1", "area1", "zoneA")
 
 	// 经 FileService 建多层结构化文件（同一 path app.yml）：global 基线 + zone 增量 + server 增量/减量
 	mk := func(group, scope, target, content string, whole bool) {

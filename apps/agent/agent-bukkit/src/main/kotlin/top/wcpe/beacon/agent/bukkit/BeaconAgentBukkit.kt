@@ -12,6 +12,7 @@ import taboolib.common.platform.function.submitAsync
 import taboolib.common.platform.function.warning
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
+import top.wcpe.beacon.agent.adapters.HttpRosterDirectory
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
 import top.wcpe.beacon.agent.adapters.OkHttpBlobStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
@@ -32,6 +33,7 @@ import top.wcpe.beacon.agent.core.identity.IdentityBindingSnapshotStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.lifecycle.BootstrapRuntime
 import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
+import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
 import java.io.File
@@ -92,6 +94,9 @@ object BeaconAgentBukkit : Plugin() {
 
     /** 跨服消息模块运行时（FR-149，HTTP 中转）；null 表示未装配。随注册自启，DISABLE 时 stop。 */
     private var messagingRuntime: MessagingRuntime? = null
+
+    /** 玩家名册持有者（FR-31）；null 表示无活跃运行时。Disable / 撤销时 reset 复位，避免业务插件读到已停用身份的名册。 */
+    private var rosterDirectoryHolder: RosterDirectoryHolder? = null
 
     /** startActiveRuntime 的稳定依赖组（enable 阶段装配一次，随每次 active 接入复用）。 */
     private data class ActiveRuntimeDeps(
@@ -218,8 +223,15 @@ object BeaconAgentBukkit : Plugin() {
         lifecycle = assembled.lifecycle
         // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
         messagingRuntime = assembled.messaging.messagingRuntime
+        // 玩家名册持有者（FR-31）：装配期已随 Discovery 门面创建，此处留引用供 DISABLE 复位。
+        rosterDirectoryHolder = assembled.messaging.rosterDirectoryHolder
         assembled.lifecycle.onRegistered { deps.snapshots.write(identity, binding) }
         assembled.lifecycle.onRegistered { deps.instrumentation.start() }
+        // 玩家名册（FR-31）：注册成功后才注入控制面 HTTP 名册适配器——端点按 v2 鉴权身份圈定 namespace，
+        // 未注册时请求必被 401 拒绝，提前注入没有意义（注入的是「已确认绑定」的身份，与此处 identity 一致）。
+        assembled.lifecycle.onRegistered {
+            assembled.messaging.rosterDirectoryHolder.set(HttpRosterDirectory(assembled.apiClient, identity))
+        }
 
         // 对外注册门面，供同进程业务插件读取。
         BeaconAgentProvider.register(assembled.beaconAgent)
@@ -244,6 +256,9 @@ object BeaconAgentBukkit : Plugin() {
     private fun stopActiveRuntime() {
         messagingRuntime?.stop()
         messagingRuntime = null
+        // 名册复位为未注入：停用后本机身份已失效（读取只会 401），持旧引用无意义，复位即让业务插件走降级。
+        rosterDirectoryHolder?.reset()
+        rosterDirectoryHolder = null
         lifecycle?.shutdown()
         lifecycle = null
         tickInstrumentation?.stop()

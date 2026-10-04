@@ -39,7 +39,9 @@ func machineRegisterTestStack(t *testing.T, allowed bool) (*InstanceService, *go
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
 	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.ServerOffline{},
-		&model.ZoneAssignment{}, &model.AgentIdentity{}, &model.AgentEndpoint{}, &model.AuditLog{}); err != nil {
+		&model.ZoneAssignment{}, &model.AgentIdentity{}, &model.AgentEndpoint{}, &model.AuditLog{},
+		// 归属读新真源 server.zone_id，解析需 zone / region / bc_cluster 三表就位
+		&model.BCCluster{}, &model.Region{}, &model.Zone{}); err != nil {
 		t.Fatalf("迁移机器注册表失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -48,7 +50,7 @@ func machineRegisterTestStack(t *testing.T, allowed bool) (*InstanceService, *go
 		}
 	})
 	svc := NewInstanceService(db, runtime.NewRegistry(),
-		repository.NewZoneAssignmentRepository(db), repository.NewServerOfflineRepository(db),
+		repository.NewServerPlacementRepository(db), repository.NewServerOfflineRepository(db),
 		repository.NewAuditLogRepository(db), 10*time.Second, 30*time.Second)
 	svc.SetMachineRegisterAllowed(allowed)
 	if err := db.Create(&model.Namespace{Code: "prod", Name: "生产"}).Error; err != nil {

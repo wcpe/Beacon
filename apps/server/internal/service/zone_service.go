@@ -25,6 +25,11 @@ type ZoneStat struct {
 // ZoneService 编排 zone 指派 CRUD 与汇总。
 // 改派后刷新内存实例归属；有效配置解析读 DB 指派，已即时反映（推送唤醒属 M3）。
 // 小区默认入口不在本服务：真源为 v2 server.is_default_entry（ADR-0067，见 v2_default_entry.go）。
+//
+// 【已退役】本服务围绕的 zone_assignment 表已退役：实例区服归属的唯一真源是 server 表的
+// zone_id / bc_cluster_id（v2 分配路径写入）。对外写入口 Assign / Unassign 已恒返回 FORBIDDEN，
+// 故这里的 Upsert / SoftDelete 生产上永不可达；本服务现仅作 v1 Legacy 只读汇总（Summary /
+// ListAssignments）与测试构造。归属读方请一律使用 repository.ServerPlacementRepository。
 type ZoneService struct {
 	db         *gorm.DB
 	assignRepo *repository.ZoneAssignmentRepository
@@ -121,6 +126,10 @@ func (s *ZoneService) applyAssignForTest(ns, serverID, group, zone, operator, no
 }
 
 // applyAssignInTx 在调用方事务内写入 V1 指派与审计；事务提交后的通知由调用方负责。
+//
+// 【已退役 · 新写入请勿再用】本函数写 zone_assignment 旧表，而该表生产上恒 0 行（唯一真源已迁到
+// server.zone_id）。它只被 applyAssignForTest 调用，生产不可达；新增归属写入一律改走 v2 分配路径
+// （V2ControlPlaneService.applyAssignment）。保留仅为维持 v1 状态机的测试可验证性。
 func (s *ZoneService) applyAssignInTx(tx *gorm.DB, ns, serverID, group, zone, operator, note, clientIP string) (*model.ZoneAssignment, error) {
 	previous, err := s.assignRepo.WithTx(tx).FindByServer(ns, serverID)
 	if err != nil {

@@ -6,8 +6,8 @@ package top.wcpe.beacon.agent.core.messaging
  * [DiscoveryView][top.wcpe.beacon.agent.core.api.DiscoveryView] 在装配期即创建，而名册实现可能晚于
  * 装配就绪，故装配期把本持有者注入 DiscoveryView，壳层就绪后 [set] 实际实现、停止时 [reset] 复位。
  *
- * **当前 v2 未装配名册实现**：名册权威已迁至控制面（ADR-0063 决策 4，取代 ADR-0016 的 agent 侧 Redis
- * 名册），而控制面名册的适配器尚未接回，故 [set] 在生产装配中无调用方、[snapshot] 恒返空。
+ * 两个平台壳层（Bukkit 子服 / Bungee 代理）都在**身份注册成功之后**注入控制面 HTTP 名册适配器
+ * （名册端点按 v2 鉴权身份圈定 namespace，未注册时请求必被 401 拒绝），并在运行时停止 / 撤销时 [reset]。
  *
  * 优雅降级（与 [MessagingHolder] 同构）：未注入实现、或实现读取抛异常时，[snapshot] 返回空 Map、
  * 绝不外抛，业务插件据此走自身降级（守不变量 #5 fail-static）。
@@ -17,7 +17,7 @@ package top.wcpe.beacon.agent.core.messaging
 class RosterDirectoryHolder(
     private val warn: (String) -> Unit = {},
 ) : RosterDirectory {
-    /** 当前注入的名册实现；null 表示未注入（当前 v2 装配下恒为 null）。 */
+    /** 当前注入的名册实现；null 表示未注入（装配期/运行时未就绪时的降级态）。 */
     @Volatile
     private var current: RosterDirectory? = null
 

@@ -223,6 +223,8 @@ func run() error {
 	revRepo := repository.NewConfigRevisionRepository(db, configCipher)
 	grayRepo := repository.NewConfigGrayRepository(db, configCipher)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
+	// 实例区服归属真源（server.zone_id）：注册回填与有效配置解析都读它；旧 zone_assignment 已退役
+	placementRepo := repository.NewServerPlacementRepository(db)
 	// 主动下线拒绝态（FR-49）：server_offline 仓库，供注册前查拒绝表与下线/取消下线落库
 	offlineRepo := repository.NewServerOfflineRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
@@ -291,7 +293,7 @@ func run() error {
 	// 可观测性指标（注册/健康 gauge 抓取时读内存注册表；发布/推送 counter 由事件处自增，见 ADR-0020）
 	metricsSet := metrics.New(registry)
 
-	instanceService := service.NewInstanceService(db, registry, assignRepo, offlineRepo, auditRepo, heartbeatInterval, ttl)
+	instanceService := service.NewInstanceService(db, registry, placementRepo, offlineRepo, auditRepo, heartbeatInterval, ttl)
 	// 机器注册通道（FR-222，见 specs/internal-trust-channel.md）：默认关闭；仅显式开启时，受信内部调用方
 	// （命中 X-Beacon-Token 共享 token，由 agentTokenMiddleware 判定并透传）经 v1 数据面挂载端点
 	// /beacon/v1/agent/data-plane/attach（FR-233 更名后的规范路径，见 ADR-0084；旧名
@@ -340,15 +342,15 @@ func run() error {
 	commandHub := longpoll.NewHub()
 	// 文件浏览结果（FR-110）：serverId 级唤醒 Hub，与命令待办独立；agent 回传浏览结果时唤醒等待中的 admin 请求。
 	// revRepo 注入供 per-server 有效配置变更时间线聚合该服覆盖链各 config 项的发布历史（FR-80）
-	effectiveService := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
-	// 发布影响面预览（FR-79）：registry（在线真源）+ assignRepo（zone 归属真源）求交算受影响在线子服
-	impactService := service.NewImpactService(registry, assignRepo, db)
+	effectiveService := service.NewEffectiveService(configRepo, placementRepo, grayRepo, revRepo, hub)
+	// 发布影响面预览（FR-79）：registry（在线真源）+ placementRepo（server.zone_id 归属真源）求交算受影响在线子服
+	impactService := service.NewImpactService(registry, placementRepo, db)
 	// 配置 admin 处理器持有 effectiveService 以支持有效配置只读预览（FR-22）+ 灰度 svc（FR-9）+ 影响面预览（FR-79）
 	configHandler := handler.NewConfigHandler(configService, effectiveService, configGrayService, impactService)
-	fileEffectiveService := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
+	fileEffectiveService := service.NewFileEffectiveService(fileRepo, placementRepo, fileHub)
 	// 三方覆盖集投递（FR-15）：复用 fileHub 唤醒集合（同属通道B），解析适用覆盖集 + 成员内容
-	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, assignRepo)
+	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, placementRepo, fileHub)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, placementRepo)
 	notifier.SetMetrics(metricsSet)
 	v2ControlPlaneService.SetChangeNotifier(notifier)
 	configService.SetNotifier(notifier)
@@ -630,6 +632,12 @@ func run() error {
 	messageService := service.NewMessageService(messageRelay, playerRoster, v2ControlPlaneService, healthViewStore)
 	v2MessageHandler := handler.NewV2MessageHandler(messageService)
 
+	// P5a 装配点：玩家名册读端点（GET /beacon/v2/agent/player-roster，ADR-0063 决策 4）。
+	// 与连接采集 / 跨服消息共用同一份内存名册（单一真源）：返回调用方所属 namespace 的
+	// 「玩家名 → 所在 serverId」快照，供 agent 侧 roster() 门面取数并在本地做 zone / 服过滤；
+	// 只读内存、不建仓库不落库，故无需 flusher 注册（无写入通道顺序约束）。
+	v2RosterHandler := handler.NewV2RosterHandler(playerRoster)
+
 	// MCP 工具调用流水（FR-240，见 mcp-invocation-audit.md §3.5）：middleware 在请求路径上只做
 	// 「生成 UUIDv7 + 解析参数顶层键 + 打包一行 + 非阻塞入队」（纯内存、无 DB IO），DB 写全在后台写入协程。
 	// 注意装配顺序：flusher 注册必须先于下方 asyncDailyWriter.Start（写入通道的 panic 守卫）。
@@ -733,7 +741,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2Roster: v2RosterHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, MCPInvocation: mcpInvocationHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)

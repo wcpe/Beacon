@@ -92,11 +92,12 @@ func TestGlobalDiscoverExcludesInactiveNamespaces(t *testing.T) {
 
 func newLifecycleRuntimeInstanceService(t *testing.T, db *gorm.DB) (*runtime.Registry, *InstanceService) {
 	t.Helper()
-	if err := db.AutoMigrate(&model.ServerOffline{}, &model.ZoneAssignment{}); err != nil {
+	// 注册解析归属读新真源 server.zone_id，需 zone / region / bc_cluster 三表就位（否则解析报缺表）
+	if err := db.AutoMigrate(&model.ServerOffline{}, &model.ZoneAssignment{}, &model.BCCluster{}, &model.Region{}, &model.Zone{}); err != nil {
 		t.Fatalf("迁移运行实例依赖表失败: %v", err)
 	}
 	registry := runtime.NewRegistry()
-	service := NewInstanceService(db, registry, repository.NewZoneAssignmentRepository(db), repository.NewServerOfflineRepository(db), repository.NewAuditLogRepository(db), time.Second, time.Minute)
+	service := NewInstanceService(db, registry, repository.NewServerPlacementRepository(db), repository.NewServerOfflineRepository(db), repository.NewAuditLogRepository(db), time.Second, time.Minute)
 	return registry, service
 }
 

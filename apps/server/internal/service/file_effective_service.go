@@ -29,26 +29,27 @@ func (t FileTree) Manifest() map[string]string {
 // FileEffectiveService 按 agent 身份解析有效文件树（scope 整文件覆盖）+ 文件长轮询挂起。
 // 持有独立于配置长轮询的 Hub，文件发布只唤醒文件 waiter，互不触发无谓重算。
 type FileEffectiveService struct {
-	fileRepo   *repository.FileObjectRepository
-	assignRepo *repository.ZoneAssignmentRepository
-	hub        *longpoll.Hub
+	fileRepo      *repository.FileObjectRepository
+	placementRepo *repository.ServerPlacementRepository
+	hub           *longpoll.Hub
 }
 
 // NewFileEffectiveService 构造服务。hub 仅长轮询用，纯解析场景可传 nil。
-func NewFileEffectiveService(fileRepo *repository.FileObjectRepository, assignRepo *repository.ZoneAssignmentRepository, hub *longpoll.Hub) *FileEffectiveService {
-	return &FileEffectiveService{fileRepo: fileRepo, assignRepo: assignRepo, hub: hub}
+// placementRepo 读新真源 server.zone_id（旧 zone_assignment 已退役，见 assignment_repo.go）。
+func NewFileEffectiveService(fileRepo *repository.FileObjectRepository, placementRepo *repository.ServerPlacementRepository, hub *longpoll.Hub) *FileEffectiveService {
+	return &FileEffectiveService{fileRepo: fileRepo, placementRepo: placementRepo, hub: hub}
 }
 
 // Resolve 解析某 (namespace, serverId) 的有效文件树：
-// 先按 zone_assignment 得 (group, zone)，未分配则 group=groupHint、zone 为空；再拉四层候选整文件覆盖。
+// 先按新真源 server.zone_id 得 (group, zone)，无归属则 group=groupHint、zone 为空；再拉四层候选整文件覆盖。
 func (s *FileEffectiveService) Resolve(ns, serverID, groupHint string) (FileTree, error) {
 	group, zone := groupHint, ""
-	assign, err := s.assignRepo.FindByServer(ns, serverID)
+	placement, err := s.placementRepo.FindByServer(ns, serverID)
 	if err != nil {
 		return FileTree{}, err
 	}
-	if assign != nil {
-		group, zone = assign.GroupCode, assign.ZoneCode
+	if placement != nil {
+		group, zone = placement.GroupCode, placement.ZoneCode
 	}
 	return s.resolveLayers(ns, serverID, group, zone)
 }
@@ -113,18 +114,18 @@ type ProvenancedFileTree struct {
 }
 
 // ResolveWithProvenance 解析某目标的有效文件树并附逐文件/逐键来源（admin 只读预览，见 ADR-0013 模式扩展到 ADR-0029 文件树，FR-45）。
-// serverID 非空时优先按 zone_assignment 解出 (group,zone)；未指派则用传入的 groupHint/zoneHint。
+// serverID 非空时优先按新真源 server.zone_id 解出 (group,zone)；无归属则用传入的 groupHint/zoneHint。
 // 不挂长轮询、不强制注册（同 FR-22 的克制）；对同一解析出的 (group,zone)，每个 path 的合并内容/ md5 与 Resolve 一致
 // （provenance 经 filetree 平行纯函数计算，不改 agent 下发热路径 Resolve）。
 func (s *FileEffectiveService) ResolveWithProvenance(ns, serverID, groupHint, zoneHint string) (ProvenancedFileTree, error) {
 	group, zone := groupHint, zoneHint
 	if serverID != "" {
-		assign, err := s.assignRepo.FindByServer(ns, serverID)
+		placement, err := s.placementRepo.FindByServer(ns, serverID)
 		if err != nil {
 			return ProvenancedFileTree{}, err
 		}
-		if assign != nil {
-			group, zone = assign.GroupCode, assign.ZoneCode
+		if placement != nil {
+			group, zone = placement.GroupCode, placement.ZoneCode
 		}
 	}
 

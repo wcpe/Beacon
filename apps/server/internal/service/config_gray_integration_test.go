@@ -26,14 +26,15 @@ func grayStack(t *testing.T) (*service.ConfigService, *service.ConfigGrayService
 	rr := repository.NewConfigRevisionRepository(db, noEncryptCipher())
 	gr := repository.NewConfigGrayRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
-	asg := repository.NewZoneAssignmentRepository(db)
+	// 配置生效解析与唤醒器的 zone 反查都读新真源 server.zone_id（旧 zone_assignment 已退役）
+	placementRepo := repository.NewServerPlacementRepository(db)
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
 	topoHub := longpoll.NewHub()
 	cfg := service.NewConfigService(db, cr, rr, ar)
 	gray := service.NewConfigGrayService(db, cfg, cr, gr, ar)
-	eff := service.NewEffectiveService(cr, asg, gr, nil, hub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topoHub, longpoll.NewHub(), runtime.NewRegistry(), asg)
+	eff := service.NewEffectiveService(cr, placementRepo, gr, nil, hub)
+	notifier := service.NewChangeNotifier(hub, fileHub, topoHub, longpoll.NewHub(), runtime.NewRegistry(), placementRepo)
 	cfg.SetNotifier(notifier)
 	gray.SetNotifier(notifier)
 	return cfg, gray, eff, hub, db

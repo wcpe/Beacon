@@ -39,8 +39,8 @@ func TestConfigTimelineRESTFlow(t *testing.T) {
 	defer ts.Close()
 	cfgBase := ts.URL + "/admin/v1/configs"
 
-	// 指派 lobby-1 → area1/zoneA，使其覆盖链含全部四层
-	assignZoneForTest(t, ts, "prod", "lobby-1", "area1", "zoneA", "集成测试指派")
+	// 落新真源归属 lobby-1 → area1/zoneA，使其覆盖链含全部四层
+	seedServerZoneForTest(t, ts, "prod", "lobby-1", "area1", "zoneA")
 
 	// 建四层配置（同一 dataId 跨层）
 	mk := func(group, scope, target, content string) int {

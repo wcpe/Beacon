@@ -36,21 +36,21 @@ func affectedOf(t *testing.T, baseURL, query string) ([]string, int) {
 }
 
 // TestConfigImpactRESTFlow 发布影响面预览 REST 集成（FR-79）：
-// 注册三台在线实例 + 经 DB 指派归属 → 各 scope 查 impact 与预期受影响在线子服集合一致；非法参数 400。
+// 注册三台在线实例 + 按新真源落区服归属 → 各 scope 查 impact 与预期受影响在线子服集合一致；非法参数 400。
 func TestConfigImpactRESTFlow(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
-	// 三台在线实例：s1/s2 在 g1、s3 在 g2（先以 groupHint，再经 DB 指派覆盖小区）
+	// 三台在线实例：s1/s2 在 g1、s3 在 g2（先以 groupHint，再按新真源 server.zone_id 落归属覆盖小区）
 	regOnline(t, ts.URL, "prod", "s1", "g1")
 	regOnline(t, ts.URL, "prod", "s2", "g1")
 	regOnline(t, ts.URL, "prod", "s3", "g2")
 
-	// 经 admin zone 指派写 DB 归属：s1→g1/za、s2→g1/zb、s3→g2/za
+	// 落新真源归属：s1→g1/za、s2→g1/zb、s3→g2/za（旧 V1 指派写端点已迁移为 410）
 	for _, a := range []struct{ sid, group, zone string }{
 		{"s1", "g1", "za"}, {"s2", "g1", "zb"}, {"s3", "g2", "za"},
 	} {
-		assignZoneForTest(t, ts, "prod", a.sid, a.group, a.zone, "集成测试指派")
+		seedServerZoneForTest(t, ts, "prod", a.sid, a.group, a.zone)
 	}
 
 	// global：覆盖全部在线

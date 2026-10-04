@@ -78,13 +78,14 @@ func newOverrideDeliveryStack(t *testing.T) overrideDeliveryStack {
 	fileRepo := repository.NewFileObjectRepository(db)
 	fileRevRepo := repository.NewFileRevisionRepository(db)
 	auditRepo := repository.NewAuditLogRepository(db)
-	assignRepo := repository.NewZoneAssignmentRepository(db)
+	// 覆盖集投递与唤醒器的 zone 反查都读新真源 server.zone_id（旧 zone_assignment 已退役）
+	placementRepo := repository.NewServerPlacementRepository(db)
 	reg := runtime.NewRegistry()
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
-	ovrEff := service.NewOverrideEffectiveService(setRepo, fileRepo, assignRepo, fileHub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, assignRepo)
+	ovrEff := service.NewOverrideEffectiveService(setRepo, fileRepo, placementRepo, fileHub)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, placementRepo)
 	setSvc := service.NewOverrideSetService(db, setRepo, revRepo, fileRepo, auditRepo)
 	setSvc.SetNotifier(notifier)
 	// 文件服务共享同一 notifier：编辑成员文件内容（成员是 override_set_id>0 的 FileObject）走通道B 发布路径，
