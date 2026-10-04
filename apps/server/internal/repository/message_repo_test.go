@@ -308,27 +308,94 @@ func TestMessageCorrelationLookupFallsBack(t *testing.T) {
 	}
 }
 
-// TestMessageDirectLookupFindsLegacyMisroutedRow 校验修复前的错表历史数据仍可按 ID 直查：
-// 真机上已落进 msg_trace_51580917（年份落在数千年后）这类日表的行，在有界回退下依然能被查到，
-// 无需人工搬表——发送方据此仍可追溯那批「发出去就消失」的消息。
-func TestMessageDirectLookupFindsLegacyMisroutedRow(t *testing.T) {
-	db := openRepoSQLite(t, "msg_legacy_misrouted")
+// TestMessageDirectLookupIgnoresFutureDayTables 校验按 ID 直查的有界回退窗口只覆盖**真实日表**：
+// 历史脏数据 / 随机位推出的日表（真机实测 msg_trace_97270109 这类公元数千年后的表名）日期晚于当前，
+// 按日降序恰好排在真实日表之前——若不过滤，8 个窗口位会被它们全部占满，刚落进真实日表中的行
+// 按 ID 直查**反而查不到**（审查发现的高危缺陷）。本用例正是修复前会失败的场景。
+//
+// 同时锁定窗口的「1 天容差」：建表任务预建的「明日」日表属正常，必须留在窗口里。
+func TestMessageDirectLookupIgnoresFutureDayTables(t *testing.T) {
+	db := openRepoSQLite(t, "msg_future_tables")
 	repo := NewMessageRepository(db)
-	createdMs := time.Date(2026, 10, 4, 7, 1, 11, 511_000_000, time.UTC).UnixMilli()
-	bogusMs, _ := store.TimeMsFromUUIDv7(untrustedMsgID) // 随机位被当成毫秒（修复前的定表依据）
-	legacyDay := time.UnixMilli(bogusMs).UTC()
-	legacyTbl, err := store.EnsureDailyTable(db, &model.MsgTrace{}, legacyDay)
-	if err != nil {
-		t.Fatalf("建历史错表失败: %v", err)
-	}
-	legacy := untrustedRecord(untrustedMsgID, createdMs, "").Trace
-	if err := db.Table(legacyTbl).Create(&legacy).Error; err != nil {
-		t.Fatalf("写历史错表失败: %v", err)
+	traceBase := model.MsgTrace{}.TableName()
+	nowDay := utcDayStart(time.Now().UTC().UnixMilli())
+
+	// 未来垃圾日表：8 张（公元 9727 年，与真机命中的错表同类），trace / payload 各建一张——
+	// 修复前它们按日降序排在最前，恰好吃掉整个回退窗口。
+	for i := 0; i < msgLookupFallbackTables; i++ {
+		day := time.Date(9727, 1, 1+i, 0, 0, 0, 0, time.UTC)
+		if _, err := store.EnsureDailyTable(db, &model.MsgTrace{}, day); err != nil {
+			t.Fatalf("建未来 msg_trace 日表失败: %v", err)
+		}
+		if _, err := store.EnsureDailyTable(db, &model.MsgPayload{}, day); err != nil {
+			t.Fatalf("建未来 msg_payload 日表失败: %v", err)
+		}
 	}
 
-	row, err := repo.FindByMessageID(untrustedMsgID)
-	if err != nil || row == nil || row.Status != model.MsgStatusExpired {
-		t.Fatalf("历史错表行应能按 ID 直查命中，实际 row=%v err=%v", row, err)
+	// 真实日表：明日（建表任务预建）+ 今日 + 前 6 天，共 8 张，恰好填满窗口；顺序即期望的窗口顺序。
+	realTables := make([]string, 0, msgLookupFallbackTables)
+	for i := 1; i >= -(msgLookupFallbackTables - 2); i-- {
+		day := nowDay.AddDate(0, 0, i)
+		name, err := store.EnsureDailyTable(db, &model.MsgTrace{}, day)
+		if err != nil {
+			t.Fatalf("建真实 msg_trace 日表失败: %v", err)
+		}
+		if _, err := store.EnsureDailyTable(db, &model.MsgPayload{}, day); err != nil {
+			t.Fatalf("建真实 msg_payload 日表失败: %v", err)
+		}
+		realTables = append(realTables, name)
+	}
+
+	// 回退窗口只应包含这 8 张真实日表（含明日预建表），未来垃圾日表一律排除。
+	got := recentDailyTables(db, traceBase, msgLookupFallbackTables, time.Now())
+	if len(got) != len(realTables) {
+		t.Fatalf("回退窗口应只含 %d 张真实日表，实际 %d 张：%v", len(realTables), len(got), got)
+	}
+	for i, name := range got {
+		if name != realTables[i] {
+			t.Fatalf("回退窗口第 %d 张应为真实日表 %s，实际 %s（未来日表必须被排除）", i+1, realTables[i], name)
+		}
+	}
+
+	// 真实行：终态行按控制面接收时刻落「今日」日表（写侧口径），payload 同日落表。
+	realID := untrustedMsgID
+	if _, err := repo.FlushDaily([]model.MessageRecord{
+		untrustedRecord(realID, time.Now().UTC().UnixMilli(), `{"text":"未来日表不得挤占回退窗口"}`),
+	}); err != nil {
+		t.Fatalf("写真实行失败: %v", err)
+	}
+
+	// 同名历史脏行：同一 message_id 在「今日」日表与未来垃圾日表各有一行，两行状态不同——
+	// 命中的必须是真实日表那行（修复前窗口被垃圾日表占满，只会命中垃圾表那行）。
+	shadowID := "d5a46cf0-bc44-4d40-8d40-91b7238e9b3d"
+	shadowReal := untrustedRecord(shadowID, time.Now().UTC().UnixMilli(), "").Trace
+	if err := db.Table(store.DailyTableName(traceBase, nowDay)).Create(&shadowReal).Error; err != nil {
+		t.Fatalf("写今日影子行失败: %v", err)
+	}
+	shadowGarbage := untrustedRecord(shadowID, time.Now().UTC().UnixMilli(), "").Trace
+	shadowGarbage.Status = model.MsgStatusDelivered
+	if err := db.Table(store.DailyTableName(traceBase, time.Date(9727, 1, 8, 0, 0, 0, 0, time.UTC))).
+		Create(&shadowGarbage).Error; err != nil {
+		t.Fatalf("写垃圾日表影子行失败: %v", err)
+	}
+
+	row, err := repo.FindByMessageID(realID)
+	if err != nil || row == nil {
+		t.Fatalf("真实日表里的行必须能按 ID 直查命中（未来日表不得占满回退窗口），实际 row=%v err=%v", row, err)
+	}
+	if row.Status != model.MsgStatusExpired {
+		t.Fatalf("命中的应是真实日表那行（expired），实际 %s", row.Status)
+	}
+	pl, err := repo.FindPayload(realID)
+	if err != nil || pl == nil || pl.Payload != `{"text":"未来日表不得挤占回退窗口"}` {
+		t.Fatalf("payload 也必须能按 ID 直查命中（未来 payload 日表不得占满回退窗口），实际 pl=%v err=%v", pl, err)
+	}
+	shadow, err := repo.FindByMessageID(shadowID)
+	if err != nil || shadow == nil {
+		t.Fatalf("同名影子行应命中真实日表那行，实际 row=%v err=%v", shadow, err)
+	}
+	if shadow.Status != model.MsgStatusExpired {
+		t.Fatalf("同名影子行必须命中真实日表（expired），不得命中未来垃圾日表的错表数据（%s）", shadow.Status)
 	}
 }
 

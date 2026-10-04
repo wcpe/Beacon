@@ -712,11 +712,15 @@ func (h *V2ControlPlaneHandler) CreateZone(w http.ResponseWriter, r *http.Reques
 // 继续接受以保持既有 HTTP 调用方不受影响。
 //
 // 返回可读 INVALID_PARAM（而非泛化「参数错误」），直接点明冲突或缺失的字段：
-//   - parentId 与旧字段都给出且不一致 → 冲突；
-//   - parentId 显式为 0 → 缺有效父级；
-//   - 两者都缺省 → 缺父级。
+//   - parentId 与旧字段都给出且不一致 → 冲突（仅当 parentId > 0 时成立）；
+//   - parentId 缺省或为 0 且旧字段也缺省 → 缺父级；
+//   - parentId 为 0 但旧字段有值 → 取旧字段（parentId 的零值视为「未提供」，不是「父级 = 0」）。
 func v2ParentRef(parentID *uint, legacyID uint, legacyField string) (uint, error) {
-	if parentID == nil {
+	// parentId 是 *uint：JSON 里显式写 0 与不写（nil）语义等同——都表示「调用方没给出父级」。
+	// 这条对「同时序列化新旧两个字段、新字段取零值」的客户端是必需的后向兼容：旧版本控制面根本不认
+	// parentId（未知字段被忽略），若把 parentId:0 判成「与旧字段冲突」或「父级为 0」，这类原本合法的
+	// 请求会突然 400（同一份请求体在升级前后行为翻转），且「保持两者取值一致」对零值无从执行。
+	if parentID == nil || *parentID == 0 {
 		if legacyID == 0 {
 			return 0, parentRefInvalidParam("缺少父级 id：请传 parentId（兼容旧字段 " + legacyField + "）")
 		}
@@ -725,9 +729,6 @@ func v2ParentRef(parentID *uint, legacyID uint, legacyField string) (uint, error
 	if legacyID != 0 && legacyID != *parentID {
 		return 0, parentRefInvalidParam(fmt.Sprintf(
 			"parentId(%d) 与 %s(%d) 冲突：两者都是父级字段，请只传其一，或保持两者取值一致", *parentID, legacyField, legacyID))
-	}
-	if *parentID == 0 {
-		return 0, parentRefInvalidParam("parentId 不能为 0：请传有效父级 id（兼容旧字段 " + legacyField + "）")
 	}
 	return *parentID, nil
 }

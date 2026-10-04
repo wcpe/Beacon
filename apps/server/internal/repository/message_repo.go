@@ -20,6 +20,8 @@ const msgInsertBatchSize = 200
 const msgIDTimeTrustWindowMs int64 = 24 * 60 * 60 * 1000
 
 // msgLookupFallbackTables 是按 ID 直查「首选日表未命中」时的有界回退探测张数上限（硬约束，防全表扫描）。
+// 窗口只覆盖「锚点（控制面当前时刻）当日及更早」的真实日表（约 8 个真实日表）：晚于锚点的日表是时钟异常 /
+// 随机位推出的垃圾日表，会挤占窗口（见 recentDailyTables）。
 const msgLookupFallbackTables = 8
 
 // MessageRepository 提供消息日表（msg_trace_YYYYMMDD / msg_payload_YYYYMMDD）的数据访问（FR-149/150）：
@@ -140,11 +142,18 @@ func absInt64(v int64) int64 {
 	return v
 }
 
+// recentLookupTables 取按 ID 直查的有界回退候选日表（锚点 = 控制面当前时刻）。
+// 锚点必须为「当前时刻」：回退要覆盖的行是「终态落表由控制面接收时刻决定」的行，其日表必然紧邻当前时间；
+// 晚于锚点的日表被排除，正是为了不让历史垃圾日表占满窗口（见 recentDailyTables）。
+func (r *MessageRepository) recentLookupTables(base string) []string {
+	return recentDailyTables(r.db, base, msgLookupFallbackTables, time.Now())
+}
+
 // findTraceInRecentTables 在最近 msgLookupFallbackTables 张已存在日表里按 message_id 有界探测单行。
 // 仅用于「ID 内嵌时间不可信导致首选日表推不出来 / 推错」的场景：这类行的终态落表由控制面接收时刻决定。
 // 表不存在或无命中返回 (nil, nil)。
 func (r *MessageRepository) findTraceInRecentTables(messageID string) (*model.MsgTrace, error) {
-	for _, tableName := range recentDailyTables(r.db, model.MsgTrace{}.TableName(), msgLookupFallbackTables) {
+	for _, tableName := range r.recentLookupTables(model.MsgTrace{}.TableName()) {
 		row, err := r.findTraceInDay(tableName, "message_id = ?", messageID)
 		if err != nil {
 			return nil, err
@@ -268,7 +277,7 @@ func (r *MessageRepository) FindByCorrelationID(correlationID string) ([]model.M
 	if len(out) > 0 {
 		return out, nil
 	}
-	for _, tableName := range recentDailyTables(r.db, model.MsgTrace{}.TableName(), msgLookupFallbackTables) {
+	for _, tableName := range r.recentLookupTables(model.MsgTrace{}.TableName()) {
 		rows, err := r.findCorrelatedInDay(tableName, correlationID)
 		if err != nil {
 			return nil, err
@@ -397,7 +406,7 @@ func (r *MessageRepository) FindCorrelated(messageID, correlationID string) (*mo
 	_, corrTrusted := store.TrustedTimeMsFromUUIDv7(correlationID)
 	_, selfTrusted := store.TrustedTimeMsFromUUIDv7(messageID)
 	if !corrTrusted || !selfTrusted {
-		for _, name := range recentDailyTables(r.db, model.MsgTrace{}.TableName(), msgLookupFallbackTables) {
+		for _, name := range r.recentLookupTables(model.MsgTrace{}.TableName()) {
 			addTable(name)
 		}
 	}
@@ -458,7 +467,7 @@ func (r *MessageRepository) FindPayload(messageID string) (*model.MsgPayload, er
 			return row, err
 		}
 	}
-	for _, tableName := range recentDailyTables(r.db, model.MsgPayload{}.TableName(), msgLookupFallbackTables) {
+	for _, tableName := range r.recentLookupTables(model.MsgPayload{}.TableName()) {
 		row, err := r.findPayloadInDay(tableName, messageID)
 		if err != nil {
 			return nil, err

@@ -192,6 +192,59 @@ func TestV2TopologyCreateMissingParentGivesActionableError(t *testing.T) {
 	assertErrorCodeAndMessage(t, code, body, "INVALID_PARAM", "parentId", "namespaceId")
 }
 
+// TestV2TopologyCreateZeroParentIDFallsBackToLegacyField 校验 parentId 的零值等同「未提供」：
+// 「同时序列化新旧两个字段、新字段取零值」的客户端仍能建树成功——旧版本控制面根本不认 parentId
+// （未知字段被忽略），把 parentId:0 判成「与旧字段冲突」或「父级为 0」都是对这类客户端的后向兼容回归。
+func TestV2TopologyCreateZeroParentIDFallsBackToLegacyField(t *testing.T) {
+	db, svc, h := newV2HandlerTestService(t)
+	ns, _, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+
+	clusterID := createTopologyNode(t, h.CreateBCCluster, "/admin/v2/bc-clusters", map[string]any{
+		"namespaceId": ns.ID, "parentId": 0, "code": "zero-bc",
+	})
+	var cluster model.BCCluster
+	if err := db.First(&cluster, clusterID).Error; err != nil || cluster.NamespaceID != ns.ID {
+		t.Fatalf("parentId:0 应回落到 namespaceId 建集群，实际 %+v err=%v", cluster, err)
+	}
+	regionID := createTopologyNode(t, h.CreateRegion, "/admin/v2/regions", map[string]any{
+		"bcClusterId": clusterID, "parentId": 0, "code": "zero-r",
+	})
+	var region model.Region
+	if err := db.First(&region, regionID).Error; err != nil || region.BCClusterID != clusterID {
+		t.Fatalf("parentId:0 应回落到 bcClusterId 建大区，实际 %+v err=%v", region, err)
+	}
+	zoneID := createTopologyNode(t, h.CreateZone, "/admin/v2/zones", map[string]any{
+		"regionId": regionID, "parentId": 0, "code": "zero-z",
+	})
+	var zone model.Zone
+	if err := db.First(&zone, zoneID).Error; err != nil || zone.RegionID != regionID {
+		t.Fatalf("parentId:0 应回落到 regionId 建小区，实际 %+v err=%v", zone, err)
+	}
+
+	// 零值豁免不放宽真正的冲突判定：parentId > 0 且与旧字段不一致仍拒绝。
+	code, body := invokeJSON(h.CreateBCCluster, http.MethodPost, "/admin/v2/bc-clusters", "", map[string]any{
+		"namespaceId": ns.ID + 1, "parentId": ns.ID, "code": "zero-conflict-bc",
+	})
+	assertErrorCodeAndMessage(t, code, body, "INVALID_PARAM", "parentId", "namespaceId", "冲突")
+
+	// parentId:0 且旧字段也缺省 → 仍是「缺父级」（零值不代表「父级 = 0」），文案照旧点名应传的字段。
+	code, body = invokeJSON(h.CreateBCCluster, http.MethodPost, "/admin/v2/bc-clusters", "", map[string]any{
+		"parentId": 0, "code": "zero-no-parent-bc",
+	})
+	assertErrorCodeAndMessage(t, code, body, "INVALID_PARAM", "parentId", "namespaceId")
+	var count int64
+	if err := db.Model(&model.BCCluster{}).Where("code IN ?", []string{"zero-conflict-bc", "zero-no-parent-bc"}).
+		Count(&count).Error; err != nil {
+		t.Fatalf("统计集群失败: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("被拒请求不得创建节点，实际 %d 条", count)
+	}
+}
+
 // TestV2TopologyCreateNameCodeDisplayNameCombinations 校验卡点 2：
 // 合法组合继续通过，name != code 的拒绝文案必须点明「name 是旧字段、展示名用 displayName」。
 func TestV2TopologyCreateNameCodeDisplayNameCombinations(t *testing.T) {

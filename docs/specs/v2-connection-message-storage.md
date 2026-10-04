@@ -43,6 +43,8 @@
   2. 写入路径兜底：按需 `CREATE TABLE IF NOT EXISTS`（经 GORM Migrator 以模型 + 动态表名创建，禁手写方言 DDL），进程内缓存「已确认存在」的表名集合避免重复探测。
 - **落表日判定**：**优先**以行主键 UUIDv7 内嵌时间戳（UTC）所在日期为准——ID 时间可信时保证「由 ID 即可定位物理表」恒成立；**不可信时改按控制面接收时刻（`created_at`）定日表并记 WARN**。可信口径：ID 是规范 UUIDv7（版本位 7 + 变体位 10）且其内嵌时间与 `created_at` 偏差 ≤ 24h。反例即真机实测：agent 误用 UUIDv4 随机 ID 时，前 48 位是随机数（`store.TimeMsFromUUIDv7` 只看位数、不校验版本位），按它定日表会把终态行写进 「由随机位推出的荒诞日期」日表——日期分片枚举（列表 / 聚合 / 按日期 SQL）永远看不到，表现为「消息发出去就消失」。故**不做「拒绝写入」**（拒绝同样等于该消息没有任何追踪行），而是改按接收时刻落表；同时**不存在「ID 无法解析即跳过」的静默丢失路径**。
 - **按 ID 直查的有界回退**：`created_at` 定表的行无法由 ID 推导出表名，故按 `messageId` / `correlationId` / payload 直查在首选日表未命中时，最多再探测 **8 张**该基名最近日表（一次表名枚举 + 主键点查，不构成全表扫描、不隐式建表）；回退命中记 WARN（提示 ID 时间不可信或历史错表数据）。保证发送方 / 运维拿 ID 仍能查到该行的最终去向。
+  - **窗口只覆盖「当前时刻及更早」的真实日表**（锚点 = 控制面当前时刻，留 1 天时钟容差以容纳预建的「明日」日表、跨时区与时钟偏差）：晚于锚点的日表只可能来自时钟异常或「随机位当时间」推出的垃圾日表（真机实测 `msg_trace_97270109`），它们按日降序恰好排在真实日表之前，会**占满**整个窗口，使刚落进真实日表的行按 ID 直查反而查不到——故这类日表一律排除，回退窗口语义为「**约 8 个真实日表**」。
+  - **取舍（有意识）**：垃圾日表内的历史行不再参与有界回退（要查它们只能显式按表查 / 人工搬表 / 归档器整表识别）；窗口优先保证「当前写入路径刚落库的行」必可查。做全表回扫以兼顾两者被明确排除（防全表扫描是硬约束）。
 - **跨表查询边界**：时间范围映射为日表集合，应用层逐表查询、按 `(时间, id)` 游标合并分页（不做跨库 UNION 视图）；单次查询允许跨表上限默认 8 张（≈7 天窗口），超限返回 400 并提示缩小范围。表不存在视为该日无数据，跳过不报错。
 - **归档衔接**：日表整表归档 / 删除由 P6 归档器执行；本域查询默认只路由热库中存在的日表，`includeArchived` 冷查询路由归 `v2-hot-cold-archive.md`。
 
@@ -121,7 +123,7 @@ proxy 宕机产生的「孤儿 open 行」：proxy agent 重启后首次上报�
 
 索引：`(namespace_id, source_server_id, created_at)`、`(namespace_id, resolved_server_id, created_at)`、`(status, created_at)`、`(correlation_id)`。
 
-`message_id` 的发送侧契约（`/beacon/v2/agent/messages/send`）：规范 UUIDv7（版本位 7 + 变体位 10），其内嵌毫秒即该消息的日表归属依据之一。**非规范 UUIDv7 的 ID 仍被受理**（不新增拒绝路径、不改响应形状），但该行按 §3.1 的兜底口径落表：按控制面接收时刻定日表 + WARN，并由按 ID 直查的有界回退保证仍可查。
+`message_id` 的发送侧契约（`/beacon/v2/agent/messages/send`）：规范 UUIDv7（版本位 7 + 变体位 10），其内嵌毫秒即该消息的日表归属依据之一。**非规范 UUIDv7 的 ID 仍被受理**（不新增拒绝路径、不改响应形状），但该行按 §3.1 的兜底口径落表：按控制面接收时刻定日表 + WARN，并由按 ID 直查的有界回退保证仍可查。发送侧入参校验因此**只判「可解析出前 48 位」、不校验 UUID 版本位**（UUIDv4 亦受理）——这是契约的一部分，不是遗漏；日表归属的可信判定在写侧（`TrustedTimeMsFromUUIDv7` + 24h 偏差窗口），读侧由有界回退兜住。
 
 ### 3.4 `msg_payload_YYYYMMDD`（payload，与元数据分离）
 
@@ -173,7 +175,7 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 - **重投**：`dispatched` 后 10s 未收到 ACK 重投（重新入队），最多 2 次；仍无回执 → `failed`（`fail_reason=ack_timeout`）。业务侧以 `message_id` 幂等去重。
 - **TTL**：`accepted` 停留超过 30s 无人取走 → `expired`。内存投递队列每服有界（默认 1000 条），溢出即对最旧消息判 `expired`（`fail_reason=queue_overflow`）。
 - **未投递消息的可追踪语义（发出去必须可查）**：发送方拿到 `200 {status:accepted}` 只代表「控制面已受理入队」，不代表送达——投递结果一律以 `msg_trace` 的终态行为准。约定：
-  1. **终态必落、必可查**：`accepted` 无人取走（目标 agent 未启用 messaging 因而不 poll、目标离线 / 失联）、队列溢出、或 `dispatched` 后回执用尽，都会在有限时限内产出**一条终态行**（`expired` + `fail_reason` / `failed` + `fail_reason`），且该行必落在按日期可被查询窗口枚举到的日表（§3.1）并可按 messageId / correlationId 直查命中（§3.1 有界回退），`/admin/v2/messages` 的按 ID 直查与 `serverId + 时间窗` 列表查询都能看到它；发送方与运维据此判断「发了但没到，原因是 X」。
+  1. **终态必落、必可查**：`accepted` 无人取走（目标 agent 未启用 messaging 因而不 poll、目标离线 / 失联）、队列溢出、或 `dispatched` 后回执用尽，都会在有限时限内产出**一条终态行**（`expired` + `fail_reason` / `failed` + `fail_reason`），且该行必落在按日期可被查询窗口枚举到的日表（§3.1）并可按 messageId / correlationId 直查命中（§3.1 有界回退，窗口只含「当前时刻及更早」的真实日表、约 8 个真实日表），`/admin/v2/messages` 的按 ID 直查与 `serverId + 时间窗` 列表查询都能看到它；发送方与运维据此判断「发了但没到，原因是 X」。
   2. **落库前不可查属设计（≤TTL）**：in-flight（`accepted` / `dispatched`）仅在内存，send 时**不落 pending 行**、中间态无 DB UPDATE（写入放大约束见下方末条）；本域刻意不引入「入队即落 pending」的中间态行。
   3. **目标未启用 messaging 不是拒发理由**：控制面不感知 agent 侧 `messaging.enabled` 开关，故 send 响应不因「目标收不到」而改形状；这类消息按可丢语义在 TTL 后落 `expired(ttl_expired)`，**不允许**出现「既没投递、也没终态、无任何痕迹」。
   4. **已知缺口（不在本轮范围）**：控制面进程重启会连同内存中的 in-flight 消息一起丢失且不留终态行（本域不做 in-flight 持久化，见 §8 待定 11）。

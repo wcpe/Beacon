@@ -213,7 +213,7 @@ agent 面：
 |---|---|---|
 | POST | `/beacon/v2/agent/connections/batch` | proxy 批量上报连接 open / close 事件 **【已实现·FR-145】** |
 | GET | `/beacon/v2/agent/player-roster` | 玩家位置名册只读查询（FR-31）：返回 `{namespace, count, players}`，**按鉴权身份只返回本域玩家**（强隔离；空名册为 `{}` 而非 404）；名册权威在控制面、由连接明细驱动 **【已实现·ADR-0063 决策 4】** |
-| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player / **broadcast** 寻址，广播可选 `targetZone` 做 zone 级定向）；payload 接受 object / array / string / number / boolean / null；Agent 先按 JSON 编码后的 UTF-8 字节数执行 64KB 前置校验，控制面再按中转 / 保存文本执行 64KB 硬校验；`msgType` 非空且 UTF-8 编码 ≤64 字节（冒号合法）。响应 `200 {messageId, status}` 的 `accepted` 仅表示**已受理入队**（送达与否以 `msg_trace` 终态行为准：目标未启用 messaging / 离线 → 限时内落 `expired`）。`messageId` 应为规范 UUIDv7；非 UUIDv7 仍受理，但终态行改按控制面接收时刻定日表（记 WARN），按 ID 直查走有界回退 **【已实现·FR-149/180】** |
+| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player / **broadcast** 寻址，广播可选 `targetZone` 做 zone 级定向）；payload 接受 object / array / string / number / boolean / null；Agent 先按 JSON 编码后的 UTF-8 字节数执行 64KB 前置校验，控制面再按中转 / 保存文本执行 64KB 硬校验；`msgType` 非空且 UTF-8 编码 ≤64 字节（冒号合法）。响应 `200 {messageId, status}` 的 `accepted` 仅表示**已受理入队**（送达与否以 `msg_trace` 终态行为准：目标未启用 messaging / 离线 → 限时内落 `expired`）。`messageId` 应为规范 UUIDv7；非 UUIDv7 仍受理（服务端只校验可解析性、不校验版本位，UUIDv4 合法），但终态行改按控制面接收时刻定日表（记 WARN），按 ID 直查走有界回退 **【已实现·FR-149/180】** |
 | POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204）；payload 往返保持 JSON 类型，string 保持业务原文且不做二次 JSON 编码，object / array / number / boolean 以 JSON 文本中转，null 表示无 payload **【已实现·FR-149】** |
 | POST | `/beacon/v2/agent/messages/ack` | 批量回执投递结果 **【已实现·FR-149/150】** |
 
@@ -224,7 +224,7 @@ agent 面：
 | GET | `/admin/v2/connections` | 连接明细查询（强制精确 ID 或过滤 + 时间范围） **【已实现·FR-145】** |
 | GET | `/admin/v2/connections/{connId}` | 单连接详情 **【已实现·FR-145】** |
 | GET | `/admin/v2/connections/stats` | 连接 / 玩家流时间桶聚合 **【已实现·FR-145】** |
-| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**；支持 `targetKind` 过滤，广播行输出 fan-out 聚合字段 `fanoutTotal`/`deliveredCount`/`failedCount`/`expiredCount`/`targetZone`）；`messageId` / `correlationId` 直查在首选日表未命中时按最近日表有界回退（覆盖 `message_id` 非规范 UUIDv7 的消息），未投递消息的终态（`expired` / `failed` + `failReason`）据此可查 **【已实现·FR-149/180】** |
+| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**；支持 `targetKind` 过滤，广播行输出 fan-out 聚合字段 `fanoutTotal`/`deliveredCount`/`failedCount`/`expiredCount`/`targetZone`）；`messageId` / `correlationId` 直查在首选日表未命中时按最近**真实**日表有界回退（约 8 个真实日表，晚于当前的未来日表不入窗口；覆盖 `message_id` 非规范 UUIDv7 的消息），未投递消息的终态（`expired` / `failed` + `failReason`）据此可查 **【已实现·FR-149/180】** |
 | GET | `/admin/v2/messages/{messageId}` | 消息详情 + hops 链路（payload 仅元信息） **【已实现·FR-149】** |
 | POST | `/admin/v2/messages/{messageId}/payload` | 旧 payload 正文入口，固定 `409 operation_requires_approval`；先通过专用审批申请，再由原申请主体消费一次性 grant **【FR-209】** |
 | GET | `/admin/v2/messages/stats` | 异常链路聚合（拓扑页数据源；`groupBy=edge\|type`，独立 bucket 维度无契约与消费方、暂未提供） **【已实现·FR-149/156】** |
