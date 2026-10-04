@@ -330,6 +330,20 @@ func (s *AlertEventService) List(f repository.AlertEventFilter) ([]model.AlertEv
 	return s.repo.List(f)
 }
 
+// Get 读取单条告警事件；不存在 → ErrAlertEventNotFound（其余存储错误原样透传）。
+// 供面层做写前校验与单条只读投影：MCP 单条处置工具需要先拿到目标的 namespace 才能判定它是否在调用者
+// 观测范围内（告警的 namespace 落库后不再变化，故「读它再判」不存在校验后被改走的窗口）。
+func (s *AlertEventService) Get(id uint) (*model.AlertEvent, error) {
+	e, err := s.repo.Get(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperr.ErrAlertEventNotFound
+		}
+		return nil, err
+	}
+	return e, nil
+}
+
 // Handle 处理一条告警事件（FR-157，见 ADR-0064）：按动作推进状态（acknowledge→acknowledged / resolve→resolved），
 // 记录处理人 / 处理时刻 / 处理说明，并在同事务内写专项审计（含操作者 / 事件 id / 动作 / 原因）。
 // 事件不存在 → ErrAlertEventNotFound；动作非法 → ErrAlertActionInvalid。返回更新后的事件。

@@ -121,3 +121,40 @@ func TestAlertOrphanRepositoryActiveServerKeysOnlyActive(t *testing.T) {
 		}
 	}
 }
+
+// TestAlertOrphanRepositoryActiveServerKeysAreNormalized 在册键经 AlertOrphanMatchKey 单点归一后入集合：
+// 判据 3 的比对在现场用同一函数构造候选键，故 namespace.code 与告警行 namespace 的大小写 / 首尾空白差异
+// 不会再让在册实例漏配（漏配 = 红线失效 → 在册实例的告警被误关）。
+func TestAlertOrphanRepositoryActiveServerKeysAreNormalized(t *testing.T) {
+	db, repo := newAlertOrphanTestDB(t)
+	// namespace.code 带大写与首尾空白（控制面登记值的异常形态），server_id 同样带大小写差异
+	ns := model.Namespace{Code: " Prod ", Name: "生产"}
+	if err := db.Create(&ns).Error; err != nil {
+		t.Fatalf("建 namespace 失败: %v", err)
+	}
+	if err := db.Create(&model.Server{
+		NamespaceID: ns.ID, ServerID: "Game-1", Kind: model.ServerKindBackend, Lifecycle: model.ServerLifecycleActive,
+	}).Error; err != nil {
+		t.Fatalf("建 server 目录行失败: %v", err)
+	}
+
+	keys, err := repo.ActiveServerKeys()
+	if err != nil {
+		t.Fatalf("查询在册实例键失败: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("应只有 1 个在册键，实际 %d：%+v", len(keys), keys)
+	}
+	// 候选侧（告警行的 namespace 原值）经同一归一函数构造的键，必须命中
+	if _, ok := keys[AlertOrphanMatchKey("prod", "game-1")]; !ok {
+		t.Fatalf("归一键 prod/game-1 应命中在册目录：%+v", keys)
+	}
+	// 与候选侧现场构造完全同源：即使告警行写的是 PROD / 带空白形态也必须命中
+	if _, ok := keys[AlertOrphanMatchKey("PROD", " game-1 ")]; !ok {
+		t.Fatalf("大小写 / 空白差异的候选键应命中在册目录：%+v", keys)
+	}
+	// 归一只作用于比对键：原值形态**不再**出现在集合里（两侧都走归一，避免一份归一一份不归一）
+	if _, ok := keys[AlertServerKey{Namespace: " Prod ", ServerID: "Game-1"}]; ok {
+		t.Fatalf("在册集合不应保留未归一的原值键：%+v", keys)
+	}
+}

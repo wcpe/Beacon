@@ -95,24 +95,60 @@ func seedOrphanServerRow(t *testing.T, db *gorm.DB, nsCode, serverID, lifecycle 
 
 // TestAlertOrphanSweeperResolvesAlertsOfExternallyDeletedInstance 判据 1+2+3+4 全真：
 // 有未处理告警、不在运行时注册表、不在 server 表活动目录、最近触发已超阈值 → 自动消解。
+// **只消解 open 行**：同一实例上人工已确认（acknowledged）的行保持原状、处置痕迹原样保留
+// （语义变更说明见该用例内注释与 repository.AutoResolveOpenByServer）。
 func TestAlertOrphanSweeperResolvesAlertsOfExternallyDeletedInstance(t *testing.T) {
 	sweeper, db, _ := newAlertOrphanSuite(t, "24")
 	now := time.Now().UTC()
 	stale := now.Add(-30 * time.Hour)
 	openID := seedOrphanAlert(t, db, "prod", "stress-1", model.AlertEventStatusOpen, &stale)
 	ackID := seedOrphanAlert(t, db, "prod", "stress-1", model.AlertEventStatusAcknowledged, &stale)
+	// 人工已确认的行带处置痕迹：自动消解若把它一并关掉，会把 handled_by / handle_note 覆盖成 system + 固定文案，
+	// 事后无法再从行上区分「人工已处理」与「系统自动消解」（本表无历史表、自动消解不逐条写审计）。
+	ackedAt := stale.Add(time.Hour)
+	if err := db.Model(&model.AlertEvent{}).Where("id = ?", ackID).
+		Updates(map[string]any{"handled_by": "ops-a", "handled_at": ackedAt, "handle_note": "正在排查，磁盘告警"}).Error; err != nil {
+		t.Fatalf("预置人工已确认行失败: %v", err)
+	}
 	siblingID := seedOrphanAlert(t, db, "prod", "game-1", model.AlertEventStatusOpen, &stale)
 	// 兄弟实例在册（active）→ 必须保持 open，见下一条用例的红线断言（此处同时防 UPDATE 打宽）。
 
 	seedOrphanServerRow(t, db, "prod", "game-1", model.ServerLifecycleActive)
 
 	n := sweeper.sweepOnce(now)
-	if n != 2 {
-		t.Fatalf("应消解 2 条（open + acknowledged），实际 %d", n)
+	if n != 1 {
+		t.Fatalf("应只消解 1 条（open），实际 %d", n)
 	}
 	assertAlertAutoResolved(t, db, openID, alertOrphanResolveNote)
-	assertAlertAutoResolved(t, db, ackID, alertOrphanResolveNote)
 	assertAlertUntouched(t, db, siblingID, model.AlertEventStatusOpen)
+	// acknowledged 行：状态与人工痕迹一字未改（这正是本次语义变更要守住的东西）
+	var acked model.AlertEvent
+	if err := db.First(&acked, ackID).Error; err != nil {
+		t.Fatalf("回读人工已确认行失败: %v", err)
+	}
+	if acked.Status != model.AlertEventStatusAcknowledged || acked.HandledBy != "ops-a" ||
+		acked.HandleNote != "正在排查，磁盘告警" || acked.HandledAt == nil || !acked.HandledAt.Equal(ackedAt) {
+		t.Fatalf("人工已确认行不得被自动消解覆盖: %+v", acked)
+	}
+}
+
+// TestAlertOrphanSweeperMatchesActiveServerDespiteNamespaceCase 判据 3 的键比对必须容忍大小写 / 首尾空白差异：
+// 候选侧 namespace 来自 agent 上报值（可能是 `PROD` / ` prod `），在册侧的键来自 `namespace.code`（`prod`）。
+// 若两侧逐字节比对，在册实例会**漏配** → 判据 3 被误判为「不在册」→ 安全红线被绕过、在册实例的告警被误关。
+func TestAlertOrphanSweeperMatchesActiveServerDespiteNamespaceCase(t *testing.T) {
+	sweeper, db, _ := newAlertOrphanSuite(t, "24")
+	now := time.Now().UTC()
+	stale := now.Add(-30 * time.Hour)
+	seedOrphanServerRow(t, db, "prod", "lobby-1", model.ServerLifecycleActive)
+	// 在册实例是 prod/lobby-1，而告警行的 namespace / serverId 写成大小写与空白有差异的形态。
+	upperID := seedOrphanAlert(t, db, "PROD", "lobby-1", model.AlertEventStatusOpen, &stale)
+	spaceID := seedOrphanAlert(t, db, " prod ", "LOBBY-1", model.AlertEventStatusOpen, &stale)
+
+	if n := sweeper.sweepOnce(now); n != 0 {
+		t.Fatalf("在册实例（键仅大小写 / 空白不同）的告警绝不能被自动关闭（安全红线），实际消解 %d 条", n)
+	}
+	assertAlertUntouched(t, db, upperID, model.AlertEventStatusOpen)
+	assertAlertUntouched(t, db, spaceID, model.AlertEventStatusOpen)
 }
 
 // TestAlertOrphanSweeperKeepsAlertsWithinTimeout 判据 4 不成立：最近触发在阈值内 → 保持 open
