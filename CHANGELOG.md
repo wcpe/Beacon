@@ -18,6 +18,10 @@
 
 - **MCP 生产模式执行面拒执（FR-242）**：FR-237 的 `production-mode` 此前只在注册与清单期隐藏 critical 工具——工具若因开关翻转时机意外可见、或客户端缓存了旧清单，仍可被调用。现在调用路径上再判一次同一开关与同一份工具目录（不引入第二真源）：拒绝时原 handler **完全不执行**（零副作用）；正常路径下工具本就未注册（表现为 SDK 的 `unknown tool`），本层是「已注册后翻转开关」的兜底（纵深防御）。持久留痕由 FR-240 的调用流水承担，同一事件不双写。
 
+### 修复
+
+- **CI 门禁对堆叠 PR 的中间层失效**：`.github/workflows/ci.yml` 的 `pull_request` 原限定 `branches: [master]`，于是 base 指向上层 feature 分支的堆叠 PR **完全不触发 CI**（GitHub 显示 `no checks`）——中间层得以在无门禁状态下把破坏性变更累积到下一层。本轮正是如此：`feat/roster-and-zone-authority` 把归属真源迁到 `server.zone_id`、跑红了两个仍只种旧 `zone_assignment` 表的集成用例，而修种子的提交落在它上面的第三层，导致该 PR 从打开起 CI 恒红。现去掉 base 分支限制：任意 base 的 PR 都跑质量任务，`push` 仍限 `master`、产物生成路径不变。`pull_request` 事件取 **base 分支**上的本文件，故改动随最底层 PR 合并前即可对其上的堆叠层生效。
+
 ## 1.3.0（2026-09-30）
 
 ### 新增
