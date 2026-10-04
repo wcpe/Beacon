@@ -191,6 +191,7 @@ Zone → Zone 继续走既有换区工单，不借本端点绕过身份重确认
 - 既有 Zone 默认入口 API、`is_default_entry` 和 `zoneDefaultEntry` 发现字段继续保留。
 - 配置中心 scope 链不新增 lobby 层；大厅 server 若需要配置，继续使用 global/server 等现有层级，不暗中改变配置解析。
 - 旧 agent 不认识大厅字段也可继续注册，但不能提供 FR-200 的首次大厅落脚能力；RC 门要求相关 BC 升级到支持版本。
+- `POST /admin/v2/server-assignments` 的 `target.kind=lobby_cluster` 与 §3.4.2 的单服端点等价（**不新增第二条归属写入通道**）：数字 `serverIds` 逐台解析为业务 `serverId` 后转发到同一 service 方法，一台一张审批票据（`operationKey=topology.lobby_member.move`），响应形如 `202 + {approvalRequestId,status,operationKey,secretReturned,tickets:[{serverId,...}]}`；`isDefaultEntry` 必须为空 / `false`（大厅成员不得是默认入口），非法入参（空 `serverIds`、无效 id、`target.id=0`）返回带修正指引的 `400 INVALID_PARAM`。排空门、已确认 backend 角色校验与 `lobby_cluster.member.*` 专项审计两个入口完全一致。
 
 ## 4. UX / 交互
 

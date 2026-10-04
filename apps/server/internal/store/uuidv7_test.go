@@ -42,6 +42,36 @@ func TestTimeMsFromUUIDv7Invalid(t *testing.T) {
 	}
 }
 
+// TestTrustedTimeMsFromUUIDv7 校验「可信时间」解析会校验 RFC 9562 结构：
+// 只有版本 7 + 变体 10 的规范 UUIDv7 才返回可信时间；UUIDv4 随机 ID（真机实测命中）必须被拒。
+func TestTrustedTimeMsFromUUIDv7(t *testing.T) {
+	ms := time.Date(2026, 10, 4, 7, 1, 11, 511_000_000, time.UTC).UnixMilli()
+	id := NewUUIDv7(ms)
+	got, ok := TrustedTimeMsFromUUIDv7(id)
+	if !ok || got != ms {
+		t.Fatalf("规范 UUIDv7 应解析出可信时间 %d，实际 %d ok=%v", ms, got, ok)
+	}
+	// UUIDv4 随机 ID：TimeMsFromUUIDv7 会「解析成功」（随机位当时间），可信解析必须拒绝。
+	const v4 = "5b84d1a0-7faa-4db0-a5df-362d302ea1cb"
+	if _, ok := TimeMsFromUUIDv7(v4); !ok {
+		t.Fatalf("用例前提不成立：宽松解析对 UUIDv4 应能取出 48 位")
+	}
+	if _, ok := TrustedTimeMsFromUUIDv7(v4); ok {
+		t.Fatalf("UUIDv4 随机 ID 的时间不可信，应返回 false")
+	}
+	// 变体位非法（第 13 位版本号 7、第 17 位变体非 10xx）。
+	for _, bad := range []string{
+		"0190a1b2-7abc-7def-0abc-0123456789ab", // 变体 0（非 10xx）
+		"0190a1b2-7abc-6def-8abc-0123456789ab", // 版本 6
+		"",
+		"0190a1b2",
+	} {
+		if _, ok := TrustedTimeMsFromUUIDv7(bad); ok {
+			t.Fatalf("结构不符的 ID %q 应返回 false", bad)
+		}
+	}
+}
+
 // hex2 把一个字节格式化为两位小写十六进制（测试构造用）。
 func hex2(b byte) string {
 	const digits = "0123456789abcdef"

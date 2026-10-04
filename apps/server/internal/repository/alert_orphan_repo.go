@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -21,6 +22,22 @@ type AlertOrphanCandidate struct {
 type AlertServerKey struct {
 	Namespace string
 	ServerID  string
+}
+
+// AlertOrphanMatchKey 构造判据 3（是否仍在册）专用的**归一比对键**：两段标识各自去首尾空白并转小写。
+//
+// 为什么需要：判据 3 的两侧来源不同——候选侧来自 `alert_event.namespace`（随 agent 上报落库），
+// 在册侧来自 `namespace.code`（控制面登记值）。仅靠逐字节相等比对，只要两侧在大小写或首尾空白上有差异，
+// 在册实例就会**漏配**，判据 3 被误判为「不在册」→ 在册实例的告警被自动关闭（安全红线失效）。
+// 归一逻辑必须收口在本函数这一处：两侧各自实现一份，迟早会在措辞上分叉，等于没有加固。
+//
+// **返回值只用于集合命中**：不得拿它当 DB 查询条件（如自动消解的 namespace 入参）或运行时注册表入参——
+// 那两处必须用库 / 注册表里的原值，归一会让大小写敏感的库（Postgres / SQLite 默认）上的 UPDATE 打不中行。
+func AlertOrphanMatchKey(namespace, serverID string) AlertServerKey {
+	return AlertServerKey{
+		Namespace: strings.ToLower(strings.TrimSpace(namespace)),
+		ServerID:  strings.ToLower(strings.TrimSpace(serverID)),
+	}
 }
 
 // alertUnresolvedRow 是一条未处理告警的归属与时间（行级读取用；时间列取真实列，驱动可原生扫描为 time.Time）。
@@ -63,6 +80,10 @@ func (r *AlertOrphanRepository) ListUnresolvedByServer() ([]AlertOrphanCandidate
 		return nil, err
 	}
 	// 应用层按实例聚合 MAX(COALESCE(last_at, created_at))：与 SQL 聚合同语义，但时间值来源是真实列。
+	//
+	// 聚合键刻意用**原值**而非 AlertOrphanMatchKey：候选随后要拿 Namespace / ServerID 回查运行时注册表
+	// 并作为自动消解 UPDATE 的入参（大小写敏感的库上归一会让 UPDATE 打不中行）。判据 3 的比对键在比对
+	// 现场由同一归一函数现算（见 AlertOrphanMatchKey），两侧因此共用一份归一逻辑而互不污染取值。
 	latest := make(map[AlertServerKey]time.Time, len(rows))
 	for _, row := range rows {
 		at := row.CreatedAt
@@ -85,6 +106,9 @@ func (r *AlertOrphanRepository) ListUnresolvedByServer() ([]AlertOrphanCandidate
 // 这是本清理器安全红线的数据源：在册（active）实例即使离线很久也绝不能被自动关闭告警——运维必须看到；
 // archived / tombstoned 行不算在册，其告警已由既有的生命周期自动消解覆盖（见 server_lifecycle.go）。
 // namespace 经 join 取 code，与 alert_event.namespace 列同口径。
+//
+// 键经 AlertOrphanMatchKey 归一后才入集合：判据 3 的比对必须容忍候选侧（agent 上报值）与 namespace.code
+// 的大小写 / 首尾空白差异，否则在册实例漏配 → 误关其告警（归一收口在 AlertOrphanMatchKey 单点）。
 func (r *AlertOrphanRepository) ActiveServerKeys() (map[AlertServerKey]struct{}, error) {
 	var rows []AlertServerKey
 	if err := r.db.Model(&model.Server{}).
@@ -96,7 +120,7 @@ func (r *AlertOrphanRepository) ActiveServerKeys() (map[AlertServerKey]struct{},
 	}
 	keys := make(map[AlertServerKey]struct{}, len(rows))
 	for _, row := range rows {
-		keys[row] = struct{}{}
+		keys[AlertOrphanMatchKey(row.Namespace, row.ServerID)] = struct{}{}
 	}
 	return keys, nil
 }

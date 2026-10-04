@@ -77,6 +77,59 @@ func existingDailyTablesListed(db *gorm.DB, base string, fromMs, toMs int64) []s
 	return names
 }
 
+// recentDailyTableFutureToleranceDays 是回退窗口对「晚于锚点」的日表所留的容忍天数：建表任务会预建
+// 「当日 + 明日」两张表（见 v2-connection-message-storage.md §3.1 建表时机），跨时区 / 时钟偏差也不该
+// 误杀正常表，故 day ≤ 锚点当日 + 1 天视为正常；再晚的日表一律排除。
+const recentDailyTableFutureToleranceDays = 1
+
+// recentDailyTables 枚举某基名**已存在、且不晚于锚点（含 1 天容差）**的日表名（按日新→旧，最多 limit 张），
+// 供「ID 内嵌时间不可信」时的有界回退直查使用（消息按 message_id 直查，见 message_repo.findTraceInRecentTables）：
+// 这类行的终态落表由控制面接收时刻决定，按 ID 推导的表名推不出来，只能在最近日表里有界探测。
+//
+// anchor 是「当前时刻」锚点（调用侧传控制面当前时间，见 MessageRepository.recentLookupTables）：
+// **明显晚于锚点的日表必须排除**——晚于锚点的日表只可能来自时钟异常或「随机位当时间」推出的垃圾日表
+// （真机实测 msg_trace_97270109 这类公元数千年后的表名），而它们按日降序恰好排在真实日表之前，
+// 会占满整个 limit 窗口，使刚落进真实日表的行按 ID 直查**反而查不到**（审查发现的高危缺陷）。
+// 取舍：历史遗留的垃圾日表内的行不再参与有界回退（要查它们只能显式按表查 / 人工搬表），
+// 窗口优先保证「当前写入路径刚落库的行」必可查。
+//
+// 与 existingDailyTablesInRange 一样只判存不建表；一次 GetTables 元数据查询 + 前缀/日期后缀过滤，
+// 不做逐日判存。上限是硬约束（防退化成全表扫描），超出部分不查（更旧的行应由时间窗列表查询覆盖）。
+func recentDailyTables(db *gorm.DB, base string, limit int, anchor time.Time) []string {
+	if limit <= 0 {
+		return nil
+	}
+	if anchor.IsZero() {
+		anchor = time.Now() // 兜底：缺锚点按当前时刻，绝不退化成「不过滤未来日表」
+	}
+	deadline := utcDayStart(anchor.UTC().UnixMilli()).AddDate(0, 0, recentDailyTableFutureToleranceDays)
+	all, err := db.Migrator().GetTables()
+	if err != nil {
+		return nil
+	}
+	type ref struct {
+		name string
+		day  time.Time
+	}
+	refs := make([]ref, 0, limit)
+	for _, name := range all {
+		day, ok := dailyDayOf(base, name)
+		if !ok || day.After(deadline) {
+			continue
+		}
+		refs = append(refs, ref{name: name, day: day})
+	}
+	sort.Slice(refs, func(i, j int) bool { return refs[i].day.After(refs[j].day) })
+	if len(refs) > limit {
+		refs = refs[:limit]
+	}
+	names := make([]string, 0, len(refs))
+	for _, r := range refs {
+		names = append(names, r.name)
+	}
+	return names
+}
+
 // dailyDayOf 从日表名解析其 UTC 日（base_YYYYMMDD）；非本 base 的日表或后缀非法返回 (zero, false)。
 func dailyDayOf(base, table string) (time.Time, bool) {
 	prefix := base + "_"

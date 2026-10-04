@@ -332,6 +332,51 @@ func TestMsgAdminListBroadcastFilterAndAggregates(t *testing.T) {
 	}
 }
 
+// TestMsgAdminNotDeliveredVisible 校验「发送方被告知 accepted、但消息最终没送达」在管理面可查：
+// 目标 agent 未启用 messaging（从不 poll）的过期消息，即使 message_id 是 UUIDv4 随机 ID
+// （真机实测命中：旧实现会把行写进数千年后的垃圾日表），也要能在按 message_id 直查与
+// serverId + 时间窗列表查询里看到 expired(ttl_expired) 终态。
+func TestMsgAdminNotDeliveredVisible(t *testing.T) {
+	r, repo, _ := newMsgAdminRouter(t, "msg_adm_not_delivered")
+	// 控制面接收时刻在「现在」，而 message_id 的随机位指向数千年后：日表只能由接收时刻决定。
+	created := time.Now().UTC().Add(-2 * time.Minute)
+	ms := created.UnixMilli()
+	const untrustedID = "5b84d1a0-7faa-4db0-a5df-362d302ea1cb"
+	if _, err := repo.FlushDaily([]model.MessageRecord{{
+		Trace: model.MsgTrace{
+			MessageID: untrustedID, NamespaceID: 1, SourceServerID: "game-1", MsgType: "chat",
+			TargetKind: model.MsgTargetKindServer, TargetServerID: "game-2", ResolvedServerID: "game-2",
+			Status: model.MsgStatusExpired, FailReason: model.MsgFailTTLExpired,
+			CreatedAt: created, HopCount: 1, Hops: "[]",
+		},
+	}}); err != nil {
+		t.Fatalf("造过期消息失败: %v", err)
+	}
+
+	code, body := getJSON(t, r, "/admin/v2/messages?messageId="+untrustedID)
+	if code != http.StatusOK {
+		t.Fatalf("按 message_id 直查应 200，实际 %d：%v", code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("按 message_id 直查应 1 条，实际 %d", len(items))
+	}
+	item, _ := items[0].(map[string]any)
+	if item["status"] != model.MsgStatusExpired || item["failReason"] != model.MsgFailTTLExpired {
+		t.Fatalf("终态应为 expired(ttl_expired)，实际 %v/%v", item["status"], item["failReason"])
+	}
+
+	from, to := isoOf(ms-time.Hour.Milliseconds()), isoOf(ms+time.Hour.Milliseconds())
+	code, body = getJSON(t, r, fmt.Sprintf("/admin/v2/messages?serverId=game-2&status=expired&from=%s&to=%s", from, to))
+	if code != http.StatusOK {
+		t.Fatalf("条件列表查询应 200，实际 %d：%v", code, body)
+	}
+	items, _ = body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("按 serverId + 时间窗应查到该过期消息，实际 %d", len(items))
+	}
+}
+
 // TestMsgAdminStatsEdgeSkipsBroadcast stats(groupBy=edge) 跳过广播行（无单一目标边，ADR-0065）；
 // groupBy=type 照旧计入广播（一条广播即一条逻辑消息）。
 func TestMsgAdminStatsEdgeSkipsBroadcast(t *testing.T) {

@@ -55,8 +55,10 @@
     2. 该实例**不在运行时注册表** `runtime.Registry`（无任何在线 / 失联登记）；
     3. 该实例**不在 `server` 表的活动目录中**（不存在 `lifecycle = active` 的对应行；`archived` / `tombstoned` 行不算在册，其告警已由上面的生命周期消解覆盖）；
     4. 其告警的**最近触发时间**（`last_at`，空则 `created_at`）距现在**超过超时阈值**（设置项 `alert.orphan-timeout-hours`，默认 24 小时、下界 1，热改项，进 `dangerousSettingKeys` 走审批 + 审计）。
-  - **安全红线**：判据 3 是防误关的关键——**在册**（`server.lifecycle = active`）的真实实例即使离线很久，其告警**绝不能**被自动关闭（运维必须看到）。实现上先取「在册 namespace code + serverId」键集合，命中即整条跳过；测试对「在册 + 不在注册表 + 远超阈值」构造断言其**保持 `open` 且无任何处理痕迹**（经变异验证：去掉判据 3 该用例立刻失败）。
-  - **关闭动作**：复用 `AlertEventRepository.AutoResolveByServer`（一条 UPDATE、只影响 `status <> 'resolved'` 的行，天然幂等），`handled_by=system`、`handle_note=「实例长期失联且不在受管目录，自动消解」`，管理台仍可区分系统自动消解与人工处理；不逐条写审计（与其余自动消解触发点同口径），不新增 HTTP 端点。
+  - **安全红线**：判据 3 是防误关的关键——**在册**（`server.lifecycle = active`）的真实实例即使离线很久，其告警**绝不能**被自动关闭（运维必须看到）。实现上先取「在册 namespace code + serverId」键集合，命中即整条跳过；比对键经 `repository.AlertOrphanMatchKey` **单点归一**（去首尾空白 + 转小写）后入集合，候选侧用同一函数现算——候选的 `namespace` 来自 agent 上报值，与 `namespace.code` 可能存在大小写 / 空白差异，逐字节比对会让在册实例**漏配**（红线被绕过）。测试对「在册 + 不在注册表 + 远超阈值」构造断言其**保持 `open` 且无任何处理痕迹**（经变异验证：去掉判据 3 该用例立刻失败），另有「候选 namespace 写成 `PROD` / ` prod `、serverId 写成 `LOBBY-1`」的用例锁定归一（同样经变异验证：去掉归一该用例报红，在册实例的告警被误关）。
+  - **关闭动作（2026-10-05 收窄）**：改用 `AlertEventRepository.AutoResolveOpenByServer`（一条 UPDATE、**只影响 `status = 'open'` 的行**，天然幂等），`handled_by=system`、`handle_note=「实例长期失联且不在受管目录，自动消解」`，管理台仍可区分系统自动消解与人工处理；不逐条写审计（与其余自动消解触发点同口径），不新增 HTTP 端点。
+    - **为什么不再连 `acknowledged` 行一起关**：那条写点会把 `handled_by` / `handle_note` 覆盖成 `system` + 固定文案，而该表**无历史表、自动消解不逐条写审计**，覆盖后**无法再从行上区分「人工已处理」与「系统自动消解」**——恰是本 FR 人机留痕设计要区分的事。其余自动消解触发点（恢复 `online` / 主动下线 / 归档 / 永久删除）都以「该实例的告警已无出路」为前提（触发条件已消失或实例已由运维处置），关掉人工确认过的行是期望行为；而**外部消失**只有「实例不见了」这一事实，没有「事件已结束」，故不据此撤销运维的处置痕迹。
+    - **取舍（有意识）**：代价是「外部消失 + 人工已确认」的告警**不会被自动关闭**，需运维自己收尾（本 FR 由 `open` 行承担降噪主量：压测实例滞留的 30+ 条全部是 `open`）。方向与本 FR 判据 3 的取舍一致——**宁可留噪音、不可静默抹掉运维可见的状态**。
   - **查询形态**：候选聚合与在册目录各一条集合查询（`repository/alert_orphan_repo.go`，新文件），严禁逐实例查库（N+1）。候选聚合取「行级读时间 + 应用层按实例取 `MAX(COALESCE(last_at, created_at))`」而非 SQL `MAX(...) GROUP BY`——聚合表达式列无声明类型，SQLite 驱动会把时间聚合结果当字符串返回（实测 `unsupported Scan ... into type *time.Time`），行级查询的时间列各驱动都能原生扫描成 `time.Time`（守 DB 可移植），代价是每次扫描多传「未处理告警行数」这点量（已被本 FR 的收敛压住）。
   - **非实例维度行**（`server_id` 为空，如集群级告警）不参与本清理器：它们不代表任何实例失联，不属其职责范围。
 - **状态保持**：`acknowledged` 行再次触发仅更新计数 / 时间，**不回退 `open`**。
@@ -94,7 +96,7 @@
 - **身份冲突逐次可追溯**：每检出一次写一条 `identity.conflict_detected` 审计（`target_ref=identityId`），检出 2 次 → 2 条审计 + 1 行告警。
 - 实例回 `online` 后该行自动 `status='resolved'`（待办数下降）；已 `resolved` 行不参与合并，同键再触发**另起一行**。
 - 实例 / 环境被归档或永久删除后，其未处理告警自动 `status='resolved'`（`handled_by=system`），且同环境其它实例、其它环境的告警原样保留（防一条 UPDATE 打宽误标已处理）。
-- **失联自动关闭**：实例被外部删除（不在运行时注册表、不在 `server` 表活动目录）且未处理告警最近触发超过阈值（默认 24h）→ 该告警自动 `resolved`（`handled_by=system`、note「实例长期失联且不在受管目录，自动消解」）；未超阈值 / 仍在注册表 / **在册（`active`）实例**三类一律保持 `open`；重复扫描 `affected=0`。
+- **失联自动关闭**：实例被外部删除（不在运行时注册表、不在 `server` 表活动目录）且其 **`open`** 告警最近触发超过阈值（默认 24h）→ 该告警自动 `resolved`（`handled_by=system`、note「实例长期失联且不在受管目录，自动消解」）；未超阈值 / 仍在注册表 / **在册（`active`）实例**（含两侧键仅大小写 / 空白不同的情形）/ **人工已确认（`acknowledged`）的行**四类保持原状；重复扫描 `affected=0`。
 - `acknowledged` 行再次触发仍为 `acknowledged`（不回退 `open`）。
 - 抖动场景下待办计数保持有界（不随触发次数线性增长）。
 - **既有库升级**：旧索引 `idx_alert_event_dedup`（含 `to_status`）升级后被新索引 `idx_alert_event_dedup_v2` 取代，`to_status` 列保留、历史行一列不改一行不丢。

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -607,7 +608,10 @@ func (h *V2ControlPlaneHandler) transitionIdentity(w http.ResponseWriter, r *htt
 }
 
 type v2CreateBCClusterRequest struct {
-	NamespaceID uint   `json:"namespaceId"`
+	NamespaceID uint `json:"namespaceId"`
+	// ParentID 是父级字段的统一别名（与 MCP 建树工具 mcpTopologyCreateInput.ParentID 同名同义）。
+	// 与 NamespaceID 同时给出且不一致时拒绝；只给其一时取其值。
+	ParentID    *uint  `json:"parentId"`
 	Name        string `json:"name"`
 	Code        string `json:"code"`
 	DisplayName string `json:"displayName"`
@@ -621,8 +625,13 @@ func (h *V2ControlPlaneHandler) CreateBCCluster(w http.ResponseWriter, r *http.R
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	namespaceID, err := v2ParentRef(req.ParentID, req.NamespaceID, "namespaceId")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	cluster, err := h.svc.CreateBCCluster(service.CreateBCClusterParams{
-		NamespaceID: req.NamespaceID, Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
+		NamespaceID: namespaceID, Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 	if err != nil {
@@ -633,7 +642,9 @@ func (h *V2ControlPlaneHandler) CreateBCCluster(w http.ResponseWriter, r *http.R
 }
 
 type v2CreateRegionRequest struct {
-	BCClusterID uint   `json:"bcClusterId"`
+	BCClusterID uint `json:"bcClusterId"`
+	// ParentID 是父级字段的统一别名（与 MCP 建树工具 mcpTopologyCreateInput.ParentID 同名同义）。
+	ParentID    *uint  `json:"parentId"`
 	Name        string `json:"name"`
 	Code        string `json:"code"`
 	DisplayName string `json:"displayName"`
@@ -647,8 +658,13 @@ func (h *V2ControlPlaneHandler) CreateRegion(w http.ResponseWriter, r *http.Requ
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	bcClusterID, err := v2ParentRef(req.ParentID, req.BCClusterID, "bcClusterId")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	region, err := h.svc.CreateRegion(service.CreateRegionParams{
-		BCClusterID: req.BCClusterID, Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
+		BCClusterID: bcClusterID, Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 	if err != nil {
@@ -659,7 +675,9 @@ func (h *V2ControlPlaneHandler) CreateRegion(w http.ResponseWriter, r *http.Requ
 }
 
 type v2CreateZoneRequest struct {
-	RegionID    uint   `json:"regionId"`
+	RegionID uint `json:"regionId"`
+	// ParentID 是父级字段的统一别名（与 MCP 建树工具 mcpTopologyCreateInput.ParentID 同名同义）。
+	ParentID    *uint  `json:"parentId"`
 	Name        string `json:"name"`
 	Code        string `json:"code"`
 	DisplayName string `json:"displayName"`
@@ -673,8 +691,13 @@ func (h *V2ControlPlaneHandler) CreateZone(w http.ResponseWriter, r *http.Reques
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	regionID, err := v2ParentRef(req.ParentID, req.RegionID, "regionId")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	zone, err := h.svc.CreateZone(service.CreateZoneParams{
-		RegionID: req.RegionID, Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
+		RegionID: regionID, Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 	if err != nil {
@@ -682,6 +705,38 @@ func (h *V2ControlPlaneHandler) CreateZone(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	render.WriteJSON(w, http.StatusCreated, zone)
+}
+
+// v2ParentRef 归一化拓扑建树的父级字段：parentId 为统一别名（MCP 建树工具一致），
+// legacyID / legacyField 是端点原有的具体字段名（namespaceId / bcClusterId / regionId），
+// 继续接受以保持既有 HTTP 调用方不受影响。
+//
+// 返回可读 INVALID_PARAM（而非泛化「参数错误」），直接点明冲突或缺失的字段：
+//   - parentId 与旧字段都给出且不一致 → 冲突（仅当 parentId > 0 时成立）；
+//   - parentId 缺省或为 0 且旧字段也缺省 → 缺父级；
+//   - parentId 为 0 但旧字段有值 → 取旧字段（parentId 的零值视为「未提供」，不是「父级 = 0」）。
+func v2ParentRef(parentID *uint, legacyID uint, legacyField string) (uint, error) {
+	// parentId 是 *uint：JSON 里显式写 0 与不写（nil）语义等同——都表示「调用方没给出父级」。
+	// 这条对「同时序列化新旧两个字段、新字段取零值」的客户端是必需的后向兼容：旧版本控制面根本不认
+	// parentId（未知字段被忽略），若把 parentId:0 判成「与旧字段冲突」或「父级为 0」，这类原本合法的
+	// 请求会突然 400（同一份请求体在升级前后行为翻转），且「保持两者取值一致」对零值无从执行。
+	if parentID == nil || *parentID == 0 {
+		if legacyID == 0 {
+			return 0, parentRefInvalidParam("缺少父级 id：请传 parentId（兼容旧字段 " + legacyField + "）")
+		}
+		return legacyID, nil
+	}
+	if legacyID != 0 && legacyID != *parentID {
+		return 0, parentRefInvalidParam(fmt.Sprintf(
+			"parentId(%d) 与 %s(%d) 冲突：两者都是父级字段，请只传其一，或保持两者取值一致", *parentID, legacyField, legacyID))
+	}
+	return *parentID, nil
+}
+
+// parentRefInvalidParam 构造同码 INVALID_PARAM 但带可读指引的参数错误。
+// 保持 code / 状态码与既有契约一致，只替换面向调用方的说明。
+func parentRefInvalidParam(message string) error {
+	return apperr.New(apperr.ErrInvalidParam.Status, apperr.ErrInvalidParam.Code, message)
 }
 
 type v2UpdateDisplayRequest struct {
@@ -833,8 +888,21 @@ type v2ServerPlacementTransferRequest struct {
 	Reason   string          `json:"reason"`
 }
 
+// v2LobbyAssignmentResponse 是 target.kind=lobby_cluster 时的响应。
+// 顶层保留 ApprovalTicketView 既有字段（取首台票据；单台提交时与 /server-placement-transfers 同形），
+// tickets 按请求顺序逐台给出票据，避免调用方拿到批量结果后无法把票据与 server 对上。
+type v2LobbyAssignmentResponse struct {
+	ApprovalRequestID string                                `json:"approvalRequestId"`
+	Status            string                                `json:"status"`
+	OperationKey      string                                `json:"operationKey"`
+	SecretReturned    bool                                  `json:"secretReturned"`
+	Tickets           []service.LobbyMemberAssignmentTicket `json:"tickets"`
+}
+
 // AssignServers 处理 POST /admin/v2/server-assignments。
 // target 对象 = 首次分配；target 显式 null = 解除分配（原因必填，见 v2-zone-authority §4.3）。
+// target.kind=lobby_cluster 不适用「首次分配」语义：逐台转发到单服大厅迁移入口
+// （见 service.RequestLobbyMemberAssignments），无需改调 /admin/v2/server-placement-transfers。
 func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Request) {
 	var req v2ServerAssignmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -853,6 +921,22 @@ func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Req
 	if req.Target != nil {
 		params.TargetKind = req.Target.Kind
 		params.TargetID = req.Target.ID
+	}
+	if params.TargetKind == service.LobbyPlacementKind {
+		tickets, err := h.svc.RequestLobbyMemberAssignments(params, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
+		if err != nil {
+			render.WriteError(w, r, err)
+			return
+		}
+		view := v2LobbyAssignmentResponse{Tickets: tickets}
+		if len(tickets) > 0 {
+			view.ApprovalRequestID = tickets[0].ApprovalRequestID
+			view.Status = tickets[0].Status
+			view.OperationKey = tickets[0].OperationKey
+			view.SecretReturned = tickets[0].SecretReturned
+		}
+		render.WriteJSON(w, http.StatusAccepted, view)
+		return
 	}
 	ticket, err := h.svc.RequestAssignServers(params, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {

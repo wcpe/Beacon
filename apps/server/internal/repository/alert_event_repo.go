@@ -168,11 +168,36 @@ func (r *AlertEventRepository) FindUnresolvedByDedupKey(namespace, serverID, typ
 	return &e, nil
 }
 
-// AutoResolveByServer 把某实例的全部未恢复告警批量置为 resolved（FR-232 实例恢复自动消解）：
+// AutoResolveByServer 把某实例的**全部**未恢复告警批量置为 resolved（FR-232 实例恢复 / 主动下线 / 归档自动消解）：
 // 一条 UPDATE，仅影响 status != resolved 的行；handled_by 记 system、note 标明自动消解，使 UI 可区分人机处理。返回受影响行数。
+//
+// 「含 acknowledged 行」是这些触发点的**有意口径**：它们都以「该实例的告警已无出路」为前提（实例恢复 online
+// 意味着触发条件已消失；主动下线 / 归档 / 永久删除意味着实例已由运维处置），此时把人工确认过的行一并关闭
+// 是期望行为。与此相对，外部消失这类**没有「事件已结束」事实**的触发点走 AutoResolveOpenByServer（只消解 open）。
 func (r *AlertEventRepository) AutoResolveByServer(namespace, serverID string, now time.Time, note string) (int64, error) {
+	return r.autoResolveByServerWhere("namespace = ? AND server_id = ? AND status <> ?",
+		[]any{namespace, serverID, model.AlertEventStatusResolved}, now, note)
+}
+
+// AutoResolveOpenByServer 把某实例**未处理（open）**的告警批量置为 resolved：
+// 一条 UPDATE，仅影响 status = open 的行；handled_by 记 system、note 标明自动消解。返回受影响行数。
+//
+// 与 AutoResolveByServer 的唯一差别是**不碰 acknowledged 行**：那些行带人工写下的 handled_by / handle_note
+// （“谁在跟、跟到哪”），而自动消解会把两列覆盖成 system + 固定文案，且本表无历史表、自动消解不逐条写审计，
+// 覆盖后无法再从行上区分「人工已处理」与「系统自动消解」——正是人机留痕设计想区分的事。
+// 孤儿清理器（实例**外部消失**，没有「事件已结束」的事实，只有「实例不见了」）因此取本方法：
+// 宁可让运维确认过的行继续留在待办里等人处理，也不悄悄抹掉他的处置痕迹（与调用方清理器判据 3
+// 「在册实例的告警绝不能被自动关闭、运维必须看到」同一取舍方向）。
+func (r *AlertEventRepository) AutoResolveOpenByServer(namespace, serverID string, now time.Time, note string) (int64, error) {
+	return r.autoResolveByServerWhere("namespace = ? AND server_id = ? AND status = ?",
+		[]any{namespace, serverID, model.AlertEventStatusOpen}, now, note)
+}
+
+// autoResolveByServerWhere 是实例级自动消解的**唯一写点**：把满足 cond 的行置 resolved + handled_by=system
+// + 固定 note（一条 UPDATE、幂等），返回受影响行数。只接收代码内常量条件与占位符，不接受外部拼串。
+func (r *AlertEventRepository) autoResolveByServerWhere(cond string, args []any, now time.Time, note string) (int64, error) {
 	res := r.db.Model(&model.AlertEvent{}).
-		Where("namespace = ? AND server_id = ? AND status <> ?", namespace, serverID, model.AlertEventStatusResolved).
+		Where(cond, args...).
 		Updates(map[string]any{
 			"status":      model.AlertEventStatusResolved,
 			"handled_by":  model.AutoResolveOperator,

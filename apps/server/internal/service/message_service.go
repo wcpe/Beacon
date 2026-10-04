@@ -94,7 +94,11 @@ func (s *MessageService) Send(p MessageSendParams) (MessageSendResult, error) {
 	sentAtMs := p.SentAtMs
 	if sentAtMs <= 0 {
 		// sentAt 缺省回退 message_id 内嵌 UUIDv7 时间（≈ 发出时刻），保证 sent 链路事件时间完整（spec §3.3）。
-		sentAtMs, _ = store.TimeMsFromUUIDv7(p.MessageID)
+		// 仅在 ID 时间可信（规范 UUIDv7）时采用：非 UUIDv7 随机 ID 的前 48 位不是时间，拿它当 sentAt
+		// 会把链路首段写成 数千年后这类无意义时刻；此时留 0（sent 事件时间留空），宁缺勿假。
+		if ms, ok := store.TrustedTimeMsFromUUIDv7(p.MessageID); ok {
+			sentAtMs = ms
+		}
 	}
 	msg := IncomingMessage{
 		MessageID: p.MessageID, NamespaceID: p.Identity.NamespaceID, SourceServerID: p.Identity.ServerID,
@@ -229,9 +233,15 @@ func (s *MessageService) AckMessages(id agentauth.Identity, results []AckResult)
 	return s.relay.Ack(id.NamespaceID, id.ServerID, results)
 }
 
-// validateSendParams 校验发送请求字段：messageId 为 UUIDv7、msgType 非空且不超列宽、目标齐备、
+// validateSendParams 校验发送请求字段：messageId 可解析、msgType 非空且不超列宽、目标齐备、
 // targetZone 仅随广播出现且不超列宽、payload 不超上限。
 func validateSendParams(p MessageSendParams) error {
+	// 这里**刻意**用 TimeMsFromUUIDv7（只看位数、不校验版本位）而不用 TrustedTimeMsFromUUIDv7：spec §3.3
+	// 与 docs/API.md 的 send 一行都明确「非规范 UUIDv7 的 `messageId` 仍被受理」（真机实测有客户端用
+	// UUIDv4 随机 ID），§3.1 同样要求「不做拒绝写入」——拒绝等于该消息连终态行都没有。本行只保证
+	// 「ID 里能取出 48 位」这类可解析性，UUIDv4 因此合法；不可信 ID 的日表归属由写侧改按控制面接收时刻
+	// 决定（见 repository.resolveMsgDay），读侧由按 ID 直查的有界回退兜住。若改为 TrustedTimeMsFromUUIDv7，
+	// 现有 UUIDv4 调用方会立刻开始 400 —— 属契约行为变更（需 CHANGELOG 显著标注 + spec/API 同步），勿擅改。
 	if _, ok := store.TimeMsFromUUIDv7(p.MessageID); !ok {
 		return apperr.ErrInvalidParam
 	}

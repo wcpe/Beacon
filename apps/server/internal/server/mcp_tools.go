@@ -135,7 +135,10 @@ func (r *MCPToolRegistry) NewMCPServer(principal auth.Principal) *mcp.Server {
 		r.registerAgentCommandApproval(server, principal)
 		r.registerSystemApproval(server, principal)
 		r.registerDeliveryApproval(server, principal)
-		// 告警处置：中等风险直接执行（管理台同语义可直执），批量仅影响 open 行、幂等且同事务写审计。
+		// 告警处置：**高风险**（`mcpToolCatalog` 登记为 high、与 spec / API 文档同档）但直接执行——
+		// 管理台同语义可直执、故不发审批票据；批量仅影响 open 行、幂等且同事务写审计；
+		// 单条与批量都受调用者观测范围约束（见 mcp_alert_tools.go）。风险等级与是否走审批是两把尺子，
+		// 不要因为「直接执行」就把注释写成中等风险——那会成为后人放宽门禁的借口。
 		r.registerAlertTools(server, principal)
 	}
 	// 审批决定需专用能力；仅受信 automation 客户端持有，用于内网闭环审批。

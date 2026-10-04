@@ -298,6 +298,70 @@ func TestMCPAlertEventHandleValidatesStatusAndNote(t *testing.T) {
 	}
 }
 
+// TestMCPAlertEventHandleRespectsObservationScope 是单条处置的范围断言（此前只有批量受范围约束，
+// 单条无 scope 入参 → 可越过观察范围改行，与批量口径不对称）：
+// 范围外目标被拒且零改动、**范围外与不存在返回同一条理由**（差异本身会是存在性探针）、失效范围先拒、范围内正常直执。
+func TestMCPAlertEventHandleRespectsObservationScope(t *testing.T) {
+	f := newAlertMCPFixture(t)
+	base := time.Date(2026, 6, 25, 8, 0, 0, 0, time.UTC)
+	inScope := f.seed(t, f.prodCode, "lobby-1", model.AlertLevelWarning, model.AlertEventStatusOpen, base)
+	outside := f.seed(t, f.devCode, "arena-1", model.AlertLevelCritical, model.AlertEventStatusOpen, base.Add(time.Minute))
+	server := f.server(t)
+	envArg := strconv.FormatUint(uint64(f.envID), 10)
+	call := func(args map[string]any) *mcp.CallToolResult {
+		return mustCallMCPTool(t, server, "beacon.alerts.events.handle", args)
+	}
+
+	// ① 范围外目标（env 只映射 prod，目标是 dev）：拒绝，且状态 / 处理痕迹 / 审计零改动
+	outsideRes := call(map[string]any{"envId": envArg, "id": outside.ID, "status": model.AlertEventStatusResolved, "note": "越界关闭"})
+	if !outsideRes.IsError {
+		t.Fatalf("观测范围外的单条处置应被拒绝: %+v", outsideRes)
+	}
+	if got := f.get(t, outside.ID); got.Status != model.AlertEventStatusOpen || got.HandledBy != "" || got.HandleNote != "" || got.HandledAt != nil {
+		t.Fatalf("范围外告警不得被改动: %+v", got)
+	}
+	if n := f.auditTotal(t, model.ActionAlertEventResolve); n != 0 {
+		t.Fatalf("被拒的越界调用不得写审计，实际 %d 行", n)
+	}
+
+	// ② 目标不存在 → 与范围外**同一文案**：否则「范围外」/「不存在」的差异可被用来探测范围外是否存在该告警
+	missingRes := call(map[string]any{"envId": envArg, "id": outside.ID + 1000, "status": model.AlertEventStatusResolved, "note": "不存在的目标"})
+	if !missingRes.IsError {
+		t.Fatalf("不存在的告警应被拒绝: %+v", missingRes)
+	}
+	outsideText, missingText := mcpResultText(outsideRes), mcpResultText(missingRes)
+	if outsideText != missingText {
+		t.Fatalf("范围外与不存在的拒绝文案必须一致（不得泄露存在性）：不存在=%q 范围外=%q", missingText, outsideText)
+	}
+	if !strings.Contains(outsideText, mcpAlertOutOfScopeRejectedReason) {
+		t.Fatalf("范围外应回统一的不可处置文案 %q，实际 %q", mcpAlertOutOfScopeRejectedReason, outsideText)
+	}
+
+	// ③ 失效观测范围 → 先拒（在读取目标之前），零改动
+	if res := call(map[string]any{"namespaceId": "99999", "id": inScope.ID, "status": model.AlertEventStatusResolved, "note": "范围无效"}); !res.IsError {
+		t.Fatalf("失效观测范围应被拒绝: %+v", res)
+	}
+	if got := f.get(t, inScope.ID); got.Status != model.AlertEventStatusOpen || got.HandledBy != "" {
+		t.Fatalf("失效范围的调用不得改动告警: %+v", got)
+	}
+
+	// ④ 范围内目标：照常直执并写审计（范围校验没有把正常路径挡掉）
+	out := mcpStructuredMap(t, call(map[string]any{"envId": envArg, "id": inScope.ID, "status": model.AlertEventStatusAcknowledged, "note": "在范围内确认"}))
+	if out["id"] != float64(inScope.ID) || out["status"] != model.AlertEventStatusAcknowledged {
+		t.Fatalf("范围内单条处置结果不符: %v", out)
+	}
+	if got := f.get(t, inScope.ID); got.Status != model.AlertEventStatusAcknowledged || got.HandledBy != f.principal.AuditRef() {
+		t.Fatalf("范围内告警应被正常处置: %+v", got)
+	}
+	if n := f.auditTotal(t, model.ActionAlertEventAcknowledge); n != 1 {
+		t.Fatalf("范围内处置应恰好写 1 行审计，实际 %d", n)
+	}
+	// 未显式给范围 → 全局范围（缺省= 观察全体），既有调用方行为不变
+	if res := call(map[string]any{"id": outside.ID, "status": model.AlertEventStatusResolved, "note": "无范围参数"}); res.IsError {
+		t.Fatalf("缺省范围（全局）应放行: %+v", res)
+	}
+}
+
 // TestMCPAlertEventBatchHandleOnlyTouchesOpenRowsAndIsIdempotent 是批量处理的核心断言：
 // 只影响观察范围内 status='open' 的行、已处理行与范围外行原样保留、重复调用幂等（affected=0）。
 func TestMCPAlertEventBatchHandleOnlyTouchesOpenRowsAndIsIdempotent(t *testing.T) {

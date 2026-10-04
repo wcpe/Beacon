@@ -34,7 +34,11 @@ var (
 	// ErrObservationScopeStale 指定的 env/namespace 已失效或二者映射不匹配。
 	ErrObservationScopeStale = New(http.StatusConflict, "observation_scope_stale", "观测范围已失效，请刷新后重试")
 	// ErrAmbiguousIdentifier 请求同时给出不一致的旧 name 与新 code。
-	ErrAmbiguousIdentifier = New(http.StatusBadRequest, "AMBIGUOUS_IDENTIFIER", "name 与 code 不一致")
+	// 文案须自解释到「改哪里」：name 是历史兼容字段（取值等于 code），展示名走 displayName。
+	// 该错误由环境、namespace、BC 集群、大区、小区五类创建共用（normalizeStableName），
+	// 五者的 name/code/displayName 语义一致，故共用同一份指引。
+	ErrAmbiguousIdentifier = New(http.StatusBadRequest, "AMBIGUOUS_IDENTIFIER",
+		"name 与 code 不一致：name 是兼容旧字段，取值须与 code 完全相同；展示名请改用 displayName（或只传 code + displayName）")
 	// ErrImmutableIdentifier 稳定业务标识不允许修改。
 	ErrImmutableIdentifier = New(http.StatusBadRequest, "IMMUTABLE_IDENTIFIER", "稳定业务标识不允许修改")
 	// ErrNamespaceConflict 同名环境已存在。

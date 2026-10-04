@@ -135,11 +135,17 @@ agent 面：
 | POST | `/admin/v2/zones` | 新建小区 |
 | PATCH | `/admin/v2/zones/{id}` | 改小区展示信息（局部更新；`code` 不可改） |
 | DELETE | `/admin/v2/zones/{id}` | 删小区（204；挂 server → 409） |
+
+拓扑建树三个创建端点（`/bc-clusters`、`/regions`、`/zones`）的请求体约定，真源 [stable-business-identifiers-and-display-names.md](specs/stable-business-identifiers-and-display-names.md)：
+
+- **父级字段**：统一别名 `parentId` 与各端点原有字段**都接受**（`/bc-clusters` 旧字段 `namespaceId`、`/regions` 旧字段 `bcClusterId`、`/zones` 旧字段 `regionId`）。`parentId` 与 MCP 建树工具（`beacon.topology.bc-clusters.create` / `regions.create` / `zones.create`，入参统一为 `parentId`）同名同义，照 MCP 文档写 HTTP 调用可直接对上；只给其一时取该值，两者都给且不一致 → `400 INVALID_PARAM`（点名冲突的两个字段），两者都缺省 → `400 INVALID_PARAM`（点名应传 `parentId` 及对应旧字段名）。
+- **标识与展示名**：`code` 是稳定业务标识（创建后不可改），`displayName` 是可改展示名；`name` 为兼容旧调用方的历史字段，**取值必须与 `code` 完全相同**，展示名请用 `displayName`。只传 `code`（或只传 `name`）时以该值同时初始化 `code` 与 `displayName`；同时给 `name` 与 `code` 且不一致 → `400 AMBIGUOUS_IDENTIFIER`（错误信息直接说明 `name` 须等于 `code`、展示名改用 `displayName`）。
+
 | GET | `/admin/v2/zone-tree?namespaceId=` | 区服结构树只读聚合（BC 集群 → 大区 → 小区，各节点带计数，附未分配计数） |
 | GET | `/admin/v2/servers` | server 分页列表（富化视图：含归属名 / 默认入口 / 在线摘要；`assigned=false` 即未分配篮）；`lifecycleStatus=active\|archived\|all`，默认 `active` |
 | GET | `/admin/v2/servers/{id}/lifecycle-impact?action=archive\|restore` | 读取有界脱敏影响预览；当前状态不满足动作前置条件返回 `409 server_not_active` 或 `server_not_archived`，不产生副作用 |
 | PATCH | `/admin/v2/servers/{id}` | 更新 server 展示名（唯一可写字段 `displayName`；serverId 仍由身份确认流程创建并确定） **【FR-205】** |
-| POST | `/admin/v2/server-assignments` | 批量首次分配（仅未分配 server），响应 `{results:[{id,serverId,ok,code?}]}`；已分配服改归属须走换区工单 |
+| POST | `/admin/v2/server-assignments` | 批量分配申请（**经统一审批**：`202` + 票据 `{approvalRequestId,status,operationKey,secretReturned}`）。`target` 为对象即首次分配（仅未分配 server；`kind` 取 `zone` / `bc_cluster`，未分配→Zone 之外的组合仍走对应流程），`target` 显式 `null` 解除分配（原因必填）。**`target.kind=lobby_cluster` 直接受理大厅成员分配**：逐台转发到单服迁移入口（无需改调 `/server-placement-transfers`），响应为 `202` + `{approvalRequestId,status,operationKey,secretReturned,tickets:[{serverId,approvalRequestId,status,operationKey,secretReturned}]}`（`operationKey=topology.lobby_member.move`，`tickets` 按请求顺序逐台给票）；该路径 `isDefaultEntry` 必须为空/`false`（大厅成员不能是默认入口），`serverIds` 为空或含无效 id → `400 INVALID_PARAM` 并带修正指引。已分配服改归属须走换区工单 |
 | POST | `/admin/v2/server-rezones` | 批量发起换区工单（已分配、同 namespace 同 kind）：单事务解绑清归属 + 写预填目标 + 身份重入 pending；未分配台 400 `not_assigned`，整批原子回滚 |
 | PUT | `/admin/v2/servers/{serverId}/draining` | 设置 `draining=true` 为直接止损：立即写强审计并返回富化视图；设置 `draining=false` 为恢复调度，必须携带原因与 `Idempotency-Key`，返回 `202` 审批票据，批准 worker 执行后才恢复 |
 | PUT | `/admin/v2/servers/{id}/default-entry` | 更新默认入口标记（路径为 server 行 id）；未分配小区 → 409 `not_assigned` |
@@ -155,7 +161,7 @@ agent 面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| POST | `/admin/v2/server-placement-transfers` | 申请变更 server 归属（**经统一审批**：`202` + 票据，批准后由 worker 原子落库）：body `{serverId,target:{kind,id}\|null,reason}`，`target.kind` 仅 `lobby_cluster` / `zone`，`target:null` 解除大厅归属转未分配；只受理「未分配→大厅」「Zone→大厅」「大厅→Zone」「大厅→未分配」四种，Zone→Zone 仍走既有换区工单、未分配→Zone 仍走首次分配，集合外 → 409 |
+| POST | `/admin/v2/server-placement-transfers` | 申请变更 server 归属（**经统一审批**：`202` + 票据，批准后由 worker 原子落库）：body `{serverId,target:{kind,id}\|null,reason}`，`target.kind` 仅 `lobby_cluster` / `zone`，`target:null` 解除大厅归属转未分配；只受理「未分配→大厅」「Zone→大厅」「大厅→Zone」「大厅→未分配」四种，Zone→Zone 仍走既有换区工单、未分配→Zone 仍走首次分配，集合外 → 409。**这是大厅归属的单服入口**（一次一台、`serverId` 为业务字符串）；批量场景可继续用 `POST /admin/v2/server-assignments` 的 `target.kind=lobby_cluster`，该端点会把数字 `serverIds` 逐台转发到这里，两者语义与审计口径完全一致 |
 
 env 展示维度（FR-178 · P8 · 0.28.x）：纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；映射整体替换、一个 namespace 至多属一个 env。
 
@@ -207,7 +213,7 @@ agent 面：
 |---|---|---|
 | POST | `/beacon/v2/agent/connections/batch` | proxy 批量上报连接 open / close 事件 **【已实现·FR-145】** |
 | GET | `/beacon/v2/agent/player-roster` | 玩家位置名册只读查询（FR-31）：返回 `{namespace, count, players}`，**按鉴权身份只返回本域玩家**（强隔离；空名册为 `{}` 而非 404）；名册权威在控制面、由连接明细驱动 **【已实现·ADR-0063 决策 4】** |
-| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player / **broadcast** 寻址，广播可选 `targetZone` 做 zone 级定向）；payload 接受 object / array / string / number / boolean / null；Agent 先按 JSON 编码后的 UTF-8 字节数执行 64KB 前置校验，控制面再按中转 / 保存文本执行 64KB 硬校验；`msgType` 非空且 UTF-8 编码 ≤64 字节（冒号合法） **【已实现·FR-149/180】** |
+| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player / **broadcast** 寻址，广播可选 `targetZone` 做 zone 级定向）；payload 接受 object / array / string / number / boolean / null；Agent 先按 JSON 编码后的 UTF-8 字节数执行 64KB 前置校验，控制面再按中转 / 保存文本执行 64KB 硬校验；`msgType` 非空且 UTF-8 编码 ≤64 字节（冒号合法）。响应 `200 {messageId, status}` 的 `accepted` 仅表示**已受理入队**（送达与否以 `msg_trace` 终态行为准：目标未启用 messaging / 离线 → 限时内落 `expired`）。`messageId` 应为规范 UUIDv7；非 UUIDv7 仍受理（服务端只校验可解析性、不校验版本位，UUIDv4 合法），但终态行改按控制面接收时刻定日表（记 WARN），按 ID 直查走有界回退 **【已实现·FR-149/180】** |
 | POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204）；payload 往返保持 JSON 类型，string 保持业务原文且不做二次 JSON 编码，object / array / number / boolean 以 JSON 文本中转，null 表示无 payload **【已实现·FR-149】** |
 | POST | `/beacon/v2/agent/messages/ack` | 批量回执投递结果 **【已实现·FR-149/150】** |
 
@@ -218,7 +224,7 @@ agent 面：
 | GET | `/admin/v2/connections` | 连接明细查询（强制精确 ID 或过滤 + 时间范围） **【已实现·FR-145】** |
 | GET | `/admin/v2/connections/{connId}` | 单连接详情 **【已实现·FR-145】** |
 | GET | `/admin/v2/connections/stats` | 连接 / 玩家流时间桶聚合 **【已实现·FR-145】** |
-| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**；支持 `targetKind` 过滤，广播行输出 fan-out 聚合字段 `fanoutTotal`/`deliveredCount`/`failedCount`/`expiredCount`/`targetZone`） **【已实现·FR-149/180】** |
+| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**；支持 `targetKind` 过滤，广播行输出 fan-out 聚合字段 `fanoutTotal`/`deliveredCount`/`failedCount`/`expiredCount`/`targetZone`）；`messageId` / `correlationId` 直查在首选日表未命中时按最近**真实**日表有界回退（约 8 个真实日表，晚于当前的未来日表不入窗口；覆盖 `message_id` 非规范 UUIDv7 的消息），未投递消息的终态（`expired` / `failed` + `failReason`）据此可查 **【已实现·FR-149/180】** |
 | GET | `/admin/v2/messages/{messageId}` | 消息详情 + hops 链路（payload 仅元信息） **【已实现·FR-149】** |
 | POST | `/admin/v2/messages/{messageId}/payload` | 旧 payload 正文入口，固定 `409 operation_requires_approval`；先通过专用审批申请，再由原申请主体消费一次性 grant **【FR-209】** |
 | GET | `/admin/v2/messages/stats` | 异常链路聚合（拓扑页数据源；`groupBy=edge\|type`，独立 bucket 维度无契约与消费方、暂未提供） **【已实现·FR-149/156】** |
@@ -439,7 +445,7 @@ token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审�
 
 `observer` 与 `automation` 均可发现 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list`、`beacon.alerts.events.list` 与 `beacon.audit.events.list`。列表均分页或受时间窗约束；消息不返回 payload、玩家标识或 hop 原文，连接仅返回聚合，命令不返回结果正文，告警不返回 detail，审计不返回 detail 与客户端地址。
 
-**告警处置工具（直接执行 + 同事务写审计）**：`automation` 另可发现 `beacon.alerts.events.handle`（单条处理）与 `beacon.alerts.events.batch-handle`（按筛选批量处理），二者风险等级均为 `high`，语义与 HTTP 面 `POST /admin/v1/alert-events/{id}/handle` / `POST /admin/v1/alert-events/handle` 一致，**直接执行并写审计、不产生审批票据**（`mcpToolCatalog` 的 `OperationKind` 留空）。约束：目标状态仅 `acknowledged` / `resolved`（其余含空值拒绝）；处理说明 `note` 必填、去空白后为空即拒绝；批量必先解析调用者观测范围并注入筛选条件（不越界改行），且只影响 `status='open'` 的行（与审计同事务，故重复调用幂等，第二次 `affected=0`）；单条返回 `{id,status,handledBy,handledAt}`，批量返回 `{affected}`。`observer` 不可发现这两个工具（只能读 `beacon.alerts.events.list`）。
+**告警处置工具（直接执行 + 同事务写审计）**：`automation` 另可发现 `beacon.alerts.events.handle`（单条处理）与 `beacon.alerts.events.batch-handle`（按筛选批量处理），二者风险等级均为 `high`，语义与 HTTP 面 `POST /admin/v1/alert-events/{id}/handle` / `POST /admin/v1/alert-events/handle` 一致，**直接执行并写审计、不产生审批票据**（`mcpToolCatalog` 的 `OperationKind` 留空）。约束：目标状态仅 `acknowledged` / `resolved`（其余含空值拒绝）；处理说明 `note` 必填、去空白后为空即拒绝；**单条与批量都受调用者观测范围约束**——批量把范围解析成筛选条件后注入（不越界改行），单条没有筛选条件可注入，故先按 `id` 读出目标再按其 `namespace` 判定，范围外即拒且零写；单条的范围外目标与不存在的目标返回**同一条**拒绝文案（`告警不存在或不在观察范围内`，不泄露目标是否存在）；范围参数缺省即全局范围、范围解析失败即拒（`观察范围无效`）；批量只影响 `status='open'` 的行（与审计同事务，故重复调用幂等，第二次 `affected=0`）；单条返回 `{id,status,handledBy,handledAt}`，批量返回 `{affected}`。`observer` 不可发现这两个工具（只能读 `beacon.alerts.events.list`）。
 
 公网入口只有在 `mcp.enabled=true`、`mcp.public-base-url` 为无路径 HTTPS 基址且 `mcp.trusted-proxy-cidrs` 已配置时才挂载；请求必须来自受信代理，并携带与基址一致的 `X-Forwarded-Proto: https`、`X-Forwarded-Host` 和 Host。详见 [built-in-admin-v2-mcp-and-oauth.md](specs/built-in-admin-v2-mcp-and-oauth.md)。
 

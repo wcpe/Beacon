@@ -262,3 +262,87 @@ func TestAlertEventAutoResolveByNamespace(t *testing.T) {
 		t.Fatalf("重复执行应 0 行受影响且不报错，n=%d err=%v", again, err)
 	}
 }
+
+// TestAlertEventAutoResolveOpenByServerKeepsAcknowledgedTrace 锁定孤儿清理器那条写点的口径：
+// 只消解 status='open' 的行；**acknowledged 行的状态与人工处置痕迹（handled_by / handled_at / handle_note）
+// 一字不改**——自动消解会把这三列覆盖成 system + 固定文案，覆盖后本表（无历史表、自动消解不写审计）
+// 再也分不出「人工已处理」与「系统自动消解」。同时防 UPDATE 打宽：兄弟实例与已 resolved 行不受影响。
+func TestAlertEventAutoResolveOpenByServerKeepsAcknowledgedTrace(t *testing.T) {
+	r := newAlertEventTestDB(t)
+	now := time.Date(2026, 6, 20, 8, 0, 0, 0, time.UTC)
+	mk := func(ns, serverID, status string) *model.AlertEvent {
+		t.Helper()
+		e := &model.AlertEvent{
+			Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning,
+			Namespace: ns, ServerID: serverID, Message: "m", Status: status, OccurrenceCount: 1,
+		}
+		if err := r.Create(e); err != nil {
+			t.Fatalf("落库失败: %v", err)
+		}
+		return e
+	}
+	open := mk("prod", "s1", model.AlertEventStatusOpen)
+	acknowledged := mk("prod", "s1", model.AlertEventStatusAcknowledged)
+	sibling := mk("prod", "s2", model.AlertEventStatusOpen)
+	alreadyResolved := mk("prod", "s1", model.AlertEventStatusResolved)
+	// 人工已确认的行带处置痕迹：acknowledged + 人工处理人 / 时刻 / 说明
+	ackedAt := now.Add(-2 * time.Hour)
+	if err := r.db.Model(&model.AlertEvent{}).Where("id = ?", acknowledged.ID).
+		Updates(map[string]any{"handled_by": "ops-a", "handled_at": ackedAt, "handle_note": "正在排查，磁盘告警"}).Error; err != nil {
+		t.Fatalf("预置人工已确认行失败: %v", err)
+	}
+
+	const note = "实例长期失联且不在受管目录，自动消解"
+	n, err := r.AutoResolveOpenByServer("prod", "s1", now, note)
+	if err != nil {
+		t.Fatalf("AutoResolveOpenByServer 失败: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("应只消解 1 行（该实例的 open 行），实际 %d", n)
+	}
+	var gotOpen model.AlertEvent
+	if err := r.db.First(&gotOpen, open.ID).Error; err != nil {
+		t.Fatalf("回读告警失败: %v", err)
+	}
+	if gotOpen.Status != model.AlertEventStatusResolved || gotOpen.HandledBy != model.AutoResolveOperator ||
+		gotOpen.HandledAt == nil || gotOpen.HandleNote != note {
+		t.Fatalf("open 行应被自动消解（resolved / handled_by=system / note=%q），实际 %+v", note, gotOpen)
+	}
+
+	// 人工已确认行：状态与三列痕迹逐字段保留（本次加固的核心断言）
+	var gotAck model.AlertEvent
+	if err := r.db.First(&gotAck, acknowledged.ID).Error; err != nil {
+		t.Fatalf("回读告警失败: %v", err)
+	}
+	if gotAck.Status != model.AlertEventStatusAcknowledged || gotAck.HandledBy != "ops-a" ||
+		gotAck.HandleNote != "正在排查，磁盘告警" || gotAck.HandledAt == nil || !gotAck.HandledAt.Equal(ackedAt) {
+		t.Fatalf("acknowledged 行不得被自动消解改写: %+v", gotAck)
+	}
+	// 防打宽：兄弟实例的 open 行与已 resolved 行不动
+	var gotSibling model.AlertEvent
+	if err := r.db.First(&gotSibling, sibling.ID).Error; err != nil {
+		t.Fatalf("回读告警失败: %v", err)
+	}
+	if gotSibling.Status != model.AlertEventStatusOpen || gotSibling.HandledBy != "" {
+		t.Fatalf("兄弟实例的告警不应被触碰，实际 %+v", gotSibling)
+	}
+	var gotResolved model.AlertEvent
+	if err := r.db.First(&gotResolved, alreadyResolved.ID).Error; err != nil {
+		t.Fatalf("回读告警失败: %v", err)
+	}
+	if gotResolved.Status != model.AlertEventStatusResolved || gotResolved.HandledBy != "" || gotResolved.HandleNote != "" {
+		t.Fatalf("已 resolved 行不应被改写，实际 %+v", gotResolved)
+	}
+
+	// 幂等：只剩 acknowledged 行时 0 行受影响且不报错（清理器每轮会重复扫到它，不得报错、不得改写）
+	if again, err := r.AutoResolveOpenByServer("prod", "s1", now.Add(time.Minute), note); err != nil || again != 0 {
+		t.Fatalf("重复执行应 0 行受影响且不报错，n=%d err=%v", again, err)
+	}
+	var stillAck model.AlertEvent
+	if err := r.db.First(&stillAck, acknowledged.ID).Error; err != nil {
+		t.Fatalf("回读告警失败: %v", err)
+	}
+	if stillAck.Status != model.AlertEventStatusAcknowledged || stillAck.HandledBy != "ops-a" || !stillAck.HandledAt.Equal(ackedAt) {
+		t.Fatalf("重复执行不得改写人工已确认行，实际 %+v", stillAck)
+	}
+}

@@ -590,18 +590,29 @@ func (r *MessageRelay) terminateDelivered(msg *liveMessage, deliveredMs int64) m
 	return buildRecord(msg, model.MsgStatusDelivered, "", &deliveredAt, &duration)
 }
 
-// persist 把终态记录经异步写入通道落库；队列满 / 未装配记 WARN，不阻塞中转（错误不静默，ADR-0057）。
+// persist 把终态记录经异步写入通道落库；未装配记 ERROR、队列满记 WARN，不阻塞中转（错误不静默，ADR-0057）。
+// 未装配属装配缺陷（main 恒绑定 message_trace 路由），但「终态记录没有任何去处」必须可见——这正是
+// 「发送方被告知 accepted、消息最终无任何痕迹」的成因之一，故用 ERROR 而非静默返回。
 func (r *MessageRelay) persist(records []model.MessageRecord) {
-	if len(records) == 0 || r.enqueue == nil {
+	if len(records) == 0 {
+		return
+	}
+	if r.enqueue == nil {
+		slog.Error("消息终态记录未装配写入通道，本批无任何去处被丢弃", "条数", len(records), "messageIds", messageIDsOf(records))
 		return
 	}
 	if !r.enqueue.Enqueue(records) {
-		ids := make([]string, 0, len(records))
-		for _, rec := range records {
-			ids = append(ids, rec.Trace.MessageID)
-		}
-		slog.Warn("消息终态记录写入队列已满，本批被丢弃", "条数", len(records), "messageIds", ids)
+		slog.Warn("消息终态记录写入队列已满，本批被丢弃", "条数", len(records), "messageIds", messageIDsOf(records))
 	}
+}
+
+// messageIDsOf 取一批终态记录的 messageId（仅日志用，payload 等业务内容永不出现在日志里）。
+func messageIDsOf(records []model.MessageRecord) []string {
+	out := make([]string, 0, len(records))
+	for _, rec := range records {
+		out = append(out, rec.Trace.MessageID)
+	}
+	return out
 }
 
 // seedHops 构造消息前置链路事件：sent（源发出）→ received（控制面收到）→（按玩家寻址时）resolved。
