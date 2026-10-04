@@ -12,7 +12,7 @@
 直接跑 `beacon` 二进制时**首次启动自动脚手架、开箱即跑**：在当前目录释放 `config.yml`（默认 sqlite、零依赖可跑），**释放时把留空的 `auth.password` / `auth.secret` 就地填入随机强值（文件 0600）**，随即直接启动（sqlite 落 `beacon.db`），无需手工 `export` 或填值（`config.yml` 已存在则不覆盖）。**不再自动生成 `.env`**——凭据就在 `config.yml`，避免 `.env`（优先级更高）静默盖掉你对 `config.yml` 的改动。上手：
 - 运行 `beacon` → 直接起服（控制台 WARN 提示已释放 `config.yml`）。
 - 打开当前目录 `config.yml`，取 `auth.password` 登录管理台（`http://本机IP:8848`，用户名 `auth.username`，默认 `admin`）；按需改 `config.yml`（切 mysql 改 `database` 段、改口令 / 端口 / token 等）后重启即生效。
-- **接 Agent**：先在管理台创建 namespace 与该 namespace 的接入 token；Agent 最小配置只填控制面 endpoint 列表和这个 token，首次注册后在「服务器 → 待确认」批准身份并分配 serverId/拓扑。不要依赖历史全局 bootstrap token。
+- **接 Agent**：先在管理台创建 namespace 与该 namespace 的接入 token；Agent 最小配置只填控制面 endpoint 列表和这个 token，首次注册后在「服务器 → 待确认」批准身份并分配 serverId/拓扑。不要依赖历史全局 bootstrap token。**多台机器请用 §1.3 的批量接入脚本**，不要逐台手工重复这套调用。
 - 如需经环境变量覆盖（如容器内、CI、临时改口令），真实环境变量与手动放置的 `.env` 仍生效，优先级 `真实 env > .env > config.yml`。
 - 管理员口令 / 签名密钥强随机、不入库（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)，非固定弱默认口令）；生产 MySQL 按外置数据库方式部署。
 
@@ -37,6 +37,37 @@
   ```
   `systemctl daemon-reload && systemctl enable --now beacon` 后即托管；崩溃 3 秒后自动重启。
 - **裸跑无任何监督**：进程崩溃即停、需手动启动；此时换版后「新版起不来」的自动回退要到下次手动启动才触发（可接受，但不建议生产如此部署）。
+
+### 1.3 批量接入多台服务器（脚本）
+逐台手工接入（建 namespace → 每台写配置 → 启动 → 每台两步批准 → 逐台分配拓扑）在真机上约需 2×N 次接口调用，机器一多极易漏步。`scripts/ops/onboard_servers.sh` 把这条链路收敛成**一条可重入命令**：
+
+```sh
+# 1) 先干跑：只打印将做什么，不产生任何写操作（安全底线）
+./scripts/ops/onboard_servers.sh --manifest .tmp/onboard.manifest --namespace mc-prod \
+  --admin-password-file <(grep -m1 '^BEACON_ADMIN_PASSWORD=' /opt/beacon/.env | cut -d= -f2-)
+
+# 2) 确认无误再加 --apply 真正执行；重复执行会自动跳过已完成的台
+./scripts/ops/onboard_servers.sh --manifest .tmp/onboard.manifest --namespace mc-prod --apply \
+  --admin-password-file <(grep -m1 '^BEACON_ADMIN_PASSWORD=' /opt/beacon/.env | cut -d= -f2-)
+```
+
+清单文件每行一台（`#` 注释，空白分隔的 `key=value`）：
+
+```
+serverId=onb-bc     dir=/srv/mc/onb-bc     role=proxy   target=bc_cluster:onb-bc1
+serverId=onb-lobby  dir=/srv/mc/onb-lobby  role=backend target=lobby_cluster:5
+serverId=onb-game-a dir=/srv/mc/onb-game-a role=backend target=zone:onb-zone1 default-entry
+```
+
+脚本按顺序做四件事，**任一步失败都给出可执行的修正指引**：
+1. **预检**：控制面可达 / 凭据有效 / namespace 存在，并逐台比对 `plugins/BeaconAgent/config.yml`（代理为 `BeaconAgentProxy`）里的 `beacon.endpoints[0]` 与 `beacon.bootstrap-token`；不一致时直接点名**该改哪个文件的哪个字段、现值与应改值**（token 只打前 11 位前缀，不落明文）。加了 `--expect-token-file` 可与控制面当前 token 精确比对，否则退化为「各台之间必须一致」的弱校验。
+2. **等 pending**：按 `serverWorkDir` 轮询 `agent-identities` 直到目标出现 `pending`（`--wait` 超时），已在 `active` 的直接跳过。
+3. **批量批准**：逐台 `POST /admin/v2/agent-identities/{id}/approve`（带 `serverId`）→ 用返回的 `approvalRequestId` 调 `POST /admin/v2/approval-requests/{id}/approve` → **轮询到 identity 真正 `active`**（不把 `202` 当成功）。
+4. **批量归属**：按端点差异自动选路——大厅成员走 `server-placement-transfers`（字符串 `serverId`），区 / BC 集群**首次分配**走 `server-assignments`、**改派**走 `server-rezones`（两者都用 servers 表数字行 id）；每条都要再批准一次，脚本内部消化。已归属到目标的直接跳过。
+
+末尾输出中文汇总表（哪台成功 / 哪台卡在哪一步 / 下一步做什么），退出码 `0` 全部达成、`1` 预检失败、`2` 用法错误、`3` 运行期有台未达成。
+
+**边界**：拓扑节点（BC 集群 / 大区 / 小区 / 大厅集群）的**创建**仍属人工规划，脚本只做归属分配；控制面凭据一律走文件或环境变量，不写在命令行。行为级回归测试：`sh scripts/ops/test_onboard_servers.sh`（本地伪控制面，覆盖预检报错定位、两步批准、轮询生效、三条归属端点、dry-run 零写请求与重复执行幂等）。
 
 ## 2. 升级与发布
 - **升级前先备份数据库（SQLite 文件/持久卷或外置 MySQL）与 Agent 本地状态**（见 §4）。
