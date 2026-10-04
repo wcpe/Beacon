@@ -334,14 +334,14 @@ func TestMsgAdminListBroadcastFilterAndAggregates(t *testing.T) {
 
 // TestMsgAdminNotDeliveredVisible 校验「发送方被告知 accepted、但消息最终没送达」在管理面可查：
 // 目标 agent 未启用 messaging（从不 poll）的过期消息，即使 message_id 是 UUIDv4 随机 ID
-// （真机实测命中：旧实现会把行写进 9727 年的垃圾日表），也要能在按 message_id 直查与
+// （真机实测命中：旧实现会把行写进数千年后的垃圾日表），也要能在按 message_id 直查与
 // serverId + 时间窗列表查询里看到 expired(ttl_expired) 终态。
 func TestMsgAdminNotDeliveredVisible(t *testing.T) {
 	r, repo, _ := newMsgAdminRouter(t, "msg_adm_not_delivered")
-	// 控制面接收时刻在「现在」，而 message_id 的随机位指向 9727 年：日表只能由接收时刻决定。
+	// 控制面接收时刻在「现在」，而 message_id 的随机位指向数千年后：日表只能由接收时刻决定。
 	created := time.Now().UTC().Add(-2 * time.Minute)
 	ms := created.UnixMilli()
-	const untrustedID = "dea22577-6629-4d6f-af11-62a67a5a90ce"
+	const untrustedID = "5b84d1a0-7faa-4db0-a5df-362d302ea1cb"
 	if _, err := repo.FlushDaily([]model.MessageRecord{{
 		Trace: model.MsgTrace{
 			MessageID: untrustedID, NamespaceID: 1, SourceServerID: "game-1", MsgType: "chat",

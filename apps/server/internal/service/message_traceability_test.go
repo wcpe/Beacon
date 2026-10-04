@@ -14,8 +14,8 @@ import (
 )
 
 // v4RandomMsgID 是真机接入验收实测命中的 message_id 形态（UUIDv4 随机 ID）：前 48 位不是时间，
-// 旧实现据其「推导」出 msg_trace_97270109 这类永不进入查询窗口的日表，于是消息发出去就消失。
-const v4RandomMsgID = "dea22577-6629-4d6f-af11-62a67a5a90ce"
+// 旧实现据其「推导」出 msg_trace_51580917 这类永不进入查询窗口的日表，于是消息发出去就消失。
+const v4RandomMsgID = "5b84d1a0-7faa-4db0-a5df-362d302ea1cb"
 
 // repoEnqueuer 把中转终态记录直接写进真仓库（替代异步写入通道，测试无计时等待、确定性强）。
 type repoEnqueuer struct {
@@ -162,7 +162,7 @@ func TestMessageDeliveredPathUnchanged(t *testing.T) {
 }
 
 // TestMessageSendSentAtFallbackTrusted 校验 sentAt 缺省回退只采用可信的 UUIDv7 内嵌时间：
-// 随机 ID 的前 48 位不是时间，不得被当成发出时刻写进 hops（否则链路首段会显示 9727 年这类假时刻）。
+// 随机 ID 的前 48 位不是时间，不得被当成发出时刻写进 hops（否则链路首段会显示 数千年后这类假时刻）。
 func TestMessageSendSentAtFallbackTrusted(t *testing.T) {
 	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC).UnixMilli()
 	svc, _, _ := newTraceableMsgSvc(t, "msg_sentat_fallback", &now)

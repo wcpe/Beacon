@@ -31,8 +31,8 @@ func TimeMsFromUUIDv7(id string) (int64, bool) {
 // 非 UUID 文本、长度不足）返回 (0, false)。
 //
 // 为什么要与 TimeMsFromUUIDv7 分开：后者只取前 48 位当时间戳，对随机 UUID（v4）也会「解析成功」，
-// 于是随机位被当成 9727 年的毫秒——终态行会被写进永不进入查询窗口的垃圾日表而彻底不可见
-// （真机实测：两条带业务 payload 的消息落进 msg_trace_97270109）。凡「据 ID 时间定日表」的
+// 于是随机位被当成 数千年后的毫秒——终态行会被写进永不进入查询窗口的垃圾日表而彻底不可见
+// （真机实测：带业务 payload 的消息曾落进「由随机位推出的荒诞日期」日表）。凡「据 ID 时间定日表」的
 // 写入 / 读取路由都必须先过本函数，确认时间可信；不可信时改由控制面接收时刻定日表（见
 // message_repo.resolveMsgDay），保证任何一条消息的终态行都落在可查询的日表里。
 func TrustedTimeMsFromUUIDv7(id string) (int64, bool) {

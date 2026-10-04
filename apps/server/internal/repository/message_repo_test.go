@@ -160,9 +160,9 @@ func TestMessageFlushIdempotent(t *testing.T) {
 }
 
 // 不可信 ID 造数用样例（真机接入验收实测命中的 UUIDv4 随机 ID：前 48 位不是时间，
-// 若按 ID 时间定日表会被写进 msg_trace_97270109 这类永不进入查询窗口的垃圾日表）。
+// 若按 ID 时间定日表会被写进 msg_trace_51580917 这类永不进入查询窗口的垃圾日表）。
 const (
-	untrustedMsgID = "dea22577-6629-4d6f-af11-62a67a5a90ce"
+	untrustedMsgID = "5b84d1a0-7faa-4db0-a5df-362d302ea1cb"
 	opaqueMsgID    = "mid-not-a-uuid"
 )
 
@@ -289,7 +289,7 @@ func TestMessageCorrelationLookupFallsBack(t *testing.T) {
 	createdMs := time.Date(2026, 10, 4, 7, 1, 11, 511_000_000, time.UTC).UnixMilli()
 	// 请求消息：UUIDv4 随机 ID，correlation_id 自引用；响应消息：另一随机 ID，correlation_id 指回请求。
 	reqID := untrustedMsgID
-	respID := "cec5bfc7-5150-4585-9833-f27fdd23f023"
+	respID := "d5a46cf0-bc44-4d40-8d40-91b7238e9b3d"
 	req := untrustedRecord(reqID, createdMs, "")
 	req.Trace.CorrelationID = reqID
 	resp := untrustedRecord(respID, createdMs+50, "")
@@ -309,7 +309,7 @@ func TestMessageCorrelationLookupFallsBack(t *testing.T) {
 }
 
 // TestMessageDirectLookupFindsLegacyMisroutedRow 校验修复前的错表历史数据仍可按 ID 直查：
-// 真机上已落进 msg_trace_97270109（公元 9727 年）这类日表的行，在有界回退下依然能被查到，
+// 真机上已落进 msg_trace_51580917（年份落在数千年后）这类日表的行，在有界回退下依然能被查到，
 // 无需人工搬表——发送方据此仍可追溯那批「发出去就消失」的消息。
 func TestMessageDirectLookupFindsLegacyMisroutedRow(t *testing.T) {
 	db := openRepoSQLite(t, "msg_legacy_misrouted")

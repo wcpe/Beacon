@@ -52,7 +52,7 @@ func TestTrustedTimeMsFromUUIDv7(t *testing.T) {
 		t.Fatalf("规范 UUIDv7 应解析出可信时间 %d，实际 %d ok=%v", ms, got, ok)
 	}
 	// UUIDv4 随机 ID：TimeMsFromUUIDv7 会「解析成功」（随机位当时间），可信解析必须拒绝。
-	const v4 = "dea22577-6629-4d6f-af11-62a67a5a90ce"
+	const v4 = "5b84d1a0-7faa-4db0-a5df-362d302ea1cb"
 	if _, ok := TimeMsFromUUIDv7(v4); !ok {
 		t.Fatalf("用例前提不成立：宽松解析对 UUIDv4 应能取出 48 位")
 	}

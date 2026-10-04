@@ -95,7 +95,7 @@ func (s *MessageService) Send(p MessageSendParams) (MessageSendResult, error) {
 	if sentAtMs <= 0 {
 		// sentAt 缺省回退 message_id 内嵌 UUIDv7 时间（≈ 发出时刻），保证 sent 链路事件时间完整（spec §3.3）。
 		// 仅在 ID 时间可信（规范 UUIDv7）时采用：非 UUIDv7 随机 ID 的前 48 位不是时间，拿它当 sentAt
-		// 会把链路首段写成 9727 年这类无意义时刻；此时留 0（sent 事件时间留空），宁缺勿假。
+		// 会把链路首段写成 数千年后这类无意义时刻；此时留 0（sent 事件时间留空），宁缺勿假。
 		if ms, ok := store.TrustedTimeMsFromUUIDv7(p.MessageID); ok {
 			sentAtMs = ms
 		}
