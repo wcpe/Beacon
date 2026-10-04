@@ -66,6 +66,7 @@ serverId=onb-game-a dir=/srv/mc/onb-game-a role=backend target=zone:onb-zone1 de
 2. **等 pending**：按 `serverWorkDir` 轮询 `agent-identities` 直到目标出现 `pending`（`--wait` 超时），已在 `active` 的直接跳过。
 3. **批量批准**：逐台 `POST /admin/v2/agent-identities/{id}/approve`（带 `serverId`）→ 用返回的 `approvalRequestId` 调 `POST /admin/v2/approval-requests/{id}/approve` → **轮询到 identity 真正 `active`**（不把 `202` 当成功）。
 4. **批量归属**：按端点差异自动选路——大厅成员走 `server-placement-transfers`（字符串 `serverId`），区 / BC 集群**首次分配**走 `server-assignments`、**改派**走 `server-rezones`（两者都用 servers 表数字行 id）；每条都要再批准一次，脚本内部消化。已归属到目标的直接跳过。
+   - **改派比首次分配多一步**：换区是两段式——批准工单只做「清空全部归属 + 写预填目标 + 把绑定身份重入 `pending`」，归属要等该身份**再次确认**时才落地。脚本会在批准工单后自动等身份回到 `pending`、再补一次身份批准（汇总表里标为「重批准」），无需人工介入；首次分配与大厅迁移都在批准工单时立即落位，没有这一步。
 
 末尾输出中文汇总表（哪台成功 / 哪台卡在哪一步 / 下一步做什么），退出码 `0` 全部达成、`1` 预检失败、`2` 用法错误、`3` 运行期有台未达成。
 
