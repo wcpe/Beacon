@@ -82,10 +82,10 @@ export const common = {
     notificationsLoading: '加载中…',
     notificationsError: '通知加载失败',
     viewAllAlerts: '查看全部告警',
-    // 页眉一键处理（不另开备注框；已处理用固定短备注）
-    quickAck: '确认',
-    quickResolve: '已处理',
-    quickResolveNote: '页眉一键标记已处理',
+    // 页眉一键处理（不另开备注框；标记处理用固定短备注）
+    quickAck: '标记已读',
+    quickResolve: '标记处理',
+    quickResolveNote: '页眉一键标记处理',
   },
   // 命令面板（FR-193）
   commandPalette: {

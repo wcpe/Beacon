@@ -1,10 +1,11 @@
 // 告警事件页（/alert-events）：主从布局——KPI + 主列（吸顶过滤 + 自区滚列表 + 分页），右侧非模态详情面板。
-// 详情面板内完成确认 / 标记已处理写闭环，状态即时更新；与 /audits、/servers 互跳（FR-157）。
-// 列表支持多选 open 行，工具栏批量确认 / 批量标记已处理（顺序 POST 单条 handle API）。
+// 详情面板内完成标记已读 / 标记处理写闭环，状态即时更新；与 /audits、/servers 互跳（FR-157）。
+// 列表支持多选 open 行，工具栏批量标记已读 / 批量标记处理（顺序 POST 单条 handle API）；
+// 工具条另提供跨页「一键已读」「一键处理」两个并列主操作（FR-229）。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Filter as FilterIcon, TriangleAlert } from 'lucide-react'
+import { Check, CheckCheck, TriangleAlert } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -56,7 +57,7 @@ function levelBadgeVariant(level: AlertEventItem['level']): 'crit' | 'warn' | 'o
   return 'off'
 }
 
-// 处理状态 → 状态药丸语义 variant：待处理危急、已处理正常、已确认次要。
+// 处理状态 → 状态药丸语义 variant：待处理危急、已处理正常、已读次要。
 function statusBadgeVariant(status: AlertEventItem['status']): 'crit' | 'ok' | 'off' {
   if (status === 'open') {
     return 'crit'
@@ -444,37 +445,43 @@ export default function AlertEventsPage() {
           }}
         />
       </div>
-      {/* FR-229：按当前筛选跨页批量（作用于全部命中 open 条目，而非仅当前页勾选） */}
+      {/* FR-229：跨页一键操作条——「一键已读」「一键处理」并列显眼主操作，
+          作用集＝当前筛选命中的全部 open 条目（跨页），由后端 HandleBatch 保证只影响 open 行 */}
       <div className="grid gap-2 rounded-lg border border-border bg-card px-2.5 py-2">
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="default"
+            disabled={filterBatchPending || total === 0}
+            title={t('observability.alertEvents.filterBatchAckHint')}
+            onClick={() => {
+              void runFilterBatch('acknowledged', '')
+            }}
+          >
+            <Check className="size-3.5" />
+            {t('observability.alertEvents.filterBatchAck')}
+          </Button>
+          {/* 一键处理：直接点开到原因填写弹窗（原因必填），不再藏在弹窗的提交按钮里 */}
           <Button
             size="sm"
             variant="outline"
             disabled={filterBatchPending || total === 0}
             title={t('observability.alertEvents.filterBatchHint')}
             onClick={() => {
-              setFilterBatchOpen((v) => !v)
+              setFilterBatchOpen(true)
               setBatchErrorText(null)
             }}
           >
-            <FilterIcon className="size-3.5" />
-            {t('observability.alertEvents.filterBatch')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={filterBatchPending || total === 0}
-            onClick={() => {
-              void runFilterBatch('acknowledged', '')
-            }}
-          >
-            {t('observability.alertEvents.filterBatchAck')}
+            <CheckCheck className="size-3.5" />
+            {t('observability.alertEvents.filterBatchResolve')}
           </Button>
           {filterBatchResult !== null && <span className="text-xs text-ok">{filterBatchResult}</span>}
           {filterBatchPending && <span className="text-xs text-ink-3">{t('observability.alertEvents.batchProgress', { done: 0, total: 1 })}</span>}
+          {/* 禁用态无法 hover 出 title，故把不可用原因直接写在旁边 */}
+          {total === 0 && <span className="text-xs text-ink-4">{t('observability.alertEvents.filterBatchEmpty')}</span>}
         </div>
       </div>
-      {/* 按筛选批量「已处理」：需填原因，走模态填单，不在工具条内联撑开 */}
+      {/* 一键处理：按筛选批量「标记处理」需填原因，走模态填单，不在工具条内联撑开 */}
       <Dialog
         open={filterBatchOpen}
         onOpenChange={(open) => {
@@ -515,7 +522,7 @@ export default function AlertEventsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* 批量操作条：已选 N + 批量确认 / 批量标记已处理 */}
+      {/* 批量操作条：已选 N + 批量标记已读 / 批量标记处理 */}
       {checkedIds.size > 0 && (
         <div className="grid gap-2 rounded-lg border border-border bg-secondary/40 px-2.5 py-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -546,7 +553,7 @@ export default function AlertEventsPage() {
           </div>
         </div>
       )}
-      {/* 勾选后批量「标记已处理」：需填原因，走模态填单，不撑高批量操作条 */}
+      {/* 勾选后批量「标记处理」：需填原因，走模态填单，不撑高批量操作条 */}
       <Dialog
         open={batchResolveOpen}
         onOpenChange={(open) => {

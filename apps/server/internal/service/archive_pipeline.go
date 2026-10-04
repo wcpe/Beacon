@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log/slog"
 	"sort"
 	"strconv"
 	"time"
@@ -192,12 +193,16 @@ func (r *archiveItemRunner) runDelete(item *model.ArchiveJobItem) error {
 		}
 		return r.saveItem(item)
 	}
+	// 附加行过滤域（extraWhere 非空）走加固路径：过滤谓词可随业务状态变化，不能假定「当前匹配的行都已搬运」。
+	if r.dom.extraWhere != "" {
+		return r.runFilteredDelete(item)
+	}
 	// 单表区间：先 SELECT 一批主键，再 DELETE WHERE pk IN(...)，循环至空。
 	for {
 		if r.cancelled() {
 			return errArchiveCancelled
 		}
-		ids, err := r.deleteBatchIDs(item)
+		ids, err := r.deleteBatchIDs(item, nil)
 		if err != nil {
 			return err
 		}
@@ -218,6 +223,67 @@ func (r *archiveItemRunner) runDelete(item *model.ArchiveJobItem) error {
 		r.sleep()
 	}
 	return nil
+}
+
+// runFilteredDelete 是附加行过滤域（extraWhere 非空）的单表删除路径。
+//
+// 与默认路径的差别只有一处，但这一处是数据安全的关键：默认路径依赖「选中即删」推进批次，
+// 而本路径的过滤谓词**可随业务状态变化**——如 alert_event 的 status 会在归档任务运行期间
+// 被人工处置 / 自动消解（孤儿清理器、实例与环境归档），于是「copy 阶段不匹配、delete 阶段匹配」
+// 的行会出现：默认路径会把它们直接删掉，而它们**从未搬到归档库**（热库删掉、冷库没有 = 静默丢失）。
+//
+// 因此本路径：① 以主键游标单调推进（选出但不删的行不会让循环原地打转）；
+// ② 只删「归档侧已确认存在」的主键——删除集合恒 ⊆ 已搬运集合，漏搬的行留在热库由下一轮任务处理。
+func (r *archiveItemRunner) runFilteredDelete(item *model.ArchiveJobItem) error {
+	var afterPK any
+	skipped := int64(0)
+	for {
+		if r.cancelled() {
+			return errArchiveCancelled
+		}
+		ids, err := r.deleteBatchIDs(item, afterPK)
+		if err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			break
+		}
+		selected := len(ids)
+		afterPK = ids[selected-1] // 无论本批是否真的删除，游标都推进
+		kept, err := r.archivedPKs(item, ids)
+		if err != nil {
+			return err
+		}
+		skipped += int64(selected - len(kept))
+		if len(kept) > 0 {
+			res := r.hot.Exec("DELETE FROM "+item.TargetTable+" WHERE "+r.dom.pkColumn+" IN ?", kept)
+			if res.Error != nil {
+				return res.Error
+			}
+			item.RowsDeleted += res.RowsAffected
+			if err := r.saveItem(item); err != nil {
+				return err
+			}
+		}
+		if selected < r.batchRows {
+			break
+		}
+		r.sleep()
+	}
+	if skipped > 0 {
+		// 未删的行是「运行期间才满足过滤条件、本任务未搬运」的行；留在热库待下一轮归档，不影响数据完整性。
+		slog.Warn("归档删除跳过未在归档库确认存在的行", "域", r.dom.name, "表", item.TargetTable, "跳过行数", skipped)
+	}
+	return nil
+}
+
+// archivedPKs 取候选主键中「归档侧已存在」的子集（归档表不存在即空集 → 一个也不删）。
+func (r *archiveItemRunner) archivedPKs(item *model.ArchiveJobItem, ids []any) ([]any, error) {
+	if !r.archive.Migrator().HasTable(item.TargetTable) {
+		return nil, nil
+	}
+	q := r.archive.Table(item.TargetTable).Where(r.dom.pkColumn+" IN ?", ids)
+	return pluckPKs(q, r.dom.pkColumn, r.dom.pkKind)
 }
 
 // readBatch 主键升序读一批热库行（cursor 断点 + 单表区间过滤），返回行 map 切片与本批最大主键字符串。
@@ -251,10 +317,14 @@ func (r *archiveItemRunner) writeArchiveBatch(tableName string, rows []map[strin
 		Create(&rows).Error
 }
 
-// deleteBatchIDs 取单表区间内主键升序的一批（至多 batchRows 个），供 DELETE IN 使用。
-func (r *archiveItemRunner) deleteBatchIDs(item *model.ArchiveJobItem) ([]any, error) {
+// deleteBatchIDs 取单表区间内主键升序的一批（至多 batchRows 个），供 DELETE IN 使用；
+// afterPK 非空时只取主键更大者（附加过滤域的单调推进游标；默认路径传 nil，行为不变）。
+func (r *archiveItemRunner) deleteBatchIDs(item *model.ArchiveJobItem, afterPK any) ([]any, error) {
 	q := r.applyRange(r.hot.Table(item.TargetTable), item).
 		Order(r.dom.pkColumn + " ASC").Limit(r.batchRows)
+	if afterPK != nil {
+		q = q.Where(r.dom.pkColumn+" > ?", afterPK)
+	}
 	return pluckPKs(q, r.dom.pkColumn, r.dom.pkKind)
 }
 
@@ -323,8 +393,11 @@ func (r *archiveItemRunner) hashRows(db *gorm.DB, tableName string, samplePKs []
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// applyRange 对单表形态附加发生时间上界（daily 无区间过滤，整表为单元）。
+// applyRange 收口本域的一切行选择条件：附加行过滤（extraWhere）+ 单表形态的发生时间上界
+// （daily 无区间过滤，整表为单元）。搬运 SELECT、删除 SELECT、计行、下界、抽样主键集全部经此，
+// 域内绝不出现「某条路径漏了 extraWhere」的错配（见 archive_domains.go 的字段注释）。
 func (r *archiveItemRunner) applyRange(q *gorm.DB, item *model.ArchiveJobItem) *gorm.DB {
+	q = applyDomainFilter(q, r.dom)
 	if r.dom.form == archiveFormSingle && item.RangeTo != nil {
 		q = q.Where(r.dom.timeColumn+" < ?", *item.RangeTo)
 	}

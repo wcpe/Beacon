@@ -20,6 +20,7 @@ import {
   type CommandGroup,
   type CommandItem,
 } from '../features/command-palette/items'
+import { auditActionLabel } from '../features/observability/audit-action-label'
 
 interface CommandPaletteProps {
   open: boolean
@@ -49,9 +50,8 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
       return t(item.titleKey)
     }
     if (item.group === 'audits') {
-      return t(`observability.audits.action.${item.title ?? ''}`, {
-        defaultValue: item.title ?? item.id,
-      })
+      // 审计深链：未映射动作回退到条目 id（与既有行为一致）
+      return auditActionLabel(t, item.title ?? '', item.title ?? item.id)
     }
     if (item.group === 'servers') {
       return t('common.commandPalette.searchServers', { q: item.title ?? '' })

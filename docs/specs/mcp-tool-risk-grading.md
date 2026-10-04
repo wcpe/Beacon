@@ -73,7 +73,7 @@ func MCPToolNames(profile string) []string
 
 `mcpToolDiscoverable` 在 FR-236 阶段只包含 `RequireApprovalDecide` 判定；FR-237 将在此叠加生产模式过滤（单点扩展，测试与运行时同时生效）。
 
-### 3.3 风险等级分配（全部 78 项）
+### 3.3 风险等级分配（全部 81 项）
 
 **`critical`（10 项，均为「不可逆」或「影响控制面自身」）**
 
@@ -92,16 +92,19 @@ func MCPToolNames(profile string) []string
 
 > 前 9 项在既有 descriptor 上为 `high`，本 FR 在 **MCP 面提级**为 `critical`，不改动 descriptor。依据：MCP 调用方是机器主体，其可发现面应**严于**人类管理台（管理台仍可正常发起这些操作的审批申请）。
 
-**`high`（44 项）**：其余全部申请类与敏感读消费类工具，等级继承既有 descriptor（`config.*` 8、`file.*` 8、`override-set.*` 3、`identity.*` 5、`namespace_trust.grant` 1、`topology` 审批 5、`lifecycle` archive/restore 4、`agent.server.resync` 1、`delivery` 其余 5、`assets.preview.*` 2、`messages.payload.*` 2）。
+**`high`（46 项）**：其余全部申请类与敏感读消费类工具，等级继承既有 descriptor（`config.*` 8、`file.*` 8、`override-set.*` 3、`identity.*` 5、`namespace_trust.grant` 1、`topology` 审批 5、`lifecycle` archive/restore 4、`agent.server.resync` 1、`delivery` 其余 5、`assets.preview.*` 2、`messages.payload.*` 2），外加 **2 项告警处置工具**（`beacon.alerts.events.handle` / `.batch-handle`：直接执行 + 同事务写审计、无审批票据——批量一条 UPDATE 且只影响 `status='open'` 行故幂等、单条可再改故可逆；但因关闭告警会隐藏故障信号、改变生产可见状态，取 `high` 而非 `low`）。
 
-**`low`（24 项）**：
+**`low`（25 项）**：
 
 - 12 个只读工具（`mcpReadToolNames`）：直查服务，无副作用。
+- 1 个告警事件只读列表：`beacon.alerts.events.list`（分页 + 状态/级别/环境/实例/时间过滤，且**不透传 detail**——该列含状态前后与实例地址上下文）。
 - 2 个审批自查：`beacon.approvals.own.list` / `.get`（仅读自己的申请）。
 - 1 个自查变更：`beacon.approvals.own.withdraw`（仅撤回自己的 pending 申请）。
 - 9 个建树工具（FR-221）：低风险结构操作，FR-221 已明确直执且 service 层有非空拒绝保护。
 
-> **合计校验**：critical 10 + high 44 + low 24 = 78。
+> **合计校验**：critical 10 + high 46 + low 25 = 81。
+
+> 本节计数随 catalog 增长更新（FR-236 交付时为 78 项；本表当前为 81 项，增量即上文 3 个告警工具）。§1 / §2 / §4 / §5 中的「78 项」是 FR-236 交付时的历史快照，不再随目录增长维护；**当前档位与计数的真源始终是 `mcpToolCatalog` 与本节**。
 
 **关于 `assets.preview.consume` / `messages.payload.consume`**：不创建审批、只消费既有 grant，故无 descriptor。定为 `high`——它们读取敏感内容，虽受上游 grant 约束，但不应与只读工具同档。
 

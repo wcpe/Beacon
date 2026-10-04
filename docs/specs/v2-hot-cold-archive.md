@@ -42,10 +42,14 @@
 | `conn_detail` | 每连接明细 | 日期后缀表（`conn_detail_YYYYMMDD`） | v2-connection-message-storage.md §3.2 | 60 天 |
 | `msg_trace` | 跨服消息元数据 | 日期后缀表（`msg_trace_YYYYMMDD`） | v2-connection-message-storage.md §3.3 | 60 天 |
 | `msg_payload` | 跨服消息 payload | 日期后缀表（`msg_payload_YYYYMMDD`） | v2-connection-message-storage.md §3.4 | 30 天 |
+| `mcp_invocation` | MCP 工具调用流水 | 日期后缀表（`mcp_invocation_YYYYMMDD`） | mcp-invocation-audit.md §3.8（FR-240） | 180 天 |
 | `audit` | 审计记录 | 单表（时间索引） | 现行 audit 域（无独立 v2 规格，见 §8） | 180 天 |
+| `alert_event` | 告警事件（**仅已处理行**） | 单表（时间索引） | 现行 `alert_event` 表（FR-89 / FR-157 / FR-232；归档约束由本规格定义） | 180 天 |
 
 - 保留期语义：数据「业务发生时间」早于 `当日 UTC 0 点 - 保留期天数`（下称 cutoff）即到期，进入归档流程。
 - 两种表形态对应两种归档单元（§4.3）：**日期后缀表**以整表为单元（仅归档日期严格早于 cutoff 的表，天然无半表状态）；**单表**以 `发生时间 < cutoff` 的行区间为单元、按主键分批。
+- **附加行过滤（`alert_event` 专属约束）**：`alert_event` 中 `status <> 'resolved'` 的行是**未处理待办**，必须留在热库让运维看到，因此该域带额外行过滤 `status = 'resolved'`——**只有已处理的行**会按保留期归档。该过滤在域注册表中以代码内常量 `extraWhere` 承载（不接受任何外部输入，无注入面），并施加于**全部行选择路径**（搬选取数、热库删除选数、dry-run / 校验计行、区间下界、抽样主键集、overview 与 item 展开的域内计数），否则会出现「按 A 集合搬运、按 B 集合删除」的静默数据丢失。删除阶段另加「归档侧确认存在才删」的收口：过滤谓词可随业务状态变化（告警会被人工处置 / 自动消解），运行期间才满足条件的行**从未搬运**，绝不能被删（留在热库交下一轮归档）。
+- 后续新增域如需同类约束，复用 `extraWhere`；域注册表规模当前为 **9 域**（7 张日期后缀表 + `audit` / `alert_event` 两张单表）。
 
 ### 3.2 归档任务表（落热库，控制面事实）
 
@@ -97,7 +101,9 @@
 | `archive.retention-days.conn-detail` | 60 | |
 | `archive.retention-days.msg-trace` | 60 | |
 | `archive.retention-days.msg-payload` | 30 | |
+| `archive.retention-days.mcp-invocation` | 180 | |
 | `archive.retention-days.audit` | 180 | |
+| `archive.retention-days.alert-event` | 180 | 只对已处理（`status = 'resolved'`）告警生效：未处理告警是运维待办、永不归档（§3.1 附加行过滤） |
 | `archive.auto-enabled` | true | 是否每日自动执行归档任务 |
 | `archive.schedule-hour-utc` | 4 | 每日自动执行的 UTC 整点 |
 | `archive.batch-rows` | 1000 | 单批搬运 / 删除行数 |

@@ -358,8 +358,8 @@ data: {}
 | `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情（同含 `backends`/`proxy`/`lastHeartbeatAgeSec`/`healthReason`/`agentVersion`） |
 | `GET /admin/v1/instances/{serverId}/config-timeline?namespace=&group=` | per-server 有效配置变更时间线（FR-80）：返回该子服**当前**覆盖链涉及的全部 config 项的发布历史（含首发 / 发布 / 回滚），按时间倒序。`namespace` 必填（缺失返 `400 INVALID_PARAM`）；`group` 可选 groupHint（未指派时定位 group 层）。返回 `{ namespace, serverId, group, zone, items: [{ configItemId, dataId, scopeLevel, scopeTarget, version, md5, operator, comment, createdAt }] }`，只读、不含 content、不落 DB |
 | `GET /admin/v1/instances/offline?namespace=` | 列出当前主动下线标记（FR-49）：`{ items: [{ namespace, serverId, reason }] }`（已下线实例不在上面的注册表列表出现，前端据此展示「已下线（可取消）」） |
-| `POST /admin/v1/instances/{serverId}/offline?namespace=` | 主动下线（FR-49）：事务内落 DB 拒绝态 `server_offline` + `instance.offline` 审计，提交后移出内存可用集；该实例**重注册被拒**（见 agent register `403`）。body 可选 `{reason}`（空体也允许）；operator 由认证态派生；写操作 readonly→403。允许对不在册实例预先下线。**区别于 drain（排空、仍可连）与健康 TTL（自动衰退）** |
-| `DELETE /admin/v1/instances/{serverId}/offline?namespace=` | 取消主动下线（FR-49）：软删 `server_offline` + `instance.online` 审计，使实例可重新接入；无下线标记返 `404 OFFLINE_NOT_FOUND`。清除后不主动复活（等 agent 降频探测重连或运维 reconnect） |
+| `POST /admin/v1/instances/{serverId}/offline?namespace=` | 主动下线（FR-49）：事务内落 DB 拒绝态 `server_offline` + `instance.offline` 审计，提交后移出内存可用集；该实例**重注册被拒**（见 agent register `403`）。body 可选 `{reason}`（空体也允许）；operator 由认证态派生；写操作 readonly→403。允许对不在册实例预先下线。**区别于 drain（排空、仍可连）与健康 TTL（自动衰退）**。提交后另自动消解该实例未处理告警（FR-232，note「实例已主动下线，自动消解」；消解失败不回滚下线） |
+| `DELETE /admin/v1/instances/{serverId}/offline?namespace=` | 取消主动下线（FR-49）：软删 `server_offline` + `instance.online` 审计，使实例可重新接入；无下线标记返 `404 OFFLINE_NOT_FOUND`。清除后不主动复活（等 agent 降频探测重连或运维 reconnect）。**不做任何告警动作**（取消下线 ≠ 实例已恢复在线，其告警留待真正回 `online` 时由既有路径消解） |
 | `POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=` | 反向抓取扫描审批申请入口。body `{scope,group,target,reason}` + `Idempotency-Key`，返回 `202` 票据；批准 worker 同一事务创建任务（`scanning`）、`mode=scan` 命令、审计与 execution receipt，提交后才唤醒 Agent。|
 | `POST /admin/v1/instances/{serverId}/logs?namespace=` | 取日志兼容申请入口：body `{reason}` + `Idempotency-Key`，创建 `agent.command.tail_logs` 审批申请并返回 `202` 票据；批准 worker 在同一事务下发命令、创建 pending grant 与执行回执，绝不直接返回正文 |
 | `GET /admin/v1/instances/{serverId}/logs?namespace=` | 旧日志正文入口，固定 `409 operation_requires_approval`；命令状态与脱敏结果摘要继续从 `GET /admin/v1/commands` 直接读取，正文只能凭批准后的 grant 消费 |
@@ -694,28 +694,28 @@ data: {}
 | `GET /admin/v1/settings` | 列全部热改项当前值 + 类型 + 默认 + 说明：`{ items: [{ key, value, valueType, default, desc, isStartup }] }`。`valueType ∈ {int,bool,string}`；`isStartup` 恒 `false`（白名单内皆热改项）。读对 full / readonly 都开。**含凭据项（`update.proxy-url`）的 `value` 回显脱敏**：userinfo 段掩为 `***`（如 `http://***:***@h:port`），落库存原值仅供运行（FR-98，见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)） |
 | `PUT /admin/v1/settings/{key}` | 改单个热改项：请求体 `{ "value": "<字符串化值>", "reason": "..." }`。低风险 key 直接返回 `{ ok: true }`；登记为高影响的 key 只创建审批申请并返回 `202` 审批票据。写方法 readonly→`403`；白名单外 `key` → `400 SETTING_KEY_NOT_ALLOWED`；类型 / 范围 / 枚举校验不过 → `400 SETTING_VALUE_INVALID`。高影响设置在批准时按冻结 version CAS，漂移即失败且不覆盖当前值。每次实际改动入审计 `settings.update`（detail 仅记 `key` + 新值，**绝不含任何密钥 / 口令**；含凭据项的新值脱敏后再记，FR-98）。**含凭据项「未改密码」语义**：若提交的 `value` 仍是当前值的脱敏占位（如原样回传 `http://***:***@h`），后端**保留原值不覆盖**、不入审计 |
 
-热改 key 白名单共 **37 项**，以服务端 `settingsWhitelist` 为契约真源，完整清单如下：
+热改 key 白名单共 **40 项**，以服务端 `settingsWhitelist` 为契约真源，完整清单如下：
 
 - 健康判定（4）：`health.degraded-after-sec`、`health.ttl-sec`、`health.offline-grace-sec`、`health.scan-interval-sec`。
 - 指标采样（3）：`metric.enabled`、`metric.sample-interval-sec`、`metric.retention-hours`。
 - 长轮询（1）：`longpoll.max-hold-ms`。
-- 告警 webhook（2）：`alert.webhook-url`、`alert.webhook-timeout-ms`。
+- 告警（3）：`alert.webhook-url`、`alert.webhook-timeout-ms`、`alert.orphan-timeout-hours`（失联孤儿告警自动关闭阈值，`int [1,8760]` 小时，默认 24；登记为高影响设置，改动走审批 + 审计）。
 - 日志（1）：`log.level`，枚举 `ERROR|WARN|INFO|DEBUG`。
 - 反向抓取（1）：`reverse-fetch.max-file-bytes`，默认 1 MiB；控制面据此结合 agent 上报 size 重算 `overThreshold`，不信任 agent 标记。
 - 在线更新（4）：`update.proxy-url`、`update.channel`、`update.auto-check-enabled`、`update.check-interval-hours`。`update.proxy-url` 接受含可选 `user:pass` 的 `http(s)://host:port`，空值表示直连，仅作用于控制面更新检查 / 下载出站，凭据在回显、审计和日志中脱敏（FR-98，见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)）；`update.channel` 为兼容保留字段，唯一合法值与响应值均为 `stable`，历史 `prerelease` / 非法旧值启动时自动持久化归一为 `stable`（FR-185，见 [ADR-0074](adr/0074-simple-rc-ga-release-flow.md)）；`update.auto-check-enabled` 默认 `true`；`update.check-interval-hours` 为 `int [1,168]`，默认 6。
 - 配置撤回（1）：`undo.window-hours`，默认 24 小时。
 - 身份冲突（1）：`identity.conflict-window-sec`，默认 600 秒。
 - 交付编排与数据面（6）：`delivery.approver-separation-enabled`、`delivery.blob-retention-days`、`delivery.blob-capacity-bytes`、`delivery.upload-concurrency`、`delivery.download-concurrency`、`delivery.cleanup-interval-minutes`。
-- 热冷归档（13）：`archive.retention-days.metric-sample`、`archive.retention-days.health-snapshot`、`archive.retention-days.sched-decision`、`archive.retention-days.conn-detail`、`archive.retention-days.msg-trace`、`archive.retention-days.msg-payload`、`archive.retention-days.audit`、`archive.auto-enabled`、`archive.schedule-hour-utc`、`archive.batch-rows`、`archive.batch-interval-ms`、`archive.verify-sample-size`、`archive.cold-query-max-days`。
+- 热冷归档（15）：`archive.retention-days.metric-sample`、`archive.retention-days.health-snapshot`、`archive.retention-days.sched-decision`、`archive.retention-days.conn-detail`、`archive.retention-days.msg-trace`、`archive.retention-days.msg-payload`、`archive.retention-days.audit`、`archive.retention-days.mcp-invocation`、`archive.retention-days.alert-event`（告警事件表归档保留期，默认 180 天；**只归档已处理 `status=resolved` 的行**，未处理告警是运维待办、始终留在热库）、`archive.auto-enabled`、`archive.schedule-hour-utc`、`archive.batch-rows`、`archive.batch-interval-ms`、`archive.verify-sample-size`、`archive.cold-query-max-days`。
 
 `config.yml` 仅为有对应配置项的设置提供**首启种子**；纯 store 设置使用服务端默认值。store 缺 key 时才写入默认值，已 seed 后修改配置文件不影响运行值。
 
 ### 审计与环境
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/audits?namespace=&operator=&action=&targetType=&targetRef=&detailKeyword=&from=&to=&page=&size=` | 分页审计（时间倒序），返回 `total` + `items`；`operator` 按操作者过滤（FR-30）；`detailKeyword` 对 `detail` 列做子串 LIKE 检索（与其它过滤 AND 叠加，`%`/`_` 已转义当字面字符，可移植 GORM 不用方言函数，FR-84） |
-| `GET /admin/v1/audits/export?<同 audits 过滤>&format=csv\|json` | 审计导出（FR-84，增强 FR-7）：复用 `GET /audits` 全部过滤（含 `detailKeyword`，**不分页、全量导出**），`format` 缺省 `csv`；按时间倒序**流式**输出（控制面按游标分批边查边写、不一次性载入内存）。`csv`→`Content-Type: text/csv` 首行表头（id,namespace,operator,action,targetType,targetRef,detail,result,clientIp,createdAt）+ 命中行；`json`→`Content-Type: application/json` 命中记录数组（小驼峰字段，同 audits items）；均带 `Content-Disposition: attachment`（文件名含 UTC 时间戳）。`format` 非 csv/json → `400 INVALID_PARAM`（写出响应头前拒绝） |
-| `GET /admin/v1/audits/analytics?namespace=&from=&to=` | 窗口内审计活动聚合（FR-73）：`namespace` 可空（全部环境）；`from`/`to` 为 RFC3339，缺省 `to`=当前、`from`=`to`-30 天，**窗口上限 92 天**（超出 `400 INVALID_PARAM`）。返回 `{from, to, total, okCount, failCount, byAction:[{action,count}]按 count 降序, byDay:[{date:"YYYY-MM-DD",count}]按 UTC 日升序}`；空窗口各数组为 `[]`。日聚合在 Go 侧做（不用方言日期函数，保 Postgres 可移植） |
+| `GET /admin/v1/audits?namespace=&operator=&action=&targetType=&targetRef=&detailKeyword=&result=&from=&to=&page=&size=` | 分页审计（时间倒序），返回 `total` + `items`；`operator` 按操作者过滤（FR-30）；`detailKeyword` 对 `detail` 列做子串 LIKE 检索（与其它过滤 AND 叠加，`%`/`_` 已转义当字面字符，可移植 GORM 不用方言函数，FR-84）；`result` 按操作结果过滤，仅接受 `ok` / `fail`（缺省不过滤，其它取值 `400 INVALID_PARAM`），与导出 / 冷查询同口径 |
+| `GET /admin/v1/audits/export?<同 audits 过滤>&format=csv\|json` | 审计导出（FR-84，增强 FR-7）：复用 `GET /audits` 全部过滤（含 `detailKeyword` / `result`，**不分页、全量导出**），`format` 缺省 `csv`；按时间倒序**流式**输出（控制面按游标分批边查边写、不一次性载入内存）。`csv`→`Content-Type: text/csv` 首行表头（id,namespace,operator,action,targetType,targetRef,detail,result,clientIp,createdAt）+ 命中行；`json`→`Content-Type: application/json` 命中记录数组（小驼峰字段，同 audits items）；均带 `Content-Disposition: attachment`（文件名含 UTC 时间戳）。`format` 非 csv/json → `400 INVALID_PARAM`（写出响应头前拒绝） |
+| `GET /admin/v1/audits/analytics?namespace=&from=&to=` | 窗口内审计活动聚合（FR-73）：`namespace` 可空（全部环境）；`from`/`to` 为 RFC3339，缺省 `to`=当前、`from`=`to`-30 天，**窗口上限 92 天**（超出 `400 INVALID_PARAM`）。返回 `{from, to, total, okCount, failCount, byAction:[{action,count}]按 count 降序, byDay:[{date:"YYYY-MM-DD",count}]按 UTC 日升序}`；空窗口各数组为 `[]`。日聚合在 Go 侧做（不用方言日期函数，保 Postgres 可移植）。同端点也**校验** `result` 参数（非法值 `400`），但聚合口径不受其影响——返回结构自身即按 `ok` / `fail` 拆分统计，按结果过滤会让另一个计数恒为 0 |
 | `GET /admin/v1/namespaces` / `POST /admin/v1/namespaces` | 环境列表 / 新建（建环境记一条 `namespace.create` 审计，operator 由认证态派生） |
 | `PUT /admin/v1/namespaces/{code}` | 改环境显示名（请求体 `{ "name": "新显示名" }`，`code` 不可变；记 `namespace.update` 审计；环境不存在 `404 NAMESPACE_NOT_FOUND`；写方法 readonly→403，FR-53） |
 | `DELETE /admin/v1/namespaces/{code}` | 旧删除入口已迁移，统一返回 `410 namespace_delete_migrated`，不触发任何硬删、副作用或隐式审批；readonly API key 仍先由 `readonlyWriteGuard` 拒绝为 `403` |

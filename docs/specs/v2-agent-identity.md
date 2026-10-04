@@ -193,6 +193,7 @@ agent 启动
 - 收到带 `X-Beacon-Identity` 的数据面上报请求时，比对请求携带的 `X-Beacon-Boot` 头与权威 boot：不一致且**未经过注册刷新** → 记一次「陈旧 bootId 请求」，并对该请求返回 **404** 促 agent 重注册（复用 agent 既有「404→重注册」路径）。选 **404 而非 401**：agent 只把 404 识别为「未注册需重注册」、据此主动重注册；401 仅退避重试同 bootId、**不重注册**（会导致真实并发双实例潜伏不被检测）。据此，活着的旧实例被顶替后其陈旧上报收 404 → 重注册 → 构成往复触发检测；已死旧实例收 404 不会重注册，故不误判单向切换（§4.6）。
 - **判定规则**：在 `identity-conflict-window`（运维设置，默认 10 分钟）内，同一 identityId 出现 **≥2 个不同 bootId 交替活跃**（即 bootId A 刷新注册后又收到 bootId B 的活跃请求，再次往复）→ 判定并发双实例，触发 T12 转 `conflict`。单向切换（A 停、B 起，不再见 A）是正常重启/换机，不触发。
 - 进入 `conflict` 后：双实例的请求都收到 409 `{status:"conflict"}`；agent 收到后停止业务上报、进入注册轮询等待处置，本地按 fail-static 继续跑（不影响玩家）。
+- **告警留痕与收敛（2026-10-04 同步）**：每次检出转 `conflict` 都写一条 `identity.conflict_detected` 审计（`target_ref=identityId`）与一条 `identity-conflict` 告警。告警按 **FR-232 收敛**：同一实例在未 `resolved` 期间**只保留 1 行**（`occurrence_count` 记检出次数、`message` / `detail` 取**最近一次**冲突双方、`created_at` 保持首发、`acknowledged` 不回退、`resolved` 后再检出另起一行）。故「检出过几次、各在何时」从审计追溯；单次 boot 明细在告警行里只保留最近一组（`conflict_peers` 亦然，逐次 boot 明细不落库）。详见 [alert-dedup-and-auto-resolve](alert-dedup-and-auto-resolve.md) §3。
 - **处置**（T13）：管理员在详情页看到冲突双方的 bootId、来源地址、最近活跃时间，指定保留一方；控制面以保留方 bootId 为准恢复 active，落败方后续请求持续 409 且响应文案明确提示「本实例身份已被判为副本，请删除本目录下 identity.yml 后按新身份重新接入，或直接下线本实例」。控制面不远程删除 agent 文件（agent 面对控制面只读暴露原则的对偶：控制面不伸手改 agent 本地身份）。
 
 ### 4.6 故障换机不误杀（FR-141 / Legacy 高风险区延续）

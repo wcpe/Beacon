@@ -43,7 +43,8 @@ func (f *fakeHealthSettings) set(key string, v int) {
 	f.values[key] = v
 }
 
-// TestScannerAlertsOnAbnormalTransitions 进入 degraded/lost/offline 触发告警，恢复 online 不触发（FR-28）。
+// TestScannerAlertsOnAbnormalTransitions 进入失联级异常态（lost/offline）触发告警；
+// 恢复 online 不触发、degraded 也不触发（FR-28 / 真机降噪：degraded 属提示级，不单独告警）。
 func TestScannerAlertsOnAbnormalTransitions(t *testing.T) {
 	capturer := &capturingAlerter{}
 	s := NewHealthScanner(NewRegistry(), newFakeHealthSettings(map[string]int{
@@ -52,20 +53,44 @@ func TestScannerAlertsOnAbnormalTransitions(t *testing.T) {
 	}), alert.NewDispatcher(capturer))
 
 	changed := []*Instance{
-		{Namespace: "prod", ServerID: "a", Address: "1.1.1.1:1", PrevStatus: StatusOnline, Status: StatusDegraded},
+		{Namespace: "prod", ServerID: "a", Address: "1.1.1.1:1", PrevStatus: StatusOnline, Status: StatusDegraded}, // 提示级，不告警
 		{Namespace: "prod", ServerID: "b", Address: "1.1.1.2:1", PrevStatus: StatusDegraded, Status: StatusLost},
 		{Namespace: "prod", ServerID: "c", Address: "1.1.1.3:1", PrevStatus: StatusLost, Status: StatusOffline},
 		{Namespace: "prod", ServerID: "d", Address: "1.1.1.4:1", PrevStatus: StatusLost, Status: StatusOnline}, // 恢复，不告警
 	}
 	s.dispatchAlerts(context.Background(), changed)
 
-	if len(capturer.got) != 3 {
-		t.Fatalf("3 个异常转移应各告警 1 次（恢复不告警），实际 %d", len(capturer.got))
+	// 旧语义（degraded 也告警）下此处为 3 条；新语义（真机降噪）下只剩 lost / offline 两条。
+	if len(capturer.got) != 2 {
+		t.Fatalf("仅 lost/offline 两个失联级转移应各告警 1 次（degraded 提示级与恢复 online 均不告警），实际 %d", len(capturer.got))
 	}
 	for _, a := range capturer.got {
-		if a.Status == StatusOnline {
-			t.Fatalf("恢复 online 不应告警，却收到 %+v", a)
+		if a.Status != StatusLost && a.Status != StatusOffline {
+			t.Fatalf("只应为 lost/offline 告警，却收到 %+v", a)
 		}
+	}
+}
+
+// TestScannerDoesNotAlertOnDegradedOnly 只发生 degraded 转移时一条告警都不派发
+// （回归真机噪音：一次网络抖动会让一批实例同时转 degraded，此前会刷出成片提示级告警）。
+func TestScannerDoesNotAlertOnDegradedOnly(t *testing.T) {
+	capturer := &capturingAlerter{}
+	s := NewHealthScanner(NewRegistry(), newFakeHealthSettings(map[string]int{
+		"health.degraded-after-sec": 15, "health.ttl-sec": 30,
+		"health.offline-grace-sec": 120, "health.scan-interval-sec": 1,
+	}), alert.NewDispatcher(capturer))
+
+	s.dispatchAlerts(context.Background(), []*Instance{
+		{Namespace: "prod", ServerID: "a", PrevStatus: StatusOnline, Status: StatusDegraded},
+		{Namespace: "prod", ServerID: "b", PrevStatus: StatusOnline, Status: StatusDegraded},
+	})
+
+	if len(capturer.got) != 0 {
+		t.Fatalf("degraded 不单独告警，实际派发 %d 条：%+v", len(capturer.got), capturer.got)
+	}
+	// isAbnormal 语义不得被收窄：它仍是「健康判定异常集合」，别处的健康判定复用不受影响。
+	if !isAbnormal(StatusDegraded) {
+		t.Fatal("isAbnormal 的语义是健康判定而非告警范围，不应随告警降噪一起收窄")
 	}
 }
 

@@ -41,7 +41,7 @@ describe('/connections 连接明细页', () => {
     useScenario('normal')
     renderPage(<ConnectionsPage />)
 
-    // 热查询默认 committed 近 1h，无需 selector
+    // 热查询默认 committed 近 24h，无需 selector
     expect(screen.getByRole('button', { name: '查询' })).toBeEnabled()
     await waitForDataRows()
   })
@@ -65,7 +65,7 @@ describe('/connections 连接明细页', () => {
     })
   })
 
-  it('URL 深链 window 为非法值时回落 1h 默认口径，不因脏参数改变默认', async () => {
+  it('URL 深链 window 为非法值时回落 24h 默认口径，不因脏参数改变默认', async () => {
     useScenario('normal')
     const capturedUrls: string[] = []
     server.use(
@@ -90,10 +90,10 @@ describe('/connections 连接明细页', () => {
     if (from === null || to === null) {
       throw new Error('热查询应带 from/to 时间窗')
     }
-    // 默认 1h 窗口：跨度落在 1 小时附近（容忍毫秒级取整偏差）
+    // 默认 24h 窗口：跨度落在 24 小时附近（容忍毫秒级取整偏差）
     const spanMs = Date.parse(to) - Date.parse(from)
-    expect(spanMs).toBeGreaterThan(3_500_000)
-    expect(spanMs).toBeLessThan(3_700_000)
+    expect(spanMs).toBeGreaterThan(86_000_000)
+    expect(spanMs).toBeLessThan(86_600_000)
   })
 
   it('按服务器 ID 收窄后点行开详情面板', async () => {    useScenario('normal')
@@ -137,7 +137,8 @@ describe('/connections 连接明细页', () => {
     useScenario('empty')
     renderPage(<ConnectionsPage />)
 
-    expect(await screen.findByText('当前条件下无连接记录')).toBeInTheDocument()
+    // 空态文案含查询口径说明（按「时间窗内新开会话」过滤），用前缀匹配避开整句
+    expect(await screen.findByText(/^当前条件下无连接记录/)).toBeInTheDocument()
   })
 
   it('可点击行键盘可达：Tab 聚焦 + Enter 打开详情，主表列集保持完整', async () => {

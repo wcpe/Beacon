@@ -1,4 +1,4 @@
-// 告警 KPI：告警总数 + 按级别（严重 / 警告 / 提示）与按状态（待处理 / 已确认 / 已处理）计数。
+// 告警 KPI：告警总数 + 按级别（严重 / 警告 / 提示）与按状态（待处理 / 已读 / 已处理）计数。
 // 客户端按当前页数据派生（超大量以服务端 total 明示）；级别与状态两组维度一眼看全。
 
 import { useTranslation } from 'react-i18next'
@@ -24,7 +24,7 @@ export default function AlertKpi({ total, items }: AlertKpiProps) {
   const warningCount = countWhere((i) => i.level === 'warning')
   const infoCount = countWhere((i) => i.level === 'info')
 
-  // KPI 七卡：总数（品牌）/ 待处理（注意）/ 已确认（品牌）/ 已处理（正常）
+  // KPI 七卡：总数（品牌）/ 待处理（注意）/ 已读（品牌）/ 已处理（正常）
   //           + 严重（危急）/ 警告（注意）/ 提示（次要）。
   const cards: { key: string; value: number; icon: typeof Bell; tone: KpiTone }[] = [
     { key: 'total', value: total, icon: Bell, tone: 'brand' },

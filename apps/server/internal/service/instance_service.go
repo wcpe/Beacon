@@ -313,8 +313,14 @@ func (s *InstanceService) RequireRegistered(ns, serverID string) (string, error)
 	return inst.GroupHint, nil
 }
 
+// offlineAutoResolveNote 是主动下线自动消解的固定处理说明；与其它自动消解触发点同风格，供 UI 区分系统自动消解与人工处理。
+const offlineAutoResolveNote = "实例已主动下线，自动消解"
+
 // Offline 主动下线（FR-49）：事务内落 DB 拒绝态 + 审计 instance.offline，提交后移出内存可用集并唤醒拓扑 watch。
 // 持久态使控制面重启仍生效、agent 重注册被拒。允许对不在内存的实例预先下线（移除内存仅是"是否在册"的副作用，不作前置条件）。
+//
+// 下线意味该实例被**明确判定不应再上线**（重注册一律 403），其未处理告警再无「等实例恢复 `online`」这条出路，
+// 留作待办只会变成永久噪音，故写入下线态后顺带自动消解（FR-232）。
 func (s *InstanceService) Offline(ns, serverID, reason, operator, clientIP string) error {
 	if ns == "" || serverID == "" {
 		return apperr.ErrInvalidParam
@@ -331,15 +337,34 @@ func (s *InstanceService) Offline(ns, serverID, reason, operator, clientIP strin
 	if err != nil {
 		return err
 	}
-	// 事务提交成功后：移出内存可用集（其下一跳心跳将 404 → 重注册被拒）→ 唤醒拓扑 watch。
+	// 事务提交成功后：移出内存可用集（其下一跳心跳将 404 → 重注册被拒）→ 唤醒拓扑 watch → 自动消解其未处理告警。
 	s.registry.Offline(ns, serverID)
 	s.notifyTopology(ns)
 	slog.Info("主动下线实例", "namespace", ns, "serverId", serverID, "operator", operator)
+	s.autoResolveOnOffline(ns, serverID)
 	return nil
+}
+
+// autoResolveOnOffline 在下线态写入成功后自动消解该实例的未处理告警（FR-232 主动下线触发点）。
+// 刻意放在事务**之后**且失败仅 WARN：下线是运维的明确意图，不能因告警表侧的读写问题而失败或回滚；
+// 与 maybeAutoResolve 的取舍一致（告警消解属后续清理，不是下线生效的前置条件）。
+func (s *InstanceService) autoResolveOnOffline(ns, serverID string) {
+	n, err := repository.NewAlertEventRepository(s.db).AutoResolveByServer(ns, serverID, time.Now().UTC(), offlineAutoResolveNote)
+	if err != nil {
+		slog.Warn("主动下线后告警自动消解失败", "namespace", ns, "serverId", serverID, "err", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("实例主动下线，自动消解未处理告警", "namespace", ns, "serverId", serverID, "count", n)
+	}
 }
 
 // Online 取消主动下线（FR-49）：事务内软删拒绝态 + 审计 instance.online；不存在拒绝态返回 OFFLINE_NOT_FOUND。
 // 清除后不主动复活实例（等 agent 降频探测重连或运维 reconnect）。
+//
+// 刻意**不做**任何告警动作：取消下线只解除拒绝态，实例此刻仍未上线（需其自行重注册 / 心跳），
+// 拿「运维点了取消」当作「实例已恢复 online」会把尚未恢复的真实故障悄悄标成 resolved，
+// 运维再也看不到该实例的待办。其告警仍由既有恢复路径（重注册 / 心跳转 online 时的 maybeAutoResolve）消解。
 func (s *InstanceService) Online(ns, serverID, operator, clientIP string) error {
 	if ns == "" || serverID == "" {
 		return apperr.ErrInvalidParam

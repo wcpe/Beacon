@@ -346,6 +346,13 @@ func updateServerLifecycle(tx *gorm.DB, payload serverLifecyclePayload, permit a
 		if err := expireServerCommands(tx, payload.Server.NamespaceID, payload.Server.ServerID); err != nil {
 			return err
 		}
+		note := "实例已归档，自动消解"
+		if operation == authz.OperationServerPermanentDelete {
+			note = "实例已永久删除，自动消解"
+		}
+		if err := autoResolveServerAlerts(tx, payload.Server.NamespaceID, payload.Server.ServerID, note); err != nil {
+			return err
+		}
 	}
 	return createAudit(tx, serverLifecycleAudit(payload, permit, operation))
 }
@@ -359,6 +366,26 @@ func expireServerCommands(tx *gorm.DB, namespaceID uint, serverID string) error 
 		return err
 	}
 	_, err := repository.NewAgentCommandRepository(tx).ExpireForTarget(namespace.Code, serverID)
+	return err
+}
+
+// autoResolveServerAlerts 在该实例被归档 / 永久删除时自动消解其全部未处理告警（FR-232 生命周期触发点）。
+// 与 expireServerCommands 同理：alert_event.namespace 存的是 namespace **code**，此处只有主键故先解析；
+// 实例本身已消失时告警会永久滞留 open，故关闭必须与生命周期状态变更在**同一事务**内原子完成。
+// namespace 查不到时静默返回（与 expireServerCommands 一致）：告警表侧数据缺失不应让生命周期操作失败关闭。
+func autoResolveServerAlerts(tx *gorm.DB, namespaceID uint, serverID, note string) error {
+	var namespace model.Namespace
+	if err := tx.First(&namespace, namespaceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if namespace.Code == "" {
+		// 无 code 无从定位告警归属；放行空串会误伤 namespace 列为空的行。
+		return nil
+	}
+	_, err := repository.NewAlertEventRepository(tx).AutoResolveByServer(namespace.Code, serverID, time.Now().UTC(), note)
 	return err
 }
 

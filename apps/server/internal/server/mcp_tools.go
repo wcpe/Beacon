@@ -27,7 +27,9 @@ type MCPToolRegistry struct {
 	overrides *service.OverrideSetService
 	assets    *service.AssetPreviewService
 	messages  *service.MessagePayloadService
-	reads     MCPReadServices
+	// alerts 供告警事件处理工具（单条 / 批量）直执领域动作；只读列表走 reads.alertEvents。
+	alerts *service.AlertEventService
+	reads  MCPReadServices
 	// invocations 是工具调用流水写入方（FR-240，spec §3.1）；为 nil 时 middleware 不挂载，
 	// 既有单测与未装配路径零依赖、零行为变化。
 	invocations MCPInvocationRecorder
@@ -69,6 +71,9 @@ func (r *MCPToolRegistry) SetSensitiveReadServices(assets *service.AssetPreviewS
 	r.assets = assets
 	r.messages = messages
 }
+
+// SetAlertEventService 接入告警事件处理工具（单条 / 批量直执 + 同事务写审计）。
+func (r *MCPToolRegistry) SetAlertEventService(alerts *service.AlertEventService) { r.alerts = alerts }
 
 // SetReadServices 接入 MCP 可公开的脱敏只读查询服务；不接 repository 或运行时内部对象。
 func (r *MCPToolRegistry) SetReadServices(reads MCPReadServices) { r.reads = reads }
@@ -130,6 +135,8 @@ func (r *MCPToolRegistry) NewMCPServer(principal auth.Principal) *mcp.Server {
 		r.registerAgentCommandApproval(server, principal)
 		r.registerSystemApproval(server, principal)
 		r.registerDeliveryApproval(server, principal)
+		// 告警处置：中等风险直接执行（管理台同语义可直执），批量仅影响 open 行、幂等且同事务写审计。
+		r.registerAlertTools(server, principal)
 	}
 	// 审批决定需专用能力；仅受信 automation 客户端持有，用于内网闭环审批。
 	if principal.HasCapability(auth.CapabilityApprovalDecide) {

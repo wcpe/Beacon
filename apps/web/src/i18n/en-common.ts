@@ -75,8 +75,8 @@ export const enCommon = {
     notificationsLoading: 'Loading…',
     notificationsError: 'Failed to load notifications',
     viewAllAlerts: 'View all alerts',
-    quickAck: 'Ack',
-    quickResolve: 'Resolve',
+    quickAck: 'Mark read',
+    quickResolve: 'Mark resolved',
     quickResolveNote: 'Quick-resolved from header',
   },
   commandPalette: {

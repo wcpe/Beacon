@@ -1,5 +1,6 @@
-// /alert-events 告警事件页测试：KPI + 列表渲染、空态、处理写闭环（确认 / 标记已处理 / 403 错误展示）。
-import { screen, waitFor } from '@testing-library/react'
+// /alert-events 告警事件页测试：KPI + 列表渲染、空态、处理写闭环（标记已读 / 标记处理 / 403 错误展示）、
+// 跨页一键操作（一键已读 / 一键处理）入口与禁用态。
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { delay, http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -19,6 +20,11 @@ afterEach(() => {
 afterAll(() => {
   server.close()
 })
+
+// 详情面板（MasterDetail 的 fixed 侧栏）：aside 隐式 role=complementary，aria-label 取 detailTitle
+function detailDrawer(): HTMLElement {
+  return screen.getByRole('complementary', { name: '告警详情' })
+}
 
 // 打开首条「待处理」告警的详情面板（写闭环用例共用步骤）
 async function openFirstOpenAlert(user: ReturnType<typeof userEvent.setup>): Promise<void> {
@@ -54,7 +60,7 @@ describe('/alert-events 告警事件页', () => {
     expect(await screen.findByText('当前筛选条件下无告警事件')).toBeInTheDocument()
   })
 
-  it('点行开右侧非模态详情面板并确认待处理告警（写闭环）', async () => {
+  it('点行开右侧非模态详情面板并标记已读（写闭环）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<AlertEventsPage />)
@@ -76,26 +82,23 @@ describe('/alert-events 告警事件页', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByRole('table')).toBeInTheDocument()
 
-    // 面板内点「确认」完成写闭环
-    await user.click(screen.getByRole('button', { name: '确认' }))
+    // 面板内点「标记已读」完成写闭环
+    await user.click(within(detailDrawer()).getByRole('button', { name: '标记已读' }))
 
-    // 详情面板内状态徽标更新为「已确认」（选中行从最新数据派生；排除筛选下拉的同名 option）
+    // 详情面板内状态徽标更新为「已读」（选中行从最新数据派生；KPI / 筛选下拉的同名文案不在抽屉内）
     await waitFor(() => {
-      const acknowledged = screen
-        .getAllByText('已确认')
-        .filter((el) => el.tagName !== 'OPTION')
-      expect(acknowledged.length).toBeGreaterThan(0)
+      expect(within(detailDrawer()).getAllByText('已读').length).toBeGreaterThan(0)
     })
   })
 
-  it('填写备注标记已处理：处理人与备注即时可见（写闭环）', async () => {
+  it('填写备注标记处理：处理人与备注即时可见（写闭环）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<AlertEventsPage />)
     await openFirstOpenAlert(user)
 
-    // 备注未填时「标记已处理」禁用（resolved 备注必填约束在面板）
-    const resolveBtn = screen.getByRole('button', { name: '标记已处理' })
+    // 备注未填时「标记处理」禁用（resolved 备注必填约束在面板）
+    const resolveBtn = within(detailDrawer()).getByRole('button', { name: '标记处理' })
     expect(resolveBtn).toBeDisabled()
 
     await user.type(screen.getByLabelText('处理备注'), '已重启 agent')
@@ -121,12 +124,77 @@ describe('/alert-events 告警事件页', () => {
     renderPage(<AlertEventsPage />)
     await openFirstOpenAlert(user)
 
-    await user.click(screen.getByRole('button', { name: '确认' }))
+    await user.click(within(detailDrawer()).getByRole('button', { name: '标记已读' }))
 
     // 后端脱敏 message 原样展示在面板内，错误不被静默（ADR-0057）
     expect(await screen.findByText('只读模式禁止写操作')).toBeInTheDocument()
     // 告警仍为待处理，处理表单未消失（可重试）
-    expect(screen.getByRole('button', { name: '确认' })).toBeInTheDocument()
+    expect(within(detailDrawer()).getByRole('button', { name: '标记已读' })).toBeInTheDocument()
+  })
+})
+
+// 一键操作（FR-229）：两个并列主操作直接暴露在工具条上，不再让「一键处理」藏在弹窗入口里。
+describe('/alert-events 跨页一键操作', () => {
+  it('工具条并列给出「一键已读」与「一键处理」两个主操作', async () => {
+    useScenario('normal')
+    renderPage(<AlertEventsPage />)
+    await screen.findByText('告警总数')
+
+    const ackAll = screen.getByRole('button', { name: '一键已读' })
+    const resolveAll = screen.getByRole('button', { name: '一键处理' })
+    // 两者并列于同一工具条容器内，且都不是 ghost 弱按钮
+    expect(ackAll.parentElement).toBe(resolveAll.parentElement)
+    expect(ackAll.getAttribute('data-variant')).toBe('default')
+    expect(resolveAll.getAttribute('data-variant')).toBe('outline')
+    // 作用范围写在 title 上（当前筛选命中的全部待处理条目、跨页）
+    expect(ackAll.getAttribute('title')).toContain('跨页')
+    expect(resolveAll.getAttribute('title')).toContain('跨页')
+    // 列表返回 total > 0 两个操作即可用
+    await waitFor(() => {
+      expect(ackAll).toBeEnabled()
+    })
+    expect(resolveAll).toBeEnabled()
+  })
+
+  it('一键处理直接打开原因填写弹窗，原因必填后才提交批量处理', async () => {
+    useScenario('normal')
+    const bodies: { status?: string; note?: string }[] = []
+    server.use(
+      http.post('/admin/v1/alert-events/handle', async ({ request }) => {
+        bodies.push((await request.json()) as { status?: string; note?: string })
+        return HttpResponse.json({ affected: 3 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<AlertEventsPage />)
+    await screen.findByText('告警总数')
+
+    await user.click(screen.getByRole('button', { name: '一键处理' }))
+
+    // 原因必填：未填时确认按钮禁用（逻辑不变，入口改为直接可见）
+    const dialog = await screen.findByRole('dialog')
+    const confirm = within(dialog).getByRole('button', { name: '一键处理' })
+    expect(confirm).toBeDisabled()
+
+    await user.type(within(dialog).getByPlaceholderText('批量处理备注（标记处理时必填）'), '已重启 agent')
+    expect(confirm).toBeEnabled()
+    await user.click(confirm)
+
+    await waitFor(() => {
+      expect(bodies.length).toBeGreaterThan(0)
+    })
+    expect(bodies[0]?.status).toBe('resolved')
+    expect(bodies[0]?.note).toBe('已重启 agent')
+  })
+
+  it('无匹配告警时两个一键按钮禁用并直接给出原因', async () => {
+    useScenario('empty')
+    renderPage(<AlertEventsPage />)
+    await screen.findByText('当前筛选条件下无告警事件')
+
+    expect(screen.getByRole('button', { name: '一键已读' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '一键处理' })).toBeDisabled()
+    expect(screen.getByText('当前筛选无匹配告警，一键操作不可用')).toBeInTheDocument()
   })
 })
 

@@ -1,6 +1,6 @@
 // 连接明细页（/connections，FR-181）：连接会话明细查询与追溯。
 // 查询防护：精确 connId 直查；热查询可仅时间窗（全局近期）；冷查询仍须 serverId / 玩家 UUID。
-// 进页默认 committed 近 1h 全局查询。游标分页（热 / 冷原生 CursorPage）；「包含归档」冷查询（FR-152）。
+// 进页默认 committed 近 24h 全局查询。游标分页（热 / 冷原生 CursorPage）；「包含归档」冷查询（FR-152）。
 // 行点击右侧非模态详情面板（行数据自足，无需二次请求）。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
@@ -32,6 +32,8 @@ import MasterDetail from '../features/shared/master-detail'
 const PAGE_SIZE = 20
 const STATUSES = ['open', 'closed'] as const
 const CLOSE_KINDS = ['quit', 'kick', 'timeout', 'proxy_shutdown', 'error'] as const
+// 进页默认时间窗（见 windowFromUrl 注释）
+const DEFAULT_WINDOW: WindowKey = '24h'
 
 // 已提交的查询条件（点「查询」才提交，避免防护条件半填时打请求）
 interface Committed {
@@ -44,9 +46,10 @@ interface Committed {
   cold: boolean
 }
 
-// URL ?window= 解析：仅接受 WindowSelect 的合法 key，非法 / 缺省回落 1h（不因脏参数改变默认口径）。
+// URL ?window= 解析：仅接受 WindowSelect 的合法 key，非法 / 缺省回落默认窗（不因脏参数改变默认口径）。
+// 默认窗取 24h：本页按「窗口内新开会话」过滤，真实流量稀疏时 1h 窗几乎恒空（真机报「页面没数据」的根因）。
 function windowFromUrl(raw: string | null): WindowKey {
-  return raw !== null && raw in WINDOW_MS ? (raw as WindowKey) : '1h'
+  return raw !== null && raw in WINDOW_MS ? (raw as WindowKey) : DEFAULT_WINDOW
 }
 
 export default function ConnectionsPage() {
@@ -63,7 +66,7 @@ export default function ConnectionsPage() {
   const [closeKind, setCloseKind] = useState('all')
   const [windowKey, setWindowKey] = useState<WindowKey>(initialWindowKey)
   const [cold, setCold] = useState(false)
-  // 进页默认近 1h 全局热查询（无需 selector）；带 URL selector 时直接按该服收窄
+  // 进页默认近 24h 全局热查询（无需 selector）；带 URL selector 时直接按该服收窄
   const [committed, setCommitted] = useState<Committed>(() => ({
     serverId: initialServerId.trim() === '' ? undefined : initialServerId,
     windowKey: initialWindowKey,
