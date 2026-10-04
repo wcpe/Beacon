@@ -197,12 +197,8 @@ func TestPublishConcurrentFrozenTarget(t *testing.T) {
 func TestEffectiveFourLayer(t *testing.T) {
 	cfg, eff, db := newStack(t)
 
-	// 指派 lobby-1 → area1/zoneA
-	if err := db.Create(&model.ZoneAssignment{
-		NamespaceCode: "prod", ServerID: "lobby-1", GroupCode: "area1", ZoneCode: "zoneA",
-	}).Error; err != nil {
-		t.Fatalf("建指派失败: %v", err)
-	}
+	// 归属 lobby-1 → area1/zoneA：按新真源落 namespace → bc_cluster → region(area1) → zone(zoneA) → server.zone_id
+	seedServerZonePlacement(t, db, "prod", "lobby-1", "area1", "zoneA")
 
 	create := func(group, scope, target, content string) {
 		if _, err := cfg.Create(service.CreateConfigParams{
@@ -257,11 +253,8 @@ func TestEffectiveFourLayer(t *testing.T) {
 // TestResolveWithProvenance 集成验证：admin 有效预览的合并结果与 Resolve 一致，且逐键来源/减量正确（FR-22）。
 func TestResolveWithProvenance(t *testing.T) {
 	cfg, eff, db := newStack(t)
-	if err := db.Create(&model.ZoneAssignment{
-		NamespaceCode: "prod", ServerID: "lobby-1", GroupCode: "area1", ZoneCode: "zoneA",
-	}).Error; err != nil {
-		t.Fatalf("建指派失败: %v", err)
-	}
+	// 归属 lobby-1 → area1/zoneA：按新真源落 server.zone_id（旧 zone_assignment 已退役，不再是任何读方的真源）
+	seedServerZonePlacement(t, db, "prod", "lobby-1", "area1", "zoneA")
 	mk := func(group, scope, target, content string) {
 		if _, err := cfg.Create(service.CreateConfigParams{
 			Namespace: "prod", Group: group, DataID: "mysql.yml",
