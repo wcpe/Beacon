@@ -51,6 +51,8 @@
   --admin-password-file <(grep -m1 '^BEACON_ADMIN_PASSWORD=' /opt/beacon/.env | cut -d= -f2-)
 ```
 
+**凭据怎么到达 curl**：控制面凭据（管理台密码 / 会话 token / API key）只从文件或环境变量读入，再由脚本经 **0600 的 curl 配置文件（`-K`）**转交——`Authorization` 头与请求体都不展开进 curl 的 argv。argv 可从 `/proc/<pid>/cmdline` 读到（权限 `444`，**同机任何用户 `ps auxww` 都能看到**），因此密码、会话 token、API key 一律不得出现在命令行里。配置文件写在 `mktemp -d` 的 0700 临时目录内、用完即删，异常退出由退出钩子兜底。回归测试用一层包装 curl 记录每次调用的 argv 与配置文件权限来锁定该行为。
+
 清单文件每行一台（`#` 注释，空白分隔的 `key=value`）：
 
 ```
@@ -67,7 +69,21 @@ serverId=onb-game-a dir=/srv/mc/onb-game-a role=backend target=zone:onb-zone1 de
 
 末尾输出中文汇总表（哪台成功 / 哪台卡在哪一步 / 下一步做什么），退出码 `0` 全部达成、`1` 预检失败、`2` 用法错误、`3` 运行期有台未达成。
 
-**边界**：拓扑节点（BC 集群 / 大区 / 小区 / 大厅集群）的**创建**仍属人工规划，脚本只做归属分配；控制面凭据一律走文件或环境变量，不写在命令行。行为级回归测试：`sh scripts/ops/test_onboard_servers.sh`（本地伪控制面，覆盖预检报错定位、两步批准、轮询生效、三条归属端点、dry-run 零写请求与重复执行幂等）。
+**轮换接入 token 是独立的一次性命令，不要和接入流程一起跑**（`--rotate-token-only`）：
+
+```sh
+# 只轮换、不接入；新明文按 0600 落盘。默认仍是 dry-run，加 --apply 才真轮换。
+./scripts/ops/onboard_servers.sh --namespace demo --apply \
+  --rotate-token-only --token-out /root/beacon-demo.token \
+  --admin-password-file <(grep -m1 '^BEACON_ADMIN_PASSWORD=' /opt/beacon/.env | cut -d= -f2-)
+```
+
+- **爆炸半径**：轮换让该 namespace 下**所有既有 agent 立刻 401**（旧 token 立即失效）。轮换后必须把新明文写入每台的 `plugins/BeaconAgent/config.yml`（代理为 `BeaconAgentProxy`）的 `beacon.bootstrap-token`、重启（或重载）实例、在管理台确认身份重新 `active`，再跑一次接入流程预检——脚本在真正轮换后会把这三步打在输出里。
+- **为什么拆开**：旧开关 `--rotate-token` 把「轮换」和「按期望 token 逐台比对配置」塞进同一次执行——轮换一生效，各台配置里仍是旧 token，预检必然报「与期望不一致」并退出，而新明文只在那一次响应里出现、调用方拿不到，结果是域内 agent 全断且不可恢复。该开关现已**废弃并直接报用法错误**，只保留指向 `--rotate-token-only` 的提示。
+- **新明文必须有可靠去处**：`--token-out <文件>`（推荐，0600 落盘，目标已存在则拒绝覆盖，避免静默丢掉上一个 token）或 `--print-token`（只打印一次，明文会进终端回滚缓冲与会话日志，非必要不用）；两者都不给则拒绝执行。落盘失败时脚本会把这次唯一可见的明文打到 stderr，避免「轮换已生效却没人知道新 token」。
+- 该子命令不执行接入流程（不拉身份、不批准、不归属），且同样默认 dry-run；`--manifest` 与它互斥。
+
+**边界**：拓扑节点（BC 集群 / 大区 / 小区 / 大厅集群）的**创建**仍属人工规划，脚本只做归属分配；控制面凭据一律走文件或环境变量，并由脚本经 0600 的 curl 配置文件转交，不写在命令行。行为级回归测试：`sh scripts/ops/test_onboard_servers.sh`（本地伪控制面，覆盖预检报错定位、两步批准、轮询生效、三条归属端点、dry-run 零写请求、重复执行幂等、**凭据不进 argv / 0600 配置文件**、轮换子命令的落盘与拒绝覆盖）。
 
 ## 2. 升级与发布
 - **升级前先备份数据库（SQLite 文件/持久卷或外置 MySQL）与 Agent 本地状态**（见 §4）。

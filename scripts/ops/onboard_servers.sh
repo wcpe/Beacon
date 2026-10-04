@@ -13,8 +13,13 @@
 # 用法见 --help。默认 dry-run，只有显式传 --apply 才产生写操作。
 #
 # 不变量：
-#   - 不把 token 明文写进 stdout/日志，只比前 11 位前缀（形如 bn_xxxxxxxx）。
-#   - 不落盘任何凭据；凭据只经文件或环境变量传入，不接受命令行明文。
+#   - 不把 token 明文写进 stdout/日志，只比前 11 位前缀（形如 bn_xxxxxxxx）；
+#     唯一例外是显式传 --rotate-token-only --print-token 时按调用方要求打印一次。
+#   - 凭据只经文件或环境变量传入，不接受命令行明文。凭据与请求体交给 curl 时一律走
+#     `-K <配置文件>`（0600，用完即删），不展开进 curl 的 argv —— argv 可从
+#     /proc/<pid>/cmdline 读到，同机任何用户 `ps auxww` 就能看到。
+#   - 正常流程不落盘任何凭据；唯一例外是 --rotate-token-only 按调用方指定路径
+#     把轮换后的新明文以 0600 写入（轮换后旧 token 立即失效，明文必须有可靠去处）。
 #   - 重复执行幂等：已 active 的身份跳过批准，已归属的服务器跳过分配。
 #   - 本脚本自身只用 POSIX sh 特性（dash / busybox sh 可跑）；README 示例里的
 #     `--admin-password-file <(...)` 是调用方 shell 的进程替换，仅 bash/zsh 支持。
@@ -49,7 +54,14 @@ wait_seconds=180
 poll_interval=3
 timeout_seconds=120
 verbose=false
-auto_rotate=false
+# 独立子命令：只轮换 namespace token，不执行接入流程
+rotate_only=false
+# 轮换后新明文的落盘路径（与 rotate_only 同用）
+token_out=''
+# 轮换后是否额外把新明文打印一次
+print_token=false
+# 已废弃的 --rotate-token（把轮换混进接入流程）；只用于给出可读的正确用法提示
+deprecated_rotate=false
 
 # 运行期凭据（绝不打印）
 auth_header=''
@@ -64,12 +76,14 @@ targets_file=''
 usage() {
     cat <<'EOF'
 用法：onboard_servers.sh --manifest <清单文件> --namespace <code> [选项]
+      onboard_servers.sh --namespace <code> --apply --rotate-token-only --token-out <文件> [选项]
 
 把「多台 MC 服务器批量接入一个 Beacon namespace」编排为一次可重复执行的操作。
 默认 dry-run（只打印将执行的动作）；必须显式传 --apply 才会真正写控制面。
+轮换接入 token 是**另一件事**，走独立的 --rotate-token-only（见下），不与接入流程耦合。
 
 必填
-  --manifest <文件>        接入清单，每行一台服务器，语法见下。
+  --manifest <文件>        接入清单，每行一台服务器，语法见下（--rotate-token-only 不需要）。
   --namespace <code>      目标 namespace 的 code（不是数字 id）。
 
 凭据（三选一，禁止写在命令行里明文暴露给 ps）
@@ -79,6 +93,22 @@ usage() {
   环境变量 BEACON_ADMIN_PASSWORD / BEACON_API_KEY 亦可。
   无法直接读取生产 .env（格式为 KEY=VALUE）时可用：--api-key-env 或
   --admin-password-file <(grep ...) 之类的进程替换。
+  凭据本身只经文件 / 环境变量读入，再经 0600 的 curl 配置文件（-K）交给 curl，
+  不会出现在任何进程的命令行里（ps / /proc/<pid>/cmdline 都看不到）。
+
+独立子命令：轮换接入 token
+  --rotate-token-only      只轮换 namespace 接入 token，不执行接入流程，做完即退出。
+                           必须给它一个新明文的去处（--token-out 或 --print-token）。
+                           默认同样是 dry-run，加 --apply 才真正轮换。
+                           爆炸半径：轮换会让该 namespace 下**所有既有 agent 立刻 401**；
+                           轮换后必须把新明文写进各台 agent 配置并重启，再跑接入流程预检。
+  --token-out <文件>       把轮换后的新明文按 0600 写入该文件（推荐）。
+                           目标已存在则拒绝覆盖（避免静默丢弃上一个 token）。
+  --print-token            额外把新明文打印到 stdout 一次。明文会进终端回滚缓冲与
+                           可能的会话日志/CI 日志，非必要不要用。
+  --rotate-token           （已废弃）旧开关曾把轮换混进接入流程：轮换后各台配置里的旧
+                           token 立即失效，预检必然失败且新明文只留在内存里，域内 agent
+                           全断且调用方拿不到明文。现直接报用法错误，请改用 --rotate-token-only。
 
 连接与行为
   --endpoint <URL>         控制面地址，默认 $BEACON_ENDPOINT 或 http://127.0.0.1:20020
@@ -91,9 +121,6 @@ usage() {
   --wait <秒>              等待身份出现 pending 的超时，默认 180。
   --poll <秒>              轮询间隔，默认 3。
   --execute-timeout <秒>   等待 approve / 归属审批实际生效的超时，默认 120。
-  --rotate-token           接入生产前的可选前置：轮换 namespace token 并只打印前缀。
-                           轮换会让该 namespace 下所有既有 agent 立刻 401，
-                           故默认关闭，仅在确实需要新 token 时显式打开。
   -v, --verbose            打印每一步的 HTTP 调用详情（token 已脱敏）。
   -h, --help               显示本帮助。
 
@@ -114,7 +141,7 @@ usage() {
 
 退出码
   0  全部目标达成（或 dry-run 预检通过）
-  1  预检失败（凭据/namespace/配置不一致）
+  1  预检失败（凭据/namespace/配置不一致；轮换失败或新明文写不进去）
   2  用法错误
   3  运行期失败：至少一台未达成目标，详见末尾汇总表
 EOF
@@ -173,7 +200,10 @@ parse_args() {
             --execute-timeout) [ $# -ge 2 ] || fail_usage "--execute-timeout 缺少参数"; timeout_seconds=$2; shift 2 ;;
             --apply) apply=true; shift ;;
             --dry-run) apply=false; shift ;;
-            --rotate-token) auto_rotate=true; shift ;;
+            --rotate-token) deprecated_rotate=true; shift ;;
+            --rotate-token-only) rotate_only=true; shift ;;
+            --token-out) [ $# -ge 2 ] || fail_usage "--token-out 缺少参数"; token_out=$2; shift 2 ;;
+            --print-token) print_token=true; shift ;;
             -v|--verbose) verbose=true; shift ;;
             -h|--help) usage; exit 0 ;;
             --) shift; break ;;
@@ -182,9 +212,33 @@ parse_args() {
         esac
     done
 
-    [ -n "$manifest" ] || fail_usage "缺少 --manifest"
+    # 废弃开关：把「轮换」和「按旧 token 预检」塞进同一次执行是自相矛盾的死结——
+    # 轮换成功后各台配置里的旧 token 立即失效，预检必然报「与期望不一致」并退出，
+    # 而新明文只出现在那一次响应里，调用方拿不到，域内既有 agent 全断且不可恢复。
+    if [ "$deprecated_rotate" = true ]; then
+        fail_usage "--rotate-token 已废弃：轮换会让该 namespace 下所有既有 agent 立刻 401，不能和接入流程混在一次执行里
+        （「轮换已生效 → 预检拿新明文比旧配置 → 必然失败 → 明文只留在内存里」，域内 agent 全断且不可恢复）。
+        请分两步：先 '$0 --namespace <code> --apply --rotate-token-only --token-out <文件>' 轮换并落盘新明文，
+        把新明文写进各台 agent 配置后，再执行不带 --rotate-token 的接入流程。"
+    fi
+
+    if [ "$rotate_only" = true ]; then
+        # 轮换让该 namespace 下所有既有 agent 立刻 401，新明文必须有可靠去处才允许执行
+        if [ -z "$token_out" ] && [ "$print_token" != true ]; then
+            fail_usage "--rotate-token-only 必须指明新明文的去处：--token-out <文件>（按 0600 落盘，推荐）或 --print-token（只打印一次，会进终端回滚缓冲）"
+        fi
+        [ -z "$manifest" ] || fail_usage "--rotate-token-only 不接受 --manifest：轮换与接入是两件事，请先轮换并用新明文更新各台 agent 配置，再单独执行接入流程"
+    else
+        [ -n "$manifest" ] || fail_usage "缺少 --manifest"
+        [ -f "$manifest" ] || fail_usage "清单文件不存在：$manifest"
+        if [ -n "$token_out" ]; then
+            fail_usage "--token-out 只能与 --rotate-token-only 同用"
+        fi
+        if [ "$print_token" = true ]; then
+            fail_usage "--print-token 只能与 --rotate-token-only 同用"
+        fi
+    fi
     [ -n "$namespace_code" ] || fail_usage "缺少 --namespace"
-    [ -f "$manifest" ] || fail_usage "清单文件不存在：$manifest"
 
     case "$endpoint" in
         http://*|https://*) ;;
@@ -243,13 +297,83 @@ sanitize() {
     printf '%s' "$1" | sed -e 's/bn_[A-Za-z0-9]\{6,\}/bn_<redacted>/g' -e 's/bk_[A-Za-z0-9]\{6,\}/bk_<redacted>/g'
 }
 
+# 新建一个仅属主可读的临时文件并回显路径。
+#
+# mktemp 以 0600 建文件（且本脚本的 work_dir 来自 `mktemp -d`，本身是 0700），
+# 因此明文在整个生命周期里都不会出现「先写成 0644 再 chmod」的可读窗口。
+new_private_file() {
+    mktemp "$work_dir/private.XXXXXX"
+}
+
+# 转义 curl 配置值：反斜杠与双引号必须转义（值内不得含裸换行，故请求体走文件引用）
+curl_cfg_value() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+# 写入 curl 配置文件：Authorization 头 +（可选）请求体文件引用。
+#
+# 为什么不用 `curl -H "Authorization: ..."` / `-d '<body>'`：那些值会展开进 curl 的
+# argv，而 /proc/<pid>/cmdline 对同机所有用户可读——任何本地用户 `ps auxww` 就能拿到
+# 凭据。`-K` 让 curl 自己从 0600 文件读，argv 里只留下一个路径。
+# $1=配置文件路径 $2=请求体文件路径（无请求体时为空串）
+# 变量名刻意与脚本别处的 body_file 区分：本函数与调用方共用同一个 shell，改到同名变量
+# 会让调用方之后读到错的路径。
+curl_cfg_write() {
+    cfg_path=$1
+    cfg_body_ref=$2
+    {
+        if [ -n "$auth_header" ]; then
+            printf 'header = "Authorization: %s"\n' "$(curl_cfg_value "$auth_header")"
+        fi
+        if [ -n "$cfg_body_ref" ]; then
+            # data-binary 原样发送文件内容（与曾经从 argv 传 -d 的字节完全一致）
+            printf 'data-binary = "@%s"\n' "$(curl_cfg_value "$cfg_body_ref")"
+        fi
+    } > "$cfg_path"
+    # 双保险：mktemp 已是 0600，这里再次显式收紧；失败即中止，绝不带病继续
+    chmod 600 "$cfg_path"
+}
+
+# 发起一次请求，凭据与请求体全程不经 argv。
+# $1=GET|POST $2=path $3=请求体（GET 传空串）$4=响应体落盘路径
+# → stdout 只回显 HTTP 状态码；网络层失败回显 000
+curl_request() {
+    method=$1
+    path=$2
+    payload=$3
+    body_file=$4
+
+    req_file=''
+    if [ -n "$payload" ]; then
+        req_file=$(new_private_file)
+        printf '%s' "$payload" > "$req_file"
+    fi
+    cfg_file=$(new_private_file)
+    curl_cfg_write "$cfg_file" "$req_file"
+
+    if [ "$method" = POST ]; then
+        code=$(curl -sS -o "$body_file" -w '%{http_code}' \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            -K "$cfg_file" \
+            "$endpoint$path" 2>"$work_dir/curl.err" || printf '000')
+    else
+        code=$(curl -sS -o "$body_file" -w '%{http_code}' \
+            -K "$cfg_file" \
+            "$endpoint$path" 2>"$work_dir/curl.err" || printf '000')
+    fi
+
+    # 用完即删：即使 curl 失败也已执行（异常退出路径由 main 的退出钩子兜底清 work_dir）
+    rm -f "$cfg_file"
+    [ -z "$req_file" ] || rm -f "$req_file"
+    printf '%s' "$code"
+}
+
 # http_get <path> → stdout body；非 2xx 时返回非 0 并打印错误
 http_get() {
     path=$1
     body_file=$work_dir/resp.json
-    code=$(curl -sS -o "$body_file" -w '%{http_code}' \
-        -H "Authorization: $auth_header" \
-        "$endpoint$path" 2>"$work_dir/curl.err" || printf '000')
+    code=$(curl_request GET "$path" '' "$body_file")
     if [ "$code" != 200 ]; then
         warn "GET $path 失败（HTTP $code）：$(api_error_message "$body_file")"
         return 1
@@ -262,12 +386,7 @@ http_post() {
     path=$1
     payload=$2
     body_file=$work_dir/resp.json
-    code=$(curl -sS -o "$body_file" -w '%{http_code}' \
-        -X POST \
-        -H "Authorization: $auth_header" \
-        -H 'Content-Type: application/json' \
-        -d "$payload" \
-        "$endpoint$path" 2>"$work_dir/curl.err" || printf '000')
+    code=$(curl_request POST "$path" "$payload" "$body_file")
     case "$code" in
         200|201|202|204)
             cat "$body_file"
@@ -323,9 +442,8 @@ authenticate() {
     log "凭据：管理台密码（仅做一次登录换会话 token，不落盘）"
     body_file=$work_dir/login.json
     payload=$(jq -n --arg u "$admin_user" --arg p "$admin_password" '{username:$u,password:$p}')
-    code=$(curl -sS -o "$body_file" -w '%{http_code}' \
-        -X POST -H 'Content-Type: application/json' \
-        -d "$payload" "$endpoint/admin/v1/auth/login" 2>"$work_dir/curl.err" || printf '000')
+    # 口令随请求体经 0600 文件传给 curl，不展开进 argv
+    code=$(curl_request POST '/admin/v1/auth/login' "$payload" "$body_file")
     if [ "$code" != 200 ]; then
         fail_preflight "管理台登录失败（HTTP $code）：$(api_error_message "$body_file")"
     fi
@@ -337,8 +455,7 @@ authenticate() {
 
 resolve_namespace() {
     body_file=$work_dir/namespaces.json
-    code=$(curl -sS -o "$body_file" -w '%{http_code}' \
-        -H "Authorization: $auth_header" "$endpoint/admin/v2/namespaces" 2>"$work_dir/curl.err" || printf '000')
+    code=$(curl_request GET '/admin/v2/namespaces' '' "$body_file")
     if [ "$code" = 401 ] || [ "$code" = 403 ]; then
         fail_preflight "凭据无效或无管理面读权限（HTTP $code）"
     fi
@@ -353,23 +470,77 @@ resolve_namespace() {
     fi
 }
 
-# 轮换 token（可选前置）。明文只打印前缀，不落 stdout。
-rotate_namespace_token() {
-    if [ "$auto_rotate" != true ]; then
-        return 0
+# 检查 --token-out 的去处是否可用：轮换前先把路验好，绝不出现「轮换已生效、明文却写不进去」
+check_token_out_destination() {
+    [ -n "$token_out" ] || return 0
+    # 拒绝覆盖：静默盖掉上一个 token，等于把「旧 token 已失效但没人知道」变成事故
+    if [ -e "$token_out" ]; then
+        fail_usage "--token-out 目标已存在：$token_out。请先移走该文件（或换一个路径），避免静默丢弃上一个 token"
     fi
-    log "前置：轮换 namespace '$namespace_code' 的接入 token（旧 token 立即失效）"
+    out_dir=$(dirname -- "$token_out")
+    [ -d "$out_dir" ] || fail_usage "--token-out 所在目录不存在：$out_dir"
+    [ -w "$out_dir" ] || fail_usage "--token-out 所在目录不可写：$out_dir"
+}
+
+# 独立子命令：只轮换 namespace token，并把新明文交给调用方（0600 落盘 / 显式打印一次）。
+#
+# 刻意与接入流程解耦。轮换的爆炸半径是该 namespace 下**所有既有 agent 立刻 401**，
+# 而新明文只在那一次响应里出现；若在同一进程里接着做「按期望 token 比对各台配置」，
+# 必然 mismatch 退出（拿的正是新明文），调用方既拿不到明文、域内 agent 又已全断。
+rotate_token_only() {
+    log ''
+    log '【轮换 namespace token】（独立子命令，不执行接入流程）'
+
+    # 先验本地去处（不联网、不写任何东西），把「明文无处安放」拦在轮换之前
+    check_token_out_destination
+
+    authenticate
+    resolve_namespace
+    log "  namespace '$namespace_code' → id=$namespace_id"
+    preflight_remote || fail_preflight '控制面可达但读接口不可用'
+
     if [ "$apply" != true ]; then
-        log "$dry_prefix 轮换 token：POST /admin/v2/namespaces/$namespace_id/token/rotate"
+        log "$dry_prefix 轮换：POST /admin/v2/namespaces/$namespace_id/token/rotate"
+        if [ -n "$token_out" ]; then
+            log "$dry_prefix 把新明文按 0600 写入：$token_out"
+        fi
+        log '  这是干跑，未轮换任何 token；加 --apply 才真正执行。'
         return 0
     fi
+
+    warn "注意：轮换成功后 namespace '$namespace_code' 下所有既有 agent 会立刻 401（旧 token 立即失效）。"
     body=$(http_post "/admin/v2/namespaces/$namespace_id/token/rotate" '{}') || fail_preflight "token 轮换失败"
     plain=$(printf '%s' "$body" | jq -r '.token // .accessToken // .plaintext // empty')
     if [ -z "$plain" ]; then
-        fail_preflight "轮换响应未见 token 字段，请人工到管理台确认新 token"
+        # 请求已发出、响应却没有明文：旧 token 可能已经失效，这里必须把人往管理台引
+        warn '轮换请求已发出，但响应里没有 token 字段，无法确认新明文。'
+        warn '请立刻到管理台的 namespace 详情页重新轮换一次并记录新 token——旧 token 可能已经失效。'
+        exit 1
     fi
-    token_expect=$plain
-    printf '新接入 token 已轮换，前缀：%s（明文未打印，请立即写入各台 agent 配置）\n' "$(printf '%s' "$plain" | cut -c1-11)"
+
+    if [ -n "$token_out" ]; then
+        # set -C（noclobber）：目标已存在时重定向直接失败，绝不静默覆盖
+        if ! (umask 077; set -C; printf '%s\n' "$plain" > "$token_out"); then
+            warn "新 token 无法写入 $token_out（文件已存在或不可写）。"
+            warn "轮换已经生效：namespace '$namespace_code' 下既有 agent 现在全部 401。"
+            warn '请立即用下面的明文更新各台 agent 配置（只显示这一次，之后无法再取回）：'
+            warn "  $plain"
+            exit 1
+        fi
+        chmod 600 "$token_out" 2>/dev/null \
+            || warn "注意：无法显式收紧 $token_out 的权限，请确认它是 600。"
+        log "新接入 token 已写入 $token_out（权限 600，前缀 $(token_prefix "$plain")）"
+    fi
+    if [ "$print_token" = true ]; then
+        # 唯一允许打印明文的路径：调用方显式要求，且只打印这一次
+        printf '%s\n' "$plain"
+    fi
+
+    log ''
+    log '下一步（必须做完，否则该 namespace 下所有 agent 会一直 401）：'
+    log '  1) 把新明文写入每台服务器的 plugins/BeaconAgent/config.yml（代理为 BeaconAgentProxy）的 beacon.bootstrap-token'
+    log '  2) 重启（或重载）各实例，并在管理台确认身份重新变为 active'
+    log '  3) 再执行接入流程（不带 --rotate-token-only）做一次预检'
 }
 
 # ---------------------------------------------------------------------------
@@ -1107,21 +1278,41 @@ print_summary() {
 # 主流程
 # ---------------------------------------------------------------------------
 
+# 退出钩子：work_dir 里都是交给 curl -K 的 0600 凭据文件与请求体，必须整目录清掉
+cleanup_work_dir() {
+    if [ -n "$work_dir" ] && [ -d "$work_dir" ]; then
+        rm -rf "$work_dir"
+    fi
+    return 0
+}
+
 main() {
     parse_args "$@"
     require_tools
 
+    # work_dir 里放着交给 curl -K 的 0600 凭据配置文件与请求体：整目录随进程一起清掉
     work_dir=$(mktemp -d "${TMPDIR:-/tmp}/beacon-onboard.XXXXXX")
     results_file=$work_dir/results.tsv
     : > "$results_file"
-    trap 'rm -rf "$work_dir"' 0 HUP INT TERM
+    # 正常结束、报错 exit、HUP/INT/TERM 都走这个钩子，确保明文不留在磁盘上
+    trap 'cleanup_work_dir' 0 HUP INT TERM
 
     log "Beacon 批量接入编排"
     log "  控制面：$endpoint"
     log "  namespace：$namespace_code"
-    log "  清单：$manifest"
+    if [ "$rotate_only" = true ]; then
+        log '  模式：仅轮换 namespace token（独立子命令，不执行接入流程）'
+    else
+        log "  清单：$manifest"
+    fi
     if [ "$apply" != true ]; then
         log "  模式：dry-run（只打印将执行的动作）"
+    fi
+
+    # 独立子命令：轮换完就结束，绝不顺带做接入
+    if [ "$rotate_only" = true ]; then
+        rotate_token_only
+        exit 0
     fi
 
     parse_manifest
@@ -1131,7 +1322,6 @@ main() {
     authenticate
     resolve_namespace
     log "  namespace '$namespace_code' → id=$namespace_id"
-    rotate_namespace_token
     if ! preflight_remote; then
         fail_preflight '控制面可达但读接口不可用'
     fi

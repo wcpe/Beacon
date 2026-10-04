@@ -63,6 +63,11 @@ check_not_contains() {
 
 command -v python3 >/dev/null 2>&1 || fail_test '本测试需要 python3 作为伪控制面'
 
+# 八进制权限位（如 600），用于断言凭据文件的权限
+file_mode() {
+    python3 -c 'import os,stat,sys;print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$1"
+}
+
 # ---------------------------------------------------------------------------
 # 伪控制面
 # ---------------------------------------------------------------------------
@@ -209,6 +214,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(401, {"code": "BAD_CREDENTIALS", "message": "用户名或密码错误"})
                 return
             self._send(200, {"token": "session-token", "operator": body.get("username")})
+            return
+
+        match = re.match(r"^/admin/v2/namespaces/(\d+)/token/rotate$", path)
+        if match:
+            count = state.get("rotateCount", 0) + 1
+            # 每次轮换给出不同的新明文：便于断言「拿到的是这一次响应里的那一个」
+            token = f"bn_rot{count:02d}" + "x" * 32
+            state["rotateCount"] = count
+            state["lastRotatedToken"] = token
+            save_state(state)
+            self._send(200, {"token": token, "namespaceId": int(match.group(1))})
             return
 
         match = re.match(r"^/admin/v2/agent-identities/([^/]+)/approve$", path)
@@ -405,6 +421,8 @@ printf '[1] --help 可用\n'
 "$onboard" --help > "$work/help.out" 2>&1
 check_contains "$work/help.out" '用法：onboard_servers.sh' '--help 打印用法'
 check_contains "$work/help.out" '--apply' '--help 说明 --apply'
+check_contains "$work/help.out" '--rotate-token-only' '--help 说明独立的轮换子命令'
+check_contains "$work/help.out" '立刻 401' '--help 写明轮换的爆炸半径'
 
 printf '\n[2] 参数校验\n'
 set +e
@@ -588,5 +606,202 @@ ONBOARD_TEST_API_KEY='bk_0123456789abcdef' "$onboard" --endpoint "http://127.0.0
 stop_fake
 check_contains "$work/api-key.out" '凭据：API key' 'API key 路径生效且不打印明文'
 check_not_contains "$work/api-key.out" 'bk_0123456789abcdef' 'API key 明文不出现在输出中'
+
+# ---------------------------------------------------------------------------
+# 凭据不进 argv：用包装 curl 记录每一次调用的 argv 与 -K 配置文件
+# ---------------------------------------------------------------------------
+
+mkdir -p "$work/stub" "$work/stub/cfgdir" "$work/tmp"
+real_curl=$(command -v curl)
+cat > "$work/stub/curl" <<'STUB'
+#!/bin/sh
+# curl 包装：记录 argv 与 -K 配置文件（附权限）、请求体文件（附权限）后转发给真实 curl。
+# 用途：断言凭据（Authorization 头、登录口令、请求体）不会再展开进任何进程的命令行。
+log=${STUB_LOG:?}
+dir=${STUB_CFG_DIR:?}
+seq_file=${STUB_SEQ:?}
+body_dump=${STUB_BODY_DUMP:?}
+
+mode_of() {
+    python3 -c 'import os,stat,sys;print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$1" 2>/dev/null || printf '?'
+}
+
+n=$(cat "$seq_file" 2>/dev/null || printf 0)
+n=$((n + 1))
+printf '%s\n' "$n" > "$seq_file"
+
+{
+    printf '=== invocation %s\n' "$n"
+    for arg in "$@"; do
+        printf 'ARG\t%s\n' "$arg"
+    done
+} >> "$log"
+
+prev=''
+for arg in "$@"; do
+    if [ "$prev" = '-K' ]; then
+        cp "$arg" "$dir/cfg-$n"
+        printf 'CFG_MODE\t%s\n' "$(mode_of "$arg")" >> "$log"
+        ref=$(sed -n 's/^data-binary = "@\(.*\)"$/\1/p' "$arg")
+        if [ -n "$ref" ]; then
+            printf 'BODY_MODE\t%s\n' "$(mode_of "$ref")" >> "$log"
+            cat "$ref" >> "$body_dump"
+            printf '\n' >> "$body_dump"
+        fi
+    fi
+    prev=$arg
+done
+
+exec "$REAL_CURL" "$@"
+STUB
+chmod +x "$work/stub/curl"
+
+printf '\n[12] 凭据不进 argv（改走 0600 的 curl -K 配置文件）\n'
+mkdir -p "$work/stub/cfgdir"
+: > "$work/stub/argv.log"
+: > "$work/stub/bodies.txt"
+: > "$work/stub/seq"
+make_pending_state "$work/state.json"
+start_fake
+set +e
+TMPDIR="$work/tmp" PATH="$work/stub:$PATH" REAL_CURL="$real_curl" \
+    STUB_LOG="$work/stub/argv.log" STUB_CFG_DIR="$work/stub/cfgdir" \
+    STUB_SEQ="$work/stub/seq" STUB_BODY_DUMP="$work/stub/bodies.txt" \
+    "$onboard" --endpoint "http://127.0.0.1:$port" --namespace demo --apply \
+    --poll 1 --execute-timeout 20 \
+    --admin-password-file "$work/password.txt" \
+    --manifest "$work/good.manifest" > "$work/stub-run.out" 2>&1
+code=$?
+set -e
+stop_fake
+check_eq 0 "$code" '包装 curl 下 --apply 依然全部达成'
+check_not_contains "$work/stub/argv.log" 'Authorization' 'Authorization 头不出现在 curl argv 里'
+check_not_contains "$work/stub/argv.log" 'test-password' '管理台密码不出现在 curl argv 里'
+check_not_contains "$work/stub/argv.log" 'session-token' '会话 token 不出现在 curl argv 里'
+check_not_contains "$work/stub/argv.log" 'serverId' '请求体（JSON）不出现在 curl argv 里'
+check_not_contains "$work/stub-run.out" 'test-password' '密码也不出现在脚本自己的输出里'
+
+invocations=$(grep -c '^=== invocation' "$work/stub/argv.log" || true)
+cfgs=$(grep -c '^CFG_MODE' "$work/stub/argv.log" || true)
+check_eq "$invocations" "$cfgs" '每次 curl 调用都经 -K 配置文件传凭据'
+loose=$(grep -E '^(CFG|BODY)_MODE' "$work/stub/argv.log" | grep -Ev '[[:space:]]600$' || true)
+check_eq '' "$loose" '凭据配置文件与请求体文件权限都是 0600'
+
+cat "$work/stub/cfgdir"/cfg-* > "$work/stub/cfgs.txt"
+check_contains "$work/stub/cfgs.txt" 'Authorization: Bearer session-token' 'Authorization 头确实经 0600 配置文件传给 curl'
+check_contains "$work/stub/cfgs.txt" 'data-binary = "@' '请求体经配置文件的 data-binary 文件引用传递'
+check_contains "$work/stub/bodies.txt" 'test-password' '登录口令确实经 0600 请求体文件传给 curl'
+check_eq '' "$(ls -A "$work/tmp")" '脚本退出后临时目录（含 0600 凭据文件）零残留'
+
+printf '\n[12b] 异常退出同样不残留凭据临时文件\n'
+set +e
+TMPDIR="$work/tmp" "$onboard" --endpoint 'http://127.0.0.1:1' --namespace demo \
+    --admin-password-file "$work/password.txt" \
+    --manifest "$work/good.manifest" > "$work/leak-exit.out" 2>&1
+code=$?
+set -e
+check_eq 1 "$code" '连不上控制面时退出码为 1'
+check_eq '' "$(ls -A "$work/tmp")" '报错退出后临时目录同样清空（退出钩子兜底）'
+
+# ---------------------------------------------------------------------------
+# 轮换 token：独立子命令
+# ---------------------------------------------------------------------------
+
+printf '\n[13] 轮换 namespace token 是独立子命令，新明文有可靠去处\n'
+
+printf '\n[13.1] 废弃的 --rotate-token 直接报错且零请求\n'
+make_pending_state "$work/state.json"
+start_fake
+set +e
+"$onboard" --endpoint "http://127.0.0.1:$port" --namespace demo --apply --rotate-token \
+    --admin-password-file "$work/password.txt" \
+    --manifest "$work/good.manifest" > "$work/rotate-deprecated.out" 2>&1
+code=$?
+set -e
+stop_fake
+check_eq 2 "$code" '--rotate-token 已废弃：退出码 2'
+check_contains "$work/rotate-deprecated.out" '--rotate-token-only' '报错点明正确用法'
+check_contains "$work/rotate-deprecated.out" '401' '报错点明轮换的爆炸半径'
+check_eq '' "$(cat "$work/requests.log")" '废弃开关在任何请求之前就被拦下（零请求、零副作用）'
+
+printf '\n[13.2] 新明文没有去处时拒绝执行\n'
+set +e
+"$onboard" --endpoint "http://127.0.0.1:$port" --namespace demo --apply --rotate-token-only \
+    --admin-password-file "$work/password.txt" > "$work/rotate-no-dest.out" 2>&1
+code=$?
+set -e
+check_eq 2 "$code" '--rotate-token-only 未给明文去处时退出码为 2'
+check_contains "$work/rotate-no-dest.out" '--token-out' '报错点明要用 --token-out 或 --print-token'
+
+set +e
+"$onboard" --endpoint "http://127.0.0.1:$port" --namespace demo --rotate-token-only \
+    --token-out "$work/never.txt" --manifest "$work/good.manifest" \
+    --admin-password-file "$work/password.txt" > "$work/rotate-with-manifest.out" 2>&1
+code=$?
+set -e
+check_eq 2 "$code" '--rotate-token-only 与 --manifest 互斥（退出码 2）'
+
+printf '\n[13.3] 轮换 dry-run：不轮换、不落盘\n'
+rm -f "$work/rotated.txt"
+make_pending_state "$work/state.json"
+start_fake
+set +e
+"$onboard" --endpoint "http://127.0.0.1:$port" --namespace demo \
+    --rotate-token-only --token-out "$work/rotated.txt" \
+    --admin-password-file "$work/password.txt" > "$work/rotate-dry.out" 2>&1
+code=$?
+set -e
+dry_rotations=$(grep -c 'token/rotate' "$work/requests.log" || true)
+stop_fake
+check_eq 0 "$code" '轮换 dry-run 退出码为 0'
+check_eq 0 "$dry_rotations" '轮换 dry-run 不发出轮换请求'
+check_eq 'absent' "$([ -e "$work/rotated.txt" ] && printf present || printf absent)" '轮换 dry-run 不落盘新明文'
+check_contains "$work/rotate-dry.out" '[dry-run]' '轮换 dry-run 打印将执行的动作'
+
+printf '\n[13.4] 轮换 apply：真正轮换、新明文按 0600 落盘、不碰接入流程\n'
+make_pending_state "$work/state.json"
+start_fake
+"$onboard" --endpoint "http://127.0.0.1:$port" --namespace demo --apply \
+    --rotate-token-only --token-out "$work/rotated.txt" \
+    --admin-password-file "$work/password.txt" > "$work/rotate-apply.out" 2>&1
+code=$?
+rotated=$(python3 -c 'import json;print(json.load(open("'"$work"'/state.json")).get("lastRotatedToken",""))')
+stop_fake
+check_eq 0 "$code" '轮换 apply 退出码为 0'
+check_contains "$work/requests.log" '/admin/v2/namespaces/7/token/rotate' '确实调用了轮换端点'
+check_eq "$rotated" "$(cat "$work/rotated.txt")" '响应里的新明文原样落盘（不再只留在内存）'
+check_eq 600 "$(file_mode "$work/rotated.txt")" '新明文文件权限为 600'
+check_not_contains "$work/requests.log" '/approve' '轮换子命令不触碰接入流程（零 approve）'
+check_contains "$work/rotate-apply.out" '401' '输出点明既有 agent 会立刻 401'
+check_contains "$work/rotate-apply.out" 'beacon.bootstrap-token' '输出给出下一步该改哪个字段'
+check_not_contains "$work/rotate-apply.out" "$rotated" '默认不把新明文打印到 stdout'
+
+printf '\n[13.5] --print-token：显式要求时才打印一次\n'
+make_pending_state "$work/state.json"
+start_fake
+"$onboard" --endpoint "http://127.0.0.1:$port" --namespace demo --apply \
+    --rotate-token-only --print-token \
+    --admin-password-file "$work/password.txt" > "$work/rotate-print.out" 2>&1
+code=$?
+rotated=$(python3 -c 'import json;print(json.load(open("'"$work"'/state.json")).get("lastRotatedToken",""))')
+stop_fake
+printed=$(grep -cF -- "$rotated" "$work/rotate-print.out" || true)
+check_eq 0 "$code" '--print-token 退出码为 0'
+check_eq 1 "$printed" '--print-token 恰好打印一次新明文'
+
+printf '\n[13.6] --token-out 目标已存在：拒绝覆盖且不轮换\n'
+printf '上一个 token 的存档\n' > "$work/existing.txt"
+make_pending_state "$work/state.json"
+start_fake
+set +e
+"$onboard" --endpoint "http://127.0.0.1:$port" --namespace demo --apply \
+    --rotate-token-only --token-out "$work/existing.txt" \
+    --admin-password-file "$work/password.txt" > "$work/rotate-existing.out" 2>&1
+code=$?
+set -e
+stop_fake
+check_eq 2 "$code" '--token-out 目标已存在时退出码为 2'
+check_eq '上一个 token 的存档' "$(cat "$work/existing.txt")" '已存在的文件内容未被覆盖'
+check_eq '' "$(cat "$work/requests.log")" '拒绝覆盖发生在轮换之前（零请求）'
 
 printf '\n全部通过：%s 项断言\n' "$passed"
