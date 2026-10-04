@@ -969,57 +969,86 @@ wait_for_pending() {
 # 步骤 ③：批量批准（提交 approve → 批准审批请求 → 轮询到 active）
 # ---------------------------------------------------------------------------
 
+# 等某台身份回到 pending。换区工单批准时会清空归属并把绑定身份重入 pending，只有等到
+# 这一步真正发生，随后的重确认批准才有意义——**必须是 pending 才算等到**：若把仍然 active
+# 的状态当成「无需重确认」放行，重确认就会被跳过、归属永不落地（脚本只会看到超时）。
+wait_identity_pending() {
+    server_id=$1
+    deadline=$(( $(date +%s) + timeout_seconds ))
+    while :; do
+        if ! fetch_identities "$work_dir/identities.jsonl"; then
+            warn "✗ $server_id：换区后拉取身份列表失败"
+            return 1
+        fi
+        identities_as_json "$work_dir/identities.jsonl" > "$work_dir/identities.json"
+        row=$(find_identity "$work_dir/identities.json" "$server_id" '' '')
+        if [ -n "$row" ]; then
+            status=$(printf '%s' "$row" | cut -f2)
+            if [ "$status" = pending ]; then
+                return 0
+            fi
+        fi
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            warn "✗ $server_id：换区后 ${timeout_seconds}s 内身份未回到 pending（最后状态 ${status:-未知}），归属不会落地"
+            return 1
+        fi
+        sleep "$poll_interval"
+    done
+}
+
 approve_one() {
     server_id=$1
     key=$2
     addr=$3
+    # 步骤名可覆盖：换区重确认复用本函数，但在汇总表里标为「重批准」以区别于首次批准
+    step=${4:-批准}
 
     identities_as_json "$work_dir/identities.jsonl" > "$work_dir/identities.json"
     row=$(find_identity "$work_dir/identities.json" "$server_id" "$key" "$addr")
     if [ -z "$row" ]; then
         if [ "$apply" != true ]; then
             # dry-run 下「尚未上报」是全新主机的正常状态，不是错误：预览将发生什么即可
-            record "$server_id" '批准' 'ok' 'dry-run：尚无对应身份，apply 时会在其转为 pending 后提交 approve 并批准'
+            record "$server_id" "$step" 'ok' 'dry-run：尚无对应身份，apply 时会在其转为 pending 后提交 approve 并批准'
             printf '%s 批准 %s 的身份：一旦出现 pending 即 POST /admin/v2/agent-identities/<identityId>/approve（serverId=%s）\n' \
                 "$dry_prefix" "$server_id" "$server_id" >&2
             return 0
         fi
-        record "$server_id" '批准' 'fail' '未找到对应身份，无法批准'
+        record "$server_id" "$step" 'fail' '未找到对应身份，无法批准'
         return 1
     fi
     ident=$(printf '%s' "$row" | cut -f1)
     status=$(printf '%s' "$row" | cut -f2)
 
     if [ "$status" = active ]; then
-        record "$server_id" '批准' 'skip' "已 active（$ident），跳过"
+        record "$server_id" "$step" 'skip' "已 active（$ident），跳过"
         return 0
     fi
     if [ "$status" != pending ]; then
-        record "$server_id" '批准' 'fail' "状态 $status 不可批准"
+        record "$server_id" "$step" 'fail' "状态 $status 不可批准"
         return 1
     fi
 
     payload=$(jq -n --arg sid "$server_id" --arg r "$reason" '{serverId:$sid,reason:$r}')
     ticket=$(write_or_dry "批准身份 $ident 并绑定 serverId=$server_id" \
         "/admin/v2/agent-identities/$ident/approve" "$payload") || {
-        record "$server_id" '批准' 'fail' '提交 approve 失败'
+        record "$server_id" "$step" 'fail' '提交 approve 失败'
         return 1
     }
     if [ "$apply" != true ]; then
-        record "$server_id" '批准' 'ok' "dry-run：将提交 approve（$ident）"
+        record "$server_id" "$step" 'ok' "dry-run：将提交 approve（$ident）"
         return 0
     fi
 
     request_id=$(printf '%s' "$ticket" | jq -r '.approvalRequestId // empty')
     if [ -z "$request_id" ]; then
-        record "$server_id" '批准' 'fail' 'approve 响应缺少 approvalRequestId'
+        record "$server_id" "$step" 'fail' 'approve 响应缺少 approvalRequestId'
         return 1
     fi
 
     decide_payload=$(jq -n --arg n "$reason" '{note:$n}')
     if ! write_or_dry "批准审批请求 $request_id" \
         "/admin/v2/approval-requests/$request_id/approve" "$decide_payload" >/dev/null; then
-        record "$server_id" '批准' 'fail' "审批请求 $request_id 批准失败"
+        record "$server_id" "$step" 'fail' "审批请求 $request_id 批准失败"
         return 1
     fi
 
@@ -1027,7 +1056,7 @@ approve_one() {
     deadline=$(( $(date +%s) + timeout_seconds ))
     while :; do
         if ! fetch_identities "$work_dir/identities.jsonl"; then
-            record "$server_id" '批准' 'fail' '生效轮询期间拉取身份失败'
+            record "$server_id" "$step" 'fail' '生效轮询期间拉取身份失败'
             return 1
         fi
         identities_as_json "$work_dir/identities.jsonl" > "$work_dir/identities.json"
@@ -1035,12 +1064,12 @@ approve_one() {
         if [ -n "$row" ]; then
             status=$(printf '%s' "$row" | cut -f2)
             if [ "$status" = active ]; then
-                record "$server_id" '批准' 'ok' "已 active（$ident）"
+                record "$server_id" "$step" 'ok' "已 active（$ident）"
                 return 0
             fi
         fi
         if [ "$(date +%s)" -ge "$deadline" ]; then
-            record "$server_id" '批准' 'fail' "审批已提交但 ${timeout_seconds}s 内未 active（最后状态 ${status:-未知}）"
+            record "$server_id" "$step" 'fail' "审批已提交但 ${timeout_seconds}s 内未 active（最后状态 ${status:-未知}）"
             warn "✗ $server_id：审批请求 $request_id 已批准，但身份未在超时内生效。可在管理台查看该审批请求的执行结果。"
             return 1
         fi
@@ -1191,6 +1220,22 @@ assign_one() {
         "/admin/v2/approval-requests/$request_id/approve" "$decide_payload" >/dev/null; then
         record "$server_id" '归属' 'fail' "归属审批请求 $request_id 批准失败"
         return 1
+    fi
+
+    # 换区是两段式（真实语义见 service.v2_control_plane_service.initRezone）：批准工单只做
+    # 「清空全部归属 + 写预填目标 + 把绑定身份重入 pending」，归属要等该身份**再次确认**时
+    # 才由 applyApproveBinding → completeRezoneApprove 落地。故此处必须补一次身份批准，
+    # 否则下面的生效轮询必然空等到超时。首次分配（server-assignments）与大厅迁移
+    # （server-placement-transfers）都在批准工单时立即落位，不走这条分支。
+    if [ "$endpoint_path" = '/admin/v2/server-rezones' ]; then
+        if ! wait_identity_pending "$server_id"; then
+            record "$server_id" '归属' 'fail' '换区后身份未回到 pending，无法完成重确认'
+            return 1
+        fi
+        if ! approve_one "$server_id" '' '' '重批准'; then
+            record "$server_id" '归属' 'fail' '换区后身份重确认失败，归属不会落地'
+            return 1
+        fi
     fi
 
     deadline=$(( $(date +%s) + timeout_seconds ))

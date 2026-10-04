@@ -147,6 +147,16 @@ class Handler(BaseHTTPRequestHandler):
                 if ident["identityId"] == approval["identityId"]:
                     ident["status"] = "active"
                     ident["serverId"] = payload["serverId"]
+                    # 换区重确认：身份再次确认时按预填目标落区（对齐 completeRezoneApprove）
+                    for srv in state["servers"]:
+                        if srv["serverId"] != payload["serverId"]:
+                            continue
+                        if srv.get("pendingZoneId"):
+                            srv["zoneId"], srv["bcClusterId"], srv["lobbyClusterId"] = srv["pendingZoneId"], None, None
+                            srv["pendingZoneId"] = None
+                        elif srv.get("pendingBCClusterId"):
+                            srv["bcClusterId"], srv["zoneId"], srv["lobbyClusterId"] = srv["pendingBCClusterId"], None, None
+                            srv["pendingBCClusterId"] = None
         elif approval["kind"] == "placement":
             for srv in state["servers"]:
                 if srv["serverId"] != payload["serverId"]:
@@ -166,6 +176,23 @@ class Handler(BaseHTTPRequestHandler):
                         srv["zoneId"], srv["bcClusterId"], srv["lobbyClusterId"] = payload["targetId"], None, None
                     else:
                         srv["bcClusterId"], srv["zoneId"], srv["lobbyClusterId"] = payload["targetId"], None, None
+        elif approval["kind"] == "rezone":
+            # 与真实 initRezone 对齐（apps/server/internal/service/v2_control_plane_service.go）：
+            # 批准换区工单只做「清空全部归属 + 写预填目标 + 把绑定身份重入 pending」，
+            # 归属要等该身份**再次确认**时才由 applyApproveBinding 落地——不是立即生效。
+            for row_id in payload["serverIds"]:
+                for srv in state["servers"]:
+                    if srv["id"] != row_id:
+                        continue
+                    srv["zoneId"], srv["bcClusterId"], srv["lobbyClusterId"] = None, None, None
+                    srv["isDefaultEntry"] = False
+                    if payload["targetKind"] == "zone":
+                        srv["pendingZoneId"], srv["pendingBCClusterId"] = payload["targetId"], None
+                    else:
+                        srv["pendingBCClusterId"], srv["pendingZoneId"] = payload["targetId"], None
+                    for ident in state["identities"]:
+                        if ident.get("serverId") == srv["serverId"]:
+                            ident["status"] = "pending"
 
     def do_GET(self):
         log_request_line("GET", self.path)
@@ -279,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
             kind = "assignment" if path.endswith("server-assignments") else "rezone"
             request_id = f"req-{kind}-{'-'.join(str(i) for i in body.get('serverIds', []))}"
             state["approvals"][request_id] = {
-                "kind": "assignment",
+                "kind": kind,
                 "payload": {
                     "serverIds": body.get("serverIds", []),
                     "targetKind": target.get("kind", ""),
@@ -525,6 +552,11 @@ check_contains "$work/requests.log" '/admin/v2/approval-requests/req-identity-id
 check_contains "$work/requests.log" '/admin/v2/server-placement-transfers' '大厅归属走 server-placement-transfers'
 check_contains "$work/requests.log" '/admin/v2/server-assignments' '首次分配走 server-assignments'
 check_contains "$work/requests.log" '/admin/v2/server-rezones' '改派走 server-rezones'
+# 换区是两段式：工单批准只把身份重入 pending，必须再批准一次身份归属才落地。
+# 这里锁住「id-c 被批准两次」，防止重确认被误删后测试仍然全绿。
+rez_approves=$(grep -c '/admin/v2/agent-identities/id-c/approve' "$work/requests.log" || true)
+check_eq 2 "$rez_approves" '换区机身份被批准两次（首次 + 换区重确认）'
+check_contains "$work/apply.out" '重批准' '汇总表把换区重确认标为「重批准」'
 
 printf '\n[7] 幂等：重复执行全部跳过且零写请求\n'
 make_settled_state "$work/state.json"
