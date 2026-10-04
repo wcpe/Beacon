@@ -65,6 +65,31 @@
 
 ## 1.3.0（2026-09-30）
 
+### 新增
+
+- **MCP bearer 支持客户端凭据直连（长驻客户端免自行续期）**：`/admin/v2/mcp` 此前只接受经 `POST /admin/v2/oauth/token` 换取的 `mct_` 短期 access token，而该 token 只有 15 分钟有效期——长驻客户端（常驻 Agent 运行时、MCP 客户端进程）必须自行实现续期循环，否则就得外挂 stdio 桥接脚本代持并刷新凭据。现在 bearer 增加第二类形态：客户端 secret（`mcs_`）可**直接**作为 bearer 使用，客户端因此不再需要续期逻辑，也不再需要桥接进程。
+  - **行为变化**：`Authorization: Bearer` 按前缀分派——`mcs_` 走客户端凭据直连校验，其余凭据（含 `mct_`）仍走原有 access token 校验，**token 路径未改一行**。直连凭据可反复使用、无 15 分钟窗口；前缀不合规 / 哈希不匹配 / 客户端已吊销统一回 `401`，不区分内部原因。
+  - **规范约束不变**：access token 有效期仍为 15 分钟，两类形态都**不签发 refresh token**；直连路径不参与 audience 校验（端点固定为 `/admin/v2/mcp`，该路径的 audience 精确比对只存在于 token 路径）。
+  - **安全边界**：直连模式下 secret 本身即长期凭据，其吊销与轮换**天然即时生效**——吊销（client 转 `revoked`）与轮换（改写 `secret_hash`、递增 `secret_version`）在下一次请求即被拒，无需缓存失效、也无需等待窗口过期。正因凭据不再自然过期，**生产环境必须经 HTTPS 反向代理**，明文直连仅限内网 / 回环（`mcp.allow-insecure-internal`）。明文 secret 仍只在创建 / 轮换响应中出现一次。
+  - **回归测试**：补 4 项用例（正确 secret 放行且主体与客户端记录一致、已吊销拒绝、轮换后旧 secret 拒绝而新 secret 放行、前缀命中但哈希不匹配与 `mct_` 形状 / 过短 / 空凭据一律拒绝）。规格见 [built-in-admin-v2-mcp-and-oauth](docs/specs/built-in-admin-v2-mcp-and-oauth.md) §4.4，接口见 [API](docs/API.md)，运维排障见 [OPERATIONS](docs/OPERATIONS.md) §9.2。
+
+- **MCP 工具风险分级真源与生产模式门禁（FR-236 / FR-237）**：MCP 的 78 个工具此前只有 `observer` / `automation` 两档 profile，**跨环境固定**——同一份 `automation` 凭据在测试与生产环境看到的工具完全一样；且工具清单是硬编码字符串，与既有 `OperationDescriptor` 的风险等级靠「工具名去前缀 ≈ operation kind」的**未声明隐式约定**耦合（实测 50 个映射里仅 5 个真符合该约定，其余为点号转下划线、复数转单数、词序反转乃至完全无关名）。
+  - **工具级风险目录（FR-236）**：新建 `mcpToolCatalog` 作为工具发现与门禁的**单一真源**（工具名为唯一键，登记风险等级、可见 profile、`RequireApprovalDecide` 与对应 operation kind，后者的显式化取代了上述隐式约定）。`MCPToolNames` 改为从目录派生、删除原 78 项字符串清单；新增泛型 helper `mcpAddTool` 包裹 SDK 注册（69 处调用点，覆盖全部 78 个工具），与 `MCPToolNames` **共用同一判定函数**，使「清单声明」与「真实注册」不可能漂移。
+  - **分级结果**：`critical` 10 项 / `high` 44 项 / `low` 24 项。有 operation kind 的工具其 MCP 面等级**不得低于**既有 descriptor（测试断言该不变量，保证 MCP 面只比人类管理台更严）；其中 9 项在 MCP 面**提级**为 `critical` 而**不改动既有 descriptor**（零回归）——依据是机器主体的可发现面应严于人类管理台。
+  - **生产模式（FR-237）**：新增 `mcp.production-mode` 启动项（默认 `false`，仅 yaml）。开启时 `critical` 档工具对客户端**完全不可发现**（表现为「工具不存在」而非「执行被拒」），`low` / `high` 不受影响；与 `mcp.allow-approval-decide` 正交但**优先**（生产模式下即使开启该开关，审批决定工具仍不可发现）。关闭时 `tools/list` 与既有**逐工具零差异**。`GET /admin/v2/mcp/config` 增加只读字段 `productionMode`，管理台客户端页同步展示。
+  - **附带收益**：automation 侧 78 个工具的完整定义实测约 22–26 KB（≈7,000–9,000 tokens 的会话级固定开销），生产模式隐藏 10 项可减少约 13%。
+  - **回归测试**：目录自洽（工具名非空唯一、等级取值合法）、**真实注册集合与目录派生集合双向一致**（经 `mcp.NewInMemoryTransports` 会话枚举，避开静态扫描漏掉 helper 注册的 15 个工具）、descriptor 不变量（精确覆盖 + 显式豁免清单，防 kind 拼错后静默免检）、生产模式两态差集精确等于 critical 集合（对 `allow-approval-decide` 两态各验一次）、observer 集合不受开关影响；生产模式同样作用于**运行时注册**（防「清单隐藏、实际仍可调用」错位）；**新增工具漏登记即以红灯暴露**——`mcpAddTool` 对未登记工具留痕、覆盖测试断言该痕迹为空（变异验证：删除目录中任一项条目，测试立即失败并指名漏登记的工具）。规格见 [mcp-tool-risk-grading](docs/specs/mcp-tool-risk-grading.md) 与 [mcp-production-mode-gate](docs/specs/mcp-production-mode-gate.md)。
+
+### 变更
+
+- **agent 数据面注册端点更名为 `/data-plane/attach`（FR-233，语义消歧）**：v1 的 `POST /beacon/v1/agent/register` 与 v2 的 `POST /beacon/v2/agent/register` **同名却不同职责**（v1 = 数据面挂载 + 机器注册直落；v2 = 身份状态机 pending→审批→active），在真机搭建时直接造成过接入误判（判定「功能重叠该退役一个」，并据此排查到错误方向）。现把 v1 端点更名为 `POST /beacon/v1/agent/data-plane/attach`，语义显式化为「**挂载数据面**」而非「注册身份」。
+  - **运行时行为逐字不变**：鉴权、机器注册直落（FR-222）、审计、registry 写入、状态码语义全部保持。新端点仍留在 `/beacon/v1/agent` 路由组内（该组挂 `agentTokenMiddleware`，是机器注册「受信内部调用方」判定的唯一来源，移出即静默失效）。
+  - **旧路径保留一个版本周期的兼容别名**，行为不变，但**仅旧路径**在响应回带 `Deprecation: true` 与 `Link: </beacon/v1/agent/data-plane/attach>; rel="successor-version"`；新路径不带（头设在路由包装层而非 handler，避免新路径也被读作已废弃）。旧客户端忽略未知响应头即可，故为非破坏性。
+  - **agent 插件**改用新路径，并在新路径返回 404（对端为尚未支持新路径的旧控制面）时自动回退旧路径重试一次——避免「插件先升级、控制面后升级」导致接入中断；其余状态码（200/400/401/403/409）一律不回退，以免掩盖真实错误（如 409 重复 serverId 被误当作版本不匹配而重试）。
+  - **配置注释澄清两个 token 的区别**：控制面 `agent-token` 是**共享 token**（v1 数据面凭据 + 机器注册唯一信任源）；agent 本地键 `beacon.bootstrap-token` 是 **namespace token**（v2 身份注册凭据，按库中哈希校验）。二者是不同凭据、取值互不相同——用错通道正是真机 401 的常见成因，此前 `config.example.yml` 的「需与 bootstrap-token 一致」表述含混。
+  - **外部平台（如 JianManager）需同步推送路径**；兼容别名窗口内旧路径仍可用。规格见 [agent-registration-endpoint-disambiguation](docs/specs/agent-registration-endpoint-disambiguation.md)，决策见 [ADR-0084](docs/adr/0084-agent-registration-endpoint-disambiguation.md)。
+
+
 ### 修复
 
 - **golangci-lint 的 `exhaustruct` 禁用失效（工具链配置漂移）**：`.golangci.yml` 的 disable 列表列的是 `exhaustruct`，而 golangci-lint 自 **v2.13.0** 起把该 linter 拆成两个**并列条目**——旧的 `exhaustruct`（标记 Deprecated）与新的 `exhaustruct_v5`（`WithVersion(5)`）。`default: all` 会启用新条目，仅 disable 旧名因此失效：本地 v2.14.0 下暴露 **3232 个**存量问题（涉及 403 个文件，测试占 61%）。经核对，v2.12.2→v2.14.0 之间 builder 的唯一新增注册项即它，其余 disable 项均有效（未知 disable 名会硬报错，本地跑通即证明）。
