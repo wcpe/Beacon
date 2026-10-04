@@ -48,6 +48,7 @@ endif
 RELEASE_CHECK := scripts/release/release_check.sh
 RELEASE_TEST := scripts/release/test_release_check.sh
 RELEASE_PROMOTE_TEST := scripts/release/test_promote_ga.sh
+OPS_TEST := scripts/ops/test_onboard_servers.sh
 RELEASE_VERSION_FILE ?= VERSION
 RELEASE_RC_TAG ?=
 RELEASE_GA_TAG ?= v$(VERSION)
@@ -91,6 +92,10 @@ lint:
 release-test:
 	sh $(RELEASE_TEST)
 	sh $(RELEASE_PROMOTE_TEST)
+
+# 运维脚本的行为级回归测试：自带本地伪控制面，不接触真实控制面与外网，也不需要凭据。
+ops-test:
+	sh $(OPS_TEST)
 
 release-check:
 	sh $(RELEASE_CHECK) check --version-file "$(RELEASE_VERSION_FILE)" --version "$(VERSION)" --rc-tag "$(RELEASE_RC_TAG)" --ga-tag "$(RELEASE_GA_TAG)" --workflow .github/workflows/release.yml

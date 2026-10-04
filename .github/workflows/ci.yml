@@ -139,6 +139,16 @@ jobs:
       - name: 运行 Agent 格式、静态检查与测试
         run: ./apps/agent/gradlew -p apps/agent ktlintCheck detekt test --no-daemon
 
+  # 运维脚本的行为级回归测试：脚本自带本地伪控制面，不接触真实控制面、不需要凭据与外网。
+  # 与 release-test 同属「脚本契约」层，但跑在每次 PR 上——脚本被改坏必须当场可见。
+  ops:
+    name: 运维脚本测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: 运行批量接入脚本回归测试
+        run: make ops-test
+
   # 使用真实 MySQL 验证控制面和 Agent 的集成路径。
   integration:
     name: 真实 MySQL 集成测试
@@ -247,7 +257,7 @@ jobs:
   # 最终门禁明确区分 PR 的跳过打包与 master 的完整打包成功。
   quality-gate:
     name: 最终质量门禁
-    needs: [lint, web, agent, integration, package]
+    needs: [lint, web, agent, integration, ops, package]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -260,6 +270,7 @@ jobs:
           WEB_RESULT: ${{ needs.web.result }}
           AGENT_RESULT: ${{ needs.agent.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
+          OPS_RESULT: ${{ needs.ops.result }}
           PACKAGE_RESULT: ${{ needs.package.result }}
         run: |
           set -euo pipefail
@@ -277,6 +288,7 @@ jobs:
           require_success "Web 质量任务" "$WEB_RESULT"
           require_success "Agent 质量任务" "$AGENT_RESULT"
           require_success "集成质量任务" "$INTEGRATION_RESULT"
+          require_success "运维脚本质量任务" "$OPS_RESULT"
 
           if [ "$EVENT_NAME" = "pull_request" ]; then
             if [ "$PACKAGE_RESULT" != "skipped" ]; then
