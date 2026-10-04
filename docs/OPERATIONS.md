@@ -43,11 +43,11 @@
 
 ```sh
 # 1) 先干跑：只打印将做什么，不产生任何写操作（安全底线）
-./scripts/ops/onboard_servers.sh --manifest .tmp/onboard.manifest --namespace mc-prod \
+./scripts/ops/onboard_servers.sh --manifest .tmp/onboard.manifest --namespace demo \
   --admin-password-file <(grep -m1 '^BEACON_ADMIN_PASSWORD=' /opt/beacon/.env | cut -d= -f2-)
 
 # 2) 确认无误再加 --apply 真正执行；重复执行会自动跳过已完成的台
-./scripts/ops/onboard_servers.sh --manifest .tmp/onboard.manifest --namespace mc-prod --apply \
+./scripts/ops/onboard_servers.sh --manifest .tmp/onboard.manifest --namespace demo --apply \
   --admin-password-file <(grep -m1 '^BEACON_ADMIN_PASSWORD=' /opt/beacon/.env | cut -d= -f2-)
 ```
 
