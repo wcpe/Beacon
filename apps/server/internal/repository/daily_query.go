@@ -77,6 +77,43 @@ func existingDailyTablesListed(db *gorm.DB, base string, fromMs, toMs int64) []s
 	return names
 }
 
+// recentDailyTables 枚举某基名**已存在**的日表名（按日新→旧，最多 limit 张），供「ID 内嵌时间不可信」
+// 时的有界回退直查使用（消息按 message_id 直查，见 message_repo.findTraceInRecentTables）：
+// 这类行的终态落表由控制面接收时刻决定，按 ID 推导的表名推不出来，只能在最近日表里有界探测。
+//
+// 与 existingDailyTablesInRange 一样只判存不建表；一次 GetTables 元数据查询 + 前缀/日期后缀过滤，
+// 不做逐日判存。上限是硬约束（防退化成全表扫描），超出部分不查（更旧的行应由时间窗列表查询覆盖）。
+func recentDailyTables(db *gorm.DB, base string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	all, err := db.Migrator().GetTables()
+	if err != nil {
+		return nil
+	}
+	type ref struct {
+		name string
+		day  time.Time
+	}
+	refs := make([]ref, 0, limit)
+	for _, name := range all {
+		day, ok := dailyDayOf(base, name)
+		if !ok {
+			continue
+		}
+		refs = append(refs, ref{name: name, day: day})
+	}
+	sort.Slice(refs, func(i, j int) bool { return refs[i].day.After(refs[j].day) })
+	if len(refs) > limit {
+		refs = refs[:limit]
+	}
+	names := make([]string, 0, len(refs))
+	for _, r := range refs {
+		names = append(names, r.name)
+	}
+	return names
+}
+
 // dailyDayOf 从日表名解析其 UTC 日（base_YYYYMMDD）；非本 base 的日表或后缀非法返回 (zero, false)。
 func dailyDayOf(base, table string) (time.Time, bool) {
 	prefix := base + "_"

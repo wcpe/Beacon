@@ -15,14 +15,7 @@ const hexDigitsLower = "0123456789abcdef"
 // 手写最小解析、不引第三方 uuid 依赖：跳过连字符取前 12 个十六进制字符（= 6 字节 = 48 位）按大端解析。
 // 返回 (毫秒, true)；字符不足 12 位或含非十六进制字符返回 (0, false)。
 func TimeMsFromUUIDv7(id string) (int64, bool) {
-	hexDigits := make([]byte, 0, 12)
-	for i := 0; i < len(id) && len(hexDigits) < 12; i++ {
-		c := id[i]
-		if c == '-' {
-			continue
-		}
-		hexDigits = append(hexDigits, c)
-	}
+	hexDigits := uuidHexDigits(id, 12)
 	if len(hexDigits) < 12 {
 		return 0, false
 	}
@@ -31,6 +24,50 @@ func TimeMsFromUUIDv7(id string) (int64, bool) {
 		return 0, false
 	}
 	return ms, true
+}
+
+// TrustedTimeMsFromUUIDv7 解析 UUIDv7 文本并**校验 RFC 9562 结构**（版本号 = 第 7 字节高 4 位、
+// 变体 = 第 9 字节高 2 位），返回 (毫秒, true)；结构不符（如 agent 误用 UUIDv4 随机 ID、
+// 非 UUID 文本、长度不足）返回 (0, false)。
+//
+// 为什么要与 TimeMsFromUUIDv7 分开：后者只取前 48 位当时间戳，对随机 UUID（v4）也会「解析成功」，
+// 于是随机位被当成 9727 年的毫秒——终态行会被写进永不进入查询窗口的垃圾日表而彻底不可见
+// （真机实测：两条带业务 payload 的消息落进 msg_trace_97270109）。凡「据 ID 时间定日表」的
+// 写入 / 读取路由都必须先过本函数，确认时间可信；不可信时改由控制面接收时刻定日表（见
+// message_repo.resolveMsgDay），保证任何一条消息的终态行都落在可查询的日表里。
+func TrustedTimeMsFromUUIDv7(id string) (int64, bool) {
+	hexDigits := uuidHexDigits(id, 32)
+	if len(hexDigits) < 32 {
+		return 0, false
+	}
+	// 结构校验（对齐 NewUUIDv7 的位写入）：版本号 7 落在跳过连字符后的第 13 个十六进制字符
+	// （hexDigits[12]），变体 10xx 落在第 17 个十六进制字符（hexDigits[16]）。
+	if hexDigits[12] != '7' {
+		return 0, false
+	}
+	switch hexDigits[16] {
+	case '8', '9', 'a', 'b', 'A', 'B':
+	default:
+		return 0, false
+	}
+	ms, err := strconv.ParseInt(string(hexDigits[:12]), 16, 64)
+	if err != nil {
+		return 0, false
+	}
+	return ms, true
+}
+
+// uuidHexDigits 提取 id 的前 n 个十六进制字符（跳过连字符）；不足 n 个返回已有长度。
+func uuidHexDigits(id string, n int) []byte {
+	out := make([]byte, 0, n)
+	for i := 0; i < len(id) && len(out) < n; i++ {
+		c := id[i]
+		if c == '-' {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // NewUUIDv7 按给定 Unix 毫秒生成一个 UUIDv7 文本（RFC 9562：前 6 字节大端为毫秒，
