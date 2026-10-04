@@ -634,6 +634,12 @@ func (s *V2ControlPlaneService) RequestGrantNamespaceTrust(p GrantNamespaceTrust
 }
 
 func (s *V2ControlPlaneService) RequestAssignServers(p AssignServersParams, principal auth.Principal, idempotencyKey string) (ApprovalTicketView, error) {
+	// 大厅归属不适用首次分配的批量语义（单服原子迁移 + 单服审批），给出可读指引而非泛化参数错误。
+	// HTTP 入口已在 handler 内转发到 RequestLobbyMemberAssignments，此处兜住 MCP / 其它内部调用方。
+	if p.TargetKind == LobbyPlacementKind {
+		return ApprovalTicketView{}, apperr.New(apperr.ErrInvalidParam.Status, apperr.ErrInvalidParam.Code,
+			"target.kind=lobby_cluster 请改用 POST /admin/v2/server-placement-transfers（入参 serverId 字符串 + target + reason），或 MCP 工具 beacon.topology.server.transfer-placement")
+	}
 	if !validAssignmentApprovalTarget(p.TargetKind, p.TargetID) {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam
 	}

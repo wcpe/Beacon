@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
@@ -328,6 +329,75 @@ func placementTransferViewOf(server *model.Server) *ServerPlacementTransferView 
 		LobbyClusterID: server.LobbyClusterID, ZoneID: server.ZoneID,
 		IsDefaultEntry: server.IsDefaultEntry, Draining: server.Draining,
 	}
+}
+
+// LobbyMemberAssignmentTicket 是 lobby_cluster 目标下逐台 server 的审批票据。
+// 额外带 serverId，让批量提交的调用方能把票据与具体 server 对上。
+type LobbyMemberAssignmentTicket struct {
+	ApprovalTicketView
+	ServerID string `json:"serverId"`
+}
+
+// RequestLobbyMemberAssignments 承接 POST /admin/v2/server-assignments 的 target.kind=lobby_cluster。
+//
+// 语义取舍：大厅归属迁移在设计上就是「单服原子迁移 + 单服审批」——排空门、已确认 backend 角色校验、
+// lobby_cluster.member.* 专项审计都按单台判定（见 lobby-cluster-authority §3.4.2）。
+// 因此这里既不复制一套归属迁移逻辑，也不伪造批量语义：把请求里的数字 serverIds 逐台解析成
+// 业务 serverId，转发给既有的单服入口 RequestTransferServerPlacement（同一 service 方法），
+// 一台一张票据、按请求顺序返回。
+func (s *V2ControlPlaneService) RequestLobbyMemberAssignments(p AssignServersParams, principal auth.Principal, idempotencyKey string) ([]LobbyMemberAssignmentTicket, error) {
+	if len(p.ServerIDs) == 0 {
+		return nil, lobbyAssignmentInvalidParam("serverIds 不能为空：请传待迁入大厅的 server 数字 id（GET /admin/v2/servers 返回的 id）")
+	}
+	if p.TargetID == 0 {
+		return nil, lobbyAssignmentInvalidParam("target.id 不能为 0：kind=lobby_cluster 时请传大厅集群 id（见 GET /admin/v2/lobby-clusters）")
+	}
+	if p.IsDefaultEntry {
+		return nil, lobbyAssignmentInvalidParam("大厅成员不能是默认入口：kind=lobby_cluster 时请勿传 isDefaultEntry=true（默认入口仅适用于 zone 归属）")
+	}
+	servers, err := loadServersByIDs(s.db, p.ServerIDs)
+	if err != nil {
+		if errors.Is(err, apperr.ErrInstanceNotFound) {
+			return nil, lobbyAssignmentInvalidParam("serverIds 中存在不存在的 server 数字 id（或存在重复 id）：请先用 GET /admin/v2/servers 核对后重试")
+		}
+		return nil, err
+	}
+	serverIDByRowID := make(map[uint]string, len(servers))
+	for i := range servers {
+		serverIDByRowID[servers[i].ID] = servers[i].ServerID
+	}
+	tickets := make([]LobbyMemberAssignmentTicket, 0, len(p.ServerIDs))
+	for _, rowID := range p.ServerIDs {
+		serverID, ok := serverIDByRowID[rowID]
+		if !ok {
+			return nil, lobbyAssignmentInvalidParam("serverIds 中存在无效 server id：请先用 GET /admin/v2/servers 核对后重试")
+		}
+		ticket, err := s.RequestTransferServerPlacement(ServerPlacementTransferParams{
+			ServerID: serverID, TargetKind: LobbyPlacementKind, TargetID: p.TargetID,
+			Reason: p.Reason, Operator: p.Operator, ClientIP: p.ClientIP,
+		}, principal, perServerIdempotencyKey(idempotencyKey, serverID))
+		if err != nil {
+			return nil, err
+		}
+		tickets = append(tickets, LobbyMemberAssignmentTicket{ApprovalTicketView: ticket, ServerID: serverID})
+	}
+	return tickets, nil
+}
+
+// perServerIdempotencyKey 把批量请求的 Idempotency-Key 派生为「每台一份」：
+// 同一批量请求重试时派生键稳定（幂等），不同 server 之间不会互撞同一键。
+// 调用方未给键时返回空串，由 service 依 (operation, serverId, 载荷) 自行派生。
+func perServerIdempotencyKey(batchKey, serverID string) string {
+	if strings.TrimSpace(batchKey) == "" {
+		return ""
+	}
+	return batchKey + ":" + serverID
+}
+
+// lobbyAssignmentInvalidParam 构造同码 INVALID_PARAM 但带可读指引的参数错误，
+// 保持 code / 状态码与既有契约一致，只替换面向调用方的说明。
+func lobbyAssignmentInvalidParam(message string) error {
+	return apperr.New(apperr.ErrInvalidParam.Status, apperr.ErrInvalidParam.Code, message)
 }
 
 // ListLobbyClustersParams 是大厅集群摘要的服务端筛选 / 分页参数。

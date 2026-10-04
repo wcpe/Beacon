@@ -259,17 +259,18 @@ zone_id / bc_cluster_id 变更在事务提交后产生三类下游效应（本�
 | DELETE | /admin/v2/envs/{id} | — | 204；映射级联删除 |
 | PUT | /admin/v2/envs/{id}/namespaces | namespaceIds[] | 整体替换映射；冲突 409 |
 | GET | /admin/v2/zone-tree | namespaceId | BC 集群 → 大区 → 小区树，各节点含服务器计数与默认入口计数，附「未分配」计数 |
-| POST | /admin/v2/bc-clusters | namespaceId, name, description | 新集群 |
+| POST | /admin/v2/bc-clusters | namespaceId（别名 parentId）, code, displayName, description | 新集群 |
 | PATCH | /admin/v2/bc-clusters/{id} | name?, description? | 更新后集群 |
 | DELETE | /admin/v2/bc-clusters/{id} | — | 204；有子级 / 挂 proxy → 409 |
-| POST | /admin/v2/regions | bcClusterId, name, description | 新大区 |
+| POST | /admin/v2/regions | bcClusterId（别名 parentId）, code, displayName, description | 新大区 |
 | PATCH | /admin/v2/regions/{id} | name?, description? | 更新后大区 |
 | DELETE | /admin/v2/regions/{id} | — | 204；有子级 → 409 |
-| POST | /admin/v2/zones | regionId, name, description | 新小区 |
+| POST | /admin/v2/zones | regionId（别名 parentId）, code, displayName, description | 新小区 |
 | PATCH | /admin/v2/zones/{id} | name?, description? | 更新后小区 |
 | DELETE | /admin/v2/zones/{id} | — | 204；挂 server → 409 |
 | GET | /admin/v2/servers | namespaceId?, kind?, assigned?(bool), zoneId?, bcClusterId?, keyword?, page | server 分页列表（含归属、默认入口、在线摘要）；`assigned=false` 即未分配篮数据源 |
 | POST | /admin/v2/server-assignments | serverIds[], target:{kind:`zone`/`bc_cluster`, id} 或 target:null（解除）, isDefaultEntry?, reason?（解除必填） | 批量首次分配（仅未分配 server）/ 解除；已分配 server 传非 null 目标 → 409 `rezone_required`（走换区工单）；整批事务，失败逐台列原因 |
+| POST | /admin/v2/server-assignments（`target.kind=lobby_cluster`） | serverIds[], target:{kind:`lobby_cluster`, id}, reason（必填）, isDefaultEntry 须为空/false | 大厅成员分配：把数字 serverIds 逐台解析为业务 serverId 后复用单服迁移入口（lobby-cluster-authority.md §3.4.2），`202` + `{approvalRequestId,...,tickets:[{serverId,...}]}`，`operationKey=topology.lobby_member.move`；非法入参回带修正指引的 `400 INVALID_PARAM` |
 | POST | /admin/v2/server-rezones | serverIds[]（已分配、同 namespace 同 kind）, target:{kind:`zone`/`bc_cluster`, id}, reason（必填） | 批量发起换区工单（§4.7）：整批事务内解绑 + 清归属 + 记预填目标；失败逐台列原因 |
 | PUT | /admin/v2/servers/{id}/default-entry | value(bool) | 更新默认入口标记；未分配 → 409 |
 | PUT | /admin/v2/servers/{serverId}/draining | draining(bool), reason | 切换排空标记（路径与语义收编自调度域，保持不变），写审计；消费方为调度 schedulable 判定 |

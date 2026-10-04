@@ -506,8 +506,8 @@ data: {}
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/zones/assignments?namespace=&group=&zone=` | 列出 serverId→zone 指派（只读，仍可用；归属的权威真源是第二版的 `server.zone_id`） |
-| `PUT /admin/v1/zones/assignments` | **已迁移**：恒返回 `410 zone_assignment_migrated`，不再改归属——请改用第二版 `POST /admin/v2/server-assignments`（首次分配）或 `POST /admin/v2/server-rezones`（换区） |
-| `DELETE /admin/v1/zones/assignments?namespace=&serverId=&reason=` | **已迁移**：恒返回 `410 zone_assignment_migrated`——请改用第二版 `POST /admin/v2/server-assignments` 的解除分配能力 |
+| `PUT /admin/v1/zones/assignments` | **已迁移**：恒返回 `410 zone_assignment_migrated`，不再改归属——请改用第二版 `POST /admin/v2/server-assignments`（首次分配，`target.kind=zone` / `bc_cluster`；大厅成员分配用 `target.kind=lobby_cluster`）或 `POST /admin/v2/server-rezones`（换区） |
+| `DELETE /admin/v1/zones/assignments?namespace=&serverId=&reason=` | **已迁移**：恒返回 `410 zone_assignment_migrated`——请改用第二版 `POST /admin/v2/server-assignments` 的解除分配能力（`target: null`；仅大厅归属的解除走 `POST /admin/v2/server-placement-transfers`） |
 | `GET /admin/v1/zones?namespace=&group=` | zone 维度汇总（每 zone 服数/在线数） |
 
 错误：指派不存在 `404 ASSIGNMENT_NOT_FOUND`。**排空门**：目标服在注册表 `online` 且 `playerCount>0`，而本次（首次指派 / 改到不同区 / 取消指派）会改变其区归属解析时，`PUT` 与 `DELETE` 一律返回 `409 ZONE_SERVER_ONLINE_NONEMPTY`（不落库 / 不审计 / 不唤醒），须先排空（drain 或等玩家离开）后再操作；指派到与现有完全相同的 `(group, zone)` 为同值 no-op，幂等返回现有记录、不落库不审计（先于排空门）。详见 ADR-0036。改派的长轮询唤醒在 M3 长轮询热更落地（M2 已即时重算有效配置、刷新内存归属）。

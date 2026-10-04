@@ -67,16 +67,17 @@ env、BC 集群、大区和小区目前由 `name` 同时承担机器寻址与界
 |---|---|---|
 | GET/POST/PATCH | `/admin/v2/namespaces`、`/admin/v2/namespaces/{id}` | 创建接收 `code, displayName, description`；PATCH 只允许 `displayName?, description?` |
 | GET/POST/PATCH | `/admin/v2/envs`、`/admin/v2/envs/{id}` | 创建接收 `code, displayName, description`；PATCH 不得改 code |
-| POST/PATCH | `/admin/v2/bc-clusters`、`/admin/v2/bc-clusters/{id}` | 创建接收 `namespaceId, code, displayName, description`；PATCH 只改展示信息 |
-| POST/PATCH | `/admin/v2/regions`、`/admin/v2/regions/{id}` | 创建接收 `bcClusterId, code, displayName, description`；PATCH 只改展示信息 |
-| POST/PATCH | `/admin/v2/zones`、`/admin/v2/zones/{id}` | 创建接收 `regionId, code, displayName, description`；PATCH 只改展示信息 |
+| POST/PATCH | `/admin/v2/bc-clusters`、`/admin/v2/bc-clusters/{id}` | 创建接收 `namespaceId, code, displayName, description`；父级字段另有统一别名 `parentId`（与 MCP 建树工具同名同义）；PATCH 只改展示信息 |
+| POST/PATCH | `/admin/v2/regions`、`/admin/v2/regions/{id}` | 创建接收 `bcClusterId, code, displayName, description`；父级字段另有统一别名 `parentId`；PATCH 只改展示信息 |
+| POST/PATCH | `/admin/v2/zones`、`/admin/v2/zones/{id}` | 创建接收 `regionId, code, displayName, description`；父级字段另有统一别名 `parentId`；PATCH 只改展示信息 |
 | PATCH | `/admin/v2/servers/{id}` | 只接收 `displayName`；server 仍由身份确认流程创建并确定 `serverId` |
 | GET | `/admin/v2/zone-tree`、`/admin/v2/servers` | 每层同时返回 code/serverId 与 displayName；`keyword` 同时匹配二者 |
 
 兼容规则：
 
 - 旧响应中的 `name` 在兼容窗内继续表示原机器标识，值等于 `code`；不得在一次 additive 发布中改成 `displayName`。
-- 旧创建请求只有 `name` 时，以同一值初始化 `code` 与 `displayName`；新请求同时给 `name` 与 `code` 且二者不一致时返回 `400 AMBIGUOUS_IDENTIFIER`。
+- 旧创建请求只有 `name` 时，以同一值初始化 `code` 与 `displayName`；新请求同时给 `name` 与 `code` 且二者不一致时返回 `400 AMBIGUOUS_IDENTIFIER`，且**文案必须能指导修正**（说明 `name` 是兼容旧字段、取值须与 `code` 完全相同、展示名改用 `displayName`）——该错误由环境 / namespace / BC 集群 / 大区 / 小区五类创建共用，判定规则不得因文案调整而改变。
+- 拓扑建树的父级字段统一别名 `parentId` 与各端点原有字段（`namespaceId` / `bcClusterId` / `regionId`）并存：只给其一时取该值，两者都给且不一致或都缺省时返回 `400 INVALID_PARAM`，文案点名冲突 / 缺失的具体字段（不改变既有字段的接受规则）。
 - 旧 PATCH 的 `name` 仍按机器标识解释：与既有 code 相同可幂等忽略，不同则返回 `400 IMMUTABLE_IDENTIFIER` 并提示改用 `displayName`；不得把同名旧字段静默改成显示名称写语义。
 - 唯一冲突返回 409，并带资源类型与冲突范围，不回显敏感上下文。
 
