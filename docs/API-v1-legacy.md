@@ -107,6 +107,14 @@ data: {}
 - `backends`（可选，`string[]`）：**仅 bc 上报**本代理当前代理的后端子服 serverId 集合，随上报刷新控制面内存事实（FR-36，[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)）。**缺键与显式空集语义不同**：bukkit / 旧 agent 缺键 → 控制面保留原集合不动；bc 显式上报（含空集即清空）才刷新。向后兼容。
 - `proxy`（可选，对象）：**仅 bc（`role=bungee`）上报**的代理专属负载指标（FR-34，[ADR-0025](adr/0025-bc-proxy-metrics-and-netty-traffic.md)），仅展示不参与决策。子对象字段：`onlineConnections`（代理在线连接数）、`threadCount`（JVM 线程数）、`uptimeMs`（JVM 运行毫秒数）、`backendUp`/`backendTotal`（后端子服可达/总数）、`backendAvgLatencyMs`（到可达后端的平均 ping 延迟毫秒，`-1` 表示无可达后端不可用）。**缺键不刷新**：bukkit / 旧 agent 不发即缺键，控制面保留实例原 BC 字段不动；bc 上报才刷新。向后兼容。网络吞吐入/出字节本期不采（BungeeCord 无干净 Netty 注入点，见 ADR-0025）。
 
+### 4.5 节点自声明刷新 `POST /beacon/v1/agent/declaration`（FR-243，见 [ADR-0086](adr/0086-agent-self-declaration-narrow-write-surface.md)）
+
+节点在**运行期**刷新自己声明的容量与自定义键值标签（此前只能在注册那一刻写入一次）。请求：`{ "namespace", "serverId", "capacity"?, "labels"? }`——`capacity` 缺键即不刷新、`0` 为合法值（与「缺键」可区分）；`labels` 缺键即不刷新、提供即**整体替换**（`{}` 即清空），约束与 FR-227 **同一组**（`key ≤ 32` / `value ≤ 128` / 单节点 `≤ 20` 个）；两个声明字段**都缺** → `400`。响应**回带生效值**：`{ "ok": true, "capacity", "labels" }`。
+
+- **幂等**：重复上报 = 刷新，不产生第二条记录；**只写自己**——改配置 / 改 zone / 写他人均不可达（[ADR-0086](adr/0086-agent-self-declaration-narrow-write-surface.md)）。
+- **两类失败可区分**：`401 UNAUTHORIZED`（凭据）/ `404 NOT_REGISTERED`（尚未挂载数据面或未在册，可重试）与 `400 INVALID_PARAM`（格式非法 / 超界，稳定事实，改正后重报）。
+- **只读事实**：声明**不进入**调度、健康与 `?tag.*=` 过滤的既有真源（`server_tag` 归 FR-227 不变）；读回走 §5 发现视图的既有字段 `capacity` / `metadata`。规格真源：[agent-self-declaration-runtime-refresh](specs/agent-self-declaration-runtime-refresh.md)。
+
 ### 5. 服务发现 `GET /beacon/v1/agent/discovery`
 查询：`?namespace=&group=&zone=&role=`，外加可选的自定义元数据过滤 `&tag.<key>=<value>`（可重复，多 tag 取交集；按实例 `metadata` 键值精确匹配，FR-29）。返回按条件过滤的**可用**实例列表（`online`+`degraded`，归 agent 前缀 + agent token）。无匹配返回 `{ "instances": [] }`。BeaconAgentProxy 用它周期同步同 namespace 下 `role=bukkit` 的可用子服，按 `serverId` 注入 Bungee `ServerInfo` 目录（仅管理 Beacon 创建的条目，同名手工配置不覆盖；FR-4 延伸出口）。
 

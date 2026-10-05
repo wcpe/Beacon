@@ -118,6 +118,14 @@ class AgentLifecycle(
     /** 注册成功监听器：供平台壳启动依赖控制面身份的子系统。 */
     internal val registeredListeners = CopyOnWriteArrayList<() -> Unit>()
 
+    /**
+     * 停机监听器：装配期注入的子系统在 [shutdown] 时复位自己（如节点自声明门面回到降级态）。
+     *
+     * 与 [registeredListeners] 对称，但**不另开 `onShutdown` 注册方法**：本类方法数已达 detekt
+     * TooManyFunctions 阈值（规则对新代码仍生效），装配方直接 `add` 即可。
+     */
+    internal val shutdownListeners = CopyOnWriteArrayList<() -> Unit>()
+
     /** 心跳周期（毫秒）：注册成功前用兜底值，成功后用下发值。 */
     @Volatile
     internal var heartbeatIntervalMs: Long = settings.heartbeatFallbackMs
@@ -256,6 +264,14 @@ class AgentLifecycle(
         metricsSampling.stop()
         schedulingRuntime?.stop()
         assetScan?.stop()
+        // 停机回调：复位装配期注入的持有者（如节点自声明门面），使其不再对外呈现「可用」。
+        shutdownListeners.forEach { listener ->
+            try {
+                listener()
+            } catch (e: Exception) {
+                adapter.warn("停机监听器执行失败：${e.message}")
+            }
+        }
         adapter.info("agent 生命周期已停止")
     }
 }

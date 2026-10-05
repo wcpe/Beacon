@@ -284,6 +284,100 @@ func (s *InstanceService) Report(p ReportParams) error {
 	return nil
 }
 
+// DeclarationParams 是节点自声明刷新入参（FR-243，见 ADR-0086）。
+// Capacity / Labels 都是「缺键 = 不刷新该项」的部分刷新语义：nil 即缺键（Capacity 用指针区分 0 与缺键）。
+// Labels 非 nil 即**整体替换**（空 map = 清空全部标签）；两者都缺由 Declare 拒绝。
+type DeclarationParams struct {
+	Namespace string
+	ServerID  string
+	Capacity  *int
+	Labels    map[string]string
+}
+
+// DeclarationResult 是声明刷新结果：回带**生效后**的容量与标签，供调用方自证（spec §3.1）。
+type DeclarationResult struct {
+	Capacity int
+	Labels   map[string]string
+}
+
+// Declare 刷新节点自声明的容量与自定义键值标签（FR-243，见 ADR-0086 的窄写入面）。
+// 流程与 Report 同口径：空校验（IDENTITY_REQUIRED）→ 运行资格（在册 / 归档 / 失活闸）→ 声明内容校验
+// （capacity ≥ 0、标签沿用 FR-227 约束）→ 写内存注册表 → 回带生效值；未注册返回 NOT_REGISTERED。
+// **不写审计**（与 Report 一致：这是节点自身的运行期事实，不是管理面写操作）；拒绝路径记 WARN（含 serverId 与原因）。
+func (s *InstanceService) Declare(p DeclarationParams) (*DeclarationResult, error) {
+	if p.Namespace == "" || p.ServerID == "" {
+		slog.Warn("声明刷新缺少身份标识被拒", "namespace", p.Namespace, "serverId", p.ServerID, "原因", "namespace / serverId 为空")
+		return nil, apperr.ErrIdentityRequired
+	}
+	// 两个声明字段都缺 = 无意义的空操作，直接拒（spec §3.1）。
+	if p.Capacity == nil && p.Labels == nil {
+		slog.Warn("声明刷新未携带任何声明字段被拒", "namespace", p.Namespace, "serverId", p.ServerID, "原因", "capacity 与 labels 键均缺失")
+		return nil, apperr.ErrInvalidParam
+	}
+	if p.Capacity != nil && *p.Capacity < 0 {
+		slog.Warn("声明容量超界被拒", "namespace", p.Namespace, "serverId", p.ServerID, "capacity", *p.Capacity)
+		return nil, apperr.ErrInvalidParam
+	}
+	labels, err := normalizeDeclaredLabels(p.Labels)
+	if err != nil {
+		slog.Warn("声明标签未通过校验被拒", "namespace", p.Namespace, "serverId", p.ServerID,
+			"标签数", len(p.Labels), "原因", err)
+		return nil, err
+	}
+	// 运行资格闸（归档 / 失活环境与 server 一律按既有分面拒绝）；nil db（单测）时跳过。
+	if s.db != nil {
+		if err := ensureServerActiveForNamespace(s.db, p.Namespace, p.ServerID); err != nil {
+			slog.Warn("声明刷新运行资格校验未通过被拒", "namespace", p.Namespace, "serverId", p.ServerID, "原因", err)
+			return nil, err
+		}
+	}
+	if !s.registry.SetDeclaration(p.Namespace, p.ServerID, p.Capacity, labels) {
+		slog.Warn("实例未注册，拒绝声明刷新", "namespace", p.Namespace, "serverId", p.ServerID)
+		return nil, apperr.ErrNotRegistered
+	}
+	// 回带生效后的值自证：读回内存注册表（声明是内存事实，不落 DB）。
+	saved := s.registry.Get(p.Namespace, p.ServerID)
+	if saved == nil {
+		// 极端竞态：写入后被同并发下线摘除。按未注册处置，与上面一致。
+		slog.Warn("声明写入后实例已不在册，拒绝回带生效值", "namespace", p.Namespace, "serverId", p.ServerID)
+		return nil, apperr.ErrNotRegistered
+	}
+	slog.Info("节点声明刷新", "namespace", p.Namespace, "serverId", p.ServerID,
+		"capacity", saved.Capacity, "标签数", len(saved.Metadata))
+	return &DeclarationResult{Capacity: saved.Capacity, Labels: declaredLabelsView(saved.Metadata)}, nil
+}
+
+// declaredLabelsView 把生效后的标签映射规整为响应视图：nil / 空一律回空 map，
+// 使响应恒为 JSON 对象（`{}`）而非 null——契约 §3.1 的 labels 是对象，调用方无需再区分两种空形态。
+func declaredLabelsView(labels map[string]string) map[string]string {
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		out[k] = v
+	}
+	return out
+}
+
+// normalizeDeclaredLabels 校验节点自声明的标签集合（FR-243）：空集合合法（= 清空全部标签），
+// 否则逐项沿用 FR-227 的同一组约束（key 字符集 / key ≤ 32 / value ≤ 128）并校验单节点数量上限（≤ 20）。
+// 入参 nil 表示请求体缺键（不刷新），原样返回 nil。
+func normalizeDeclaredLabels(labels map[string]string) (map[string]string, error) {
+	if labels == nil {
+		return nil, nil
+	}
+	if len(labels) > model.ServerTagMaxPerServer {
+		return nil, apperr.ErrInvalidParam
+	}
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		key, err := normalizeTagEntry(k, v)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = v
+	}
+	return out, nil
+}
+
 // List 按标签过滤列出实例。
 func (s *InstanceService) List(f runtime.Filter) []*runtime.Instance {
 	return s.registry.List(f)

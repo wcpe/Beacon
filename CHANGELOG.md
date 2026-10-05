@@ -6,6 +6,14 @@
 
 ### 新增
 
+- **节点自声明的运行期刷新与读回（FR-243）**：节点的容量与自定义键值标签**此前只能在注册那一刻写入一次**——agent 侧是启动期注入的不可变值（`capacity` 由 bukkit 壳反射读 `max-players`），服务端 `Register` 是整条覆盖、`Report` 只刷指标、`Heartbeat` 只刷心跳，接入方在运行期的变化只能靠重启或改配置。现在在「agent 对业务插件只读暴露」的边界内开一个**窄写入面**（决策见 [ADR-0086](docs/adr/0086-agent-self-declaration-narrow-write-surface.md)）：`POST /beacon/v1/agent/declaration` 刷新**自己节点**的容量与键值标签，并经 agent 门面 `BeaconAgent.declaration()` 暴露给同进程的业务插件。规格见 [agent-self-declaration-runtime-refresh](docs/specs/agent-self-declaration-runtime-refresh.md)。
+  - **边界（只开一扇窄门）**：只能写**自己**的容量与标签；**改配置 / 改 zone / 写他人不可达**；声明是**只读事实**——控制面只存不判，不进入调度、健康与 `?tag.*=` 过滤的既有真源（`server_tag` 归 FR-227 不变）。**不含任何业务语义**：区、玩法模式、放量范围由接入方在自己的标签命名空间下自行解释，Beacon 不定义任何 key 的含义。
+  - **幂等与部分刷新**：重复上报 = 刷新，不产生第二条记录、不叠加；缺键即不刷新该字段（`capacity = 0` 与「缺键」可区分）；`labels` 提供即整体替换（空对象 = 清空）。
+  - **两类失败可区分**：「通道不可用」（401 / 404，可重试）与「声明被拒」（400，稳定事实）在服务端状态码与 agent 门面取值两层都分开——用同一个返回值承载两类结论，会让调用方无从判断该重试还是该改声明。
+  - **有界**：标签沿用 FR-227 的约束（`key ≤ 32` / `value ≤ 128` / 单节点 `≤ 20`），超界即「声明被拒」。
+  - **启动竞态**：声明若发生在"已装配但尚未注册成功"时，agent-core 记住最近一次声明并在注册成功后自动补报一次（幂等，重复补报无副作用）。
+  - **向后兼容**：不下发该端点的旧 agent 行为逐字不变。
+
 - **多台服务器批量接入脚本（`scripts/ops/onboard_servers.sh`）**：真机接入验收实测，一个 namespace 接 4 台机要手工走 8+ 次接口调用（每台两次批准、每台一次归属，另加建库与轮换 token），且每一步都只回泛化错误、必须读源码才能猜对——尤其「agent 配置里 endpoint / token 与控制面不一致」这一最常见的坑，失败时只表现为身份永远不出现，很难定位。现把「预检 → 等 pending → 批量批准 → 批量归属 → 中文汇总」收敛成一条可重入命令，**默认 dry-run**（只打印将执行的动作），必须显式传 `--apply` 才产生写操作。
   - **预检点名字段**：逐台读取 `plugins/BeaconAgent/config.yml`（代理为 `BeaconAgentProxy`），比对 `beacon.endpoints[0]` 与 `beacon.bootstrap-token`；不一致时输出「文件 + 字段 + 现值 + 应改值」，token 只打前 11 位前缀、不落明文。可选 `--expect-token-file` 与控制面当前 token 精确比对（不提供时退化为「各台之间必须一致」的弱校验）。
   - **不把 202 当成功**：逐台 `agent-identities/{id}/approve`（带 `serverId`）后，用返回的 `approvalRequestId` 调 `approval-requests/{id}/approve`，再**轮询到 identity 真正 `active`** 才计入达成。

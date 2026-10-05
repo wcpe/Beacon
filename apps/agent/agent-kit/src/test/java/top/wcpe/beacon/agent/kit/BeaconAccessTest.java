@@ -10,6 +10,7 @@ import top.wcpe.beacon.agent.api.CandidateView;
 import top.wcpe.beacon.agent.api.ConfigChangeListener;
 import top.wcpe.beacon.agent.api.DataSource;
 import top.wcpe.beacon.agent.api.DataSourceState;
+import top.wcpe.beacon.agent.api.DeclarationOutcome;
 import top.wcpe.beacon.agent.api.DecisionSource;
 import top.wcpe.beacon.agent.api.Discovery;
 import top.wcpe.beacon.agent.api.DiscoveryQuery;
@@ -18,7 +19,9 @@ import top.wcpe.beacon.agent.api.ListenerHandle;
 import top.wcpe.beacon.agent.api.HealthView;
 import top.wcpe.beacon.agent.api.MessageHandler;
 import top.wcpe.beacon.agent.api.Messaging;
+import top.wcpe.beacon.agent.api.NodeDeclaration;
 import top.wcpe.beacon.agent.api.ScheduleResult;
+import top.wcpe.beacon.agent.api.SelfDeclaration;
 import top.wcpe.beacon.agent.api.ServiceInstance;
 import top.wcpe.beacon.agent.api.TopicHandler;
 import top.wcpe.beacon.agent.api.TopologyListener;
@@ -362,6 +365,14 @@ class BeaconAccessTest {
             }
         };
 
+        /** 假自声明门面：始终不可用（本测试不覆盖 FR-243 行为，仅满足接口实现）。 */
+        private static final SelfDeclaration FAKE_DECLARATION = new SelfDeclaration() {
+            @Override
+            public DeclarationOutcome declare(NodeDeclaration declaration) {
+                return DeclarationOutcome.unavailable();
+            }
+        };
+
         final Map<String, String> config = new LinkedHashMap<>();
         final FakeDiscovery discovery = new FakeDiscovery();
         final FakeEffectiveConfig effectiveConfig = new FakeEffectiveConfig(this);
@@ -391,6 +402,11 @@ class BeaconAccessTest {
         @Override
         public BeaconScheduling scheduling() {
             return FAKE_SCHEDULING;
+        }
+
+        @Override
+        public SelfDeclaration declaration() {
+            return FAKE_DECLARATION;
         }
 
         @Override

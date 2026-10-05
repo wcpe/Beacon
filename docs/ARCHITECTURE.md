@@ -18,7 +18,7 @@ Beacon 是**集群调度中间件的控制面（control plane）**：集中存�
 四条硬边界（PRD §3，违反即架构漂移，见 [.claude/rules/architecture-invariants.md](../.claude/rules/architecture-invariants.md)）：
 
 - **fail-static**：agent 持本地快照（候选缓存、配置、身份），控制面不可用时按快照降级继续，绝不阻断玩家进服、绝不阻塞 MC 主线程。
-- **业务插件只走本机 agent-api**：调度候选、健康事实、跨服消息一律经 agent 本机门面获取；直连 Beacon HTTP 不作为契约、随时可变（[API.md](API.md)「agent-api」节）。
+- **业务插件只走本机 agent-api**：调度候选、健康事实、跨服消息一律经 agent 本机门面获取；直连 Beacon HTTP 不作为契约、随时可变（[API.md](API.md)「agent-api」节）。门面**对配置与 zone 只读**——唯一写面是节点[自声明](adr/0086-agent-self-declaration-narrow-write-surface.md)的窄入口（只能声明**自己节点**的容量与键值标签，改配置 / 改 zone / 写他人不可达，见 [FR-243](PRD.md) 与 [规格](specs/agent-self-declaration-runtime-refresh.md)）。
 - **namespace 强隔离**：注册 / 调度 / 消息 / Agent 操作 / 配置 / 变更单六个面默认禁止跨 namespace，跨域仅经后台显式单向信任关系（capability 级）开放并额外审计；配置与变更单绝对禁止跨域（[v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §4）。
 - **首次接入人工确认**：新 agent 注册后处于待确认态，未确认、未分配区服前不可调度（[v2-agent-identity.md](specs/v2-agent-identity.md)）。
 
@@ -49,7 +49,7 @@ packages/
 
 ### 2.3 agent（Kotlin）五模块抽象（沿用 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）
 
-`agent-api`（纯 Java8 只读契约，业务插件 compileOnly）/ `agent-core`（平台无关核心，零具体库依赖，transport·codec 只依赖接口）/ `agent-adapters`（OkHttp + kotlinx 适配器，唯一碰具体库）/ `agent-bukkit` / `agent-bungee`（双端打包）。agent 自管身份文件，不依赖 CoreLib；阻塞 IO 一律 TabooLib async，绝不上 MC 主线程。
+`agent-api`（纯 Java8 契约，业务插件 compileOnly；对配置与 zone 只读，唯一写面是节点自声明的窄入口——[ADR-0086](adr/0086-agent-self-declaration-narrow-write-surface.md)）/ `agent-core`（平台无关核心，零具体库依赖，transport·codec 只依赖接口）/ `agent-adapters`（OkHttp + kotlinx 适配器，唯一碰具体库）/ `agent-bukkit` / `agent-bungee`（双端打包）。agent 自管身份文件，不依赖 CoreLib；阻塞 IO 一律 TabooLib async，绝不上 MC 主线程。
 
 ## 3. 领域模型（概览）
 

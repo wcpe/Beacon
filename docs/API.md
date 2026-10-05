@@ -60,6 +60,7 @@
 
 - 调度 / 健康门面 `BeaconScheduling`（`acquireCandidate` / `candidatesInZone` / `healthOf` / `selfHealth` / `dataSource`）：真源 [v2-metrics-health-scheduling](specs/v2-metrics-health-scheduling.md) §5.3。
 - 消息门面（`send` / `call` / `on` / `isAvailable`）：真源 [v2-connection-message-storage](specs/v2-connection-message-storage.md) §5.1。
+- 节点自声明门面 `SelfDeclaration`（`declare`）：门面里**唯一的写面**——只能声明**自己节点**的容量与键值标签，改配置 / 改 zone / 写他人不可达；真源 [agent-self-declaration-runtime-refresh](specs/agent-self-declaration-runtime-refresh.md) §3.3，决策见 [ADR-0086](adr/0086-agent-self-declaration-narrow-write-surface.md)。
 
 ## 端点索引（按域）
 

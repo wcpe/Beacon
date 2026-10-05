@@ -24,6 +24,19 @@ type ServerTagView struct {
 // serverTagKeyPattern 限定标签 key 字符集（FR-227 §3：字母 / 数字 / _ . -）。
 var serverTagKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
+// normalizeTagEntry 校验单个标签条目（key 非空、符合字符集与长度上限，value 长度受限），返回规整（去首尾空白）后的 key。
+// FR-227 管理面标签与 FR-243 节点自声明标签共用同一组约束，避免两处口径漂移。
+func normalizeTagEntry(key, value string) (string, error) {
+	k := strings.TrimSpace(key)
+	if k == "" || len(k) > model.ServerTagKeyMaxLen || !serverTagKeyPattern.MatchString(k) {
+		return "", apperr.ErrInvalidParam
+	}
+	if len(value) > model.ServerTagValueMaxLen {
+		return "", apperr.ErrInvalidParam
+	}
+	return k, nil
+}
+
 // normalizeServerTags 校验并规整标签映射：key 非空、符合字符集与长度上限，value 长度受限。
 func normalizeServerTags(tags map[string]string) (map[string]string, error) {
 	if len(tags) == 0 {
@@ -31,12 +44,9 @@ func normalizeServerTags(tags map[string]string) (map[string]string, error) {
 	}
 	out := make(map[string]string, len(tags))
 	for k, v := range tags {
-		key := strings.TrimSpace(k)
-		if key == "" || len(key) > model.ServerTagKeyMaxLen || !serverTagKeyPattern.MatchString(key) {
-			return nil, apperr.ErrInvalidParam
-		}
-		if len(v) > model.ServerTagValueMaxLen {
-			return nil, apperr.ErrInvalidParam
+		key, err := normalizeTagEntry(k, v)
+		if err != nil {
+			return nil, err
 		}
 		out[key] = v
 	}

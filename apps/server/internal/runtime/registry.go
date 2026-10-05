@@ -191,6 +191,37 @@ func (r *Registry) SetBackends(ns, serverID string, backends []string) bool {
 	return true
 }
 
+// SetDeclaration 刷新该实例自声明的容量与自定义键值标签（FR-243，见 ADR-0086 的窄写入面）；未注册返回 false。
+// 部分刷新语义：capacity 为 nil 表示请求体缺键（不刷新该项）；labels 为 nil 亦表示缺键（不刷新），
+// 非 nil 即整体替换（含空 map = 清空全部标签，与缺键区分）。
+// **只动** Capacity 与 Metadata 两个字段：Status / Resolved* / LastHeartbeat / Backends / 指标字段各有独立真源
+// （健康扫描 / 控制面归属解析 / 心跳 / 上报），声明不得越界改写（守「不新增第二真源」，spec §3.5）。
+// 锁纪律与深拷贝同 SetBackends：单锁临界区、无 DB IO，写入前拷贝与调用方入参隔离。
+func (r *Registry) SetDeclaration(ns, serverID string, capacity *int, labels map[string]string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	inst := r.lookup(ns, serverID)
+	if inst == nil {
+		return false
+	}
+	if capacity != nil {
+		inst.Capacity = *capacity
+	}
+	if labels != nil {
+		if len(labels) == 0 {
+			// 显式空集合 = 清空全部标签（与「缺键不刷新」区分），与 SetBackends 传空集清空同风格。
+			inst.Metadata = nil
+		} else {
+			cp := make(map[string]string, len(labels))
+			for k, v := range labels {
+				cp[k] = v
+			}
+			inst.Metadata = cp
+		}
+	}
+	return true
+}
+
 // Offline 手动下线：从内存移除条目；不存在返回 false。
 func (r *Registry) Offline(ns, serverID string) bool {
 	r.mu.Lock()

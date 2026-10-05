@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.client
 
+import top.wcpe.beacon.agent.api.DeclarationApplied
 import top.wcpe.beacon.agent.core.command.AssetEntry
 import top.wcpe.beacon.agent.core.config.EffectiveResult
 import top.wcpe.beacon.agent.core.filetree.FileManifest
@@ -460,4 +461,25 @@ sealed class AssetManifestOutcome {
 
     /** 连接级失败 / 其它非预期状态：fail-static 保留本地状态、等下周期。 */
     data class Failed(val reason: String) : AssetManifestOutcome()
+}
+
+// ---- 节点自声明（FR-243，见 ADR-0086）：调用结果 ----
+
+/**
+ * 节点自声明（运行期刷新容量 / 标签）的调用结果，供门面映射为 agent-api 的三档结论。
+ *
+ * 与 agent-api 的 `DeclarationOutcome` 分工：本类型是 core 内部结果（失败分支带**诊断原因**，
+ * 供日志与重试判据）；门面只把三档取值透出给业务插件，不把诊断细节混进公开取值。
+ *
+ * @param Unavailable.reason UNAVAILABLE 的诊断原因（token 不过 / 实例不在册 / 连接失败等）
+ */
+sealed class DeclarationResult {
+    /** 200：已生效（回带控制面生效值）。 */
+    data class Applied(val applied: DeclarationApplied) : DeclarationResult()
+
+    /** 400：声明被拒（超界 / 格式非法等稳定事实，改正后重报）。 */
+    data class Rejected(val reason: String) : DeclarationResult()
+
+    /** 401 / 404 / 连接失败 / 尚未就绪：通道不可用，退避后重报。 */
+    data class Unavailable(val reason: String) : DeclarationResult()
 }

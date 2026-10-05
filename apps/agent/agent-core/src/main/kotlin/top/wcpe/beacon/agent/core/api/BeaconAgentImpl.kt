@@ -5,6 +5,7 @@ import top.wcpe.beacon.agent.api.BeaconScheduling
 import top.wcpe.beacon.agent.api.Discovery
 import top.wcpe.beacon.agent.api.EffectiveConfig
 import top.wcpe.beacon.agent.api.Messaging
+import top.wcpe.beacon.agent.api.SelfDeclaration
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
@@ -26,6 +27,9 @@ class BeaconAgentImpl(
     private val messagingHolder: MessagingHolder,
     // 调度 / 健康门面（FR-148）：装配期注入真实 SchedulingView；未注入时用占位实现兜底（fail-static 语义仍成立）。
     private val scheduling: BeaconScheduling = UnavailableScheduling,
+    // 节点自声明门面（FR-243，见 ADR-0086）：装配期注入持有者（未注册成功前一律降级为 UNAVAILABLE，
+    // 并记住最近一次声明、注册成功后自动补报一次）；未注入时用占位实现兜底。
+    private val declaration: SelfDeclaration = UnavailableSelfDeclaration,
 ) : BeaconAgent {
     override fun identity(): ApiIdentity {
         // group/zone 以 store 当前值为准（注册/拉取后回填、换区后更新）。
@@ -46,6 +50,9 @@ class BeaconAgentImpl(
     override fun messaging(): Messaging = messagingHolder.get()
 
     override fun scheduling(): BeaconScheduling = scheduling
+
+    // 始终返回当前生效门面（未注册成功时为降级实现：UNAVAILABLE 且记住最近一次声明备补报）。
+    override fun declaration(): SelfDeclaration = declaration
 
     override fun connected(): Boolean = lifecycle.isConnected()
 
