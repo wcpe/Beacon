@@ -4,6 +4,8 @@ import top.wcpe.beacon.agent.api.BeaconAgent
 import top.wcpe.beacon.agent.core.api.BeaconAgentImpl
 import top.wcpe.beacon.agent.core.api.DiscoveryView
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
+import top.wcpe.beacon.agent.core.api.NodeDeclarationHolder
+import top.wcpe.beacon.agent.core.api.SelfDeclarationView
 import top.wcpe.beacon.agent.core.api.TopologyWatchHub
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.fetchFileContent
@@ -147,6 +149,8 @@ private data class LifecycleAndExecutor(
     val topologyWatchHub: TopologyWatchHub,
     val scheduling: SchedulingComponents,
     val messaging: MessagingComponents,
+    // 节点自声明门面持有者（FR-243）：装配期即建（降级态），注册成功后激活、停机复位。
+    val declarationHolder: NodeDeclarationHolder,
 )
 
 /** 调度组件装配产物。 */
@@ -228,7 +232,17 @@ object AgentAssembly {
         val rosterDirectoryHolder = RosterDirectoryHolder(warn = adapter::warn)
         val discoveryView = DiscoveryView(apiClient, le.topologyWatchHub, rosterDirectoryHolder, identity)
         val beaconAgent =
-            BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView, messagingHolder, schedulingView)
+            BeaconAgentImpl(
+                identity,
+                store,
+                lifecycle,
+                effectiveConfigView,
+                discoveryView,
+                messagingHolder,
+                schedulingView,
+                // 节点自声明门面（FR-243，见 ADR-0086）：装配期降级持有者，注册成功激活、停机复位。
+                le.declarationHolder,
+            )
 
         return AssembledAgent(
             lifecycle,
@@ -237,6 +251,28 @@ object AgentAssembly {
             MessagingAssembly(messagingHolder, rosterDirectoryHolder, messagingRuntime),
             schedulingCache::current,
         )
+    }
+
+    /**
+     * 装配节点自声明门面（FR-243，见 ADR-0086）：装配期先给降级持有者——未注册成功前一律回 UNAVAILABLE
+     * 并记住最近一次声明；注册成功（含重连重注册）后换为控制面真实实现并自动补报一次，停机复位。
+     *
+     * 声明端点按在册身份判定（未注册时必被 401 / 404 拒绝），故必须等注册成功后再激活。
+     */
+    private fun createDeclarationHolder(
+        lifecycle: AgentLifecycle,
+        ctx: AssemblyContext,
+    ): NodeDeclarationHolder {
+        val holder = NodeDeclarationHolder(warn = ctx.adapter::warn)
+        val real =
+            SelfDeclarationView(
+                apiClient = ctx.apiClient,
+                identity = ctx.identity,
+                warn = ctx.adapter::warn,
+            )
+        lifecycle.onRegistered { holder.set(real) }
+        lifecycle.shutdownListeners.add { holder.reset() }
+        return holder
     }
 
     /** 装配反向抓取执行器（FR-39）与生命周期（FR-148），返回 lifecycle + topologyWatchHub。 */
@@ -295,8 +331,9 @@ object AgentAssembly {
                     ),
             )
         lifecycle.onRegistered { messaging.messagingRuntime.start() }
+        val declarationHolder = createDeclarationHolder(lifecycle, ctx)
         lifecycleRef.set(lifecycle)
-        return LifecycleAndExecutor(lifecycle, topologyWatchHub, scheduling, messaging)
+        return LifecycleAndExecutor(lifecycle, topologyWatchHub, scheduling, messaging, declarationHolder)
     }
 
     private fun createFileTreeApplier(

@@ -210,6 +210,38 @@ func (h *AgentHandler) Report(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// declarationRequest 是节点自声明刷新请求体（FR-243，见 ADR-0086）。
+// 两个声明字段均为「缺键 = 不刷新该项」的部分刷新语义，故都用可区分「缺键」的类型承载：
+//   - Capacity 用指针：缺键 nil（不刷新）与显式 0（合法容量）严格区分（同 reportRequest 的 CPULoad 惯例）；
+//   - Labels 用 map：缺键 nil（不刷新）与显式 `{}`（解码为非 nil 空 map，= 清空全部标签）区分。
+//
+// Namespace / ServerID 只用于定位**自己**：身份判定沿用 agentTokenMiddleware 与在册判定，不信任请求体自报的归属。
+type declarationRequest struct {
+	Namespace string            `json:"namespace"`
+	ServerID  string            `json:"serverId"`
+	Capacity  *int              `json:"capacity,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+}
+
+// Declaration 处理 POST /beacon/v1/agent/declaration（FR-243）。
+// 声明刷新成功回 200 + 生效后的 capacity / labels（自证）；未注册 / 未挂载数据面 404 NOT_REGISTERED；
+// 格式非法、超界、capacity < 0、两字段全缺 400 INVALID_PARAM（失败分类见 spec §3.4）。
+func (h *AgentHandler) Declaration(w http.ResponseWriter, r *http.Request) {
+	var req declarationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	res, err := h.svc.Declare(service.DeclarationParams{
+		Namespace: req.Namespace, ServerID: req.ServerID, Capacity: req.Capacity, Labels: req.Labels,
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "capacity": res.Capacity, "labels": res.Labels})
+}
+
 // Discover 处理 GET /beacon/v1/agent/discovery（仅返回可用实例：online+degraded）。
 // 支持按 role/zone/group 与自定义元数据 tag 过滤；tag 以重复查询参数 tag.<key>=<value> 传入（多 tag 取交集，FR-29）。
 func (h *AgentHandler) Discover(w http.ResponseWriter, r *http.Request) {
