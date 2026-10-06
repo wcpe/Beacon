@@ -172,6 +172,7 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 
 > **本地前置（工具链）**：下面的手动联调与 §7.1–7.3 的 Go E2E 都需在本机构建控制面二进制并经 Gradle 起真机服务端，跑前先就位：
 > - **JDK21**：运行 Gradle、Paper 与 BungeeCord。Windows 上若 `JAVA_HOME` 路径含 `!` 等特殊字符，`gradlew.bat` 可能回退到 PATH 上的旧 JDK；E2E 经 harness 调 `./apps/agent/gradlew` 继承环境，跑前把 `JAVA_HOME` 显式指向干净路径的 JDK21。
+>   **本机构建 agent 制品（`make agent` / `make package`）同样要求 JDK21**：`mc-testkit 0.5.0` 插件在配置阶段就校验运行期 JVM ≥ 21，若 `JAVA_HOME` 仍指向 JDK 8 会在 `:agent-e2e` 配置期直接失败并报 `Dependency requires at least JVM runtime version 21. This build uses a Java 8 JVM.`——注意这看起来像构建脚本出错，实为选错了 JDK。Linux/macOS 上写成 `JAVA_HOME=/path/to/jdk-21 make package` 即可（`mc-testkit 0.5.0` 之后的版本对 JVM 的要求以插件自身声明为准）。
 > - **C 编译器（CGO）**：控制面默认 sqlite 驱动为 `mattn/go-sqlite3`（CGO），需 `CGO_ENABLED=1` 且 PATH 上有 gcc/clang，否则 `go build ./apps/server/cmd/beacon` 编不出（即便走 `E2E_DB_DRIVER=mysql` 也一样——编译期已静态 import sqlite 驱动）。
 > - **已构建前端**：控制面 `go:embed apps/web/dist`，跑前先 `make web`（或根目录 `pnpm --filter @beacon/web build`），否则只会内嵌占位目录。
 > - **mc-testkit 0.5.0**：默认精确从 `maven.wcpe.top` 解析正式版；不设置 `MC_TESTKIT_INCLUDE_BUILD` 即使用 Maven 工件。仅在开发 mc-testkit 插件本身、需要联调其未发布源码改动时，才可选设置该变量指向本地 mc-testkit 源码目录。
