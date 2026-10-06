@@ -110,7 +110,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/report", h.Agent.Report)
 		// 节点自声明刷新（FR-243，见 ADR-0086）：运行期刷新**自己节点**的容量与自定义键值标签（窄写入面）。
 		// **必须留在本组内**：本组挂了 agentTokenMiddleware，声明与其它数据面端点同属内网信任面。
-		// 声明是只读事实（控制面只存不判）：不进入调度 / 健康 / 标签过滤的既有真源，不写审计。
+		// 声明是只存不判的事实：自声明标签**仅在准入判定处被读**，不参与健康打分、不参与候选排序，
+		// 也不进 `?tag.*=` 过滤真源；不写审计。
 		r.Post("/declaration", h.Agent.Declaration)
 		r.Get("/discovery", h.Agent.Discover)
 		// 反向抓取命令（FR-39，见 ADR-0027）：拉本机待办命令 + 回传 plugins 文件集 ingest

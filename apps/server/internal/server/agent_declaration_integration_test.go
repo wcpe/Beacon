@@ -183,9 +183,16 @@ func TestAgentDeclarationRefreshFlow(t *testing.T) {
 		map[string]string{"mode": "creative", "tier": "core"})
 }
 
-// TestAgentDeclarationDoesNotFeedOtherTruthSources 负向断言（spec §3.5）：声明刷新后，
-// `?tag.*=` 标签过滤（真源 = 控制面 server_tag）与调度候选 / 健康打分（真源 = 健康视图内存快照）
-// 逐项不变——声明是只读事实，控制面只存不判。
+// TestAgentDeclarationDoesNotFeedOtherTruthSources 负向断言（spec §3.5；**FR-244 已重新裁定其中一条**）：
+// 声明刷新后，`?tag.*=` 标签过滤（真源 = 控制面 server_tag）与**健康打分**（真源 = 健康视图内存快照）
+// 逐项不变——控制面只存；自声明标签**仅在准入判定处被读**，不参与健康打分、不参与候选排序、
+// 也不进 `?tag.*=` 过滤真源。
+//
+// **口径变更（FR-244，2026-10-06）**：本用例原先把「调度候选逐项不变」也算在负向里。FR-244 明文重新
+// 裁定那一条：节点自声明**进入调度决策**（作为准入作用域的判定输入），并随候选带出 `labels` 字段。
+// 但它**仍不**参与健康打分、**仍不**参与候选排序、**仍不**进入 `?tag.*=` 过滤真源。
+// 故这里把候选那一档改成两条一起断：**调度字段**逐项不变，而 `labels` 正是本次声明的那一份——
+// 少了前者是"声明改动了调度语义"（越界），少了后者是"声明没接进决策"（FR-244 未达）。
 func TestAgentDeclarationDoesNotFeedOtherTruthSources(t *testing.T) {
 	ts := newDeclarationITServer(t)
 	// 落新真源归属 + 经管理面写控制面标签 env=beta（FR-227，`?tag.*=` 过滤的唯一真源）。
@@ -211,6 +218,8 @@ func TestAgentDeclarationDoesNotFeedOtherTruthSources(t *testing.T) {
 		OnlineCount: 7, MaxOnline: 200,
 	}})
 	schedSvc := service.NewSchedulingV2Service(testHealthViews, rand.New(rand.NewPCG(1, 2)))
+	// 按**生产同款**装配自声明标签真源（main.go 里那一行同源）：调度侧的准入作用域读的就是它。
+	schedSvc.SetDeclarationLabels(service.RegistryDeclarationLabels{Registry: ts.registry})
 	id := agentIdentityForTest(ns.ID, "lobby-1")
 	before := schedSvc.Candidates(id)
 	beforeView, ok := testHealthViews.Get(ns.ID, "lobby-1")
@@ -238,11 +247,37 @@ func TestAgentDeclarationDoesNotFeedOtherTruthSources(t *testing.T) {
 		t.Fatalf("声明标签不得进入 ?tag.*= 过滤真源，实际命中 %d 个实例", total)
 	}
 
-	// ② 调度候选逐项不变（仅生成时刻不同，其余字段必须完全相同）。
+	// ② 调度候选：**调度字段**逐项不变（声明不得改变排序 / 健康字段），而 labels 如实是本次声明的那一份。
 	after := schedSvc.Candidates(id)
+	afterLabels := after.Zones[0].Candidates[0].Labels
+	beforeLabels := before.Zones[0].Candidates[0].Labels
 	before.GeneratedAtMs, after.GeneratedAtMs = 0, 0
+	before.Zones[0].Candidates[0].Labels, after.Zones[0].Candidates[0].Labels = nil, nil
 	if !reflect.DeepEqual(before, after) {
-		t.Fatalf("声明刷新不得改变调度候选：\n前 %+v\n后 %+v", before, after)
+		t.Fatalf("声明刷新不得改变候选的调度字段：\n前 %+v\n后 %+v", before, after)
+	}
+	if beforeLabels["env"] != "" {
+		t.Fatalf("声明之前候选不应带 env 标签，实际 %v", beforeLabels)
+	}
+	if afterLabels["env"] != "gamma" || afterLabels["tier"] != "core" {
+		t.Fatalf("候选应带出本次声明的标签（FR-244 重新裁定的那一处），实际 %v", afterLabels)
+	}
+	// ②b 决策侧按作用域收窄：声明的 env=gamma 是判据，未声明该标签的节点进不了候选。
+	narrowed, err := schedSvc.DecideScopedWithAdmission(id, service.SchedScopeZone, "zoneA", "", "",
+		[]map[string]string{{"env": "gamma"}})
+	if err != nil {
+		t.Fatalf("带作用域的决策不应出错: %v", err)
+	}
+	if narrowed.ChosenServerID != "lobby-1" {
+		t.Fatalf("声明了 env=gamma 的节点应被选中，实际 %q", narrowed.ChosenServerID)
+	}
+	empty, err := schedSvc.DecideScopedWithAdmission(id, service.SchedScopeZone, "zoneA", "", "",
+		[]map[string]string{{"env": "beta"}})
+	if err != nil {
+		t.Fatalf("全被滤掉是稳定结论、不应出错: %v", err)
+	}
+	if empty.FailReason != service.SchedFailNoCandidateInScope || empty.ChosenServerID != "" {
+		t.Fatalf("未声明 env=beta 时应为空结果（no_candidate_in_scope），实际 %+v", empty)
 	}
 
 	// ③ 健康打分输入（健康视图真源）逐项不变。

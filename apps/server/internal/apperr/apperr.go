@@ -183,6 +183,11 @@ var (
 	ErrSchedZoneNotFound = New(http.StatusNotFound, "zone_not_found", "目标 zone 不存在")
 	// ErrSchedCrossNamespace 跨 namespace 调度请求默认拒绝（信任放行规则归 namespace 隔离域，FR-146，spec §4.6）。
 	ErrSchedCrossNamespace = New(http.StatusForbidden, "cross_namespace", "禁止跨 namespace 调度请求")
+	// ErrSchedAdmissionUnavailable 请求带了非空准入作用域，但本进程此刻没有自声明标签的读取真源
+	// （FR-244）：**不能**当成"没有符合条件的候选"（那是稳定事实、会让调用方永久放弃），也不能
+	// 忽略作用域照旧全量决策（那是静默放宽准入）；故按"当前状态、可重试"的 503 报出去。
+	ErrSchedAdmissionUnavailable = New(http.StatusServiceUnavailable, "admission_unavailable",
+		"准入作用域此刻判不了（自声明标签的读取真源未装配）")
 	// ErrApprovalCrossNamespace 危险批量审批目标跨越 namespace，禁止隐式拆分或创建全局申请。
 	ErrApprovalCrossNamespace = New(http.StatusForbidden, "cross_namespace", "禁止跨 namespace 批量审批请求")
 	// ErrInvalidHealthWeights 健康权重配置校验不通过（权重非负 / good、bad 边界有序 / 等级阈值有序，FR-147，spec §4.4）。
