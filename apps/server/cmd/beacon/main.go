@@ -607,6 +607,9 @@ func run() error {
 	// 健康视图与健康域计算轮填充的 Store 为同一实例（单一真源，§4.5）。
 	schedulingV2Service := service.NewSchedulingV2Service(healthViewStore, nil)
 	schedulingV2Service.SetDecisionEnqueuer(service.SchedDecisionEnqueuer{Writer: asyncDailyWriter})
+	// 准入作用域（FR-244）的判定真源 = 节点自声明标签（FR-243 写进注册表的 `Metadata`）。
+	// 只读接入；未装配时带非空作用域的决策请求按 503 报出（当前状态），不静默忽略作用域。
+	schedulingV2Service.SetDeclarationLabels(service.RegistryDeclarationLabels{Registry: registry})
 	v2SchedHandler := handler.NewV2SchedHandler(schedulingV2Service)
 	// 决策记录管理面查询（§5.2）：跨日并表列表 / 详情 / 概览，只读、查询侧不隐式建日表。
 	schedDecisionQueryService := service.NewSchedDecisionQueryService(schedDecisionRepo)

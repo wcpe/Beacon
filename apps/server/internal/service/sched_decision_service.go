@@ -26,6 +26,21 @@ type schedDecisionEnqueuer interface {
 	Enqueue(rows []model.SchedDecisionV2) bool
 }
 
+// DeclarationLabelReader 是「节点自声明标签」的**只读**真源（FR-243 的写入面 = 声明端点，
+// 此处只读，故本接口不含任何写入路径）。
+//
+// 调度决策按准入作用域收窄时（FR-244）读它：被排除的候选要的是"**这台节点自己声明了什么**"，
+// 不是控制面另登记的一套标签（那会形成第二真源、且与配置分叉时不报错）。
+//
+// 抽成接口而不是直接用 *runtime.Registry：决策服务与注册表之间保持窄依赖，
+// 单测可以注入替身而无需建整个注册表；装配期未接（nil）时带作用域的请求按"判不了"报 503
+// （见 ErrSchedAdmissionUnavailable），不静默忽略作用域。
+type DeclarationLabelReader interface {
+	// DeclaredLabels 返回某节点当前自声明的键值标签（namespace 为环境 code）。
+	// 节点不在册 / 无标签一律返回 **nil** —— "读不到声明"与"声明了空集"在准入判定上同效（都不满足非空作用域）。
+	DeclaredLabels(namespace string, serverID string) map[string]string
+}
+
 // SchedDecisionEnqueuer 把泛化异步日表写入通道绑定到 sched_decision 路由（装配用）。
 type SchedDecisionEnqueuer struct {
 	// Writer 泛化异步日表写入通道（须已注册 RouteKindSchedDecision 路由）。
@@ -48,6 +63,13 @@ const (
 	SchedSourceLocalFallback = model.SchedSourceLocalFallback
 	// SchedFailNoCandidate 圈定 zone 后无任何可调度候选（成功响应携带，非 HTTP 错误）。
 	SchedFailNoCandidate = "no_candidate"
+	// SchedFailNoCandidateInScope 圈定 zone 后的候选**全部**因不满足本次准入作用域被排除（FR-244，成功响应携带）。
+	// 与 SchedFailNoCandidate 分开只为诊断能读出来"是没候选还是都被作用域滤掉了"：作用域排除是**稳定事实**
+	// （换服 / 调范围才能改口），而 no_candidate 里的健康排除是等一等会过去的**当前状态**。
+	SchedFailNoCandidateInScope = "no_candidate_in_scope"
+	// SchedExcludedAdmissionMismatch 单台候选因不满足准入作用域被排除的明细原因码（FR-244，落 excluded 列）。
+	// 取值字符串是前后端与 agent 侧对接的事实，与常量名解耦：改名不改值。
+	SchedExcludedAdmissionMismatch = "admission_scope_mismatch"
 	// SchedFailZoneNotFound 请求方 namespace 内无该 zone 名（HTTP 404，决策行仍落库可查）。
 	SchedFailZoneNotFound = "zone_not_found"
 	// SchedScopeZone 保持既有按小区调度的缺省作用域。
@@ -61,6 +83,9 @@ const (
 	schedZoneNameMaxLen = 64
 	schedPluginMaxLen   = 64
 	schedPurposeMaxLen  = 128
+	// schedAdmissionMaxAlternatives 是准入作用域的备选个数上限（FR-244）：本版 8。
+	// 界存在的理由是"请求体有界"，不是为了限制表达力——表达"不限制 ∨ 若干取值"两三条就够。
+	schedAdmissionMaxAlternatives = 8
 )
 
 // SchedExcluded 是决策中单台被排除的明细（序列化为 excluded 列的 json 数组元素，spec §3.4）。
@@ -85,10 +110,14 @@ type SchedDecisionOutcome struct {
 	WeightsRev        int
 	CandidateCount    int
 	Excluded          []SchedExcluded
-	ChosenServerID    string
-	ChosenScore       int
-	FailReason        string
-	DurationMs        int
+	// AdmissionExcludedCount 是本次**因准入作用域**被排除的候选台数（FR-244）。
+	// 它是"决策阶段确实收窄了"的可读信号：只统计作用域那一类排除（健康原因不算），
+	// 故 >0 时调用方可以确定地说"这次收窄发生了"。
+	AdmissionExcludedCount int
+	ChosenServerID         string
+	ChosenScore            int
+	FailReason             string
+	DurationMs             int
 }
 
 // Chosen 返回是否选出了候选（失败时 ChosenServerID 为空、ChosenScore 为 -1）。
@@ -111,6 +140,9 @@ type SchedulingV2Service struct {
 	newTraceID func() string
 	// enqueue 决策行异步入库通道（可选装配；nil 时仅决策不落库，单测用）。
 	enqueue schedDecisionEnqueuer
+	// labels 节点自声明标签的只读真源（FR-244；可选装配）。**只有**请求带非空准入作用域时才会被读，
+	// 而那种请求在未装配时会被入口按 503 拦下——故"装配缺失"不会被读成"没有符合条件的候选"。
+	labels DeclarationLabelReader
 	// reportMu 保护 reportSeen（补报判重集合，按 (namespace, server) 维度懒建）。
 	reportMu   sync.Mutex
 	reportSeen map[reportSeenKey]*boundedTraceSet
@@ -141,9 +173,48 @@ func (s *SchedulingV2Service) Decide(id agentauth.Identity, zone, purpose, plugi
 
 // DecideScoped 在 zone 或 lobby 作用域内执行一次 highest_score 调度决策。
 // 空 scope 仅在 handler 层归一为 zone；服务层调用必须显式给出有效 scope。
+//
+// 不带准入作用域（等价于 admission 为空）——既有调用方与既有行为逐位不变。
 func (s *SchedulingV2Service) DecideScoped(id agentauth.Identity, scope, zone, purpose, plugin string) (SchedDecisionOutcome, error) {
+	return s.DecideScopedWithAdmission(id, scope, zone, purpose, plugin, nil)
+}
+
+// DecideScopedWithAdmission 在 zone 或 lobby 作用域内执行一次调度决策，并按**准入作用域**收窄候选
+// （FR-244）：作用域是若干**备选**，每个备选是一组「候选节点必须**自己声明过**的键值标签」
+// （备选之间 OR、备选之内 AND，逐项精确相等）。
+//
+// <h3>候选在**生成的那一刻**就被收窄</h3>
+//
+// 不满足作用域的节点进不了 eligible，因此**没有被选中的机会**——这与"选出来之后由调用方校验并拒掉"
+// 是两件事：后者会让本次调用白跑一圈直接失败，前者根本不会选中它。
+//
+// <h3>三条结论分类</h3>
+//
+//   - 选了 → ChosenServerID 非空；
+//   - 候选全被作用域滤掉 → 成功返回 + FailReason=SchedFailNoCandidateInScope（**稳定事实**：
+//     重试不会改口，恢复动作是换服 / 调服务范围）；
+//   - 作用域非空但读取真源未装配 → ErrSchedAdmissionUnavailable（**当前状态**、可重试）——
+//     **不**退化成"忽略作用域照旧全量决策"（那是静默放宽准入），也**不**报成"没有候选"（那是把
+//     "判不了"印成稳定结论）。
+//
+// 空 admission 时逐位等于 DecideScoped（一次都不读标签真源）。**无约束**的作用域形态与之同效：
+// 备选全为空 map（`[{}]` / `[{},{}]`——任何候选都满足、一台都滤不掉）在校验通过后被归一为 nil，
+// 故不读真源、不因真源未装配报 503、也不会被印成 no_candidate_in_scope。
+func (s *SchedulingV2Service) DecideScopedWithAdmission(id agentauth.Identity, scope, zone, purpose, plugin string,
+	admission []map[string]string) (SchedDecisionOutcome, error) {
 	if err := validateScopedDecideParams(scope, zone, purpose, plugin); err != nil {
 		return SchedDecisionOutcome{}, err
+	}
+	if err := validateAdmissionScope(admission); err != nil {
+		return SchedDecisionOutcome{}, err
+	}
+	// 无约束作用域归一为 nil：与缺键逐位一致，把"有没有约束力"这一个判断收在入口一次做掉。
+	if !admissionHasConstraints(admission) {
+		admission = nil
+	}
+	// 非空作用域必须先有判定真源：判不了就报"当前状态"，绝不静默忽略作用域。
+	if len(admission) > 0 && s.labels == nil {
+		return SchedDecisionOutcome{}, apperr.ErrSchedAdmissionUnavailable
 	}
 	started := s.now()
 	outcome := SchedDecisionOutcome{
@@ -165,11 +236,20 @@ func (s *SchedulingV2Service) DecideScoped(id agentauth.Identity, scope, zone, p
 		s.finish(&outcome, started)
 		return outcome, apperr.ErrSchedZoneNotFound
 	}
-	eligible, excluded := partitionSchedulable(views)
+	eligible, excluded := s.partitionEligible(id.Namespace, views, admission)
 	outcome.CandidateCount = len(views)
 	outcome.Excluded = excluded
+	outcome.AdmissionExcludedCount = countAdmissionExcluded(excluded)
 	if len(eligible) == 0 {
+		// 空结果的两条诊断分开：zone 里本来就没可调度候选 / 候选都被本次作用域滤掉了。
+		// 分类依据是"这条结论稳不稳定"：作用域排除是**稳定事实**（换服 / 调范围才能改口），
+		// 健康排除是**当前状态**（等一等会过去）——把后者印成稳定事实正是 503 那套设计要避免的。
+		// 故只有"全部候选都因作用域被排除"才报 SchedFailNoCandidateInScope；混合原因仍报
+		// SchedFailNoCandidate（作用域排掉几台由 admissionExcludedCount 与 excluded 明细带出）。
 		outcome.FailReason = SchedFailNoCandidate
+		if len(admission) > 0 && len(views) > 0 && outcome.AdmissionExcludedCount == len(views) {
+			outcome.FailReason = SchedFailNoCandidateInScope
+		}
 		if len(views) > 0 {
 			outcome.WeightsRev = views[0].WeightsRev
 		}
@@ -189,9 +269,44 @@ func (s *SchedulingV2Service) SetDecisionEnqueuer(e schedDecisionEnqueuer) {
 	s.enqueue = e
 }
 
+// SetDeclarationLabels 装配「节点自声明标签」的只读真源（FR-244，main 装配期调用）。
+//
+// 只有带**非空**准入作用域的请求才会读它；未装配时那种请求按 503 ErrSchedAdmissionUnavailable 报出
+// （当前状态、可重试），**不**退化成"忽略作用域照旧全量决策"（静默放宽准入），
+// 也**不**报成"没有候选"（把判不了印成稳定结论）。
+func (s *SchedulingV2Service) SetDeclarationLabels(reader DeclarationLabelReader) {
+	s.labels = reader
+}
+
+// countAdmissionExcluded 数出 excluded 里因准入作用域被排除的台数。
+func countAdmissionExcluded(excluded []SchedExcluded) int {
+	count := 0
+	for _, item := range excluded {
+		if item.Reason == SchedExcludedAdmissionMismatch {
+			count++
+		}
+	}
+	return count
+}
+
+// logAdmissionNarrowed 在**准入作用域确实剔除了候选**时留一条读数行（FR-244）。
+//
+// 只记非正常路径：没被收窄的派房一条都不打（那是正常路径，噪声会淹掉这条）。
+// 它是"决策阶段收窄"在控制面侧最直接的痕迹，与决策行里的 excluded 明细互为印证。
+func logAdmissionNarrowed(o SchedDecisionOutcome) {
+	if o.AdmissionExcludedCount == 0 {
+		return
+	}
+	slog.Info("调度决策按准入作用域收窄（候选在生成阶段即被排除）",
+		"traceId", o.TraceID, "zone", o.ZoneName,
+		"剔除", o.AdmissionExcludedCount, "候选总数", o.CandidateCount,
+		"中选", o.ChosenServerID, "失败原因", o.FailReason)
+}
+
 // finish 结算决策耗时（用注入时钟，测试可确定断言）并把决策行推入异步入库通道。
 func (s *SchedulingV2Service) finish(o *SchedDecisionOutcome, started time.Time) {
 	o.DurationMs = int(s.now().Sub(started).Milliseconds())
+	logAdmissionNarrowed(*o)
 	s.persistOutcome(*o)
 }
 
@@ -247,6 +362,32 @@ func validateScopedDecideParams(scope, zone, purpose, plugin string) error {
 		}
 	default:
 		return apperr.ErrInvalidParam
+	}
+	return nil
+}
+
+// validateAdmissionScope 校验准入作用域的键值形状（FR-244）：逐项沿用 FR-227 与声明端点**同一套**
+// 约束（key 字符集 / key ≤ 32 / value ≤ 128），单个备选的条数 ≤ 单节点标签数上限，
+// 备选个数 ≤ 一个很小的界（本版 8：够表达"不限制 ∨ 若干取值"，又不让请求体无界）。
+//
+// 空 / nil 作用域合法（= 不按标签收窄）。**判定侧不做任何归一化**：归一化（trim key）只由写声明的
+// 那一方做一次（见 normalizeDeclaredLabels），真源里存的因此都是**规整 key**——判定侧遇到带空白的
+// key 永远命中不了，那就是一个坏请求，当场 400 比"校验放过、判定永不命中"更诚实。
+// value 同样不归一化：逐字符精确相等是作用域的语义本身。
+func validateAdmissionScope(admission []map[string]string) error {
+	if len(admission) > schedAdmissionMaxAlternatives {
+		return apperr.ErrInvalidParam
+	}
+	for _, alternative := range admission {
+		if len(alternative) > model.ServerTagMaxPerServer {
+			return apperr.ErrInvalidParam
+		}
+		for key, value := range alternative {
+			normalized, err := normalizeTagEntry(key, value)
+			if err != nil || normalized != key {
+				return apperr.ErrInvalidParam
+			}
+		}
 	}
 	return nil
 }
@@ -320,6 +461,88 @@ func partitionSchedulable(views []healthview.View) (eligible []healthview.View, 
 	return eligible, excluded
 }
 
+// partitionEligible 是带上准入作用域（FR-244）的逐台判定，是 partitionSchedulable 的超集：
+//
+//   - 准入作用域**为空**时直接交给 partitionSchedulable：一次都不读自声明标签真源，
+//     判定逐位等于改动前（这是本改动向后兼容的关键一条）；
+//   - 非空时先按作用域判（不满足 → excluded，原因 admission_scope_mismatch），再把通过者交给
+//     partitionSchedulable 判可调度性，两份排除明细按"作用域不满足在前"拼接。
+//
+// 顺序刻意如此：先答"这台服该不该服务我"，再答"它此刻健不健康"。两者叠加时排除原因报的是
+// **作用域不满足**——那才是调用方能动手改的那一条（调灰度 / 换服），而"不健康"是等一等会过去的当前状态。
+func (s *SchedulingV2Service) partitionEligible(namespace string, views []healthview.View,
+	admission []map[string]string) (eligible []healthview.View, excluded []SchedExcluded) {
+	if len(admission) == 0 {
+		return partitionSchedulable(views)
+	}
+	admitted := make([]healthview.View, 0, len(views))
+	notAdmitted := make([]SchedExcluded, 0)
+	for _, v := range views {
+		if satisfiesAdmission(s.declaredLabels(namespace, v.ServerID), admission) {
+			admitted = append(admitted, v)
+			continue
+		}
+		notAdmitted = append(notAdmitted, SchedExcluded{ServerID: v.ServerID, Reason: SchedExcludedAdmissionMismatch})
+	}
+	eligible, excluded = partitionSchedulable(admitted)
+	return eligible, append(notAdmitted, excluded...)
+}
+
+// admissionHasConstraints 判定准入作用域是否**确有约束力**：存在任一非空备选即为 true。
+//
+// 备选全为空 map（`[{}]` / `[{},{}]`）时 satisfiesAlternative 恒真、一台候选都滤不掉，
+// 那种形态与缺键同效（见 DecideScopedWithAdmission 的入口归一）。
+func admissionHasConstraints(admission []map[string]string) bool {
+	for _, alternative := range admission {
+		if len(alternative) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// satisfiesAdmission 判定一组节点自声明标签是否满足准入作用域：**备选之间 OR、备选之内 AND**，
+// 逐项精确相等，**不做**任何归一化（归一化只由写声明的那一方做一次）。空作用域恒满足（不读标签）。
+//
+// 为什么要 OR：调用方的真值表里「没有收窄服务范围（不限制）」与「收窄到正好包含这个取值」是**并列**的
+// 两种受理形态，用单一 AND 表达不了；而让本仓去解释某个键的**值结构**（如逗号分列的清单）
+// 是另一条路，本仓明确不走（FR-244 的边界：不解释 key，也不解释值结构）。
+func satisfiesAdmission(declared map[string]string, admission []map[string]string) bool {
+	if len(admission) == 0 {
+		return true
+	}
+	for _, alternative := range admission {
+		if satisfiesAlternative(declared, alternative) {
+			return true
+		}
+	}
+	return false
+}
+
+// satisfiesAlternative 判定单个备选是否成立：备选内每一对都要在声明里精确命中。
+// 空备选恒成立（调用方若写出这种形态，是它的条件本身没有约束力）。
+func satisfiesAlternative(declared map[string]string, alternative map[string]string) bool {
+	if len(alternative) == 0 {
+		return true
+	}
+	for key, want := range alternative {
+		got, ok := declared[key]
+		if !ok || got != want {
+			return false
+		}
+	}
+	return true
+}
+
+// declaredLabels 读某节点当前自声明的标签；读取真源**未装配时返回 nil**
+// （调用方只在**非空**作用域下才会走到这里，而未装配的情形已在入口按 503 拦下）。
+func (s *SchedulingV2Service) declaredLabels(namespace string, serverID string) map[string]string {
+	if s.labels == nil {
+		return nil
+	}
+	return s.labels.DeclaredLabels(namespace, serverID)
+}
+
 // pickHighestScore 按 highest_score 策略选一台：分数降序，同分优先容量占用率低者，再同随机
 // （先整体洗牌再稳定排序——完全平手者保留洗牌相对序，等价均匀随机决胜，可用种子复现）。
 func (s *SchedulingV2Service) pickHighestScore(eligible []healthview.View) healthview.View {
@@ -343,6 +566,11 @@ type SchedCandidate struct {
 	Schedulable bool
 	OnlineCount int
 	MaxOnline   int
+	// Labels 是该节点**自己声明**的键值标签（FR-243 的写入面，FR-244 起随候选一起下发），
+	// 供调用方在"选之前"按自己的命名空间收窄候选。三种形态必须分开读（见 schedCandidateOf）：
+	// 非 nil 空 map = 这台节点没声明过标签；非 nil 非空 = 声明了这些；**nil** = 本进程未装配标签真源，
+	// 即"看不到声明"——调用方带非空作用域时须归入不可用，不得读成"没有声明"。
+	Labels map[string]string
 }
 
 // SchedZoneCandidates 是一个 zone 的候选集。
@@ -367,6 +595,10 @@ type SchedCandidatesResult struct {
 
 // Candidates 返回请求方 namespace 内全部 zone 与大厅的当前可调度候选快照（纯内存，零 DB）。
 // lobby 即使无候选也返回 ready=false 的空段，避免 Agent 把模型缺失和暂无候选混淆。
+//
+// 每台候选随带它**自己声明**的键值标签（FR-244）：调用方据此在"选之前"收窄候选，
+// 或直接读出来展示。标签读取真源**未装配时返回 nil**（adapter 层据此不下发该键），
+// 与"装配了但该节点没声明"（非 nil 空 map，会下发 `{}`）是两件事。
 func (s *SchedulingV2Service) Candidates(id agentauth.Identity) SchedCandidatesResult {
 	all := s.views.List()
 	byZone := map[string][]SchedCandidate{}
@@ -374,7 +606,7 @@ func (s *SchedulingV2Service) Candidates(id agentauth.Identity) SchedCandidatesR
 		if v.NamespaceID != id.NamespaceID || v.ZoneName == "" || !v.Schedulable {
 			continue
 		}
-		byZone[v.ZoneName] = append(byZone[v.ZoneName], schedCandidateOf(v))
+		byZone[v.ZoneName] = append(byZone[v.ZoneName], s.schedCandidateOf(id.Namespace, v))
 	}
 	zones := make([]SchedZoneCandidates, 0, len(byZone))
 	for zone, candidates := range byZone {
@@ -388,7 +620,7 @@ func (s *SchedulingV2Service) Candidates(id agentauth.Identity) SchedCandidatesR
 	if clusterID != 0 {
 		for _, v := range all {
 			if v.NamespaceID == id.NamespaceID && v.LobbyClusterID == clusterID && v.Schedulable {
-				lobbyCandidates = append(lobbyCandidates, schedCandidateOf(v))
+				lobbyCandidates = append(lobbyCandidates, s.schedCandidateOf(id.Namespace, v))
 			}
 		}
 	}
@@ -399,9 +631,31 @@ func (s *SchedulingV2Service) Candidates(id agentauth.Identity) SchedCandidatesR
 	}
 }
 
-func schedCandidateOf(v healthview.View) SchedCandidate {
+// schedCandidateOf 把一台健康视图翻成候选条目；标签取自自声明真源。
+//
+// 标签字段分两种形态，**不要**把它们读成同一件事：
+//   - 非 nil（含空 map）：本进程**装配了**标签真源——空 map 是"这台节点当前没声明过标签"（稳定事实），
+//     非空是它声明的那些键值；
+//   - **nil**：本进程没有装配标签真源（装配缺失）——调用方据此判"看不到声明"，
+//     带非空准入作用域时应归入**不可用**（可重试），不得读成"没有声明"（稳定事实）。
+//
+// 判定依据是"真源装配没装配"（控制面能力），不是"这台节点有没有标签"：后者是稳定事实，
+// 拿它当"看不到"会让一个真没声明标签的节点把整批决策拖成不可用。
+func (s *SchedulingV2Service) schedCandidateOf(namespace string, v healthview.View) SchedCandidate {
+	if s.labels == nil {
+		return SchedCandidate{ServerID: v.ServerID, Score: v.Score, Level: v.Level, Schedulable: v.Schedulable,
+			OnlineCount: v.OnlineCount, MaxOnline: v.MaxOnline, Labels: nil}
+	}
+	declared := s.declaredLabels(namespace, v.ServerID)
+	// 拷贝一份，并保证非 nil：三态里"装配了但该节点没声明"必须是**非 nil** 空 map（nil 表示"看不到声明"）。
+	// 拷贝的理由是与任意 DeclarationLabelReader 实现隔离——接口没有约定它返回的 map 不可变，
+	// 候选快照不应与真源共享可变引用（注册表那一路虽已自行深拷贝，这里不作依赖）。
+	copied := make(map[string]string, len(declared))
+	for k, val := range declared {
+		copied[k] = val
+	}
 	return SchedCandidate{ServerID: v.ServerID, Score: v.Score, Level: v.Level, Schedulable: v.Schedulable,
-		OnlineCount: v.OnlineCount, MaxOnline: v.MaxOnline}
+		OnlineCount: v.OnlineCount, MaxOnline: v.MaxOnline, Labels: copied}
 }
 
 func sortSchedCandidates(candidates []SchedCandidate) {

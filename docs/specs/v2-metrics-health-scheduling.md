@@ -1,6 +1,6 @@
 # 规格：指标采样、健康值与调度闭环（第二版）
 
-> 状态：草拟 · 关联 FR：FR-144, FR-146, FR-147, FR-148 · 阶段：P4（0.24.x）
+> 状态：草拟 · 关联 FR：FR-144, FR-146, FR-147, FR-148, FR-244（准入作用域：§4.5 / §4.6 / §5.1 / §5.3 / §7） · 阶段：P4（0.24.x）
 >
 > 共享实体（`namespace` / `zone` / `server` / `agent_identity` 等）与全仓建表约定、路由 / 鉴权约定以 `v2-zone-authority.md` 与 `docs/API.md` 第二版通用约定为权威，本文引用不复制。
 
@@ -246,6 +246,7 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 - **degraded 仍可调度**：仅作为决策排序劣势，不进排除表（见 §8 待定 10）。
 - 判定在每轮健康计算时一并更新内存视图，管理面与调度决策共用同一份判定结果（单一真源）。
+- **判定顺序与准入作用域（FR-244）**：生成候选时**先判准入作用域、再判可调度性**；作用域未通过者**不再**进入本表判定，其 `excluded.reason` 为 `admission_scope_mismatch` 并拼接在健康原因之前。作用域只决定"在不在候选里"，**不改**本表任一原因的语义，也不参与候选间排序。语义、上限与「无约束力退化形态」见 §5.1；真源是 FR-243 声明端点写入注册表的那一份（**只读接入，不新增第二真源**，决策见 [ADR-0087](../adr/0087-scheduling-admission-scope-over-self-declared-labels.md)）。
 
 ### 4.6 调度决策流程
 
@@ -257,9 +258,10 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 2. 控制面在内存注册表 + 健康视图上执行（全程内存，无 DB 读）：
    - 解析 zone（请求方 namespace 内按名称，找不到 → 失败 `zone_not_found`）；
    - 跨 namespace 请求默认拒绝 `cross_namespace`（信任放行规则归 `v2-namespace-isolation.md`）；
-   - 枚举 zone 内全部 server 为候选，逐台按 §4.5 判定，不可调度者记入 `excluded[{serverId, reason}]`（取第一条命中原因码）；
+   - 枚举 zone 内全部 server 为候选，**先按 `admissionScope` 收窄（FR-244）**、再逐台按 §4.5 判定；被排除者记入 `excluded[{serverId, reason}]`（**作用域原因 `admission_scope_mismatch` 优先，排在健康原因之前**）；
    - 剩余候选按 `highest_score` 策略：分数最高者胜，同分优先容量占用率低者，再同随机；
-   - 无剩余候选 → 失败 `no_candidate`。
+   - 无剩余候选 → 失败 `no_candidate`；**全部候选都因作用域被排除**时改报 `no_candidate_in_scope`（稳定事实），"部分作用域排除 + 部分健康排除"仍为 `no_candidate`（健康属可恢复的当前状态）；
+   - 作用域非空而本进程**没有**自声明标签读取真源 → 失败 `admission_unavailable`（`503`，当前状态、可重试；**不忽略作用域照旧决策**，也**不**报成"没有候选"）。
 3. 生成 traceId，决策记录推入异步写入通道（不阻塞响应），响应返回选择结果 + traceId + 解释摘要。
 4. agent 把结果透传给业务插件；决策耗时目标 < 5ms（纯内存）。
 
@@ -286,8 +288,8 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 | 方法 | 路径 | 请求要点 | 响应要点 |
 |---|---|---|---|
 | POST | `/beacon/v2/agent/metrics/report` | `{namespace, serverId, kind, agentTimeMs, droppedSinceLast, samples[]}`；samples 按 §4.1 字段集，单批 ≤120 | 202 `{accepted, deduplicated, self:{score, level, schedulable, reasons[]}}`（顺带回传自身健康，agent-api `selfHealth` 数据源）；429 忙；400 `clock_skew_too_large` |
-| GET | `/beacon/v2/agent/schedule/candidates` | 无参（服务端按请求方 namespace 圈定） | `{generatedAtMs, zones:[{zone, candidates:[{serverId, score, level, schedulable, onlineCount, maxOnline}]}]}`，仅含 schedulable 或 degraded 候选 |
-| POST | `/beacon/v2/agent/schedule/decide` | `{zone, purpose?, plugin?}` | 200 `{traceId, chosen:{serverId, score}?, candidateCount, excludedCount, failReason?}`；404 `zone_not_found`；403 `cross_namespace` |
+| GET | `/beacon/v2/agent/schedule/candidates` | 无参（服务端按请求方 namespace 圈定） | `{generatedAtMs, zones:[{zone, candidates:[{serverId, score, level, schedulable, onlineCount, maxOnline, labels?}]}]}`，仅含 schedulable 或 degraded 候选；`labels`（FR-244）= 该节点**自己声明**的键值标签，**三态**：真源已装配**总是下发**（没声明过即 `{}`，是稳定事实）/ 真源未装配**整个键不发**（= 看不到声明，调用方**不得**读成"没有声明"）/ `{}` = 本节点确实没声明过 |
+| POST | `/beacon/v2/agent/schedule/decide` | `{zone, purpose?, plugin?, admissionScope?}`；`admissionScope`（FR-244）= `[{k:v,...}, ...]`，**备选之间 OR、备选之内 AND、逐项精确相等**（不 trim、不折叠大小写），备选 ≤ 8、单备选键 ≤ 20（键值长度沿用 FR-227），`key` 去空白后须与原文相等（否则 400 `INVALID_PARAM`），缺键 / `null` / 空数组 / 全空备选的退化形态 = **不按标签收窄**（逐位等同旧行为） | 200 `{traceId, chosen:{serverId, score}?, candidateCount, excludedCount, excluded:[{serverId, reason}], admissionExcludedCount?, failReason?}`；`admissionExcludedCount`（FR-244，`omitempty`，仅 > 0 下发）= 因**准入作用域**被排除的台数（健康原因不计）；`excluded.reason` 新增 `admission_scope_mismatch`（作用域排除**先于**健康排除）；`failReason` 新增 `no_candidate_in_scope`（**仅当**本次全部候选都因作用域被排除；"部分作用域排除 + 部分健康排除"仍为 `no_candidate`）；404 `zone_not_found`；403 `cross_namespace`；**503 `admission_unavailable`**（作用域非空但本进程没有自声明标签读取真源——判不了、**当前状态可重试**，**不忽略作用域照旧决策**、**不**报成没有候选） |
 | POST | `/beacon/v2/agent/schedule/report-local` | `{decisions:[{localTraceId, tsMs, zone, plugin?, purpose?, candidateCount, excluded[], chosenServerId?, failReason?}]}` ≤100 条/批 | 202 `{accepted, deduplicated}`（按 localTraceId 幂等） |
 
 > **实现状态**：`POST /beacon/v2/agent/metrics/report`（FR-144）已实现——token↔namespace + identity 鉴权中间件（未确认 403），接收端只校验 + 更 60s 内存窗口 + 非阻塞入队回 202，后台写入池事务批插当日 `metric_sample_YYYYMMDD`（唯一键幂等去重、跨日拆表、队列满 429、时钟偏移 400）；`self` 已接真实健康视图（FR-147，无视图时仍 `null`）。`GET /schedule/candidates`、`POST /schedule/decide`、`POST /schedule/report-local` 服务端已实现（FR-146，均挂同一鉴权中间件、请求 goroutine 零 DB）。
@@ -316,7 +318,7 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 位于 agent-core `beacon.agent.api` 包，业务插件经 `BeaconAgentApi.scheduling()` 获取（仅本 JVM，禁止业务插件直连 Beacon HTTP——直连不作为契约，随时可变）。HTTP / JSON 实现只存在于适配器（ADR-0005 延续），本接口不暴露任何传输细节。
 
-> 实现状态（agent 侧，FR-148）：**已实现**。门面契约以 **Java 8** 落地于 `agent-api`（纯 Java 模块，公开签名只用 `java.util.*` / `CompletableFuture`，不漏 core 类型）：`BeaconScheduling` 接口 + 值对象 `ScheduleResult`/`CandidateView`/`HealthView`/`DataSourceState` + 枚举 `HealthLevel`/`DecisionSource`/`DataSource`；语义与下方 Kotlin 展示一致，默认参数 `purpose` 以重载表达（`acquireCandidate(zone)` / `acquireCandidate(zone, purpose)`）。core 实现 `scheduling/SchedulingView`：`acquireCandidate` 异步走 `decide`，连接级失败（网络 / 超时 800ms / 5xx）用本地候选快照在目标 zone 内 highest_score 降级决策（本地 traceId、`LOCAL_FALLBACK`），future 绝不异常完成、绝不阻塞玩家链路；`zone_not_found` / `cross_namespace` / 参数非法如实回控制面失败（`CONTROL_PLANE`）不降级。`SchedulingRefresher` 每 10s 拉 `candidates` 刷新 `SchedulingCache` + 原子落盘 `candidates-snapshot.json`（重启后恢复即注册前可降级），恢复后经 `report-local` 批量补报积压降级决策（内存队列 512、满丢最旧）；快照超龄 >10min 仍用但 `dataSource` 标 STALE。`selfHealth` 读 `SelfHealthHolder`（由指标上报 202 响应内 `self` 段刷新，约 5s 新鲜度）。HTTP 客户端（`candidates`/`decide`/`report-local`）与 JSON 仍只在 core 客户端 / 适配器（守 ADR-0005）。随注册成功 start、停机 stop、启动时从落盘快照恢复。
+> 实现状态（agent 侧，FR-148）：**已实现**。门面契约以 **Java 8** 落地于 `agent-api`（纯 Java 模块，公开签名只用 `java.util.*` / `CompletableFuture`，不漏 core 类型）：`BeaconScheduling` 接口 + 值对象 `ScheduleResult`/`CandidateView`/`HealthView`/`DataSourceState` + 枚举 `HealthLevel`/`DecisionSource`/`DataSource`；语义与下方 Kotlin 展示一致，默认参数 `purpose` 以重载表达（`acquireCandidate(zone)` / `acquireCandidate(zone, purpose)`）。**FR-244 增量**：新增值对象 `AdmissionScope` 与三态枚举 `ScheduleState`（`CHOSEN` / `NO_CANDIDATE`（稳定事实）/ `UNAVAILABLE`（当前状态、可重试）），`ScheduleResult` 增 `state()` 与 `admissionExcludedCount()`（带 `state` 的构造器校验 `CHOSEN ⟺ chosen != null`），`CandidateView` 增 `labels()`，`BeaconScheduling` 增两条 `default` 重载 `acquireCandidate(zone, purpose, scope)` / `candidatesInZone(zone, scope)`——`scope` 为 `null` / 空作用域即**委派既有重载**，非空而实现不支持则抛 `UnsupportedOperationException`（**绝不静默忽略作用域**），`candidatesInZone(zone, scope)` 在"判据看不到"（快照缺 `labels` 字段）时抛 `IllegalStateException`（当前状态、可重试）；`ServiceInstance` 同时暴露 `metadata()` / `capacity()`（FR-243 读回补齐）。既有三个方法与两个既有构造器**签名一字未改**（本次以 `javap` 人工逐条比对，仓内**暂无**自动化二进制兼容门禁）；**用户可见取值变更**：占位实现 `UnavailableScheduling` 与降级路径在"看不到"时由 `no_candidate` **更正为** `unavailable` + `UNAVAILABLE`。core 实现 `scheduling/SchedulingView`：`acquireCandidate` 异步走 `decide`，连接级失败（网络 / 超时 800ms / 5xx）用本地候选快照在目标 zone 内 highest_score 降级决策（本地 traceId、`LOCAL_FALLBACK`），future 绝不异常完成、绝不阻塞玩家链路；`zone_not_found` / `cross_namespace` / 参数非法如实回控制面失败（`CONTROL_PLANE`）不降级。`SchedulingRefresher` 每 10s 拉 `candidates` 刷新 `SchedulingCache` + 原子落盘 `candidates-snapshot.json`（重启后恢复即注册前可降级），恢复后经 `report-local` 批量补报积压降级决策（内存队列 512、满丢最旧）；快照超龄 >10min 仍用但 `dataSource` 标 STALE。`selfHealth` 读 `SelfHealthHolder`（由指标上报 202 响应内 `self` 段刷新，约 5s 新鲜度）。HTTP 客户端（`candidates`/`decide`/`report-local`）与 JSON 仍只在 core 客户端 / 适配器（守 ADR-0005）。随注册成功 start、停机 stop、启动时从落盘快照恢复。
 
 ```kotlin
 interface BeaconScheduling {
@@ -328,8 +330,14 @@ interface BeaconScheduling {
      */
     fun acquireCandidate(zone: String, purpose: String? = null): CompletableFuture<ScheduleResult>
 
+    /** 带准入作用域取候选（FR-244 default 重载）：scope 为 null / 空作用域时委派既有重载；非空而实现不支持时抛「不支持」，绝不静默忽略作用域 */
+    fun acquireCandidate(zone: String, purpose: String?, scope: AdmissionScope?): CompletableFuture<ScheduleResult>
+
     /** 列出指定小区当前候选快照（本地缓存，O(1) 读，可在主线程调用；非实时，最长滞后一个刷新周期） */
     fun candidatesInZone(zone: String): List<CandidateView>
+
+    /** 带准入作用域列出候选（FR-244 default 重载）：判据看不到（快照缺 labels 字段）时抛 IllegalStateException（当前状态、可重试） */
+    fun candidatesInZone(zone: String, scope: AdmissionScope?): List<CandidateView>
 
     /** 查询某台服务器的健康视图（本地缓存快照；缓存未覆盖该服时返回 null） */
     fun healthOf(serverId: String): HealthView?
@@ -342,16 +350,22 @@ interface BeaconScheduling {
 }
 
 data class ScheduleResult(
-    val chosen: CandidateView?,      // 为空表示本次调度失败
+    val chosen: CandidateView?,      // 为空表示本次没选到；是「确实没有」还是「看不到」看 state（FR-244）
     val traceId: String,             // 控制面决策为服务端 traceId；本地降级为本地 traceId
     val source: DecisionSource,      // CONTROL_PLANE / LOCAL_FALLBACK
-    val failReason: String?          // 失败原因码，成功为 null
+    val failReason: String?,         // 失败原因码，成功为 null
+    val state: ScheduleState,        // FR-244 三态：CHOSEN / NO_CANDIDATE（稳定事实）/ UNAVAILABLE（可重试）
+    val admissionExcludedCount: Int  // FR-244：因准入作用域被排除的台数（健康原因不计）
 )
+
+/** 准入作用域（FR-244）：若干备选，每个备选是一组「候选节点必须自己声明过」的键值；备选之间 OR、备选之内 AND、逐项精确相等。不可变；isEmpty() = 无约束力（空列表或只含空备选，anyOf 的退化形态归约为 empty()） */
+data class AdmissionScope(val alternatives: List<Map<String, String>>)
 
 data class CandidateView(
     val serverId: String, val zone: String,
     val score: Int, val level: HealthLevel,
-    val onlineCount: Int, val maxOnline: Int
+    val onlineCount: Int, val maxOnline: Int,
+    val labels: Map<String, String>  // FR-244：节点自己声明的只读标签（不可变副本；本帧没有可展示标签时为空 map）
 )
 
 data class HealthView(
@@ -368,9 +382,10 @@ data class DataSourceState(
 enum class HealthLevel { HEALTHY, DEGRADED, UNHEALTHY }
 enum class DecisionSource { CONTROL_PLANE, LOCAL_FALLBACK }
 enum class DataSource { CONTROL_PLANE, LOCAL_SNAPSHOT }
+enum class ScheduleState { CHOSEN, NO_CANDIDATE, UNAVAILABLE }  // FR-244 三态
 ```
 
-**降级语义（fail-static）汇总**：Beacon 不可用时——`acquireCandidate` 走本地快照决策照常返回；`candidatesInZone` / `healthOf` 继续供给最后快照（含落盘恢复）；一切方法**不抛因控制面不可达导致的异常、不阻塞玩家进服链路**；恢复后自动切回 CONTROL_PLANE 并补报降级期决策。
+**降级语义（fail-static）汇总**：Beacon 不可用时——`acquireCandidate` 走本地快照决策照常返回；`candidatesInZone` / `healthOf` 继续供给最后快照（含落盘恢复）；一切方法**不抛因控制面不可达导致的异常、不阻塞玩家进服链路**；恢复后自动切回 CONTROL_PLANE 并补报降级期决策。**FR-244 起降级路径同按三态给结论**：无快照 → `unavailable` + `UNAVAILABLE`（**不**报"没有候选"）；快照缺 `labels` 字段且作用域非空 → `admission_scope_unavailable`（判不了、可重试）；**候选快照落盘保留 `labels`**，而原本不带该字段的旧快照恢复后仍是"看不到"（不被空 map 冒充）。
 
 ## 6. 与其他规格的边界
 
@@ -412,6 +427,12 @@ enum class DataSource { CONTROL_PLANE, LOCAL_SNAPSHOT }
 **页面接真（配合 FR-154 / FR-157 本期部分）**
 
 12. `/dashboard` 健康与调度概览、`/service-analysis` 指标趋势与健康回放从 mock 切真，真机验收通过；1000+ 子服模拟下列表 / 时序查询分页可用、无全量扫描。
+
+**FR-244（准入作用域）**
+
+13. `decide` 带非空 `admissionScope` 时按「备选之间 OR、备选之内 AND、逐项精确相等」收窄候选（含"大小写 / 首尾空白不同即不相等"的反向用例）；全部候选都被作用域滤掉 → `failReason=no_candidate_in_scope`，而"部分作用域排除 + 部分健康排除"仍为 `no_candidate`；`excluded.reason=admission_scope_mismatch` 排在健康原因之前；`admissionExcludedCount` 只计作用域排除台数（健康不计）、为 0 时**不下发该键**。
+14. 缺键 / `null` / 空数组 / 全空备选与"缺键"逐位等价（不收窄、不读真源、不报 503）；备选 > 8、单备选键 > 20、`key` 去空白后与原文不等、键值超 FR-227 长度 → `400 INVALID_PARAM`；作用域非空而本进程无标签读取真源 → `503 admission_unavailable`（**不忽略作用域照旧决策、不报成没有候选**）。
+15. `candidates` 的 `labels` 三态（真源已装配总是下发、没声明过即 `{}`；未装配整个键不发）与门面 `CandidateView.labels()` / `candidatesInZone(zone, scope)` 的 `IllegalStateException` 分别覆盖；两条 `default` 重载在 `null` / 空作用域下**委派既有重载**、非空且实现不支持时抛「不支持」（不静默忽略）；降级路径三态且快照保留 `labels`、旧格式快照仍"看不到"；既有三个方法与两个构造器签名经 `javap` 逐条比对未变；作用域不含健康打分与 `?tag.*=` 过滤的输入（负向断言）。
 
 ## 8. 风险 / 待定（默认决定集中登记，待拍板）
 

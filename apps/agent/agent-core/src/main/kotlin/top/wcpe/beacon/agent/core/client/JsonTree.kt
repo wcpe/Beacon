@@ -57,6 +57,22 @@ internal object JsonTree {
         }
     }
 
+    /** 读字符串键值 map 字段（如实例标签 metadata）。 */
+    fun strMap(
+        obj: Map<String, Any?>,
+        key: String,
+    ): Map<String, String> {
+        // 缺键 / 非 map 归空 map（旧控制面兼容）；键或值非字符串的条目跳过，不臆造转换。
+        val raw = obj[key] as? Map<*, *> ?: return emptyMap()
+        val result = LinkedHashMap<String, String>(raw.size)
+        for ((k, v) in raw) {
+            if (k is String && v is String) {
+                result[k] = v
+            }
+        }
+        return result
+    }
+
     /** 读布尔字段，缺失给默认值。 */
     fun boolOr(
         obj: Map<String, Any?>,

@@ -2,6 +2,9 @@ package top.wcpe.beacon.agent.adapters
 
 import top.wcpe.beacon.agent.adapters.testutil.FakeHttpTransport
 import top.wcpe.beacon.agent.adapters.testutil.TestFixtures
+import top.wcpe.beacon.agent.api.DiscoveryQuery
+import top.wcpe.beacon.agent.core.api.DiscoveryView
+import top.wcpe.beacon.agent.core.api.TopologyWatchHub
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.HeartbeatOutcome
 import top.wcpe.beacon.agent.core.client.PollResult
@@ -10,9 +13,11 @@ import top.wcpe.beacon.agent.core.client.discover
 import top.wcpe.beacon.agent.core.client.heartbeat
 import top.wcpe.beacon.agent.core.client.pollEffective
 import top.wcpe.beacon.agent.core.client.register
+import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.transport.HttpResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -190,5 +195,53 @@ class BeaconApiClientTest {
         val transport = FakeHttpTransport().enqueue(HttpResponse(200, """{"instances":[]}"""))
         client(transport).discover("prod", null, null, null)
         assertTrue(!transport.captured.single().url.contains("tag."), "无 tag 不应拼 tag 参数")
+    }
+
+    // 以假 transport + 真实 KotlinxJsonCodec 组装实例视图，走完整「HTTP 报文 → 解码 → ServiceInstance」链路。
+    private fun instanceView(transport: FakeHttpTransport) = DiscoveryView(client(transport), TopologyWatchHub(), RosterDirectoryHolder())
+
+    @Test
+    fun `discover 报文含 metadata 时实例读得回标签且 map 不可变`() {
+        // 控制面 discovery 响应带节点标签（FR-227）：实例应原样读回，键值不做任何解释。
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(
+                    200,
+                    """
+                    {"instances":[{"serverId":"lobby-1","role":"bukkit","group":"area1","zone":"zoneA",
+                    "address":"10.0.0.7:25565","version":"1.4.2","status":"online","playerCount":12,
+                    "capacity":200,"weight":100,"zoneDefaultEntry":true,"lobbyClusterMember":true,
+                    "metadata":{"region":"cn-east","tier":"core"}}]}
+                    """.trimIndent(),
+                ),
+            )
+
+        val instance = instanceView(transport).query(DiscoveryQuery.builder().namespace("prod").build()).single()
+
+        assertEquals(mapOf("region" to "cn-east", "tier" to "core"), instance.metadata())
+        assertEquals("zoneA", instance.zone())
+        // 返回的 map 已冻结：外部改写应被拒绝（防止下游误改快照影响他处）。
+        assertFailsWith<UnsupportedOperationException> {
+            @Suppress("UNCHECKED_CAST")
+            (instance.metadata() as MutableMap<String, String>)["region"] = "cn-north"
+        }
+    }
+
+    @Test
+    fun `discover 报文缺 metadata 键时标签为空 map`() {
+        // 旧控制面（升级前 / 无标签实例）不返回 metadata 字段，解析必须降级为空 map 而非报错。
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(
+                    200,
+                    """
+                    {"instances":[{"serverId":"lobby-1","role":"bukkit","status":"online"}]}
+                    """.trimIndent(),
+                ),
+            )
+
+        val instance = instanceView(transport).query(DiscoveryQuery.builder().namespace("prod").build()).single()
+
+        assertTrue(instance.metadata().isEmpty(), "缺 metadata 键应解析为空 map（向后兼容）")
     }
 }

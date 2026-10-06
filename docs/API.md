@@ -59,8 +59,10 @@
 业务插件**禁止直连 Beacon HTTP**（直连不作为契约、随时可变），唯一入口是 agent 本机 `BeaconAgentApi` 门面（Kotlin；HTTP / JSON 只存在于适配器，[ADR-0005](adr/0005-agent-transport-codec-abstraction.md) 延续；fail-static 降级语义随门面，绝不阻塞 MC 主线程）：
 
 - 调度 / 健康门面 `BeaconScheduling`（`acquireCandidate` / `candidatesInZone` / `healthOf` / `selfHealth` / `dataSource`）：真源 [v2-metrics-health-scheduling](specs/v2-metrics-health-scheduling.md) §5.3。
+- **准入作用域（FR-244）**：`BeaconScheduling` 新增 `acquireCandidate(zone, purpose, scope)` / `candidatesInZone(zone, scope)` 两条 `default` 重载（缺省抛「不支持」，**绝不静默忽略作用域**），作用域类型为 `AdmissionScope`（OR 备选 / 备选内 AND / 逐项精确相等；本仓**不解释**任何 key 的语义，也**不**解释值结构）；结论三态由 `ScheduleResult.state()`（`CHOSEN` / `NO_CANDIDATE` / `UNAVAILABLE`）给出，`admissionExcludedCount()` 回报「因作用域被排除」的台数；候选视图经 `CandidateView.labels()` 带出该节点**自己声明**的标签。既有三个方法与两个构造器签名**一字未动**（接入方是反射调用；本次以 `javap` 人工逐条比对，仓内暂无自动化二进制兼容门禁）。语义细节见 [sched-admission-scope](specs/sched-admission-scope.md)（线上键名与三态），决策见 [ADR-0087](adr/0087-scheduling-admission-scope-over-self-declared-labels.md)（取代 ADR-0086 决策 4 的「不进入调度决策」一条）。
 - 消息门面（`send` / `call` / `on` / `isAvailable`）：真源 [v2-connection-message-storage](specs/v2-connection-message-storage.md) §5.1。
 - 节点自声明门面 `SelfDeclaration`（`declare`）：门面里**唯一的写面**——只能声明**自己节点**的容量与键值标签，改配置 / 改 zone / 写他人不可达；真源 [agent-self-declaration-runtime-refresh](specs/agent-self-declaration-runtime-refresh.md) §3.3，决策见 [ADR-0086](adr/0086-agent-self-declaration-narrow-write-surface.md)。
+- 声明 / 标签的**读回**：发现门面返回的实例值对象 `ServiceInstance` 暴露 `capacity()` 与 `metadata()`（不可变副本，旧控制面缺键 → 空 map）。标签是**节点声明的只读事实**，门面**不解释任何 key 的语义**；键值上限对齐 FR-227（`key ≤ 32` / `value ≤ 128` / 单节点 `≤ 20`）。
 
 ## 端点索引（按域）
 
@@ -184,6 +186,8 @@ agent 面：
 | GET | `/beacon/v2/agent/schedule/candidates` | 拉取本 namespace 各 zone 调度候选快照 **【已实现·FR-146 服务端】** |
 | POST | `/beacon/v2/agent/schedule/decide` | 请求控制面做一次调度决策（产生 traceId）**【已实现·FR-146 服务端】** |
 | POST | `/beacon/v2/agent/schedule/report-local` | 降级期本地决策恢复后补报（幂等）**【已实现·FR-146 服务端】** |
+
+> **FR-244 准入作用域（已实现）**：`POST /beacon/v2/agent/schedule/decide` 新增可选请求键 `admissionScope`（`[{k:v,...}, ...]`，备选之间 OR / 备选之内 AND / 逐项精确相等，不 trim 不折叠大小写），在生成候选的那一刻按「候选节点自己声明过的标签」收窄候选；响应新增可选键 `admissionExcludedCount`（`omitempty`，只计因作用域被排除的台数），`failReason` 新增 `no_candidate_in_scope`（仅当全部候选都因作用域被排除；「部分作用域 + 部分健康」仍为 `no_candidate`），新增 `503 admission_unavailable`（作用域非空但本进程没有标签读取真源——判不了、可重试，**不忽略作用域、不报成没有候选**），决策明细 `excluded` 新增原因码 `admission_scope_mismatch`（先于健康原因）。`GET /beacon/v2/agent/schedule/candidates` 每台候选新增可选键 `labels`（对象），**缺键 = 真源未装配 / 空对象 = 该节点没声明过标签**：这是版本信号，调用方不得把缺键读成"没有声明"。真源只有一处（FR-243 声明端点写进注册表的那一份），**不新增第二真源**；语义与上限见 [sched-admission-scope](specs/sched-admission-scope.md) §3，决策见 [ADR-0087](adr/0087-scheduling-admission-scope-over-self-declared-labels.md)。
 
 > **FR-144 采样入库已实现**：`POST /beacon/v2/agent/metrics/report` 挂 token↔namespace + identity 鉴权中间件（未确认身份 403），接收端只做校验 + 更 60s 内存窗口 + 非阻塞入队即回 `202 {accepted, deduplicated, self}`（请求 goroutine 不碰 DB），后台写入池攒批事务批插当日 `metric_sample_YYYYMMDD` 日表（唯一键 `(server_id,bucket_start_ms)` 幂等去重、跨日自动拆表、队列满回 `429 metrics_ingest_busy`、时钟偏移 >5min 回 `400 clock_skew_too_large`）。`samples[]` 为 agent 端已按 5s 桶聚合的批（含 `bucketStartMs`/`sampleCount`/各 `*Avg`/`*Max`/`*Min` 字段）。
 >

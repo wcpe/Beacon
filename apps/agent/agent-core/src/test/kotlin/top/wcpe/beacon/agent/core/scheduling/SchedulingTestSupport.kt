@@ -76,8 +76,8 @@ class SchedCannedCodec : JsonCodec {
                                 "zone" to "z-a",
                                 "candidates" to
                                     listOf(
-                                        candidateTree(candidateEntry("lobby-1", 90, "healthy", true, 3, 100)),
-                                        candidateTree(candidateEntry("lobby-2", 70, "degraded", true, 8, 100)),
+                                        candidateTree(candidateEntry("lobby-1", 90, "healthy", true, 3, 100, labelsPresent = true)),
+                                        candidateTree(candidateEntry("lobby-2", 70, "degraded", true, 8, 100, labelsPresent = true)),
                                     ),
                             ),
                         ),
@@ -104,7 +104,9 @@ class SchedCannedCodec : JsonCodec {
             "schedulable" to entry.schedulable,
             "onlineCount" to entry.onlineCount,
             "maxOnline" to entry.maxOnline,
-        )
+            // labels 键只在"对端支持该字段"时出现：缺键即旧控制面（FR-244 的版本信号）。
+            "labels" to if (entry.labelsPresent) entry.labels else null,
+        ).filterValues { it != null }
 }
 
 /** 手动调度适配器：runAsync 同步执行，runAsyncDelayed 只入队（测试显式推进）；捕获各级日志供 warn-once 断言。 */
@@ -171,7 +173,16 @@ class RoundTripCodec : JsonCodec {
     override fun decode(json: String): Any? = store[json.trim()] ?: emptyMap<String, Any?>()
 }
 
-/** 构造候选条目（测试夹具）。 */
+/**
+ * 构造候选条目（测试夹具）。
+ *
+ * @param labels        该节点自声明的键值标签（FR-244）
+ * @param labelsPresent 快照里**有没有** labels 字段。**刻意不给默认值**：它与生产数据类
+ *                      [CandidateEntry.labelsPresent] 的默认值方向相反，给默认会让"看不到声明"
+ *                      这条路径在用例里静默消失。每个用例必须显式表态：true = 本帧来源携带该字段
+ *                      （空 [labels] 即"这台没声明过"），false = 看不到声明（旧控制面响应、
+ *                      或自旧格式落盘恢复的快照）
+ */
 fun candidateEntry(
     serverId: String,
     score: Int,
@@ -179,7 +190,9 @@ fun candidateEntry(
     schedulable: Boolean = true,
     online: Int = 0,
     max: Int = 100,
-): CandidateEntry = CandidateEntry(serverId, score, level, schedulable, online, max)
+    labels: Map<String, String> = emptyMap(),
+    labelsPresent: Boolean,
+): CandidateEntry = CandidateEntry(serverId, score, level, schedulable, online, max, emptyList(), labels, labelsPresent)
 
 /** 构造候选快照（单 zone 便捷）。 */
 fun snapshotOf(

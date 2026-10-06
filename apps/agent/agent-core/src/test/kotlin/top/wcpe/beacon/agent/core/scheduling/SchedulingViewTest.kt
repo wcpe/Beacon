@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.core.scheduling
 
 import top.wcpe.beacon.agent.api.DecisionSource
 import top.wcpe.beacon.agent.api.HealthLevel
+import top.wcpe.beacon.agent.api.ScheduleState
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.SelfHealth
 import java.io.File
@@ -33,7 +34,10 @@ class SchedulingViewTest {
         cache.set(
             snapshotOf(
                 "z-a",
-                listOf(candidateEntry("lobby-1", 90, "healthy", true, 3, 100), candidateEntry("lobby-2", 70, "degraded", true, 8, 100)),
+                listOf(
+                    candidateEntry("lobby-1", 90, "healthy", true, 3, 100, labelsPresent = true),
+                    candidateEntry("lobby-2", 70, "degraded", true, 8, 100, labelsPresent = true),
+                ),
                 savedAtMs = 10_000L,
             ),
             live = true,
@@ -45,6 +49,7 @@ class SchedulingViewTest {
         populate()
         val result = newView().acquireCandidate("z-a").get()
         assertEquals(DecisionSource.CONTROL_PLANE, result.source())
+        assertEquals(ScheduleState.CHOSEN, result.state())
         assertEquals("srv-trace-1", result.traceId(), "应用服务端 traceId")
         assertNull(result.failReason())
         val chosen = result.chosen()
@@ -63,6 +68,7 @@ class SchedulingViewTest {
         transport.down = true
         val result = newView().acquireCandidate("z-a", "lobby-transfer").get()
         assertEquals(DecisionSource.LOCAL_FALLBACK, result.source())
+        assertEquals(ScheduleState.CHOSEN, result.state())
         assertEquals("lobby-1", result.chosen()?.serverId(), "本地 highest_score 应选分最高者")
         assertEquals(90, result.chosen()?.score())
         assertNull(result.failReason())
@@ -75,15 +81,29 @@ class SchedulingViewTest {
     }
 
     @Test
-    fun `控制面不可达且快照为空降级为 no_candidate 不抛异常`() {
+    fun `控制面不可达且整体无快照时降级为不可用而不是没有候选（FR-244 口径更正）`() {
         transport.down = true
-        // 未 populate：快照空。
+        // 未 populate：**根本没有快照**——此时我们看不到任何东西，不是"确实没有候选"。
         val future = newView().acquireCandidate("z-a")
         val result = future.get()
         assertFalse(future.isCompletedExceptionally, "fail-static：future 绝不异常完成")
         assertEquals(DecisionSource.LOCAL_FALLBACK, result.source())
         assertNull(result.chosen())
+        // 改动前这里报 "no_candidate"（把"看不到"印成稳定事实）；FR-244 要求三态可分，故改为不可用。
+        assertEquals(ScheduleState.UNAVAILABLE, result.state())
+        assertEquals("unavailable", result.failReason())
+    }
+
+    @Test
+    fun `控制面不可达且快照覆盖该区但无候选时降级为空结果`() {
+        transport.down = true
+        // 快照存在、但不含该 zone：这是"快照里那个区没有候选"这一结论（稳定），不是"看不到"。
+        cache.set(snapshotOf("z-other", listOf(candidateEntry("lobby-9", 10, labelsPresent = true)), savedAtMs = 10_000L), live = true)
+        val result = newView().acquireCandidate("z-a").get()
+        assertEquals(DecisionSource.LOCAL_FALLBACK, result.source())
+        assertEquals(ScheduleState.NO_CANDIDATE, result.state())
         assertEquals("no_candidate", result.failReason())
+        assertNull(result.chosen())
     }
 
     @Test
@@ -92,6 +112,7 @@ class SchedulingViewTest {
         transport.decideStatus = 404
         val result = newView().acquireCandidate("z-x").get()
         assertEquals(DecisionSource.CONTROL_PLANE, result.source())
+        assertEquals(ScheduleState.NO_CANDIDATE, result.state(), "控制面权威结论是稳定事实，不是不可用")
         assertEquals("zone_not_found", result.failReason())
         assertNull(result.chosen())
         assertEquals(0, reportQueue.size(), "控制面权威失败不入补报队列")

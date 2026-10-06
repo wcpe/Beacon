@@ -224,6 +224,13 @@ data class CandidateEntry(
     val onlineCount: Int,
     val maxOnline: Int,
     val reasons: List<String> = emptyList(),
+    /** 该节点**自己声明**的键值标签（FR-243 的写入面，FR-244 起随候选下发）。 */
+    val labels: Map<String, String> = emptyMap(),
+    /**
+     * 本帧是否**带有** labels 键（FR-244）：true = 控制面支持该字段，空 [labels] 即"这台节点没声明过标签"
+     * （稳定事实）；false = 对端没有这个字段，**看不到**声明——按本仓铁律不得读成"没有声明"。
+     */
+    val labelsPresent: Boolean = false,
 )
 
 /** 某小区的候选集（candidates 响应 zones 元素）。 */
@@ -270,6 +277,8 @@ sealed class SchedDecideOutcome {
         val candidateCount: Int,
         val excludedCount: Int,
         val failReason: String?,
+        /** 因准入作用域被排除的候选台数（FR-244）；旧控制面缺键解析为 0。 */
+        val admissionExcludedCount: Int = 0,
     ) : SchedDecideOutcome()
 
     /** 404：目标小区不存在（zone_not_found）——控制面权威判定，非降级触发。 */
@@ -280,6 +289,15 @@ sealed class SchedDecideOutcome {
 
     /** 400：请求被拒（如 INVALID_PARAM）；携脱敏原因。 */
     data class Rejected(val reason: String) : SchedDecideOutcome()
+
+    /**
+     * 503：控制面此刻判不了本次的**准入作用域**（FR-244，如自声明标签的读取真源未装配）。
+     *
+     * <p>与 [Failed] 分开是因为它是一个**有信息的**当前状态（"判不了"而不是"连不上"），
+     * 日志里要能读出来；处置相同（降级本地快照决策 / 最终以 [ScheduleState.UNAVAILABLE] 收场），
+     * **绝不**读成"没有符合条件的候选"。</p>
+     */
+    data class AdmissionUnavailable(val reason: String) : SchedDecideOutcome()
 
     /** 连接级失败 / 超时 / 5xx / 其它：触发本地快照降级决策（fail-static）。 */
     data class Failed(val reason: String) : SchedDecideOutcome()

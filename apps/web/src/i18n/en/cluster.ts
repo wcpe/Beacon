@@ -126,6 +126,7 @@ export const cluster = {
     },
     // Not-schedulable reason codes → short English summary (list row)
     schedReason: {
+      admission_scope_mismatch: 'Admission scope not met',
       kind_not_schedulable: 'Kind not schedulable',
       pending_confirm: 'Pending',
       disabled: 'Disabled',

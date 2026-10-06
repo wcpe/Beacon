@@ -60,6 +60,9 @@ type integrationTestServer struct {
 	*httptest.Server
 	approval *service.ApprovalService
 	db       *gorm.DB
+	// registry 是控制面的运行期实例注册表（FR-243 声明的落点）。暴露给用例是为了能按**生产同款**
+	// 装配（service.RegistryDeclarationLabels）驱动调度侧的准入作用域（FR-244），而不是另造一份标签真源。
+	registry *runtime.Registry
 }
 
 // newTestServer 装配真实路由与 DB-backed 服务（不启用 agent token）；未设 BEACON_TEST_DSN 则跳过。
@@ -247,7 +250,7 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	}, agentToken, authn, apiKeySvc, auditRepo)
 	ts := httptest.NewServer(router)
 	adminToken = loginForToken(t, ts.URL)
-	return &integrationTestServer{Server: ts, approval: approvalSvc, db: db}
+	return &integrationTestServer{Server: ts, approval: approvalSvc, db: db, registry: registry}
 }
 
 // approveAndRun 以另一位 human/full 审批人完成申请，再同步驱动一次 worker。

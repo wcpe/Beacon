@@ -128,6 +128,168 @@ func TestSchedCandidatesResponseShape(t *testing.T) {
 	}
 }
 
+// schedHandlerWithLabels 构造挂真实服务、且**装配了**自声明标签真源的调度处理器（FR-244）。
+// 未装配那一档由 newSchedHandlerForTest 覆盖（它同时是"旧装配"的向后兼容形态）。
+func schedHandlerWithLabels(views []healthview.View, labels map[string]map[string]string) *V2SchedHandler {
+	h := newSchedHandlerForTest(views)
+	h.svc.SetDeclarationLabels(schedFakeLabels{byServer: labels})
+	return h
+}
+
+// schedFakeLabels 是自声明标签真源的替身（键 = serverId）。
+type schedFakeLabels struct {
+	byServer map[string]map[string]string
+}
+
+func (f schedFakeLabels) DeclaredLabels(_ string, serverID string) map[string]string {
+	return f.byServer[serverID]
+}
+
+// TestSchedCandidatesCarryLabelsWhenDeclarationWired 装配了标签真源时，候选随带 labels 字段；
+// 没声明过标签的节点发空对象（= 稳定事实），与"真源未装配"（整个键不发）分开。
+func TestSchedCandidatesCarryLabelsWhenDeclarationWired(t *testing.T) {
+	h := schedHandlerWithLabels(schedTestViews(), map[string]map[string]string{
+		"s-a": {"example.zone.lobby-a": "true"},
+	})
+	rec := httptest.NewRecorder()
+	h.Candidates(rec, schedAgentRequest(http.MethodGet, "/beacon/v2/agent/schedule/candidates", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("应 200，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("响应应为 json：%v", err)
+	}
+	zones, _ := body["zones"].([]any)
+	zone, _ := zones[0].(map[string]any)
+	candidates, _ := zone["candidates"].([]any)
+	byID := map[string]map[string]any{}
+	for _, raw := range candidates {
+		c := raw.(map[string]any)
+		byID[c["serverId"].(string)] = c
+	}
+	first := byID["s-a"]
+	assertKeys(t, first, "serverId", "score", "level", "schedulable", "onlineCount", "maxOnline", "labels")
+	labels, _ := first["labels"].(map[string]any)
+	if labels["example.zone.lobby-a"] != "true" {
+		t.Fatalf("候选应带上节点自声明的标签，实际 %v", first["labels"])
+	}
+	second := byID["s-b"]
+	if empty, ok := second["labels"].(map[string]any); !ok || len(empty) != 0 {
+		t.Fatalf("没声明过标签的节点应发空对象（稳定事实），实际 %v", second["labels"])
+	}
+}
+
+// TestSchedDecideAdmissionScopeNarrowsThroughHandler 请求体里的 admissionScope 一路传到服务层：
+// 高分节点不满足作用域 → 选低分满足者；全被滤掉 → 200 + no_candidate_in_scope（稳定事实）。
+func TestSchedDecideAdmissionScopeNarrowsThroughHandler(t *testing.T) {
+	views := []healthview.View{
+		func() healthview.View {
+			v := schedTestViews()[0]
+			v.ServerID, v.Score = "s-high", 99
+			return v
+		}(),
+		schedTestViews()[1], // s-b(80)
+	}
+	h := schedHandlerWithLabels(views, map[string]map[string]string{
+		"s-high": {"example.zone.other-a": "true"},
+		"s-b":    {"example.zone.lobby-a": "true"},
+	})
+	rec := httptest.NewRecorder()
+	h.Decide(rec, schedAgentRequest(http.MethodPost, "/beacon/v2/agent/schedule/decide", map[string]any{
+		"zone": "area-1", "admissionScope": []map[string]string{{"example.zone.lobby-a": "true"}}}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("应 200，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	chosen, _ := body["chosen"].(map[string]any)
+	if chosen == nil || chosen["serverId"] != "s-b" {
+		t.Fatalf("应选中满足作用域的 s-b，实际 %v（选中 s-high 说明作用域没进决策）", body["chosen"])
+	}
+	if body["admissionExcludedCount"] != float64(1) {
+		t.Fatalf("响应应如实带出「因作用域被排除」的台数=1，实际 %v", body["admissionExcludedCount"])
+	}
+
+	// 换一个谁都不满足的作用域：稳定空结果，原因码与"没候选"分开。
+	rec = httptest.NewRecorder()
+	h.Decide(rec, schedAgentRequest(http.MethodPost, "/beacon/v2/agent/schedule/decide", map[string]any{
+		"zone": "area-1", "admissionScope": []map[string]string{{"example.zone.nobody": "true"}}}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("全被滤掉是稳定结论、应 200，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	body = map[string]any{}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["failReason"] != "no_candidate_in_scope" {
+		t.Fatalf("失败原因应为 no_candidate_in_scope，实际 %v", body["failReason"])
+	}
+	if body["chosen"] != nil {
+		t.Fatalf("不应给出目标，实际 %v", body["chosen"])
+	}
+}
+
+// TestSchedDecideAdmissionScopeWithoutLabelSource 未装配标签真源 + 非空作用域 → 503
+// （当前状态、可重试），**不**静默忽略作用域照旧全量决策。
+func TestSchedDecideAdmissionScopeWithoutLabelSource(t *testing.T) {
+	h := newSchedHandlerForTest(schedTestViews())
+	rec := httptest.NewRecorder()
+	h.Decide(rec, schedAgentRequest(http.MethodPost, "/beacon/v2/agent/schedule/decide", map[string]any{
+		"zone": "area-1", "admissionScope": []map[string]string{{"example.zone.lobby-a": "true"}}}))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("应 503，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["code"] != "admission_unavailable" {
+		t.Fatalf("业务码应为 admission_unavailable，实际 %v", body["code"])
+	}
+}
+
+// TestSchedDecideEmptyAdmissionScopeIsBackwardCompatible 空 / 缺键的 admissionScope 逐位等于旧行为。
+func TestSchedDecideEmptyAdmissionScopeIsBackwardCompatible(t *testing.T) {
+	h := schedHandlerWithLabels(schedTestViews(), map[string]map[string]string{
+		"s-a": {"example.zone.other-a": "true"}, // 即使最高分者不满足，空作用域也不该排除它
+	})
+	for _, payload := range []map[string]any{
+		{"zone": "area-1"},
+		{"zone": "area-1", "admissionScope": []map[string]string{}},
+	} {
+		rec := httptest.NewRecorder()
+		h.Decide(rec, schedAgentRequest(http.MethodPost, "/beacon/v2/agent/schedule/decide", payload))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("应 200，实际 %d：%s", rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		chosen, _ := body["chosen"].(map[string]any)
+		if chosen == nil || chosen["serverId"] != "s-a" {
+			t.Fatalf("空作用域下仍应选最高分 s-a，实际 %v（请求 %v）", body["chosen"], payload)
+		}
+		if _, present := body["admissionExcludedCount"]; present {
+			t.Fatalf("没被作用域收窄时不应下发该键（旧响应逐字不变），实际 %v", body)
+		}
+	}
+}
+
+// TestSchedDecideUnconstrainedAdmissionScopeIsBackwardCompatible 备选全为空对象（`[{}]`）是无约束作用域：
+// 即便本进程**没装配**标签真源也照常决策（不 503），响应键集合与不带作用域时逐字一致。
+func TestSchedDecideUnconstrainedAdmissionScopeIsBackwardCompatible(t *testing.T) {
+	h := newSchedHandlerForTest(schedTestViews()) // 刻意不装配标签真源
+	rec := httptest.NewRecorder()
+	h.Decide(rec, schedAgentRequest(http.MethodPost, "/beacon/v2/agent/schedule/decide",
+		map[string]any{"zone": "area-1", "admissionScope": []map[string]string{{}}}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("无约束作用域与缺键同效、应 200，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	assertKeys(t, body, "traceId", "chosen", "candidateCount", "excludedCount", "failReason")
+	chosen, _ := body["chosen"].(map[string]any)
+	if chosen == nil || chosen["serverId"] != "s-a" {
+		t.Fatalf("无约束作用域下仍应选最高分 s-a，实际 %v", body["chosen"])
+	}
+}
+
 // TestSchedDecideLobbyRequestShape 锁定 scope=lobby 不带 zone 的兼容扩展与空大厅 no_candidate 形状。
 func TestSchedDecideLobbyRequestShape(t *testing.T) {
 	h := newSchedHandlerForTest(schedTestViews())

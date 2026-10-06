@@ -22,19 +22,32 @@ func NewV2SchedHandler(svc *service.SchedulingV2Service) *V2SchedHandler {
 }
 
 // schedCandidateJS 是候选快照中单台候选（键逐字对齐 §5.1 candidates 行）。
+// labels 是该节点**自己声明**的键值标签（FR-244 起随候选一起下发）。它按"真源装配没装配"决定在不在：
+// 装配了 → 总是下发（没声明标签即 `{}`，是稳定事实）；未装配 → **整个键不发**，调用方据此判"看不到声明"
+// （不得读成"没有声明"）。故这里用指针 + omitempty：nil 不发、指向空 map 发 `{}`。
 type schedCandidateJS struct {
-	ServerID    string `json:"serverId"`
-	Score       int    `json:"score"`
-	Level       string `json:"level"`
-	Schedulable bool   `json:"schedulable"`
-	OnlineCount int    `json:"onlineCount"`
-	MaxOnline   int    `json:"maxOnline"`
+	ServerID    string             `json:"serverId"`
+	Score       int                `json:"score"`
+	Level       string             `json:"level"`
+	Schedulable bool               `json:"schedulable"`
+	OnlineCount int                `json:"onlineCount"`
+	MaxOnline   int                `json:"maxOnline"`
+	Labels      *map[string]string `json:"labels,omitempty"`
 }
 
 // schedZoneJS 是单 zone 候选集。
 type schedZoneJS struct {
 	Zone       string             `json:"zone"`
 	Candidates []schedCandidateJS `json:"candidates"`
+}
+
+// labelsField 把候选的标签表翻成响应字段：nil（真源未装配 = 看不到声明）→ 不发该键；
+// 非 nil（含空 map）→ 发出去，空 map 序列化为 `{}`（= 这台节点确实没声明过标签，稳定事实）。
+func labelsField(labels map[string]string) *map[string]string {
+	if labels == nil {
+		return nil
+	}
+	return &labels
 }
 
 // schedCandidatesResponse 是 GET /beacon/v2/agent/schedule/candidates 的响应体。
@@ -67,6 +80,7 @@ func (h *V2SchedHandler) Candidates(w http.ResponseWriter, r *http.Request) {
 			candidates = append(candidates, schedCandidateJS{
 				ServerID: c.ServerID, Score: c.Score, Level: c.Level,
 				Schedulable: c.Schedulable, OnlineCount: c.OnlineCount, MaxOnline: c.MaxOnline,
+				Labels: labelsField(c.Labels),
 			})
 		}
 		zones = append(zones, schedZoneJS{Zone: z.Zone, Candidates: candidates})
@@ -75,7 +89,7 @@ func (h *V2SchedHandler) Candidates(w http.ResponseWriter, r *http.Request) {
 	for _, c := range result.Lobby.Candidates {
 		lobbyCandidates = append(lobbyCandidates, schedCandidateJS{
 			ServerID: c.ServerID, Score: c.Score, Level: c.Level, Schedulable: c.Schedulable,
-			OnlineCount: c.OnlineCount, MaxOnline: c.MaxOnline,
+			OnlineCount: c.OnlineCount, MaxOnline: c.MaxOnline, Labels: labelsField(c.Labels),
 		})
 	}
 	render.WriteJSON(w, http.StatusOK, schedCandidatesResponse{
@@ -85,11 +99,18 @@ func (h *V2SchedHandler) Candidates(w http.ResponseWriter, r *http.Request) {
 }
 
 // schedDecideRequest 是 POST /beacon/v2/agent/schedule/decide 的请求体（§5.1：purpose/plugin 可空）。
+//
+// admissionScope 是可选的**准入作用域**（FR-244）：若干**备选**，每个备选是一组
+// 「候选节点必须自己声明过的键值标签」（备选之间 OR、备选之内 AND，逐项精确相等，键值上限同 FR-227）。
+// 缺键 / 空数组 = 不按标签收窄，行为与不带它逐位一致（旧客户端逐字不变）；备选全为空对象（如 `[{}]`）
+// 任何候选都满足、没有约束力，服务层会把它归一为同一档（不读标签真源）。
+// 带**有约束力**的作用域而本进程没有标签真源时按 503 报出，**不**静默忽略。
 type schedDecideRequest struct {
-	Scope   string `json:"scope"`
-	Zone    string `json:"zone"`
-	Purpose string `json:"purpose"`
-	Plugin  string `json:"plugin"`
+	Scope          string              `json:"scope"`
+	Zone           string              `json:"zone"`
+	Purpose        string              `json:"purpose"`
+	Plugin         string              `json:"plugin"`
+	AdmissionScope []map[string]string `json:"admissionScope"`
 }
 
 // schedChosenJS 是决策选中结果（失败时整体为 null）。
@@ -105,10 +126,15 @@ type schedDecideResponse struct {
 	CandidateCount int            `json:"candidateCount"`
 	ExcludedCount  int            `json:"excludedCount"`
 	FailReason     *string        `json:"failReason"`
+	// AdmissionExcludedCount 是本次**因准入作用域**被排除的候选台数（FR-244 的增量键）。
+	// 只在 >0 时下发：调用方据此留一条"决策阶段确实收窄了"的读数行，而没被收窄的响应
+	// （含全部旧客户端路径）键集合与 §5.1 逐字一致。
+	AdmissionExcludedCount int `json:"admissionExcludedCount,omitempty"`
 }
 
 // Decide 处理 POST /beacon/v2/agent/schedule/decide：控制面在线调度决策（纯内存，目标 <5ms）。
-// 200 含选择结果 + traceId + 解释摘要；404 zone_not_found；无候选为 200 + failReason=no_candidate。
+// 200 含选择结果 + traceId + 解释摘要；404 zone_not_found；无候选为 200 + failReason=no_candidate
+// （带准入作用域时全被滤掉则为 no_candidate_in_scope）；作用域判不了为 503 admission_unavailable。
 func (h *V2SchedHandler) Decide(w http.ResponseWriter, r *http.Request) {
 	identity, ok := agentauth.FromContext(r.Context())
 	if !ok {
@@ -124,15 +150,17 @@ func (h *V2SchedHandler) Decide(w http.ResponseWriter, r *http.Request) {
 	if scope == "" {
 		scope = service.SchedScopeZone
 	}
-	outcome, err := h.svc.DecideScoped(identity, scope, req.Zone, req.Purpose, req.Plugin)
+	outcome, err := h.svc.DecideScopedWithAdmission(identity, scope, req.Zone, req.Purpose, req.Plugin,
+		req.AdmissionScope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
 	resp := schedDecideResponse{
-		TraceID:        outcome.TraceID,
-		CandidateCount: outcome.CandidateCount,
-		ExcludedCount:  len(outcome.Excluded),
+		TraceID:                outcome.TraceID,
+		CandidateCount:         outcome.CandidateCount,
+		ExcludedCount:          len(outcome.Excluded),
+		AdmissionExcludedCount: outcome.AdmissionExcludedCount,
 	}
 	if outcome.Chosen() {
 		resp.Chosen = &schedChosenJS{ServerID: outcome.ChosenServerID, Score: outcome.ChosenScore}

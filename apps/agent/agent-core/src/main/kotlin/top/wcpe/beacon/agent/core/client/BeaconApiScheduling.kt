@@ -29,21 +29,31 @@ fun BeaconApiClient.scheduleCandidates(identity: AgentIdentity): SchedCandidates
 /**
  * 请求控制面做一次调度决策：POST /beacon/v2/agent/schedule/decide（FR-148 §5.1）。同步调用，请在异步线程使用。
  *
- * 请求体 `{zone, purpose?, plugin?}`（全 camelCase，purpose/plugin 非空才拼入）；读超时收紧到
+ * 请求体 `{zone, purpose?, plugin?, admissionScope?}`（全 camelCase，purpose/plugin 非空才拼入；
+ * admissionScope 非空才拼入，见参数说明）；读超时收紧到
  * [BeaconApiClient.SCHED_DECIDE_TIMEOUT_MS]（玩家链路不容久等，超时即由上层降级本地决策）。200 决策成功 / 无候选；
- * 404 zone_not_found；403 cross_namespace；400 参数非法；其它 / 连接失败 → Failed（触发降级）。
+ * 404 zone_not_found；403 cross_namespace；400 参数非法；503 准入作用域判不了（当前状态、可重试）；
+ * 其它 / 连接失败 → Failed（触发降级）。
+ *
+ * @param admissionScope 准入作用域（FR-244）：若干**备选**，每个备选是一组「候选节点必须自己声明过的
+ *                       键值标签」（备选之间 OR、备选之内 AND，逐项精确相等）。
+ *                       **空列表（缺省）= 不下发该键**，请求体与改动前逐字一致（向后兼容）；
+ *                       控制面在**生成候选的那一刻**按它收窄，故被排除的候选连被选中的机会都没有。
  */
 fun BeaconApiClient.scheduleDecide(
     identity: AgentIdentity,
     zone: String,
     purpose: String?,
     plugin: String?,
+    admissionScope: List<Map<String, String>> = emptyList(),
 ): SchedDecideOutcome {
     val body =
         buildMap<String, Any?> {
             put("zone", zone)
             if (!purpose.isNullOrBlank()) put("purpose", purpose)
             if (!plugin.isNullOrBlank()) put("plugin", plugin)
+            // 空作用域不下发该键：旧控制面对未知键虽不报错，但"逐字不变"是更硬的兼容承诺。
+            if (admissionScope.isNotEmpty()) put("admissionScope", admissionScope)
         }
     val resp =
         exec(
@@ -60,6 +70,8 @@ fun BeaconApiClient.scheduleDecide(
         404 -> SchedDecideOutcome.ZoneNotFound
         403 -> SchedDecideOutcome.CrossNamespace
         400 -> SchedDecideOutcome.Rejected(parseErrorCode(resp.body))
+        // 503：控制面判不了准入作用域（当前状态）。与"没有符合条件的候选"是两件事，故单独一档。
+        503 -> SchedDecideOutcome.AdmissionUnavailable(parseErrorCode(resp.body))
         else -> SchedDecideOutcome.Failed("非预期状态码 ${resp.statusCode}")
     }
 }
@@ -130,6 +142,10 @@ internal fun BeaconApiClient.parseCandidate(obj: Map<String, Any?>): CandidateEn
         onlineCount = JsonTree.intOr(obj, "onlineCount", 0),
         maxOnline = JsonTree.intOr(obj, "maxOnline", 0),
         reasons = JsonTree.asList(obj["reasons"]).map(JsonTree::asString),
+        // 标签（FR-244）：缺键 = 对端没有这个字段（看不到声明），与"声明了空集"不是同一件事，
+        // 故另带 labelsPresent 标记，由上层在降级判定里分开处置。
+        labels = JsonTree.strMap(obj, "labels"),
+        labelsPresent = obj.containsKey("labels"),
     )
 
 /** 解析 decide 200 响应（chosen 可空、failReason 可空）。 */
@@ -149,5 +165,7 @@ internal fun BeaconApiClient.parseDecide(jsonBody: String): SchedDecideOutcome.D
         candidateCount = JsonTree.intOr(obj, "candidateCount", 0),
         excludedCount = JsonTree.intOr(obj, "excludedCount", 0),
         failReason = JsonTree.str(obj, "failReason"),
+        // 作用域排除台数（FR-244）：只在真被收窄时下发，旧控制面缺键解析为 0。
+        admissionExcludedCount = JsonTree.intOr(obj, "admissionExcludedCount", 0),
     )
 }

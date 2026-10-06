@@ -114,6 +114,40 @@ class DiscoveryViewTest {
     }
 
     @Test
+    fun `query 解析实例 metadata 标签且缺键归空 map`() {
+        // codec 返回一条带 metadata 的实例与一条不带 metadata 键的旧控制面实例。
+        val codec =
+            object : JsonCodec {
+                override fun encode(value: Any?): String = "{}"
+
+                override fun decode(json: String): Any? =
+                    mapOf(
+                        "instances" to
+                            listOf(
+                                mapOf(
+                                    "serverId" to "lobby-1",
+                                    "role" to "bukkit",
+                                    "status" to "online",
+                                    "metadata" to mapOf("region" to "cn-east", "tier" to "core"),
+                                ),
+                                mapOf("serverId" to "lobby-2", "role" to "bukkit", "status" to "online"),
+                            ),
+                    )
+            }
+        val apiClient = BeaconApiClient(CapturingTransport(), codec, settings(), NoopStreamTransport())
+        val view = DiscoveryView(apiClient, TopologyWatchHub(), RosterDirectoryHolder())
+
+        val instances = view.query(DiscoveryQuery.builder().namespace("prod").build())
+
+        assertEquals(
+            mapOf("region" to "cn-east", "tier" to "core"),
+            instances[0].metadata(),
+            "带 metadata 的实例应原样透传标签（本层不解释 key 语义）",
+        )
+        assertTrue(instances[1].metadata().isEmpty(), "缺 metadata 键应解析为空 map（向后兼容）")
+    }
+
+    @Test
     fun `query 发现失败仍兼容返回空列表`() {
         val transport =
             object : HttpTransport {
