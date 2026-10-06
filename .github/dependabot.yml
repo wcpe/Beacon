@@ -64,6 +64,25 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # ── msw 3.x：破坏性升级，且与当前 vitest 的 mocker 不兼容 ──
+      # 本地实测（2026-10-06，基于当日 master）：仅改版本号会 typecheck 失败 2 处
+      # （msw 3 移除 onUnhandledRequest），且 pnpm test 有 32/50 个测试文件失败。
+      # 另有两处 peer 冲突：msw 3 要求 typescript >=5.9（本仓 5.6.3）、
+      # vitest 5.0.1 的 @vitest/mocker 要求 msw ^2.4.9（不认 3.x）。
+      # 升级需先适配新 API 并解决与 vitest 的 peer 冲突（可能要连带升 vitest），
+      # 待上游生态对齐后手动评估。只拦 3.x，2.x 的补丁更新照常提。
+      - dependency-name: "msw"
+        versions: [">=3.0.0"]
+      # ── typescript 6.x：typescript-eslint 与 tsc 的类型推断不一致 ──
+      # 本地实测（2026-10-06）：typecheck / test(544) / build 全过，仅 lint 失败 2 处
+      # （@typescript-eslint/no-unnecessary-condition 对 HTMLElement.textContent 的可空性
+      # 判成 string，而 tsc 在 strict 下正确判成 string | null）。三条规则互相封死：
+      # 保留 ?. 被说多余、改 ?? '' 被说左侧不该为 null、改 String() 被说无意义。
+      # 已验证与其它依赖升级无关——回滚 typescript 到 5.6.3 后 lint 立即通过。
+      # 待 typescript-eslint 修好与 TS 6 的一致后再升。只拦 6.x，5.x 照常提。
+      - dependency-name: "typescript"
+        versions: [">=6.0.0"]
   # 工作流引用的 GitHub Actions（对应 .github/workflows/*.yml）
   - package-ecosystem: "github-actions"
     directory: "/"
