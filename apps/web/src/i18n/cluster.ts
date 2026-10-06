@@ -127,6 +127,7 @@ export const cluster = {
     },
     // 不可调度原因码 → 中文摘要（列表行直显用）
     schedReason: {
+      admission_scope_mismatch: '不满足准入作用域',
       kind_not_schedulable: '类型不可调度',
       pending_confirm: '待确认',
       disabled: '已禁用',
