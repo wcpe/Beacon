@@ -9,7 +9,7 @@ import kotlin.test.assertNull
 class LobbyCandidatesProtocolTest {
     @Test
     fun `候选帧保留可选大厅段`() {
-        val lobby = LobbyCandidates(12L, true, listOf(candidateEntry("lobby-1", 92, "healthy", true, 8, 300)))
+        val lobby = LobbyCandidates(12L, true, listOf(candidateEntry("lobby-1", 92, "healthy", true, 8, 300, labelsPresent = true)))
 
         val snapshot = SchedCandidates(1_000L, emptyList(), lobby).toSnapshot(1_200L)
 

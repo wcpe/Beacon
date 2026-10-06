@@ -52,9 +52,9 @@ internal fun mapLevel(wire: String): HealthLevel =
         else -> HealthLevel.UNHEALTHY
     }
 
-/** 候选 wire 条目 → API 候选视图（zone 由调用侧提供，wire 不重复携带）。 */
+/** 候选 wire 条目 → API 候选视图（zone 由调用侧提供，wire 不重复携带）；标签随候选一起带出（FR-244）。 */
 internal fun CandidateEntry.toCandidateView(zone: String): CandidateView =
-    CandidateView(serverId, zone, score, mapLevel(level), onlineCount, maxOnline)
+    CandidateView(serverId, zone, score, mapLevel(level), onlineCount, maxOnline, labels)
 
 /** 候选 wire 条目 → API 健康视图（控制面可选下发 reasons；旧响应缺失时为空表）。 */
 internal fun CandidateEntry.toHealthView(sampledAtMs: Long): HealthView =

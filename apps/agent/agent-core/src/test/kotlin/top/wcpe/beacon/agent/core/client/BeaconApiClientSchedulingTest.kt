@@ -172,6 +172,42 @@ class BeaconApiClientSchedulingTest {
         assertIs<SchedCandidatesOutcome.Failed>(outcome)
     }
 
+    @Test
+    fun `candidates 解析节点自声明标签并区分标签字段缺失（FR-244）`() {
+        val codec =
+            CapturingCodec {
+                mapOf(
+                    "generatedAtMs" to 1_700_000_000_000L,
+                    "zones" to
+                        listOf(
+                            mapOf(
+                                "zone" to "z-a",
+                                "candidates" to
+                                    listOf(
+                                        // 有 labels 键：键存在即为"控制面支持该字段"，空 map 是"这台没声明过"。
+                                        mapOf("serverId" to "with-labels", "labels" to mapOf("example.zone.a" to "true")),
+                                        mapOf("serverId" to "empty-labels", "labels" to emptyMap<String, Any?>()),
+                                        // 无 labels 键：旧控制面，**看不到**声明（不是"没有声明"）。
+                                        mapOf("serverId" to "legacy"),
+                                    ),
+                            ),
+                        ),
+                )
+            }
+
+        val zone =
+            assertIs<SchedCandidatesOutcome.Success>(
+                BeaconApiClient(StatusTransport(200, "body"), codec, settings()).scheduleCandidates(identity()),
+            ).candidates.zones.single()
+
+        val byId = zone.candidates.associateBy { it.serverId }
+        assertEquals(mapOf("example.zone.a" to "true"), byId.getValue("with-labels").labels)
+        assertTrue(byId.getValue("with-labels").labelsPresent)
+        assertTrue(byId.getValue("empty-labels").labelsPresent, "有键但空 map 也是「支持该字段」")
+        assertTrue(byId.getValue("empty-labels").labels.isEmpty())
+        assertTrue(!byId.getValue("legacy").labelsPresent, "缺键 = 旧控制面，看不到声明")
+    }
+
     // ---- decide ----
 
     @Test
@@ -248,6 +284,50 @@ class BeaconApiClientSchedulingTest {
         val rejectCodec = CapturingCodec { mapOf("code" to "INVALID_PARAM") }
         val rejected = BeaconApiClient(StatusTransport(400, "err"), rejectCodec, settings()).scheduleDecide(identity(), "", null, null)
         assertEquals("INVALID_PARAM", assertIs<SchedDecideOutcome.Rejected>(rejected).reason)
+    }
+
+    // ---- decide：准入作用域（FR-244） ----
+
+    @Test
+    fun `decide 非空准入作用域随请求体下发`() {
+        val codec = CapturingCodec { mapOf("traceId" to "t1") }
+        BeaconApiClient(StatusTransport(200, "body"), codec, settings())
+            .scheduleDecide(
+                identity(),
+                zone = "z-a",
+                purpose = null,
+                plugin = null,
+                admissionScope = listOf(mapOf("example.zone.lobby-a" to "true")),
+            )
+
+        val body = encoded(codec)
+        assertEquals(setOf("zone", "admissionScope"), body.keys, "非空作用域时应下发 admissionScope 键")
+        assertEquals(
+            listOf(mapOf("example.zone.lobby-a" to "true")),
+            body["admissionScope"],
+            "作用域按「备选列表」下发（备选之间 OR）",
+        )
+    }
+
+    @Test
+    fun `decide 空准入作用域不下发该键（向后兼容）`() {
+        val codec = CapturingCodec { mapOf("traceId" to "t1") }
+        BeaconApiClient(StatusTransport(200, "body"), codec, settings())
+            .scheduleDecide(identity(), "z-a", null, null, admissionScope = emptyList())
+        assertEquals(setOf("zone"), encoded(codec).keys, "空作用域不应把 admissionScope 拼进请求体")
+    }
+
+    @Test
+    fun `decide 503 映射为准入判不了而不是连接失败`() {
+        val codec = CapturingCodec { mapOf("code" to "admission_unavailable") }
+        val outcome =
+            BeaconApiClient(StatusTransport(503, "err"), codec, settings())
+                .scheduleDecide(identity(), "z-a", null, null, admissionScope = listOf(mapOf("k" to "v")))
+        assertEquals(
+            "admission_unavailable",
+            assertIs<SchedDecideOutcome.AdmissionUnavailable>(outcome).reason,
+            "503 是「判不了」（当前状态），必须与 Failed（连不上）分开",
+        )
     }
 
     // ---- report-local ----

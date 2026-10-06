@@ -74,7 +74,14 @@ class SchedulingRefresherTest {
 
     @Test
     fun `restoreSnapshot 从落盘快照恢复缓存`() {
-        store.write(snapshotOf("z-b", listOf(candidateEntry("lobby-9", 55, "degraded")), generatedAtMs = 500L, savedAtMs = 500L))
+        store.write(
+            snapshotOf(
+                "z-b",
+                listOf(candidateEntry("lobby-9", 55, "degraded", labelsPresent = true)),
+                generatedAtMs = 500L,
+                savedAtMs = 500L,
+            ),
+        )
         newRefresher().restoreSnapshot()
         assertEquals(1, cache.entriesInZone("z-b").size, "启动期应凭落盘快照恢复候选（重启后仍可降级）")
         assertTrue(cache.current()?.zones?.containsKey("z-b") == true)

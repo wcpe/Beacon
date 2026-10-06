@@ -21,7 +21,7 @@ class SchedulingCacheTest {
     fun `刷新成功数据源为控制面且新鲜`() {
         val now = 10_000L
         val cache = SchedulingCache(now = { now })
-        cache.set(snapshotOf("z-a", listOf(candidateEntry("lobby-1", 90)), savedAtMs = now - 1_000L), live = true)
+        cache.set(snapshotOf("z-a", listOf(candidateEntry("lobby-1", 90, labelsPresent = true)), savedAtMs = now - 1_000L), live = true)
         val ds = cache.dataSource()
         assertEquals(DataSource.CONTROL_PLANE, ds.source())
         assertTrue(ds.fresh())
@@ -33,7 +33,14 @@ class SchedulingCacheTest {
         val now = 1_000_000L
         val cache = SchedulingCache(now = { now })
         // savedAt 距今 11 分钟 > 10 分钟阈值 → 非新鲜（STALE），但快照仍在（zones 非空）。
-        cache.set(snapshotOf("z-a", listOf(candidateEntry("lobby-1", 90)), savedAtMs = now - 11L * 60L * 1000L), live = false)
+        cache.set(
+            snapshotOf(
+                "z-a",
+                listOf(candidateEntry("lobby-1", 90, labelsPresent = true)),
+                savedAtMs = now - 11L * 60L * 1000L,
+            ),
+            live = false,
+        )
         val ds = cache.dataSource()
         assertEquals(DataSource.LOCAL_SNAPSHOT, ds.source())
         assertFalse(ds.fresh(), "超 10 分钟应标 STALE")
@@ -43,7 +50,7 @@ class SchedulingCacheTest {
     @Test
     fun `markStale 只翻数据源不动快照`() {
         val cache = SchedulingCache(now = { 100L })
-        cache.set(snapshotOf("z-a", listOf(candidateEntry("lobby-1", 90))), live = true)
+        cache.set(snapshotOf("z-a", listOf(candidateEntry("lobby-1", 90, labelsPresent = true))), live = true)
         cache.markStale()
         assertEquals(DataSource.LOCAL_SNAPSHOT, cache.dataSource().source())
         assertEquals(1, cache.entriesInZone("z-a").size, "markStale 不清空快照")
@@ -58,8 +65,8 @@ class SchedulingCacheTest {
                 savedAtMs = 1L,
                 zones =
                     linkedMapOf(
-                        "z-a" to listOf(candidateEntry("lobby-1", 90)),
-                        "z-b" to listOf(candidateEntry("lobby-2", 70)),
+                        "z-a" to listOf(candidateEntry("lobby-1", 90, labelsPresent = true)),
+                        "z-b" to listOf(candidateEntry("lobby-2", 70, labelsPresent = true)),
                     ),
             ),
             live = true,

@@ -122,5 +122,8 @@ private fun toInstance(obj: Map<String, Any?>): ServiceInstance {
         JsonTree.boolOr(obj, "zoneDefaultEntry", false),
         // 全局大厅归属（FR-200）：与健康候选独立，旧控制面缺键解析为 false。
         JsonTree.boolOr(obj, "lobbyClusterMember", false),
+        // 节点声明的键值标签（FR-227）：控制面只存；自声明标签仅在准入调度判定处被读（FR-244），
+        // 不参与健康打分、候选排序与 `?tag.<key>=<value>` 过滤真源。本层只透传；旧控制面缺键解析为空 map。
+        JsonTree.strMap(obj, "metadata"),
     )
 }

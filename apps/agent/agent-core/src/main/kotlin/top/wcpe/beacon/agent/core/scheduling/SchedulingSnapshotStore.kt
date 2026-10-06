@@ -81,16 +81,30 @@ class SchedulingSnapshotStore(
         }
     }
 
-    private fun candidateTree(entry: CandidateEntry): Map<String, Any?> =
-        linkedMapOf(
-            "serverId" to entry.serverId,
-            "score" to entry.score,
-            "level" to entry.level,
-            "schedulable" to entry.schedulable,
-            "onlineCount" to entry.onlineCount,
-            "maxOnline" to entry.maxOnline,
-            "reasons" to entry.reasons,
-        )
+    /**
+     * 候选条目 → 落盘树（zones 与 lobby 两侧共用同一对函数，落盘 / 还原口径只此一处）。
+     *
+     * <p>`labels` 键**只在** [CandidateEntry.labelsPresent] 为 true 时写入（空 map 也写 `{}`）：
+     * 该键的存在与否就是"本帧来源携带没携带自声明标签字段"的信号，
+     * 为 false 时不落这个键，恢复后才仍读成"看不到"——落盘不能把「看不到」升级成「没有声明」。
+     * 少了这一步，重启恢复后的快照会一律被判成"判据不可见"，带作用域的降级决策凭空失真。</p>
+     */
+    private fun candidateTree(entry: CandidateEntry): Map<String, Any?> {
+        val tree =
+            linkedMapOf<String, Any?>(
+                "serverId" to entry.serverId,
+                "score" to entry.score,
+                "level" to entry.level,
+                "schedulable" to entry.schedulable,
+                "onlineCount" to entry.onlineCount,
+                "maxOnline" to entry.maxOnline,
+                "reasons" to entry.reasons,
+            )
+        if (entry.labelsPresent) {
+            tree["labels"] = entry.labels
+        }
+        return tree
+    }
 
     private fun parseCandidate(raw: Any?): CandidateEntry {
         val obj = JsonTree.asObject(raw)
@@ -102,6 +116,9 @@ class SchedulingSnapshotStore(
             onlineCount = JsonTree.intOr(obj, "onlineCount", 0),
             maxOnline = JsonTree.intOr(obj, "maxOnline", 0),
             reasons = JsonTree.asList(obj["reasons"]).map(JsonTree::asString),
+            // 键在不在决定"看不看得到声明"：在 → 支持该字段（空 map 即"这台没声明过"）；不在 → 看不到。
+            labels = JsonTree.strMap(obj, "labels"),
+            labelsPresent = obj.containsKey("labels"),
         )
     }
 }
