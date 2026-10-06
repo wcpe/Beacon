@@ -66,18 +66,21 @@ FR-243 已经给了节点一个**运行期刷新自己键值标签**的窄写入
   "chosen": { "serverId": "string", "score": 0 },
   "candidateCount": 0,
   "excludedCount": 0,
-  "excluded": [ { "serverId": "string", "reason": "admission_scope_mismatch" } ],
   "admissionExcludedCount": 0,
   "failReason": "no_candidate_in_scope"
 }
 ```
+
+> **逐台排除明细不在本响应里**：`decide` 只回 `excludedCount` 计数。逐台的 `{serverId, reason}`
+> 落在**决策日表**，经 `GET /admin/v2/sched-decisions/{traceId}` 查询——该端点与本响应共用同一
+> traceId。此处曾误画 `excluded` 数组，已按实现改正。
 
 - `admissionExcludedCount` 带 `omitempty`：未被收窄时**不下发该键**（旧调用方逐位不变）。
 - `failReason` 取值新增 `no_candidate_in_scope`，语义与触发条件：
   - **仅当本次全部候选都因作用域被排除**时给出（稳定事实：换服 / 调服务范围才能改口）；
   - "部分作用域排除 + 部分健康排除" 仍为 `no_candidate`（健康属**可恢复的当前状态**，不能印成稳定事实）。
 - 新增 `503 admission_unavailable`：作用域非空但本进程没有自声明标签的读取真源——**判不了**，可重试；不得忽略作用域照旧决策，也不得报 `no_candidate*`。
-- 判定顺序：**先准入作用域、后可调度性**；同一台同时命中两类原因时 `excluded` 记 `admission_scope_mismatch`（作用域原因拼接在前）。
+- 判定顺序：**先准入作用域、后可调度性**；同一台同时命中两类原因时，**决策明细**（经 `sched-decisions/{traceId}` 查，非本响应）的 `excluded` 记 `admission_scope_mismatch`（作用域原因拼接在前）。
 
 ### 3.2 `GET /beacon/v2/agent/schedule/candidates`（服务端）
 
