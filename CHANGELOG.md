@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 1.4.0（2026-10-07）
+
 ### 新增
 
 - **节点自声明的运行期刷新与读回（FR-243）**：节点的容量与自定义键值标签**此前只能在注册那一刻写入一次**——agent 侧是启动期注入的不可变值（`capacity` 由 bukkit 壳反射读 `max-players`），服务端 `Register` 是整条覆盖、`Report` 只刷指标、`Heartbeat` 只刷心跳，接入方在运行期的变化只能靠重启或改配置。现在在「agent 对业务插件只读暴露」的边界内开一个**窄写入面**（决策见 [ADR-0086](docs/adr/0086-agent-self-declaration-narrow-write-surface.md)）：`POST /beacon/v1/agent/declaration` 刷新**自己节点**的容量与键值标签，并经 agent 门面 `BeaconAgent.declaration()` 暴露给同进程的业务插件。规格见 [agent-self-declaration-runtime-refresh](docs/specs/agent-self-declaration-runtime-refresh.md)。
