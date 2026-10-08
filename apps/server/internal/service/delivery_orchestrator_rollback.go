@@ -202,6 +202,9 @@ func (s *DeliveryOrchestrator) rollbackRestartTimeout(rt *orderRuntime, t *model
 
 // autoFinishRollback 无在途回滚目标时自动收单（rolling_back→rolled_back + 系统审计）；有 failed 不走此路径（待人工）。
 // notApplicable 为「从未覆盖磁盘、无文件可回滚」的目标数，记入审计便于区分「全回滚成功」与「本就无回滚工作」。
+//
+// 收单即释放观察窗内存（FR-265）：自动收单是唯一不经审批执行适配器（那里有 clearObserve）的终态出口，
+// 漏掉这条会让单终态化后观察窗缓冲与停滞观测长期驻留——控制面长跑即无界增长。
 func (s *DeliveryOrchestrator) autoFinishRollback(rt *orderRuntime, notApplicable int) {
 	now := s.now()
 	err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -220,6 +223,7 @@ func (s *DeliveryOrchestrator) autoFinishRollback(rt *orderRuntime, notApplicabl
 		return
 	}
 	rt.order.Status = model.ChangeOrderStatusRolledBack
+	s.clearObserve(rt.order.ID)
 	s.emitOrderEvent(rt)
 }
 

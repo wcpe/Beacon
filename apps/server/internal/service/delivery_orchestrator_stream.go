@@ -248,10 +248,12 @@ func (s *DeliveryOrchestrator) markObserveStarted(orderID uint, batchNo int, sta
 }
 
 // clearObserve 清空某单观察窗缓冲（推进门确认切批 / 紧急终止后）。
+// 同时清停滞观测（FR-265）：单已收口就不再会停滞，留着只是内存垃圾。
 func (s *DeliveryOrchestrator) clearObserve(orderID uint) {
 	s.observeMu.Lock()
 	delete(s.observeByOrder, orderID)
 	s.observeMu.Unlock()
+	s.clearStall(orderID)
 }
 
 // ObserveSeries 读某单当前批观察窗序列（/observe 接真，spec §4.6.3）；无缓冲返回空形态（数组非 null）。
