@@ -11,6 +11,22 @@ import (
 
 // —— FR-264：agent 交付能力版本守卫（落实 ADR-0069 L58）——
 
+// deliveryTestMinAgentVersion 是测试中显式开启能力守卫所用的下限（FR-264）：
+// 出厂默认为空串（不校验，避免真机上报串未核对时全量拒服），故测试必须给一个确定值才能验证守卫行为。
+const deliveryTestMinAgentVersion = "0.29.0"
+
+// TestDeliveryGuardDisabledByDefault 出厂默认（空下限）即关闭守卫——
+// 真机 agent 上报串形态尚未核对，守卫又是 fail-closed 的，拍猜测值作默认等于上线即全量拒服。
+func TestDeliveryGuardDisabledByDefault(t *testing.T) {
+	if deliveryDefaultMinAgentVersion != "" {
+		t.Fatalf("出厂默认下限应为空串（显式配置才启用守卫），实际 %q", deliveryDefaultMinAgentVersion)
+	}
+	// 守卫对空下限一律放行（含未上报版本的旧 agent）。
+	if !deliveryAgentSupportsStreaming("", "") {
+		t.Fatal("下限为空时未上报版本的 agent 也应放行")
+	}
+}
+
 // TestDeliveryAgentSupportsStreaming 版本下限判定纯函数（空版本 / 旧版本一律不支持，空下限即不校验）。
 func TestDeliveryAgentSupportsStreaming(t *testing.T) {
 	cases := []struct {

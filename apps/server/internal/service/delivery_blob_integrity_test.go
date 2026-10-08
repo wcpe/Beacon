@@ -69,6 +69,13 @@ func TestMarkReadyZeroRowsFails(t *testing.T) {
 	if err := repo.MarkReady(sha, 128, time.Now().UTC()); err != nil {
 		t.Fatalf("有占位行时 MarkReady 应成功，实际 %v", err)
 	}
+	// 重复落账且值未变：MySQL 的 RowsAffected 计「真正被修改」的行数（值未变即 0），
+	// sqlite 计「匹配」的行数（计 1）。只看 RowsAffected 会在 MySQL 上把重复落账误报成丢槽。
+	// 故重复落账必须幂等成功（行在即成功）。
+	at := time.Now().UTC()
+	if err := repo.MarkReady(sha, 128, at); err != nil {
+		t.Fatalf("重复落账（值未变）应幂等成功，不得误报丢槽，实际 %v", err)
+	}
 }
 
 // TestPersistBlobSlotLostSurfaces 上传链路把 MarkReady 的行数校验结果透到调用方（不吞成成功）。
@@ -221,21 +228,141 @@ func TestCleanerReclaimsUnreferencedBlob(t *testing.T) {
 	if itemCount != 0 {
 		t.Fatalf("本用例前提是无任何变更项，实际 %d 条", itemCount)
 	}
-	// 推过短宽限（1 小时）但远未到保留期（7 天）：补偿删除应生效。
-	// 宽限不能为零——写入 blob 与「引用它的变更项落库」不在同一事务，零宽限会误删刚上传的 blob。
-	if err := db.Model(&model.DeliveryBlob{}).Where("sha256 = ?", sha).
-		Update("last_referenced_at", time.Now().UTC().Add(-2*time.Hour)).Error; err != nil {
+	// 同批次放一个「有引用」的对照 blob：它必须活下来。
+	// 没有这条反例的话，一个「无条件删光」的错误实现也能骗过本用例。
+	kept := []byte("referenced sibling stays")
+	keptSHA := shaOf(kept)
+	mustStore(t, svc, keptSHA, kept)
+	seedOrderWithFileItem(t, db, model.ChangeOrderStatusApproved, keptSHA)
+	// 两个 blob 都推过宽限（否则对照不成立——新鲜 blob 本就受宽限保护）。
+	stale := time.Now().UTC().Add(-2 * time.Hour)
+	if err := db.Model(&model.DeliveryBlob{}).Where("sha256 IN ?", []string{sha, keptSHA}).
+		Update("last_referenced_at", stale).Error; err != nil {
 		t.Fatalf("回拨引用时间失败: %v", err)
+	}
+
+	// 前提校验（必须在 SweepOnce 之前）：对照 blob 必须真的是「有引用且已过宽限」的候选，
+	// 否则「有引用的 blob 活下来」这条反例形同虚设——无条件删光的错误实现也能骗过本用例。
+	var refCount int64
+	db.Model(&model.ChangeOrderItem{}).Where("sha256 = ?", keptSHA).Count(&refCount)
+	if refCount == 0 {
+		t.Fatal("前提不成立：对照 blob 的引用行未建出来")
+	}
+	var candidate int64
+	db.Model(&model.DeliveryBlob{}).Where("sha256 = ? AND state = ? AND last_referenced_at < ?",
+		keptSHA, model.DeliveryBlobStateReady, time.Now().UTC().Add(-time.Hour)).Count(&candidate)
+	if candidate == 0 {
+		t.Fatal("前提不成立：对照 blob 不是「已过宽限的 ready 候选」，反例不构成对照")
 	}
 
 	cleaner.SweepOnce()
 
 	if _, err := svc.Head(sha); !errors.Is(err, apperr.ErrDeliveryBlobNotFound) {
-		t.Fatalf("无人引用的 blob 应立即回收，实际仍在: %v", err)
+		t.Fatalf("无人引用的 blob 应被回收，实际仍在: %v", err)
 	}
 	if _, err := os.Stat(svc.blobPath(sha)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("无人引用的 blob 磁盘文件应一并删除，实际 stat err=%v", err)
 	}
+	// 反例：同批次有引用的 blob 必须还在（证明回收是「按引用判定」而非「无条件删光」）。
+	if _, err := svc.Head(keptSHA); err != nil {
+		t.Fatalf("有引用的对照 blob 不应被回收，实际 %v", err)
+	}
+	if _, err := os.Stat(svc.blobPath(keptSHA)); err != nil {
+		t.Fatalf("有引用的对照 blob 磁盘文件不应被删，实际 stat err=%v", err)
+	}
+}
+
+// TestPurgeBlobDeletesRowBeforeFile 删除顺序：必须先删元数据行、行删成功才删盘（P0-1）。
+//
+// 反序（先删盘）会开一个窗口：并发上传者在保护集查询之后、删盘之前提交了引用行，
+// 盘已删而行还在 → Head 按「元数据 ready 但磁盘缺失即未就绪」返回 404，目标下载失败。
+// 行是保护判定的真源，故以「行删成功」作为删盘的门票。
+func TestPurgeBlobDeletesRowBeforeFile(t *testing.T) {
+	svc, db, _ := newIntegritySvc(t, "purgeorder")
+	content := []byte("purge ordering probe")
+	sha := shaOf(content)
+	mustStore(t, svc, sha, content)
+
+	// 让「删行」必然失败（模拟并发下引用行已插入、DELETE 被挡或事务回滚）。
+	repo := repository.NewDeliveryBlobRepository(db)
+	svc.blobs = repo
+	if err := db.Exec("CREATE TRIGGER IF NOT EXISTS block_blob_delete " +
+		"BEFORE DELETE ON delivery_blob BEGIN SELECT RAISE(ABORT, 'blocked'); END").Error; err != nil {
+		t.Fatalf("建拦截触发器失败: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Exec("DROP TRIGGER IF EXISTS block_blob_delete").Error })
+
+	cleaner := NewDeliveryBlobCleaner(svc, repository.NewAuditLogRepository(db))
+	if cleaner.purgeBlob(sha) {
+		t.Fatal("行删失败时不应计为成功")
+	}
+	// 关键断言：行没删掉，盘上的文件就必须还在（否则就是先删盘的反序实现）。
+	if _, err := os.Stat(svc.blobPath(sha)); err != nil {
+		t.Fatalf("行删失败时不得先删盘（TOCTOU 复发），实际 stat err=%v", err)
+	}
+	// 反向对照：放行删行后，盘上文件应随之消失。
+	_ = db.Exec("DROP TRIGGER IF EXISTS block_blob_delete")
+	if !cleaner.purgeBlob(sha) {
+		t.Fatal("放行后删行应成功")
+	}
+	if _, err := os.Stat(svc.blobPath(sha)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("行删成功后应删盘，实际 stat err=%v", err)
+	}
+}
+
+// TestCleanerProtectsApprovedOrderBlob approved 单引用的 blob 必须被持续刷新保护（P0-1）。
+//
+// approved 单在「审批通过 → 等模板源上传」的准备期可能停留远超 1 小时，若引用只在启动时
+// 刷新一次，宽限一过补偿删除就会误删这张单马上要消费的 blob（目标侧 404 且无告警）。
+func TestCleanerProtectsApprovedOrderBlob(t *testing.T) {
+	svc, db, _ := newIntegritySvc(t, "approved")
+	content := []byte("approved order pending upload")
+	sha := shaOf(content)
+	mustStore(t, svc, sha, content)
+	seedOrderWithFileItem(t, db, model.ChangeOrderStatusApproved, sha)
+
+	// 引用刷新集合必须覆盖 approved（推进器每轮刷新的单集合）。
+	statuses := deliveryBlobReferenceRefreshStatuses
+	if !containsBlobStatus(statuses, model.ChangeOrderStatusApproved) {
+		t.Fatalf("引用刷新状态集应含 approved，实际 %v", statuses)
+	}
+	// 该状态必须能被「按状态取单」的接口选中（即刷新真能作用到它）。
+	orders, err := repository.NewChangeOrderRepository(db).ListActiveOrders(statuses)
+	if err != nil {
+		t.Fatalf("按刷新状态集取单失败: %v", err)
+	}
+	if len(orders) != 1 || orders[0].Status != model.ChangeOrderStatusApproved {
+		t.Fatalf("approved 单应被引用刷新集合选中，实际 %+v", orders)
+	}
+	// 刷新后引用时间应被推到当下（宽限从「最后一次刷新」起算才保护得住）。
+	if err := db.Model(&model.DeliveryBlob{}).Where("sha256 = ?", sha).
+		Update("last_referenced_at", time.Now().UTC().Add(-2*time.Hour)).Error; err != nil {
+		t.Fatalf("回拨引用时间失败: %v", err)
+	}
+	ids := make([]uint, 0, len(orders))
+	for i := range orders {
+		ids = append(ids, orders[i].ID)
+	}
+	if err := svc.TouchReferencesForOrders(ids); err != nil {
+		t.Fatalf("刷新引用失败: %v", err)
+	}
+	var fresh model.DeliveryBlob
+	if err := db.Where("sha256 = ?", sha).First(&fresh).Error; err != nil {
+		t.Fatalf("读 blob 失败: %v", err)
+	}
+	if time.Since(fresh.LastReferencedAt) > 5*time.Minute {
+		t.Fatalf("刷新后引用时间应回到当下，实际 %v", fresh.LastReferencedAt)
+	}
+}
+
+// containsBlobStatus 判定字符串切片是否含某值（测试小工具）。
+func containsBlobStatus(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestCleanerGraceProtectsFreshUpload 宽限内的新鲜 blob 即便暂无人引用也不被回收——

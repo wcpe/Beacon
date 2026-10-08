@@ -105,10 +105,14 @@ const (
 	deliveryDefaultUploadConcurrency      = 4
 	deliveryDefaultDownloadConcurrency    = 64
 	deliveryDefaultCleanupIntervalMinutes = 60
-	// deliveryDefaultMinAgentVersion 是交付能力守卫的默认最低 agent 版本（FR-264）：
-	// 取 FR-165（交付数据面与流式传输）落地版本——自该版本起 agent 才具备 BlobStreamTransport、
-	// 才认得 delivery_upload / push / activate / rollback 四类命令。留空即关闭守卫。
-	deliveryDefaultMinAgentVersion = "0.29.0"
+	// deliveryDefaultMinAgentVersion 是交付能力守卫的默认最低 agent 版本（FR-264）。
+	//
+	// **默认为空串 = 守卫默认关闭（显式配置才启用）**：agent 上报的版本串尚未经真机核对其形态
+	// （实际来自 TabooLib `pluginVersion`，与 Gradle 坐标不同源），而守卫是 fail-closed 的
+	// （未上报版本一律按「不支持」处理）。若拍一个猜测值作默认，真机上一旦上报串不符
+	// （例如 `0.1.0` 或空串），**全部目标都会被拒、首日无任何已批准单能启动**——
+	// 这是上线即全量拒服的事故级风险，故以「不校验」上线，真机核对后再由运维设为确定值。
+	deliveryDefaultMinAgentVersion = ""
 	// 容量上限的可配上界（1 TiB）与下界（1 MiB）：防误配 0 / 负值当场拒绝所有上传。
 	deliveryBlobCapacityMinBytes = 1048576
 	deliveryBlobCapacityMaxBytes = 1099511627776

@@ -16,11 +16,11 @@
 
 ### FR-261 blob 引用保护与清理一致性（fix）
 
-1. **引用刷新补全**：以下时刻都刷新该单引用 blob 的 `last_referenced_at`（文件项 sha + 配置冻结工件 sha）：
-   - 变更单进入 approved（准备期上传窗口开启）；
-   - 启动（payload 准备前后）；
-   - 模板源上传回执成功（既有）；
-   - 回滚下发（回滚仍要消费同一批 blob）。
+1. **引用刷新补全**：刷新该单引用 blob 的 `last_referenced_at`（文件项 sha + 配置冻结工件 sha）。
+   **实现方式（唯一口径）**：推进器每轮对 `deliveryBlobReferenceRefreshStatuses` = **approved + rolling + paused + rolling_back** 的单批量刷新（`TouchReferencesForOrders`），另在启动（`resolvePayloadPlan`）与模板源上传回执成功（既有）时按单刷新。
+   - **不碰 `delivery_order_service.go`**：approved 是审批域在事务内落的状态，在那里挂刷新会把数据面耦合进审批事务；改为推进器按状态批量覆盖，approved 单在准备期停留多久都能被持续刷新到（宽限从「最后一次刷新」起算）。
+   - **approved 必须在集合内**：准备期等模板源上传常超过 1 小时补偿宽限，只靠启动那一次刷新挡不住（P0-1 实测）。
+   - draft 不纳：未提审，谈不上消费。
 2. **孤儿文件扫描与回收**：清理器每轮扫 `blobs/` 目录，回收两类孤儿——① 磁盘有文件但元数据无行（或元数据非 ready）；② 元数据标 ready 但磁盘文件缺失（不删磁盘——没有可删的，改把元数据降级/删除，使 `Head` 与真实盘面一致）。删除入审计。
 3. **上传残留删文件**：`uploading` 残留清理除删元数据行外，一并删除该 sha 对应的磁盘文件（此前只删元数据，文件永久滞留）。
 4. **MarkReady 检查行数**：`MarkReady` 必须校验其 `UPDATE` 实际影响行数 > 0；为 0（占位行被并发清理器回收）视为失败并明确报错，不得静默「假就绪」——否则元数据没有行、`Head` 却能查到文件（或反之）的不一致态被悄悄造出来。
@@ -51,10 +51,12 @@
 
 ### 3.1 数据面（FR-261）
 
-- **引用刷新**：`DeliveryBlobService.TouchReferences(orderID)` 已存在且覆盖「文件项 sha + 配置工件 sha」，本条补齐**调用点**——新增导出方法 `TouchReferencesForOrders(orderIDs []uint)` 供批量场景，并在下列路径调用既有刷新：
-  - `DeliveryOrderService` 审批流落到 approved 的时刻（只读改造受限 → 改为在**启动**与**下发**前统一刷新，覆盖准备期上传窗口）；
-  - `DeliveryOrchestrator` 启动（payload 准备前）与回滚下发前。
+- **引用刷新**：`DeliveryBlobService.TouchReferences(orderID)` 已存在且覆盖「文件项 sha + 配置工件 sha」，本条补齐**调用点**——新增导出方法 `TouchReferencesForOrders(orderIDs []uint)` 供批量场景，并在下列路径调用：
+  - `DeliveryOrchestrator.refreshBlobReferences()`：**每轮**对 `deliveryBlobReferenceRefreshStatuses`（**approved + rolling + paused + rolling_back**）批量刷新——这是持续保护的主路径，与 §2.1 第 1 条同口径；
+  - `DeliveryOrchestrator.resolvePayloadPlan`（启动，payload 准备前）：准备期起点补一次。
+  **不碰 `delivery_order_service.go`**（与 §2.1 一致）：approved 由审批域在事务内落，在那儿挂刷新会把数据面耦合进审批事务；按状态批量覆盖即可，approved 单在准备期停留多久都刷得到。
   刷新是**廉价的 UPDATE ... WHERE sha IN (...)**，空集合 no-op，重复调用无副作用。
+- **删除顺序与 TOCTOU 收口**：`purgeBlob` **先删元数据行、行删成功才删盘**（行是保护判定真源）；两条回收路径都在**删除前二次确认引用**（判定与删除之间的窗口可能有单提交引用行），不留「拿旧快照删活 blob」的缝。
 - **孤儿回收**：`DeliveryBlobCleaner` 每轮追加 `purgeOrphanFiles()`——遍历 `<root>/blobs/<xx>/<sha>`：
   - 文件名不是 64 位小写 hex → 非本域产物，跳过（防误删他目录内容）；
   - 元数据无行或非 ready → 删文件（元数据 ready 但文件在的情况不会走到这里，见下条）；

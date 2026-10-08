@@ -338,6 +338,11 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 // 为什么不是「跳过去、什么都不落」：不下发命令的目标若仍留在 pending，推进器每轮都会重扫重试，
 // 运维只看到「卡住」；置 failed 并带原因才把「为什么没动」表达出来（与 ADR-0088 同族的可观测纪律）。
 // 守卫未装配 / 最低版本设置为空 → 返回空列表（不校验）。
+//
+// **调用顺序约束（P1-1）**：本函数在**事务外**执行，守卫查询走的是编排器自身的 `s.capability`
+// （非事务连接）。调用方必须在 `s.db.Transaction` **之前**调用它，否则在单连接池（测试 / 受限部署）
+// 下会出现「外层事务持连接等守卫查询、守卫查询等连接池」的互等死锁。
+// 事务内需要能力判定的场景（如审批适配器在事务内启动）走 `capabilityGuard.withTx`，别复用本函数。
 func (s *DeliveryOrchestrator) rejectUnsupportedTargets(rt *orderRuntime, targets []*model.ChangeTarget) []uint {
 	if s.capability == nil || len(targets) == 0 {
 		return nil

@@ -21,6 +21,10 @@ const (
 	// 远短于保留期（默认 7 天）。不能是 0——写入 blob 与引用它的变更项 / 配置工件落库不在同一事务，
 	// 瞬时存在「已落盘、引用行未提交」的窗口，零宽限会误删刚上传、马上要被消费的 blob。
 	deliveryUnreferencedGraceHours = 1
+	// deliveryOrphanScanFileLimit 是单轮孤儿扫描的文件数上限（FR-261 P1-3）：
+	// 超大部署下 blobs 目录可能达万级文件，全量扫会把每轮清理的 IO 放大成热瓶颈，
+	// 故单轮有界截断、剩余自然留待下轮（清理周期默认 60 分钟，收敛仍然够快）。
+	deliveryOrphanScanFileLimit = 5000
 )
 
 // DeliveryBlobCleaner 是交付中转 blob 的后台清理器（FR-165，spec §4.5.4）：周期删除
@@ -115,17 +119,42 @@ func (c *DeliveryBlobCleaner) purgeUnreferencedBlobs() (int, int64) {
 	}
 	var deleted int
 	var freed int64
+	toDelete := make([]string, 0, len(candidates))
 	for i := range candidates {
-		blob := candidates[i]
-		if _, reclaim := unreferenced[blob.SHA256]; !reclaim {
+		if _, reclaim := unreferenced[candidates[i].SHA256]; reclaim {
+			toDelete = append(toDelete, candidates[i].SHA256)
+		}
+	}
+	if len(toDelete) == 0 {
+		return 0, 0
+	}
+	// 删除前**二次确认引用**（TOCTOU 收口）：上面判定与这里删除之间存在时间窗，
+	// 期间可能有变更单已提交引用行（准备期上传的单尤其常见）。不二次确认就等于
+	// 拿一分钟前的快照去删别人的 blob——正是 FR-261 要根除的「删掉仍在被消费的 blob」。
+	confirmed, err := c.listUnreferencedSHAs(toDelete)
+	if err != nil {
+		return 0, 0
+	}
+	for _, sha := range toDelete {
+		if _, reclaim := confirmed[sha]; !reclaim {
 			continue
 		}
-		if c.purgeBlob(blob.SHA256) {
+		if c.purgeBlob(sha) {
 			deleted++
-			freed += blob.SizeBytes
+			freed += blobSizeOf(candidates, sha)
 		}
 	}
 	return deleted, freed
+}
+
+// blobSizeOf 从候选集里取某 sha 的声明字节数（审计 freedBytes 用；未命中记 0）。
+func blobSizeOf(candidates []model.DeliveryBlob, sha string) int64 {
+	for i := range candidates {
+		if candidates[i].SHA256 == sha {
+			return candidates[i].SizeBytes
+		}
+	}
+	return 0
 }
 
 // purgeRetentionExpiredBlobs 删除「ready 且 last_referenced_at 超保留期、且不被非终态单引用」的 blob。
@@ -158,18 +187,51 @@ func (c *DeliveryBlobCleaner) purgeRetentionExpiredBlobs() (int, int64) {
 	}
 	var deleted int
 	var freed int64
+	toDelete := make([]string, 0, len(candidates))
 	for i := range candidates {
-		blob := candidates[i]
-		if _, keep := protected[blob.SHA256]; keep {
+		if _, keep := protected[candidates[i].SHA256]; !keep {
+			toDelete = append(toDelete, candidates[i].SHA256)
+		}
+	}
+	if len(toDelete) == 0 {
+		return 0, 0
+	}
+	// 删除前二次确认「仍不被非终态单引用」（TOCTOU 收口，同 purgeUnreferencedBlobs）：
+	// 准备期的 approved 单随时可能在判定与删除之间提交引用行。
+	stillProtected, err := c.listReferencedSHAs(toDelete, changeOrderTerminalStatuses)
+	if err != nil {
+		return 0, 0
+	}
+	for _, sha := range toDelete {
+		if _, keep := stillProtected[sha]; keep {
 			continue
 		}
-		if c.purgeBlob(blob.SHA256) {
+		if c.purgeBlob(sha) {
 			deleted++
-			freed += blob.SizeBytes
+			freed += blobSizeOf(candidates, sha)
 		}
 	}
 	return deleted, freed
 }
+
+// listReferencedSHAs 求给定 sha 集合中「被状态不在 excluded 集合内的变更单引用」的子集
+// （保护判定；excluded 为 nil 表示不施加状态过滤）。文件项与配置冻结工件两侧取并集。
+func (c *DeliveryBlobCleaner) listReferencedSHAs(shas []string, excluded []string) (map[string]struct{}, error) {
+	out, err := c.svc.orders.ListSHAsReferencedByStatusNotIn(shas, excluded)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := c.svc.artifacts.ListSHAsReferencedByStatusNotIn(shas, excluded)
+	if err != nil {
+		return nil, err
+	}
+	for sha := range cfg {
+		out[sha] = struct{}{}
+	}
+	return out, nil
+}
+
+// listUnreferencedSHAs 求给定 sha 集合中**不被任何变更单引用**的子集（文件项 + 配置冻结工件两侧都不命中）。
 
 // listUnreferencedSHAs 求给定 sha 集合中**不被任何变更单引用**的子集（文件项 + 配置冻结工件两侧都不命中）。
 // 这是「补偿删除」的判据：无人引用即无人消费，无需等保留期。查询失败返回错误（由调用方放弃本轮回收）。
@@ -204,14 +266,17 @@ func (c *DeliveryBlobCleaner) listUnreferencedSHAs(shas []string) (map[string]st
 //     「以为就绪、直到目标下载时才 404」——后者的代价是目标侧推送失败且无告警。
 //
 // 文件名不是 64 位小写 hex 的一律跳过：blobs 目录可能被人手工放过别的东西，清理器不得越界删本域之外的产物。
+//
+// 批量化 + 有界（FR-261 P1-3）：先收集本轮候选 sha，**一次**批量取回它们的就绪态（逐文件查一次是 N+1，
+// 小文件场景单轮可达万级查询），再走内存差集判定；单轮扫描文件数超过 deliveryOrphanScanFileLimit
+// 即截断（剩余留待下轮），防超大部署下每轮 IO 放大成热瓶颈。
 func (c *DeliveryBlobCleaner) purgeOrphans() (int, int64) {
 	root := filepath.Join(c.svc.root, "blobs")
 	shards, err := os.ReadDir(root)
 	if err != nil {
 		return 0, 0 // 根目录尚未创建（从未上传过），无孤儿可回收
 	}
-	var deleted int
-	var freed int64
+	names := make([]string, 0)
 	for _, shard := range shards {
 		if !shard.IsDir() {
 			continue
@@ -224,39 +289,58 @@ func (c *DeliveryBlobCleaner) purgeOrphans() (int, int64) {
 			if entry.IsDir() {
 				continue
 			}
-			name := entry.Name()
-			if !isSHA256Hex(name) {
+			if !isSHA256Hex(entry.Name()) {
 				continue // 非本域产物，不碰
 			}
-			deletedOne, freedOne := c.purgeOrphan(name)
-			deleted += deletedOne
-			freed += freedOne
+			names = append(names, entry.Name())
+			if len(names) >= deliveryOrphanScanFileLimit {
+				break // 单轮有界：剩余留待下轮
+			}
 		}
+		if len(names) >= deliveryOrphanScanFileLimit {
+			break
+		}
+	}
+	if len(names) == 0 {
+		return 0, 0
+	}
+	// 一次批量取回就绪态（缺失的 sha 不出现在结果里），替代逐文件 FindBySHA256。
+	states, err := c.svc.blobs.StatesBySHAs(names)
+	if err != nil {
+		return 0, 0 // 元数据读失败不猜、不动盘
+	}
+	var deleted int
+	var freed int64
+	for _, sha := range names {
+		deletedOne, freedOne := c.purgeOrphan(sha, states)
+		deleted += deletedOne
+		freed += freedOne
 	}
 	return deleted, freed
 }
 
 // purgeOrphan 收口单个 sha 的孤儿形态（返回是否删了东西、释放字节）。
-func (c *DeliveryBlobCleaner) purgeOrphan(sha string) (int, int64) {
+// states 是本轮批量取回的「sha → 就绪态」快照（缺失即无元数据行）。
+func (c *DeliveryBlobCleaner) purgeOrphan(sha string, states map[string]string) (int, int64) {
 	path := c.svc.blobPath(sha)
 	info, statErr := os.Stat(path)
-	blob, err := c.svc.blobs.FindBySHA256(sha)
-	if err != nil {
-		return 0, 0 // 元数据读失败不猜、不动盘
-	}
-	// 形态①：文件在、元数据缺或非 ready → 删文件。
+	state, hasRow := states[sha]
+	// 形态①：文件在、元数据缺或非 ready → 删文件，防磁盘泄漏。
 	if statErr == nil {
-		if blob == nil || blob.State != model.DeliveryBlobStateReady {
+		if !hasRow || state != model.DeliveryBlobStateReady {
 			if os.Remove(path) == nil {
 				return 1, info.Size()
 			}
 		}
 		return 0, 0
 	}
-	// 形态②：文件缺失、元数据标 ready → 删元数据行（文件已无可删）。
-	if errors.Is(statErr, os.ErrNotExist) && blob != nil && blob.State == model.DeliveryBlobStateReady {
+	// 形态②：文件缺失、元数据标 ready → 删元数据行：让 Head 回到「未就绪」而不是
+	// 「以为就绪、直到目标下载时才 404」——后者的代价是目标侧推送失败且无告警。
+	if errors.Is(statErr, os.ErrNotExist) && hasRow && state == model.DeliveryBlobStateReady {
 		if c.svc.blobs.Delete(sha) == nil {
-			return 1, blob.SizeBytes
+			// 同步快照，避免后续重复处理同一 sha。
+			delete(states, sha)
+			return 1, 0
 		}
 	}
 	return 0, 0
@@ -304,10 +388,20 @@ func (c *DeliveryBlobCleaner) purgeStaleUploading() (int, int64) {
 	return deleted, freed
 }
 
-// purgeBlob 删除单个 blob 的磁盘文件（幂等，不存在忽略）与元数据行。
+// purgeBlob 删除单个 blob：**先删元数据行，行删成功才删盘**（顺序不可换）。
+//
+// 行是保护判定的真源——「先删盘」会开一个 TOCTOU 窗口：并发上传者在保护集查询之后、
+// 删盘之前提交了引用行，盘已删而行还在，`Head` 按「元数据 ready 但磁盘缺失即未就绪」
+// 返回 404，目标下载失败且无告警。这正是 FR-261 要修的病，只是换成补偿删除路径复发。
+//
+// 以「行删成功」作为删盘的门票：行删失败（并发下引用行已插入等）即不碰盘，
+// 该 blob 下一轮重新参与判定。盘删失败不回滚行——行已删，重传会重建，不会留下幽灵态。
 func (c *DeliveryBlobCleaner) purgeBlob(sha string) bool {
+	if c.svc.blobs.Delete(sha) != nil {
+		return false
+	}
 	_ = os.Remove(c.svc.blobPath(sha))
-	return c.svc.blobs.Delete(sha) == nil
+	return true
 }
 
 // recordAudit 记一条系统清理审计（actor=system，含清理数量与释放字节；绝不含文件内容）。

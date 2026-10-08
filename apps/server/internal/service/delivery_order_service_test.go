@@ -125,9 +125,10 @@ func seedDeliveryFixture(t *testing.T, env *deliveryTestEnv) *deliveryFixture {
 	f.t2Row = seedDeliveryServer(t, env.db, f.nsID, "t-2", model.ServerKindBackend, &zone2.ID, model.AgentIdentityStatusActive)
 	// FR-264：夹具代表**已升级的现代 agent**——自报版本（真实 agent 经 TabooLib pluginVersion 上报，
 	// 未上报版本的旧 agent 由能力守卫按 fail-closed 拒绝）。需要旧 agent 场景的用例显式覆盖本值。
+	// 版本下限取 deliveryTestMinAgentVersion 而非出厂默认（出厂默认为空 = 不校验，见 settings_metadata.go）。
 	env.db.Model(&model.AgentIdentity{}).
 		Where("namespace_id = ? AND server_id IN ?", f.nsID, []string{"src-1", "t-1", "t-2"}).
-		Update("agent_version", deliveryDefaultMinAgentVersion)
+		Update("agent_version", deliveryTestMinAgentVersion)
 	markDeliveryOnline(env.health, f.nsID, "src-1", "t-1", "t-2")
 	return f
 }

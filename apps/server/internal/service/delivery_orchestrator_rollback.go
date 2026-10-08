@@ -101,6 +101,10 @@ func (s *DeliveryOrchestrator) initTargetRollback(rt *orderRuntime, t *model.Cha
 
 // rollbackGuardReason 对单台目标执行 agent 能力版本守卫（FR-264）：返回非空即该目标不合格、原因即返回值。
 // 守卫未装配 / 最低版本设置为空 → 返回空串（不校验）。
+//
+// **调用顺序约束（P1-1）**：与 `rejectUnsupportedTargets` 同——守卫查询走非事务连接，
+// 必须在 `s.db.Transaction` **之前**调用，否则单连接池下会与外层事务互等死锁。
+// 当前 `dispatchRollback` 正是在开启事务之前调用它，改调用位置时必须保持这一次序。
 func (s *DeliveryOrchestrator) rollbackGuardReason(rt *orderRuntime, t *model.ChangeTarget) string {
 	if s.capability == nil {
 		return ""

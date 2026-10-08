@@ -97,7 +97,10 @@ func newOrchestratorHarness(t *testing.T) *orchestratorHarness {
 	blobSvc.SetConfigRenderer(configSvc, repository.NewConfigLayerVersionRepository(env.db), repository.NewConfigFileRepository(env.db))
 	orch := NewDeliveryOrchestrator(env.db, repo, blobSvc, cmdRepo, auditRepo, env.health, metricwindow.New(0), nil)
 	orch.SetConfigRollbacker(configSvc, repository.NewConfigLayerVersionRepository(env.db))
-	// 交付能力版本守卫（FR-264）：版本查身份表、最低版本热读交付测试设置（默认取出厂下限）。
+	// 交付能力版本守卫（FR-264）：版本查身份表、最低版本热读交付测试设置。
+	// 真机默认为空串（不校验，避免上报串未核对时全量拒服），**测试须显式开启守卫**才能验证其行为，
+	// 故 harness 默认给一个确定下限（具体用例可用 env.settings.Set 覆盖为 "" 关闭）。
+	env.settings.Set(SettingDeliveryMinAgentVersion, deliveryTestMinAgentVersion)
 	orch.SetCapabilityGuard(repository.NewAgentIdentityRepository(env.db), func() string {
 		if env.settings.minAgentVersion != nil {
 			return *env.settings.minAgentVersion
