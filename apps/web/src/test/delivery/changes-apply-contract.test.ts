@@ -8,12 +8,18 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   confirmChangeBatch,
   deleteChangeOrder,
+  fetchChangeOrder,
+  fetchChangeOrders,
+  fetchChangeTargets,
+  fetchRollbackRecords,
   finishRollbackChangeOrder,
   isApprovalTicket,
   resumeChangeOrder,
   rollbackChangeOrder,
+  rollbackChangeTargets,
   submitChangeOrder,
 } from '../../api/delivery-changes'
+import { approveApproval } from '../../api/approvals'
 import { createTestServer, useScenario } from './harness'
 
 const server = createTestServer()
@@ -95,5 +101,64 @@ describe('变更单申请动作契约（202 票据 + 幂等键）', () => {
   it('票据缺失 approvalRequestId 时不被误判为详情（类型守卫按键判定）', () => {
     expect(isApprovalTicket({ id: 1, title: '变更单详情' } as never)).toBe(false)
     expect(isApprovalTicket(TICKET)).toBe(true)
+  })
+})
+
+// —— 返工：目标级子集回滚必须经**真实 devmock**（不 server.use 打桩）走完申请与批准 ——
+// 批 1 的教训：用 server.use 覆盖端点会让「演示模式实际按整单执行」这类偏差被完全掩盖。
+describe('目标级子集回滚的演示模式闭环（不经打桩）', () => {
+  /** 找一个已完成且有 ≥2 台可回滚（曾推送）目标的种子单 */
+  async function completedOrderWithRollbackTargets(): Promise<{ orderId: number; rows: { serverId: string }[] }> {
+    const list = await fetchChangeOrders({ status: 'completed', pageSize: 50 })
+    for (const summary of list.items) {
+      const page = await fetchChangeTargets(summary.id, { page: 1, pageSize: 50 })
+      const eligible = page.items.filter((row) => row.pushedAt !== null)
+      if (eligible.length >= 2) {
+        return { orderId: summary.id, rows: eligible.map((row) => ({ serverId: row.serverId })) }
+      }
+    }
+    throw new Error('种子缺少「已完成且 ≥2 台可回滚目标」的变更单')
+  }
+
+  it('批准后只有选中目标被回滚，未选中目标与单主状态都不动', async () => {
+    useScenario('normal')
+    const { orderId, rows } = await completedOrderWithRollbackTargets()
+    const picked = rows[0].serverId
+    const untouched = rows.slice(1).map((row) => row.serverId)
+
+    const ticket = await rollbackChangeTargets(orderId, [picked], '只回滚一台', 'key-subset-real')
+    expect(ticket.approvalRequestId).toBeTruthy()
+    // 申请阶段零副作用：单主状态不变、目标回滚态未写
+    expect((await fetchChangeOrder(orderId)).status).toBe('completed')
+    const beforeApproval = await fetchChangeTargets(orderId, { page: 1, pageSize: 50 })
+    expect(beforeApproval.items.every((row) => row.rollbackStatus === null)).toBe(true)
+
+    await approveApproval(ticket.approvalRequestId)
+
+    const after = await fetchChangeTargets(orderId, { page: 1, pageSize: 50 })
+    const byId = new Map(after.items.map((row) => [row.serverId, row]))
+    expect(byId.get(picked)?.rollbackStatus).toBe('rolled_back')
+    for (const serverId of untouched) {
+      expect(byId.get(serverId)?.rollbackStatus).toBeNull()
+    }
+    // 子集回滚不改单主状态，且被回滚台的交付版本被清空（演示模式可复现「回滚后回退显示」）
+    expect((await fetchChangeOrder(orderId)).status).toBe('completed')
+    expect(byId.get(picked)?.deliveredVersion).toBeNull()
+  })
+
+  it('全选（覆盖全部可回滚目标）按整单回滚执行：全部目标回滚、单收口并落整单记录', async () => {
+    useScenario('normal')
+    const { orderId, rows } = await completedOrderWithRollbackTargets()
+    const ticket = await rollbackChangeTargets(orderId, rows.map((row) => row.serverId), '全选回滚', 'key-subset-all')
+    await approveApproval(ticket.approvalRequestId)
+
+    // 整单路径：单状态迁移并收口（演示模式无后台推进，整单一步到位），目标全量回滚
+    expect((await fetchChangeOrder(orderId)).status).toBe('rolled_back')
+    const after = await fetchChangeTargets(orderId, { page: 1, pageSize: 50 })
+    expect(after.items.every((row) => row.rollbackStatus === 'rolled_back')).toBe(true)
+    // 记录里落的是**整单**动作且标注已回退配置——与子集动作可区分
+    const records = await fetchRollbackRecords(orderId)
+    expect(records.items[0].kind).toBe('order')
+    expect(records.items[0].configRolledBack).toBe(true)
   })
 })

@@ -95,6 +95,18 @@ export interface ChangeRollbackRecordTarget {
   error: string | null
 }
 
+/**
+ * 目标分页响应（/change-orders/{id}/targets）。
+ * `rollbackEligibleCount` 是本单**可回滚目标数**（曾覆盖磁盘 = pushedAt 非空），与 `total` 不是一回事：
+ * total 含从未推送的目标。界面「全选等价整单回滚」的判定基数必须用它——用 total 会在「存在未推送台」时
+ * 把全覆盖误判成子集（界面说「配置不回退」而后端按整单执行），按批筛选时又反之。
+ */
+export interface ChangeTargetPage {
+  items: ChangeTarget[]
+  total: number
+  rollbackEligibleCount: number
+}
+
 /** 一次回滚动作记录（FR-270 / FR-271）：整单 / 子集 / 重试各一条 */
 export interface ChangeRollbackRecord {
   id: number

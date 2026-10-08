@@ -294,3 +294,75 @@ describe('目标级回滚与回滚预检', () => {
     expect(screen.getByText(/失败原因：备份不存在，无法文件回滚/)).toBeInTheDocument()
   })
 })
+
+// —— 返工：全选判定必须以「可回滚目标数」（曾推送）为基数，不能用 total ——
+
+describe('全选判定基数（可回滚口径）', () => {
+  const target = (serverId: string, batchNo: number, pushed: boolean) => ({
+    serverId,
+    batchNo,
+    status: 'activated' as const,
+    pushedAt: pushed ? '2026-07-16T07:00:00Z' : null,
+    activatedAt: pushed ? '2026-07-16T07:05:00Z' : null,
+    changedFileCount: 3,
+    skippedFileCount: 0,
+    backupPresent: true,
+    error: null,
+    rollbackStatus: null,
+    rollbackError: null,
+    deliveredVersion: null,
+  })
+
+  it('含未推送台时：勾满可勾选目标即等价整单（提示含配置回退），与后端 eligible 口径一致', async () => {
+    useScenario('normal')
+    server.use(
+      http.get('*/admin/v2/change-orders/:id/targets', () =>
+        HttpResponse.json({
+          // t-3 从未推送：计入 total，但不可勾选、也不计入可回滚数
+          items: [target('t-1', 1, true), target('t-2', 1, true), target('t-3', 2, false)],
+          total: 3,
+          rollbackEligibleCount: 2,
+        }),
+      ),
+    )
+    renderPage(<TargetStatusWall orderId={9002} orderStatus="completed" />)
+
+    const table = await screen.findByRole('table')
+    fireEvent.click(within(table).getByRole('checkbox', { name: 't-1' }))
+    fireEvent.click(within(table).getByRole('checkbox', { name: 't-2' }))
+    // 未推送台不可勾选（disabled）
+    expect(within(table).getByRole('checkbox', { name: 't-3' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /整单回滚（已全选）/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /整单回滚（已全选）/ }))
+    expect(await screen.findByText(/已全选全部可回滚目标/)).toBeInTheDocument()
+  })
+
+  it('按批筛选勾满该批：仍按子集执行（提示配置不回退），不得因本页勾满而误判整单', async () => {
+    useScenario('normal')
+    server.use(
+      http.get('*/admin/v2/change-orders/:id/targets', ({ request }) => {
+        const batch = new URL(request.url).searchParams.get('batch')
+        const all = [target('t-1', 1, true), target('t-2', 1, true), target('t-3', 2, true)]
+        const items = batch === null ? all : all.filter((row) => String(row.batchNo) === batch)
+        return HttpResponse.json({ items, total: all.length, rollbackEligibleCount: all.length })
+      }),
+    )
+    renderPage(
+      <TargetStatusWall orderId={9003} orderStatus="completed" batches={[1, 2]} />,
+    )
+
+    const table = await screen.findByRole('table')
+    // 先筛到第 1 批（2 台），再勾满本批
+    fireEvent.change(screen.getByLabelText('批次'), { target: { value: '1' } })
+    await waitFor(() => {
+      expect(within(table).queryByText('t-3')).not.toBeInTheDocument()
+    })
+    fireEvent.click(within(table).getByRole('checkbox', { name: 't-1' }))
+    fireEvent.click(within(table).getByRole('checkbox', { name: 't-2' }))
+    expect(screen.getByRole('button', { name: /^回滚选中目标$/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^回滚选中目标$/ }))
+    expect(await screen.findByText(/本次不回退配置版本/)).toBeInTheDocument()
+  })
+})

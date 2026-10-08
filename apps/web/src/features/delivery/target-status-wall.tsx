@@ -70,6 +70,9 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
 
   const items = query.data?.items ?? []
   const total = query.data?.total ?? 0
+  // 可回滚目标数（曾推送）：全选判定的基数。用 total 判会在「存在未推送台」时把全覆盖误判成子集
+  // （界面说「配置不回退」而后端按整单执行，语义相反），按批筛选时又反之。
+  const eligibleCount = query.data?.rollbackEligibleCount ?? 0
   const failedCount = items.filter((row) => row.status === 'failed').length
   const rollbackFailedCount = items.filter((row) => row.rollbackStatus === 'failed').length
 
@@ -83,8 +86,9 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
     [items],
   )
   const allPageSelected = selectableOnPage.length > 0 && selectableOnPage.every((id) => selected.includes(id))
-  // 全选等价整单回滚（/spec §3.3）：勾满全部可回滚目标时按钮与提示都切到整单口径，避免按子集预期操作。
-  const allSelected = selected.length > 0 && selected.length === total
+  // 全选等价整单回滚（spec §3.3）：勾满**全部可回滚目标**（而非本页 total）时按钮与提示都切到整单口径。
+  // 基数用服务端给的 rollbackEligibleCount —— 与执行期 eligible 判定同源，界面明示才不会与后端相反。
+  const allSelected = selected.length > 0 && selected.length === eligibleCount
 
   const toggleOne = (serverId: string, checked: boolean) => {
     setSelected((prev) => (checked ? [...new Set([...prev, serverId])] : prev.filter((id) => id !== serverId)))

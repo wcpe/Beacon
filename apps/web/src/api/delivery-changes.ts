@@ -11,11 +11,9 @@ import type {
   ChangeOrderItem,
   ChangeOrderListResponse,
   ChangeSelector,
-  ChangeTarget,
   ConfigChangeInput,
   DeliveryApprovalTicket,
   FileDiffResponse,
-  Paged,
 } from '@beacon/contracts'
 
 import { ApiClientError, buildQuery, request } from './request'
@@ -42,6 +40,7 @@ export type {
   ChangeRollbackRecordTarget,
   ChangeSelector,
   ChangeTarget,
+  ChangeTargetPage,
   ChangeTargetStatus,
   ConfigChangeInput,
   DeliveredVersion,
@@ -54,6 +53,7 @@ export type {
 
 import type {
   ChangeRollbackRecordListResponse,
+  ChangeTargetPage,
   DeliveredVersionListResponse,
 } from '@beacon/contracts'
 
@@ -299,10 +299,7 @@ export interface ChangeTargetQuery {
   pageSize?: number
 }
 
-export function fetchChangeTargets(
-  id: number,
-  query: ChangeTargetQuery,
-): Promise<Paged<ChangeTarget>> {
+export function fetchChangeTargets(id: number, query: ChangeTargetQuery): Promise<ChangeTargetPage> {
   return request('GET', `/admin/v2/change-orders/${String(id)}/targets${buildQuery({ ...query })}`)
 }
 

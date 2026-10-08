@@ -735,7 +735,7 @@ export const delivery = {
         gateBy: '{{who}} at {{at}}',
         targetsTitle: 'Batch targets',
       },
-      // Per-server status wall (FR-254): rollout / rollback status, failure reason, backup marker
+      // 单服级状态墙（FR-254）：正推 / 回滚状态、失败原因与备份标记
       targets: {
         title: 'Per-server status',
         summary: '{{total}} target servers',
@@ -745,7 +745,7 @@ export const delivery = {
         noFailure: '—',
         backupPresent: 'Backup present',
         backupMissing: 'No backup',
-        // Selection and target-level rollback (FR-270)
+        // 勾选与目标级回滚（FR-270）
         selected: '{{count}} selected',
         selectAll: 'Select this page',
         clearSelection: 'Clear selection',
@@ -753,7 +753,7 @@ export const delivery = {
         rollbackSelectedAll: 'Full-order rollback (all selected)',
         selectHint: 'Select targets to roll back only their files (config versions are not rolled back)',
         noRollbackTarget: 'No rollback-eligible target in this order (targets never pushed files)',
-        // Current delivered version (FR-271)
+        // 当前交付版本（FR-271）
         deliveredVersion: 'Current delivered version',
         deliveredVersionNone: 'No delivery record',
         deliveredVersionUnknown: '—',
@@ -776,7 +776,7 @@ export const delivery = {
           failed: 'Rollback failed',
         },
       },
-      // Rollback action records (FR-270 / FR-271): who / when / why / how many / config rolled back / per-target result
+      // 回滚动作记录（FR-270 / FR-271）：谁 / 何时 / 为何 / 台数 / 是否回退配置 / 逐台结果
       rollbackRecords: {
         title: 'Rollback records',
         empty: 'No rollback action on this order yet',
@@ -1007,7 +1007,7 @@ export const delivery = {
       },
     },
   },
-  // Full-order rollback (features/delivery/order-rollback + rollback-dialog; shared by /changes and history)
+  // 回滚共享控件（features/delivery/order-rollback + rollback-dialog，/changes 与历史页共用）
   rollback: {
     action: 'Roll back order',
     title: 'Roll back order',
@@ -1024,7 +1024,7 @@ export const delivery = {
     info: 'Rollback: {{who}} at {{at}} · {{reason}}',
     progress: 'Rollback progress: rolled back {{done}} · rollback failed {{failed}} · not rolled back {{pending}}',
     progressNote: 'After residual failed targets are handled, "Finish rollback manually" closes the order.',
-    // Rollback precheck (FR-255r)
+    // 回滚预检（FR-255r）
     precheck: {
       title: 'Rollback precheck',
       allRollbackable: 'All targets can be rolled back from local backups.',
@@ -1033,7 +1033,7 @@ export const delivery = {
       unavailable: 'Precheck unavailable (target backup state could not be read). Check the backup markers on the per-server status wall first.',
       refreshing: 'Reading precheck…',
     },
-    // Target-level (subset) rollback (FR-270)
+    // 目标级（子集）回滚（FR-270）
     targets: {
       action: 'Roll back selected targets',
       title: 'Roll back selected targets',
@@ -1047,7 +1047,7 @@ export const delivery = {
       phraseLabel: 'Type "{{phrase}}" to confirm',
       phrase: 'rollback',
     },
-    // Retry (FR-262r)
+    // 回滚重试（FR-262r）
     retry: {
       action: 'Retry failed targets',
       title: 'Retry rollback of failed targets',

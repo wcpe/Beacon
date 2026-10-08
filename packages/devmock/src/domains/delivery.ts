@@ -1155,13 +1155,16 @@ export const deliveryHandlers: HttpHandler[] = [
         `目标 ${outOfScope.join('、')} 不在本单可回滚目标内（未启动或从未推送）`,
       )
     }
+    // 全选（覆盖全部可回滚目标）等价整单回滚：登记时不带 serverIds，批准后走整单副作用（含配置版本回退）。
+    // 这与真机同判定口径（真机执行期也回落整单路径），只是把分流提前到登记时刻。
+    const coversAll = selected.length === eligible.size
     const ticket = issueTicket(order, {
       operationKey: 'delivery.rollback',
       reason: body.reason,
-      safeSummary:
-        selected.length === eligible.size
-          ? `选中集合覆盖本单全部 ${String(eligible.size)} 台可回滚目标 → 等价整单回滚（含配置版本回退）`
-          : `目标级子集回滚变更单 #${String(order.id)}：${String(selected.length)} 台（仅文件，配置版本不回退）`,
+      ...(coversAll ? {} : { serverIds: selected }),
+      safeSummary: coversAll
+        ? `选中集合覆盖本单全部 ${String(eligible.size)} 台可回滚目标 → 等价整单回滚（含配置版本回退）`
+        : `目标级子集回滚变更单 #${String(order.id)}：${String(selected.length)} 台（仅文件，配置版本不回退）`,
     })
     return HttpResponse.json(ticket, { status: 202 })
   }),
