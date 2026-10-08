@@ -88,8 +88,20 @@ func (s *DeliveryOrchestrator) activateTarget(rt *orderRuntime, t *model.ChangeT
 	if rt.order.ActivationMethod == model.ActivationMethodRestart {
 		payload.ActivateTimeoutSec = rt.order.ActivateTimeoutSec
 	}
-	cmd := newDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryActivate, payload)
 	startedAt := s.now() // activating 起始锚点：restart 只认此刻之后接收的心跳批为回归（排除关服前残留）
+	// FR-263：生效命令重发幂等——已在途的同类型同单命令复用，不建第二条（重复 activate 会二次关服 / 二次回调）。
+	if existing, e := s.cmdRepo.FindActiveByTypeAndOrder(rt.nsCode, t.ServerID,
+		model.CommandTypeDeliveryActivate, rt.order.ID); e != nil {
+		slog.Error("交付编排查在途生效命令失败", "orderId", rt.order.ID, "serverId", t.ServerID, "错误", e)
+		return
+	} else if existing != nil {
+		// 命令已在途（控制面重启续跑）：补上内存快照与事件即可，不再下发。
+		t.Status = model.ChangeTargetStatusActivating
+		t.ActivatingStartedAt = &startedAt
+		s.emitTargetEvent(rt, t)
+		return
+	}
+	cmd := newDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryActivate, payload)
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		ok, e := s.repo.WithTx(tx).UpdateTargetCAS(t.ID, []string{model.ChangeTargetStatusPushed},
 			map[string]any{"status": model.ChangeTargetStatusActivating, "activating_started_at": startedAt})
@@ -290,6 +302,15 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 			}
 			if !ok {
 				continue // 已被并发推进（幂等护栏），跳过
+			}
+			// FR-263：命令重发幂等——控制面重启后重跑下发时，若该目标本单已有在途同类型命令则复用，
+			// 不建第二条（重复命令会让 agent 收到两条 push，产生二次备份 / 二次覆盖）。
+			if existing, e := cmdTx.FindActiveByTypeAndOrder(rt.nsCode, t.ServerID,
+				model.CommandTypeDeliveryPush, rt.order.ID); e != nil {
+				return e
+			} else if existing != nil {
+				dispatched = append(dispatched, t)
+				continue
 			}
 			cmd := newDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryPush,
 				deliveryPushPayload{OrderID: rt.order.ID, FileCount: fileCount, TotalBytes: totalBytes})

@@ -68,22 +68,26 @@
 
 - 新增运维设置 `delivery.min-agent-version`（默认 `0.29.0`，即 FR-165 数据面落地版本；空串 = 不校验）。
 - 新增纯函数 `deliveryAgentSupportsStreaming(version string, minVersion string) bool`：按 `.` 切分逐段数值比较，长度不等补 0；**空版本 → false**（旧 agent 未上报）；含非数字段（如 `1.4.0-rc.1`）取前缀数字段比较，非数字后缀不影响主版本判定。
-- 新增窄查询 `AgentIdentityRepository.FindVersionsByServerIDs(namespaceID uint, serverIDs []string) (map[string]string, error)`：一次批量取回，避免逐目标查库。
+- 新增窄查询 `AgentIdentityRepository.FindVersionsByServerIDs(namespaceID uint, serverIDs []string) (map[string]string, error)`：一次批量取回，避免逐目标查库。同键多行取 `status_changed_at` 最新一行；无身份行的服**不回键**（由调用方按「无版本 = 旧 agent」fail-closed 处理）。
 - 守卫挂点（**只读 `delivery_order_service.go` 与 orchestrator，最小改动**）：
-  - 启动：`prepareStart` 末尾校验 **全目标集 + 模板源**（源也要能上传）；
-  - 下发：`dispatchPending` / `activateTarget` / `dispatchRollback` 下发命令前校验该目标；
-  - 上传命令：`resolvePayloadPlan` 生成 upload 命令前校验模板源。
-  不通过 → 目标置 `failed` + `error` 写可读原因（启动期则整单拒绝启动并报错），**命令一条都不建**。
+  - 启动：`prepareStart` 内校验 **全目标集 + 模板源**（源也要能上传），不合格即**整单拒绝启动**；
+  - 下发：`dispatchPending` / `activateTarget` 下发命令前校验该目标，不合格就地置 `failed` + 写原因；
+  - 回滚：`dispatchRollback` 下发前校验，不合格落 `rollback_status=failed` + `rollback_error`（不动主状态）。
+  不通过时**命令一条都不建**。
+- **事务安全**：能力查询必须复用调用方事务连接（`capabilityGuard.withTx`）。审批适配器在「已开启事务」内启动变更单，守卫若另开连接，在单连接池（测试 / 受限部署）下会与外层事务互等死锁——这一条是实测踩到的，不是理论风险。
+- **为什么置 failed 而不是静默跳过**：不下发命令的目标若仍留 `pending`，推进器每轮重扫重试，运维只看到「卡住」；置 failed 并带原因才把「为什么没动」表达出来（与 ADR-0088 同族的可观测纪律）。
 - 与 ADR-0088 的关系：ADR-0088 的 `gracefulShutdownSupported` 是 **agent 进程内**对「关服原语是否实现」的自探测，只影响 restart 生效是否回执 success；本守卫是**控制面**对「agent 版本是否够新到认识流式交付命令」的前置判定，只影响是否下发。二者判定主体、时机、失败动作都不同，互不覆盖；同一台旧 agent 会先被本守卫拒（不下发），即便侥幸下发也会被 agent 侧能力探测拒（不回执 success）——双 fail-closed，不冲突。
 
 ### 3.3 跨端幂等语义（FR-263）
 
 > 与波次 A 的边界：ADR-0088 / spec §4.6.4 已规定「agent 侧同一条命令只发一条回执」，本条在控制面侧给出**被重复时的确定行为**，两端合起来才是完整契约。
 
-1. **命令重发（控制面重启）**：新增 `FindActiveByTypeAndOrder(ns, serverID, cmdType, orderID)`（按 payload `orderId` 应用层过滤的既有范式），下发前先查：已存在 pending/fetched 同键命令则**复用**不新建。落在下发路径的守卫位，不进 advance 主体逻辑。
+1. **命令重发（控制面重启）**：新增 `FindActiveByTypeAndOrder(ns, serverID, cmdType, orderID)`（按 payload `orderId` 应用层过滤的既有范式），`dispatchPending` / `activateTarget` / `dispatchRollback` 下发前先查：已存在 pending/fetched 同键命令则**复用**不新建。
+   - 只看**在途态**是刻意的：已 done/failed/expired 的历史命令不得阻拦下一轮下发，否则重试 / 回滚再下发会被历史命令永久挡住。
+   - 幂等键取「payload 内 orderId」而非加列：payload 是 TEXT JSON，用 SQL JSON 函数会破坏 DB 可移植（架构不变量 §4）；单服在途交付命令量级为个位数，全取后内存匹配代价可忽略。
 2. **重复 push / activate**：命令终态由推进器单点推进（`fetched → done/failed` CAS），重复回执必然 CAS 未命中；控制面**不改变**目标状态与计数，返回既有 `ErrCommandNotFound`，使 agent 侧能区分「回执被接受」与「重复被拒」。
-3. **result 重复回执**：`ReceiveResult` 在 CAS 未命中时返回明确错误（当前 `errOrCommand` 已返回 `ErrCommandNotFound`，本条补**专门测试锁定**：重复回执不改状态、不改 `result_detail`、不二次唤醒推进器）。
-4. **blob PUT 重传**：`persistBlob` 的秒传去重已覆盖「已 ready」；并发重传由 `placeBlobFile` 的 rename 去重覆盖；哈希不符的占位行由清理器回收。本条补测试锁定「同一内容并发 PUT N 次只落一份、均成功」。
+3. **result 重复回执**：`ReceiveResult` 在 CAS 未命中时返回明确错误（`ErrCommandNotFound`）。已锁定三条行为：不改命令状态、不改 `result_detail`（失败原因不得覆盖已落定的成功事实）、**不二次唤醒推进器**（唤醒是「回执落定」的副产物，不是「收到回执」的副产物）。
+4. **blob PUT 重传**：`persistBlob` 的秒传去重覆盖「已 ready」（不重写磁盘、mtime 不变）；并发重传由 `placeBlobFile` 的 rename 去重覆盖（同 sha 内容必然一致）；哈希不符的占位行由清理器回收。已锁定「同一内容并发 PUT 8 次只落一份、全部成功、字节一致」。
 
 ### 3.4 错误码
 
@@ -99,9 +103,9 @@
 ## 5. 任务拆分
 
 - [x] 新建本 spec（FR-261 / 264 / 263 合一）
-- [ ] FR-261：引用刷新调用点补全 + 孤儿回收 + 残留删文件 + MarkReady 行数校验（红→绿）
-- [ ] FR-264：版本比较纯函数 + 批量版本查询 + 启动/下发守卫（红→绿）
-- [ ] FR-263：命令重发复用 + 四类重复幂等测试锁定（红→绿）
+- [x] FR-261：引用刷新调用点补全 + 孤儿回收 + 残留删文件 + MarkReady 行数校验（红→绿）
+- [x] FR-264：版本比较纯函数 + 批量版本查询 + 启动/下发/回滚守卫（红→绿）
+- [x] FR-263：命令重发复用 + 四类重复幂等测试锁定（红→绿）
 - [ ] 文档同步：PRD 状态、本 spec、CHANGELOG
 
 ## 6. 验收标准

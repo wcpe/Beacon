@@ -143,6 +143,14 @@ func (s *DeliveryOrchestrator) dispatchRollback(rt *orderRuntime, t *model.Chang
 		s.failRollbackTarget(rt, t, unsupported)
 		return
 	}
+	// FR-263：回滚命令重发幂等——已在途的同类型同单命令复用，不建第二条（重复 rollback 会二次还原）。
+	if existing, e := s.cmdRepo.FindActiveByTypeAndOrder(rt.nsCode, t.ServerID,
+		model.CommandTypeDeliveryRollback, rt.order.ID); e != nil {
+		slog.Error("交付编排查在途回滚命令失败", "orderId", rt.order.ID, "serverId", t.ServerID, "错误", e)
+		return
+	} else if existing != nil {
+		return
+	}
 	payload := deliveryActivatePayload{OrderID: rt.order.ID, ActivationMethod: rt.order.ActivationMethod}
 	cmd := newDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryRollback, payload)
 	err := s.db.Transaction(func(tx *gorm.DB) error {
