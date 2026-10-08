@@ -195,6 +195,8 @@ class DeliveryCommandExecutor(
      * 执行推送计划：下载 → 备份 → 覆盖 / 删除 → 清临时目录，返回成功回执。
      *
      * 下载失败 / 备份失败抛 [DeliveryPushException]（各携脱敏原因）；覆盖阶段 IO 失败以 [IOException] 上抛。
+     * 临时目录**成功与失败都清**（FR-268）：失败时若留在盘上会随每次失败累积（下载半截的大文件尤其占地），
+     * 而同一次调用内的断点续传不受影响（部分文件在本次重试循环中即被复用）。
      */
     private fun executePush(
         orderId: Long,
@@ -203,12 +205,15 @@ class DeliveryCommandExecutor(
         val skipped = plan.count { it.kind == DeliveryFileOp.Kind.SKIP }
         val downloadWork = plan.filter { it.kind == DeliveryFileOp.Kind.ADD || it.kind == DeliveryFileOp.Kind.UPDATE }
         val tempDir = File(pipeline.tempRoot, orderId.toString())
-        val download = pipeline.downloader.downloadAll(downloadWork, tempDir)
-        if (!download.ok) throw DeliveryPushException(download.error)
-        val backupPresent = backup(orderId, plan)
-        val changed = pipeline.overwriter.apply(plan, tempDir)
-        cleanTemp(tempDir)
-        return DeliveryStageReport(PHASE_PUSH, STATUS_SUCCESS, changed, skipped, backupPresent, "")
+        try {
+            val download = pipeline.downloader.downloadAll(downloadWork, tempDir)
+            if (!download.ok) throw DeliveryPushException(download.error)
+            val backupPresent = backup(orderId, plan)
+            val changed = pipeline.overwriter.apply(plan, tempDir)
+            return DeliveryStageReport(PHASE_PUSH, STATUS_SUCCESS, changed, skipped, backupPresent, "")
+        } finally {
+            cleanTemp(tempDir)
+        }
     }
 
     /** 覆盖前备份工作集并机会式修剪保留；备份 IO 失败转 [DeliveryPushException]（未触碰任何原文件）。 */
@@ -411,6 +416,31 @@ class DeliveryCommandExecutor(
         if (!ok) adapter.warn("交付阶段回执失败（命令态不符 / 连接失败）：orderId=$orderId，phase=${report.phase}")
     }
 
+    /** 清理本单临时下载目录；删除失败仅记 warn（非关键路径，残留交由启动期清扫兜底）。 */
+    private fun cleanTemp(tempDir: File) {
+        if (!tempDir.exists()) return
+        if (!tempDir.deleteRecursively()) {
+            adapter.warn("交付临时目录清理未完全删除：${tempDir.absolutePath}")
+        }
+    }
+
+    /**
+     * 启动期清扫交付临时根下的遗留目录（FR-268）：进程刚起、无任何交付命令在跑，此刻残留的一律是上轮进程
+     * 崩溃 / 被杀 / 失败中断留下的（目录名为 orderId，对该轮进程已无意义）。
+     *
+     * **须在 async 线程调用**（删盘是阻塞 IO，绝不上 MC 主线程）；删除失败不静默——按项计数记 warn。
+     */
+    fun sweepStaleTemp() {
+        val stale = pipeline.tempRoot.listFiles().orEmpty()
+        if (stale.isEmpty()) return
+        val failed = stale.count { !it.deleteRecursively() }
+        if (failed > 0) {
+            adapter.warn("交付临时目录启动清扫未完全删除：失败=$failed，总数=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
+        } else {
+            adapter.info("交付临时目录启动清扫完成：删除=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
+        }
+    }
+
     /** 回执一条失败结果（计数归零、backupPresent=false），并记 error 级日志。 */
     private fun failResult(
         orderId: Long,
@@ -455,8 +485,3 @@ private class DeliveryPushException(
 
 /** 异常摘要（类名 + 消息，无凭据；上层再经控制面脱敏兜底）。 */
 private fun reasonOf(e: Exception): String = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}"
-
-/** 清理本单临时下载目录（推送成功后）。 */
-private fun cleanTemp(tempDir: File) {
-    if (tempDir.exists()) tempDir.deleteRecursively()
-}

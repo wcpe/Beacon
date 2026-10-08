@@ -428,7 +428,10 @@ object AgentAssembly {
                     overwriter = DeliveryOverwriter(resolver),
                     tempRoot = File(ctx.adapter.dataFolder(), DELIVERY_TMP_DIR),
                 )
-            DeliveryCommandExecutor(ctx.identity, ctx.apiClient, ctx.adapter, pipeline)
+            // 启动期清扫上轮进程遗留的交付临时目录（FR-268）：装配在插件启用期于主线程执行，删盘转异步。
+            DeliveryCommandExecutor(ctx.identity, ctx.apiClient, ctx.adapter, pipeline).also {
+                ctx.adapter.runAsync { it.sweepStaleTemp() }
+            }
         } else {
             null
         }

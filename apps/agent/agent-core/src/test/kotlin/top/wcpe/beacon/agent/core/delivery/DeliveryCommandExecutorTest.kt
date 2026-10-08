@@ -81,6 +81,18 @@ class DeliveryCommandExecutorTest {
     }
 
     @Test
+    fun `推送失败路径同样清理临时目录`() {
+        seedServerRoot()
+        // 下载持续失败：返回非 2xx，下载器重试上限后整体失败。
+        blob.onDownload = { _, _, _ -> BlobDownloadOutcome(500, 0L) }
+
+        executor(backupRoot = File(dataDir, "delivery-backups")).execute(pushCommand())
+
+        assertTrue(resultBodies.single().contains("status=failed"))
+        assertFalse(File(dataDir, "delivery-tmp/1").exists(), "失败路径也必须清理临时目录")
+    }
+
+    @Test
     fun `清单非 200 时失败原因保留状态码`() {
         val exec =
             executor(
@@ -150,6 +162,18 @@ class DeliveryCommandExecutorTest {
             "被拒命令应回执 failed 并给可读原因：$resultBodies",
         )
         assertTrue(resultBodies.any { it.contains("status=success") }, "原命令应照常完成：$resultBodies")
+    }
+
+    @Test
+    fun `启动清扫删除遗留临时目录`() {
+        val tempRoot = File(dataDir, "delivery-tmp")
+        DeliveryTestSupport.writeFile(tempRoot, "77/plugins/a.bin", "x".toByteArray())
+        DeliveryTestSupport.writeFile(tempRoot, "88/plugins/b.bin", "y".toByteArray())
+
+        executor(backupRoot = File(dataDir, "delivery-backups")).sweepStaleTemp()
+
+        assertFalse(File(tempRoot, "77").exists(), "上轮遗留临时目录应被清扫")
+        assertFalse(File(tempRoot, "88").exists(), "上轮遗留临时目录应被清扫")
     }
 
     @Test
