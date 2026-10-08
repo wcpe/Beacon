@@ -98,7 +98,9 @@
 
 ### 3.4 FR-265：内存释放与预热防呆
 
-- **统一终态释放出口**：观察窗缓冲与停滞观测都按单索引，故收敛到 `releaseTerminalMemory`（内部调 `clearObserve`），由**全部**终态出口调用——人工终止、确认末批、自动收单、人工结束回滚。逐个调用点补 `clearObserve` 既容易漏（人工结束回滚就漏了），也断言不出「全部出口都释放」。
+- **统一终态释放出口**：观察窗缓冲与停滞观测都按单索引，故收敛到 `releaseTerminalMemory`（内部调 `clearObserve`），由**全部**终态出口调用——人工终止、确认末批、自动收单、人工结束回滚。
+  - **结束回滚的释放必须挂在生产的 afterCommit 上**：`applyFinishRollback` 明写「供同包测试复用」，全仓只有测试调用；生产路径是 `executeDeliveryRollbackFinishInTx`，它此前返回 `nil` afterCommit。释放在测试入口上修好、生产路径照旧泄漏，等于病换个出口复发——故本函数返回 `func(){ orchestrator.releaseTerminalMemory(order.ID) }`（与确认批同款写法）。`releaseTerminalMemory` 只取 `observeMu` / `stallMu`、不取 `mu`，在 afterCommit 里调用安全。
+  - 逐个调用点补 `clearObserve` 既容易漏，也断言不出「全部出口都释放」；验收用例必须走 `registry.ExecuteInTx` + afterCommit 的生产路径，只测测试入口拦不住这类偏差。
 - **预热防呆只对触及相关字段的请求生效**：`validateObserveWindowCombination(order, touched)` 拒绝 `restart` + `unhealthyRateThresholdPercent > 0` + `observeWindowSec < 90` 的组合，错误文案点明「健康恶化熔断永不触发」；`touched` 为假（本次未动 `activationMethod` / `unhealthyRateThresholdPercent` / `observeWindowSec`）时跳过，避免存量短窗单变成死单（理由见 §7）。
 
 ## 4. UX / 交互
@@ -137,7 +139,7 @@
   14. `-race` 下「推进器推进」与「审批 afterCommit 清观察窗」并发跑同一单不报数据竞争（P0 回归）。
 - **FR-265**
   15. 自动收单（`rolling_back` → `rolled_back` 全自动出口）后释放观察窗缓冲与停滞观测；
-  16. 人工「结束回滚」同样是终态出口，收单后同样释放两者；
+  16. 人工「结束回滚」同样是终态出口：**经审批 worker 走 `registry.ExecuteInTx` + afterCommit 的生产路径**批准后，观察窗缓冲与停滞观测均被释放（只测 `applyFinishRollback` 不能算数）；
   17. `restart` + 健康恶化阈值 > 0 + 观察窗 60s → 编辑与创建均被拒；观察窗 90s（等于预热宽限）→ 放行；关闭健康恶化阈值或非 restart 生效方式 → 短窗放行；
   18. 存量短窗单（库内已带 `restart` + 30s）在未触及三字段时**仍可编辑**无关字段（改标题不被拒），但本次改观察窗 / 改成 `restart` 时冲突照样暴露。
 
