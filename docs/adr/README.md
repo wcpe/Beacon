@@ -73,7 +73,7 @@
 | [0067](0067-default-entry-v2-authority.md) | 小区默认入口真源收敛 v2 server.is_default_entry（取代 ADR-0031 存储决策） | 已接受 |
 | [0068](0068-asset-manifest-sync-protocol.md) | 文件资产清单上报协议（增量 delta + 摘要校准 + 全量分片兜底） | 已接受 |
 | [0069](0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md) | 交付数据面：控制面 sha256 内容寻址 blob 中转 + agent 流式传输端口（扩展 ADR-0005） | 已接受 |
-| [0070](0070-agent-graceful-shutdown-primitive.md) | agent 优雅关服平台原语（restart 生效靠宿主自启拉起，重申 ADR-0011 禁进程管理） | 已接受 |
+| [0070](0070-agent-graceful-shutdown-primitive.md) | agent 优雅关服平台原语（restart 生效靠宿主自启拉起，重申 ADR-0011 禁进程管理） | 已接受（决策部分）。**决策 2 的「先回执『开始生效』再关服」顺序描述被 [0088](0088-restart-activation-single-receipt-and-shutdown-capability.md) 取代**（其余决策仍有效） |
 | [0071](0071-config-gray-effectuation-model.md) | 变更单配置变更的灰度生效语义模型（模型 A：head=定稿非生效、pin 落后者到 from、配置域零改动） | 已接受 |
 | [0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) | 不可变 RC、GA 同 commit/同字节晋级与 N-1 背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
 | [0073](0073-standard-rc-ga-release-lifecycle.md) | 通用 RC/GA 生命周期与 GA-only 在线更新背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
@@ -91,6 +91,7 @@
 | [0085](0085-mcp-client-secret-direct.md) | MCP 端点接受客户端凭据直连（第二类长期凭据） | 已接受 |
 | [0086](0086-agent-self-declaration-narrow-write-surface.md) | agent 对业务插件开放「节点自声明」的窄写入面（只读边界内：容量 + 自定义键值标签） | 已接受（决策）；实现并入 FR-243 待排期。**决策 4 中「控制面只存不判 / 不进入调度决策」一条被 [0087](0087-scheduling-admission-scope-over-self-declared-labels.md) 取代**（其余决策仍有效）。增强 FR-227 / FR-228，不取代任何 ADR |
 | [0087](0087-scheduling-admission-scope-over-self-declared-labels.md) | 调度准入作用域读取节点自声明标签（取代 ADR-0086 决策 4 的「不进入调度决策」一条） | 已接受（决策）；实现并入 FR-244 待排期。增强 FR-243 / FR-227，不取代其他 ADR |
+| [0088](0088-restart-activation-single-receipt-and-shutdown-capability.md) | restart 生效的单次回执收敛与关服能力探测（取代 ADR-0070 决策 2 的回执顺序描述） | 已接受（决策）；实现并入 FR-266。增强 FR-171 / FR-266，不取代其他 ADR |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 
