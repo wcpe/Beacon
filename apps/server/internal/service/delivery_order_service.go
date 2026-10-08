@@ -100,10 +100,55 @@ func (s *DeliveryOrderService) SetObserveProvider(p changeObserveProvider) { s.o
 func (s *DeliveryOrderService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
 
 // DeliveryApprovalTicketView 是交付兼容审批入口返回的最小视图。
+// HTTP 面直出本结构体（键 operationKey）；MCP 侧经 mcpDeliveryTicketView 投影（既有键 operation，本项只加两键）。
 type DeliveryApprovalTicketView struct {
 	ApprovalRequestID string `json:"approvalRequestId"`
 	Status            string `json:"status"`
 	OperationKey      string `json:"operationKey"`
+	// OrderID 是票据归属的变更单号（六类交付申请恒有）。
+	OrderID uint `json:"orderId"`
+	// ImpactSummary 是创建申请时刻的影响摘要：即时读数，不写入冻结 payload、不随后续推进漂移。
+	ImpactSummary DeliveryImpactSummaryView `json:"impactSummary"`
+}
+
+// DeliveryImpactSummaryView 是交付申请票据的影响摘要（FR-249）。
+// 计数为 0 时保留 0 而不省略，便于 AI 稳定解析。
+type DeliveryImpactSummaryView struct {
+	TargetCount    int `json:"targetCount"`
+	BatchCount     int `json:"batchCount"`
+	PayloadFiles   int `json:"payloadFiles"`
+	PayloadConfigs int `json:"payloadConfigs"`
+}
+
+// deliveryImpactSummary 即时统计变更单的目标 / 批次 / 载荷计数，供新创建的交付申请票据返回。
+// 只读当前落库行（不解析 selector、不冻结），因此同一张单在不同时刻申请得到的是各自时刻的读数。
+func deliveryImpactSummary(repo *repository.ChangeOrderRepository, orderID uint) (DeliveryImpactSummaryView, error) {
+	var summary DeliveryImpactSummaryView
+	targetCounts, err := repo.CountTargetsByStatus(orderID)
+	if err != nil {
+		return DeliveryImpactSummaryView{}, err
+	}
+	for _, count := range targetCounts {
+		summary.TargetCount += int(count)
+	}
+	batches, err := repo.ListBatches(orderID)
+	if err != nil {
+		return DeliveryImpactSummaryView{}, err
+	}
+	summary.BatchCount = len(batches)
+	items, err := repo.ListItems(orderID)
+	if err != nil {
+		return DeliveryImpactSummaryView{}, err
+	}
+	for _, item := range items {
+		switch item.Kind {
+		case model.ChangeItemKindFileDiff:
+			summary.PayloadFiles++
+		case model.ChangeItemKindConfigChange:
+			summary.PayloadConfigs++
+		}
+	}
+	return summary, nil
 }
 
 // changeIllegalState 构造状态机非法迁移错误（409，message 对齐 devmock）。
@@ -411,6 +456,11 @@ func (s *DeliveryOrderService) requestApprovePending(id uint, reason string, pri
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
+	// 影响摘要在建申请前取，计数失败即整体失败——避免申请已建而票据缺摘要。
+	summary, err := deliveryImpactSummary(s.repo, order.ID)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
 	payload := map[string]any{
 		"orderId": id, "expectedStatus": order.Status, "snapshotHash": snapshotHash,
 		"operator": operator, "clientIP": clientIP,
@@ -430,6 +480,7 @@ func (s *DeliveryOrderService) requestApprovePending(id uint, reason string, pri
 	}
 	return DeliveryApprovalTicketView{
 		ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey,
+		OrderID: order.ID, ImpactSummary: summary,
 	}, nil
 }
 
@@ -446,6 +497,10 @@ func (s *DeliveryOrderService) RequestDelete(id uint, reason string, principal a
 	if order.Status != model.ChangeOrderStatusDraft {
 		return DeliveryApprovalTicketView{}, changeIllegalState(order.Status, "申请删除")
 	}
+	summary, err := deliveryImpactSummary(s.repo, order.ID)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
 	payload := map[string]any{"orderId": order.ID, "expectedStatus": order.Status, "reason": reason, "operator": operator, "clientIP": clientIP}
 	created, err := s.approval.Request(authz.Operation{Kind: authz.OperationDeliveryDraftDelete,
 		NamespaceID: &order.NamespaceID, Resource: model.TargetTypeChangeOrder,
@@ -454,7 +509,10 @@ func (s *DeliveryOrderService) RequestDelete(id uint, reason string, principal a
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
-	return DeliveryApprovalTicketView{ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey}, nil
+	return DeliveryApprovalTicketView{
+		ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey,
+		OrderID: order.ID, ImpactSummary: summary,
+	}, nil
 }
 
 // applyApprove 是统一审批适配器使用的领域状态迁移。

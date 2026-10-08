@@ -12,6 +12,13 @@
   - **门禁**：六个工具全部登记 `mcpToolCatalog`（`low`、`OperationKind` 留空、**不带 `AutomationOnly`**——该标记的真实语义是「仅 automation 可发现」，挂上即令 observer 不可见），走 `mcpAddTool` 唯一注册入口，既有覆盖测试自动守护新增项。
   - **测试**：两 profile 可见性（清单与真实注册两侧）、投影有界断言（逐字段键集合精确比对）与全链路可读 + 跨 namespace `orderId` 拒绝的负向用例。
 
+- **交付审批票据与 MCP 审批视图扩字段（FR-249）**：机器主体（AI）提交交付申请后只能拿到 `{approvalRequestId,status,operation}`——既不知道申请的是哪张变更单、也看不到影响面；申请被驳回或执行失败时同样只有状态，无从判断"为什么没成"。现按 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md) §3.6 补齐两侧契约。
+  - **票据补归属与影响面**：六类交付申请入口（提交 / 草稿删除 / 继续 / 批次确认 / 整单回滚 / 结束回滚）的 `202` 票据新增 `orderId` 与 `impactSummary` 对象 `{targetCount,batchCount,payloadFiles,payloadConfigs}`。摘要在**创建申请那一刻即时统计**（只读当前落库的 targets / batches / items 行，`file_diff` 与 `config_change` 分计），draft 阶段目标与批次尚未固化故两项为 0，计数为 0 时保留 0 而不省略键；**不写入冻结 payload**、不随后续推进漂移。
+  - **两侧同名同源**：HTTP 面直出结构体（既有键 `operationKey`）、MCP 侧投影（既有键 `operation`），两侧键名现状都不变，只同步新增后两键——MCP 投影不同步补键的话，AI 永远看不到归属单号。
+  - **审批视图拆两档**：`beacon.approvals.own.list` 保持轻量并补截断后的 `failureSummary` 与 `finishedAt`（列表一次可能回多行，故按 200 字符截断）；`own.get` 在轻量档之上补完整失败摘要、`rejectReason`、`decisionReason`、`approvedBy` 与 `decidedAt` / `approvedAt` / `executedAt` / `finishedAt` 四个时间点（有值即返、不组装数组）；`withdraw` / `approve` / `reject` 沿用轻量档。两档都**不投影**审批申请的 `impactSummary` / `safeSummary` 文本列——避免与票据的对象键同名两型。
+  - **隔离不变**：机器主体仍只可见自己创建的申请（服务端强制注入 `RequesterType` / `RequesterID`），新增负向用例锁定他人申请在列表不可见、详情一律拒绝且与"不存在"同形。
+  - **测试**：六类申请点逐类断言 `orderId` 与四项计数，并断言计数**未进**冻结 payload；MCP 协议路径实测 `beacon.delivery.order.submit` 的结构化输出带两键；列表 / 详情字段集合逐键锁定（含两档字段数）与主体隔离负向用例。
+
 ### 修复
 
 - **管理台提审必填原因与幂等键（FR-251）**：`/changes` 的两个「提交审批」入口（详情页生命周期动作、引导创建向导第 5 步）此前**既不携带请求体、也不携带 `Idempotency-Key` 头**调用 `POST /admin/v2/change-orders/{id}/submit`。真机上这必然失败，且失败方式很恶劣：后端 `RequestSubmit` 强制 reason 非空（缺则 `400 approval_reason_required`）；即便补上原因，建审批申请时还会校验幂等键（缺则 `400 INVALID_PARAM`），而 submit 是「先冻结状态、后建申请」两步非事务——**键校验失败发生在状态冻结之后**，单据会被永久卡在 `pending_approval` 且审批列表里查无对应申请（真机实测单 1 / 单 4 均已卡死，该死结由批 2 的 FR-259 收敛）。演示模式下 mock 两道都不校验，问题被完整掩盖。现在两处入口都先收集提审原因再提交：详情页复用既有高风险确认弹窗的原因输入（与驳回 / 终止同形，未填写时确认置灰），向导第 5 步新增必填「提审原因」字段（未填写时底部「提交审批」置灰）；提审时按 `randomId()`（非安全上下文可用的 UUID 生成器，与 API 密钥 / MCP 客户端先例一致）生成一次性幂等键随 `Idempotency-Key` 头发送，**同一提审意图重试复用同一键**（后端据此去重，换键会把重试变成新申请），弹窗关闭 / 向导重开即作废重来。原因与键一并进入审批申请与审计留痕。
