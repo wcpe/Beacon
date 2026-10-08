@@ -114,6 +114,11 @@ export const cluster = {
       notReported: '未上报',
       reasons: '不可调度原因',
       weightsRev: '权重版本',
+      // 当前交付版本（FR-271）：该服最近一条 activated 且未被回滚的交付记录
+      deliveredVersion: '当前交付版本',
+      deliveredVersionValue: '单 #{{orderId}} · {{title}} · {{at}}',
+      deliveredVersionNone: '无交付记录',
+      deliveredVersionUnknown: '—',
       level_healthy: '健康',
       level_degraded: '亚健康',
       level_unhealthy: '不健康',

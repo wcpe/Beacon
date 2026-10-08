@@ -745,11 +745,26 @@ export const delivery = {
         noFailure: '—',
         backupPresent: 'Backup present',
         backupMissing: 'No backup',
+        // Selection and target-level rollback (FR-270)
+        selected: '{{count}} selected',
+        selectAll: 'Select this page',
+        clearSelection: 'Clear selection',
+        rollbackSelected: 'Roll back selected targets',
+        rollbackSelectedAll: 'Full-order rollback (all selected)',
+        selectHint: 'Select targets to roll back only their files (config versions are not rolled back)',
+        noRollbackTarget: 'No rollback-eligible target in this order (targets never pushed files)',
+        // Current delivered version (FR-271)
+        deliveredVersion: 'Current delivered version',
+        deliveredVersionNone: 'No delivery record',
+        deliveredVersionUnknown: '—',
+        deliveredVersionHint: 'Order #{{orderId}} · {{title}} · {{at}}',
         columns: {
+          select: 'Select',
           serverId: 'Server ID',
           batch: 'Batch',
           status: 'Rollout status',
           rollback: 'Rollback status',
+          delivered: 'Delivered version',
           error: 'Failure reason',
           rollbackError: 'Rollback failure reason',
           backup: 'Backup',
@@ -760,6 +775,21 @@ export const delivery = {
           rolled_back: 'Rolled back',
           failed: 'Rollback failed',
         },
+      },
+      // Rollback action records (FR-270 / FR-271): who / when / why / how many / config rolled back / per-target result
+      rollbackRecords: {
+        title: 'Rollback records',
+        empty: 'No rollback action on this order yet',
+        kind: {
+          order: 'Full-order rollback',
+          targets: 'Target-level rollback',
+        },
+        meta: '{{who}} · {{at}} · {{count}} targets',
+        configRolledBack: 'Config versions rolled back',
+        configNotRolledBack: 'Config not rolled back',
+        targetLine: '{{serverId}}: {{result}}',
+        errorLine: 'Failure reason: {{error}}',
+        partialPrecheck: '{{total}} targets in total; precheck covers the first {{checked}}',
       },
       // Observation
       observe: {
@@ -994,6 +1024,40 @@ export const delivery = {
     info: 'Rollback: {{who}} at {{at}} · {{reason}}',
     progress: 'Rollback progress: rolled back {{done}} · rollback failed {{failed}} · not rolled back {{pending}}',
     progressNote: 'After residual failed targets are handled, "Finish rollback manually" closes the order.',
+    // Rollback precheck (FR-255r)
+    precheck: {
+      title: 'Rollback precheck',
+      allRollbackable: 'All targets can be rolled back from local backups.',
+      blocked: '{{count}} targets cannot be rolled back (backup missing) and will fail immediately:',
+      blockedList: '{{serverIds}}',
+      unavailable: 'Precheck unavailable (target backup state could not be read). Check the backup markers on the per-server status wall first.',
+      refreshing: 'Reading precheck…',
+    },
+    // Target-level (subset) rollback (FR-270)
+    targets: {
+      action: 'Roll back selected targets',
+      title: 'Roll back selected targets',
+      desc: 'Only the **files** of the selected targets are rolled back; **config versions are not rolled back**, and the order status stays unchanged.',
+      confirm: 'Confirm rollback of selected targets',
+      selectedCount: '{{count}} selected',
+      configNotice: 'Config versions are NOT rolled back this time — if the root cause is in config, use the full-order rollback instead.',
+      allSelectedNotice: 'All rollback-eligible targets are selected; submitting runs a full-order rollback (including config version rollback).',
+      reasonLabel: 'Rollback reason',
+      reasonPlaceholder: 'e.g. the version misbehaves in that zone',
+      phraseLabel: 'Type "{{phrase}}" to confirm',
+      phrase: 'rollback',
+    },
+    // Retry (FR-262r)
+    retry: {
+      action: 'Retry failed targets',
+      title: 'Retry rollback of failed targets',
+      desc: 'Only failed targets are re-dispatched; already-succeeded targets and config versions stay untouched.',
+      confirm: 'Confirm retry',
+      phrase: 'retry',
+      phraseLabel: 'Type "{{phrase}}" to confirm',
+      reasonLabel: 'Retry reason',
+      reasonPlaceholder: 'e.g. local backups restored, retry the rollback',
+    },
   },
   changesHistory: {
     title: 'Delivery history',

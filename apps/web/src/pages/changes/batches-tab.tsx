@@ -105,7 +105,11 @@ export default function BatchesTab({ order, onQuickAction }: BatchesTabProps) {
       />
 
       {/* 单服级状态墙：逐台正推 / 回滚状态、失败原因与备份标记（执行中 5s 自动刷新） */}
-      <TargetStatusWall orderId={order.id} orderStatus={order.status} />
+      <TargetStatusWall
+        orderId={order.id}
+        orderStatus={order.status}
+        batches={order.batches.map((batch) => batch.batchNo)}
+      />
 
       <ConfirmDialog
         open={confirmBatchNo !== null}

@@ -23,6 +23,8 @@ import {
 } from '@beacon/ui'
 
 import { fetchHealthDetail } from '../../api/cluster'
+import { fetchDeliveredVersions } from '../../api/delivery-changes'
+import { formatTime } from '../../features/delivery/format'
 import { inapplicableReasonOf } from './health-factor-reason'
 import { LEVEL_META, badgeOf } from './health-level'
 
@@ -39,7 +41,14 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
     queryFn: () => fetchHealthDetail(serverId ?? ''),
     enabled: serverId !== null,
   })
+  // 当前交付版本（FR-271）：该服最近一条 activated 且未被回滚的交付记录；与变更单目标列表同源取值。
+  const deliveredQuery = useQuery({
+    queryKey: ['delivered-versions', serverId],
+    queryFn: () => fetchDeliveredVersions([serverId ?? '']),
+    enabled: serverId !== null,
+  })
   const detail = query.data
+  const version = deliveredQuery.data?.items[0] ?? null
   const level = detail ? (LEVEL_META[detail.level] ?? 'warn') : 'warn'
 
   return (
@@ -117,6 +126,23 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
                     </ul>
                   </div>
                 )}
+
+                <div className="space-y-1.5">
+                  <p className="text-[12.5px] font-semibold text-ink-1">
+                    {t('cluster.servers.health.deliveredVersion')}
+                  </p>
+                  <p className="text-[12.5px] text-ink-2">
+                    {deliveredQuery.isError
+                      ? t('cluster.servers.health.deliveredVersionUnknown')
+                      : version == null
+                        ? t('cluster.servers.health.deliveredVersionNone')
+                        : t('cluster.servers.health.deliveredVersionValue', {
+                            orderId: version.orderId,
+                            title: version.orderTitle,
+                            at: formatTime(version.activatedAt),
+                          })}
+                  </p>
+                </div>
 
                 <div className="space-y-1.5">
                   <p className="text-[12.5px] font-semibold text-ink-1">{t('cluster.servers.health.factors')}</p>

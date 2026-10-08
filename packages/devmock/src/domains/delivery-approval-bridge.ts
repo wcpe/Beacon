@@ -20,6 +20,8 @@ export interface DeliveryApprovalSpec {
   resumeMode?: 'retry_failed' | 'skip_failed'
   /** 确认放行的批号（仅 delivery.confirm_batch 用） */
   batchNo?: number
+  /** 目标级（子集）回滚的选中目标（仅 delivery.rollback 且子集路径用，FR-270） */
+  serverIds?: string[]
 }
 
 interface BridgeState {

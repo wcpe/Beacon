@@ -744,11 +744,26 @@ export const delivery = {
         noFailure: '—',
         backupPresent: '已备份',
         backupMissing: '无备份',
+        // 勾选与目标级回滚（FR-270）
+        selected: '已选 {{count}} 台',
+        selectAll: '全选本页',
+        clearSelection: '清空勾选',
+        rollbackSelected: '回滚选中目标',
+        rollbackSelectedAll: '整单回滚（已全选）',
+        selectHint: '勾选目标后可只回滚这几台的文件（配置版本不回退）',
+        noRollbackTarget: '本单无可回滚目标（目标从未推送文件）',
+        // 当前交付版本（FR-271）
+        deliveredVersion: '当前交付版本',
+        deliveredVersionNone: '无交付记录',
+        deliveredVersionUnknown: '—',
+        deliveredVersionHint: '单 #{{orderId}} · {{title}} · {{at}}',
         columns: {
+          select: '选择',
           serverId: '子服',
           batch: '批次',
           status: '正推状态',
           rollback: '回滚状态',
+          delivered: '当前交付版本',
           error: '失败原因',
           rollbackError: '回滚失败原因',
           backup: '备份',
@@ -759,6 +774,21 @@ export const delivery = {
           rolled_back: '已回滚',
           failed: '回滚失败',
         },
+      },
+      // 回滚动作记录（FR-270 / FR-271）：谁 / 何时 / 为何 / 台数 / 是否回退配置 / 逐台结果
+      rollbackRecords: {
+        title: '回滚记录',
+        empty: '本单暂无回滚动作',
+        kind: {
+          order: '整单回滚',
+          targets: '目标级回滚',
+        },
+        meta: '{{who}} · {{at}} · 涉及 {{count}} 台',
+        configRolledBack: '配置版本已回退',
+        configNotRolledBack: '配置未回退',
+        targetLine: '{{serverId}}：{{result}}',
+        errorLine: '失败原因：{{error}}',
+        partialPrecheck: '共 {{total}} 台，预检仅覆盖前 {{checked}} 台',
       },
       // 观察窗
       observe: {
@@ -993,6 +1023,40 @@ export const delivery = {
     info: '回滚：{{who}} 于 {{at}} · {{reason}}',
     progress: '回滚进度：已回滚 {{done}} · 回滚失败 {{failed}} · 未回滚 {{pending}}',
     progressNote: '残留失败目标处理完后，可「人工结束回滚」收单。',
+    // 回滚预检（FR-255r）：动手前先说明哪些台根本回不了
+    precheck: {
+      title: '回滚预检',
+      allRollbackable: '全部目标均可文件回滚。',
+      blocked: '{{count}} 台因备份缺失不可文件回滚，将在回滚中直接判失败：',
+      blockedList: '{{serverIds}}',
+      unavailable: '预检不可用（未能读到目标备份状态），请先到单服状态墙确认备份标记。',
+      refreshing: '预检读取中…',
+    },
+    // 目标级（子集）回滚（FR-270）
+    targets: {
+      action: '回滚选中目标',
+      title: '回滚选中目标',
+      desc: '只回滚选中目标的**文件**；**配置版本不会回退**，单主状态也不变。',
+      confirm: '确认回滚选中目标',
+      selectedCount: '已选 {{count}} 台',
+      configNotice: '本次不回退配置版本——若故障根因在配置，请改用整单回滚。',
+      allSelectedNotice: '已全选全部可回滚目标，提交后将按整单回滚执行（含配置版本回退）。',
+      reasonLabel: '回滚原因',
+      reasonPlaceholder: '例如：该小区版本启动异常',
+      phraseLabel: '请输入「{{phrase}}」以确认',
+      phrase: '回滚',
+    },
+    // 重试（FR-262r）：回滚失败目标可重试
+    retry: {
+      action: '重试失败目标',
+      title: '重试回滚失败目标',
+      desc: '只重推回滚失败的目标；已成功目标与配置版本都不动。',
+      confirm: '确认重试',
+      phrase: '重试',
+      phraseLabel: '请输入「{{phrase}}」以确认',
+      reasonLabel: '重试原因',
+      reasonPlaceholder: '例如：已补做本地备份，重试还原',
+    },
   },
   changesHistory: {
     title: '交付历史',

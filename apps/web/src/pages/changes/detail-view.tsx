@@ -32,7 +32,7 @@ import ConfirmDialog, { type ConfirmResult } from './confirm-dialog'
 import { randomId } from '../../lib/random-id'
 import ApprovalProgress from '../../features/delivery/approval-progress'
 import { useApprovalTicketFeedback } from '../../features/delivery/approval-ticket'
-import { OrderRollbackActions, RollbackBanner } from '../../features/delivery/order-rollback'
+import { OrderRollbackActions, RollbackBanner, RollbackRecordsSection } from '../../features/delivery/order-rollback'
 import { OrderStatusBadge } from '../../features/delivery/status-badges'
 import ItemsTab from './items-tab'
 import ImpactTab from './impact-tab'
@@ -145,8 +145,9 @@ export default function DetailView({ orderId }: DetailViewProps) {
             {/* 审批进度：本单关联的统一审批申请（状态 / 审批人 / 驳回理由） */}
             <ApprovalProgress orderId={orderId} />
 
-            {/* 回滚信息横幅 + 回滚中逐目标进度 */}
+            {/* 回滚信息横幅 + 回滚中逐目标进度 + 回滚动作记录（FR-271） */}
             <RollbackBanner order={order} />
+            <RollbackRecordsSection orderId={order.id} />
 
             {/* Tabs */}
             <Tabs defaultValue="items">
