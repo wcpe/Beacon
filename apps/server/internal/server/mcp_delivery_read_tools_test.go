@@ -278,7 +278,7 @@ func TestMCPDeliveryReadProjectionsAreBounded(t *testing.T) {
 	}
 	assertExactKeys(t, "targets.list 行", targetRows[0],
 		"serverId", "batchNo", "status", "rollbackStatus", "error", "rollbackError",
-		"backupPresent", "changedFileCount", "skippedFileCount", "pushedAt", "activatedAt")
+		"backupPresent", "changedFileCount", "skippedFileCount", "pushedAt", "activatedAt", "deliveredVersion")
 
 	impact := mcpDeliveryImpactView(&service.ChangeImpactView{
 		Summary: service.ChangeImpactSummaryView{

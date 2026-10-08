@@ -58,6 +58,14 @@ export interface ChangeBatch {
   breakReason: string | null
 }
 
+/** 某服「当前交付版本」（FR-271）：该服最近一条 activated 且未被回滚的交付记录 */
+export interface DeliveredVersion {
+  serverId: string
+  orderId: number
+  orderTitle: string
+  activatedAt: string
+}
+
 /** 目标服 */
 export interface ChangeTarget {
   serverId: string
@@ -71,6 +79,50 @@ export interface ChangeTarget {
   error: string | null
   rollbackStatus: 'pending' | 'running' | 'rolled_back' | 'failed' | null
   rollbackError: string | null
+  /** 该服当前交付版本（FR-271）；无交付记录为 null */
+  deliveredVersion: DeliveredVersion | null
+}
+
+/** 交付版本批量查询响应（FR-271）：无交付记录的服不回行 */
+export interface DeliveredVersionListResponse {
+  items: DeliveredVersion[]
+}
+
+/** 回滚动作内逐台结果（FR-271） */
+export interface ChangeRollbackRecordTarget {
+  serverId: string
+  result: string
+  error: string | null
+}
+
+/**
+ * 目标分页响应（/change-orders/{id}/targets）。
+ * `rollbackEligibleCount` 是本单**可回滚目标数**（曾覆盖磁盘 = pushedAt 非空），与 `total` 不是一回事：
+ * total 含从未推送的目标。界面「全选等价整单回滚」的判定基数必须用它——用 total 会在「存在未推送台」时
+ * 把全覆盖误判成子集（界面说「配置不回退」而后端按整单执行），按批筛选时又反之。
+ */
+export interface ChangeTargetPage {
+  items: ChangeTarget[]
+  total: number
+  rollbackEligibleCount: number
+}
+
+/** 一次回滚动作记录（FR-270 / FR-271）：整单 / 子集 / 重试各一条 */
+export interface ChangeRollbackRecord {
+  id: number
+  kind: 'order' | 'targets'
+  reason: string
+  operator: string
+  /** 本次动作是否回退了配置版本；子集回滚与重试恒为 false（界面据此明示「配置未回退」） */
+  configRolledBack: boolean
+  targetCount: number
+  createdAt: string
+  targets: ChangeRollbackRecordTarget[]
+}
+
+/** 回滚动作记录列表响应（倒序） */
+export interface ChangeRollbackRecordListResponse {
+  items: ChangeRollbackRecord[]
 }
 
 /** 变更单（列表项） */

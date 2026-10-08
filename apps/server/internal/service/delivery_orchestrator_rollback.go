@@ -13,8 +13,12 @@ import (
 // 逐目标按 rollback_status 推进：pending 下发 delivery_rollback 令 agent 还原备份、running 判回执终态
 // （restart 生效方式还原后 agent 关服，复用心跳回归判定）。全回滚目标终态且无 failed→单自动 rolled_back，
 // 有 failed→停在 rolling_back 待人工 FinishRollback。
+//
+// rollback_status 为空的目标按「是否曾覆盖磁盘」穷尽归类（FR-262r）：从未覆盖 = 非回滚目标（显式计数）、
+// 曾覆盖 = 就地补回滚初态纳入本次推进。空值不落任何分支会让目标被静默丢弃，一旦单内回滚目标全部为空，
+// 自动收单条件 `terminal > 0` 永假、单永久停在 rolling_back。
 func (s *DeliveryOrchestrator) advanceRollingBack(rt *orderRuntime) {
-	pending, running, terminal, failed := 0, 0, 0, 0
+	pending, running, terminal, failed, notApplicable := 0, 0, 0, 0, 0
 	for i := range rt.targets {
 		t := &rt.targets[i]
 		switch t.RollbackStatus {
@@ -35,12 +39,64 @@ func (s *DeliveryOrchestrator) advanceRollingBack(rt *orderRuntime) {
 			failed++
 		case model.RollbackStatusRolledBack:
 			terminal++
+		default:
+			// 回滚态为空：从未覆盖磁盘 → 无文件可回滚；曾覆盖 → 补初态后立即纳入本次推进。
+			if t.PushedAt == nil {
+				notApplicable++
+				continue
+			}
+			switch s.initTargetRollback(rt, t) {
+			case rollbackInitPending:
+				s.dispatchRollback(rt, t)
+				pending++
+			case rollbackInitFailed:
+				failed++
+			default:
+				// 补初态未命中（库内状态已被他处改写）：本 tick 按在途处理，下 tick 按库内真值重判。
+				pending++
+			}
 		}
 	}
 	// 无在途且有回滚目标：全 rolled_back 自动完成整单；有 failed 则停待人工 FinishRollback。
-	if pending == 0 && running == 0 && failed == 0 && terminal > 0 {
-		s.autoFinishRollback(rt)
+	// 全部目标都是非回滚目标（无实际回滚工作）时同样收口，不再永久停留。
+	if pending == 0 && running == 0 && failed == 0 && (terminal > 0 || notApplicable > 0) {
+		s.autoFinishRollback(rt, notApplicable)
 	}
+}
+
+// rollbackInitResult 是回滚初态自愈结果（FR-262r）。
+type rollbackInitResult int
+
+const (
+	// rollbackInitCASMiss 补初态未命中：库内回滚态非空，交由下一 tick 按库内真值重判
+	rollbackInitCASMiss rollbackInitResult = iota
+	// rollbackInitPending 已补为 pending（有备份，可实际下发还原）
+	rollbackInitPending
+	// rollbackInitFailed 已补为 failed（无备份，无法文件回滚）
+	rollbackInitFailed
+)
+
+// initTargetRollback 为曾覆盖磁盘但回滚态为空的目标就地补回滚初态并更新快照（FR-262r），
+// 返回补态结果；无备份目标直接判 failed（与整单回滚预检 §4.7.2 step1 同口径）。
+func (s *DeliveryOrchestrator) initTargetRollback(rt *orderRuntime, t *model.ChangeTarget) rollbackInitResult {
+	ok, err := s.repo.InitTargetRollbackIfEmpty(t.ID, t.BackupPresent, rollbackBackupMissingReason)
+	if err != nil {
+		slog.Error("交付编排补目标回滚初态失败", "targetId", t.ID, "错误", err)
+		return rollbackInitCASMiss
+	}
+	if !ok {
+		return rollbackInitCASMiss
+	}
+	if !t.BackupPresent {
+		t.RollbackStatus = model.RollbackStatusFailed
+		t.RollbackError = rollbackBackupMissingReason
+		s.emitTargetEvent(rt, t)
+		return rollbackInitFailed
+	}
+	t.RollbackStatus = model.RollbackStatusPending
+	t.RollbackError = ""
+	s.emitTargetEvent(rt, t)
+	return rollbackInitPending
 }
 
 // dispatchRollback 下发回滚命令（rollback_status pending→running + delivery_rollback 命令，一事务原子），提交后唤醒 agent。
@@ -144,8 +200,9 @@ func (s *DeliveryOrchestrator) rollbackRestartTimeout(rt *orderRuntime, t *model
 	s.failRollback(rt, t, "回滚重启后 activateTimeoutSec 内心跳未回归（宿主未拉起进程或启动过慢）")
 }
 
-// autoFinishRollback 全回滚目标 rolled_back 时自动收单（rolling_back→rolled_back + 系统审计）；有 failed 不走此路径（待人工）。
-func (s *DeliveryOrchestrator) autoFinishRollback(rt *orderRuntime) {
+// autoFinishRollback 无在途回滚目标时自动收单（rolling_back→rolled_back + 系统审计）；有 failed 不走此路径（待人工）。
+// notApplicable 为「从未覆盖磁盘、无文件可回滚」的目标数，记入审计便于区分「全回滚成功」与「本就无回滚工作」。
+func (s *DeliveryOrchestrator) autoFinishRollback(rt *orderRuntime, notApplicable int) {
 	now := s.now()
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		ok, e := s.repo.WithTx(tx).UpdateStatusCAS(rt.order.ID, []string{model.ChangeOrderStatusRollingBack},
@@ -154,7 +211,7 @@ func (s *DeliveryOrchestrator) autoFinishRollback(rt *orderRuntime) {
 			return errOrSkip(e, ok)
 		}
 		return s.writeOrchestratorAudit(tx, rt.nsCode, "system", "", model.ActionDeliveryOrderRollbackFinish, rt.order.ID,
-			map[string]any{"orderId": rt.order.ID, "auto": true})
+			map[string]any{"orderId": rt.order.ID, "auto": true, "notApplicableCount": notApplicable})
 	})
 	if err != nil {
 		if err != errCASSkip {
@@ -164,6 +221,58 @@ func (s *DeliveryOrchestrator) autoFinishRollback(rt *orderRuntime) {
 	}
 	rt.order.Status = model.ChangeOrderStatusRolledBack
 	s.emitOrderEvent(rt)
+}
+
+// advanceTargetRollbacks 推进「目标级（子集）回滚」目标（FR-270）：子集回滚**不改单主状态**，
+// 故这些单不会被按状态筛选的活动单列表选中，必须单独扫描——按「目标是否处于回滚推进态」定位单，
+// 逐台复用整单回滚同一套 dispatchRollback / reconcileRollback（同一命令类型、同一心跳回归判定）。
+// 与整单回滚的互斥：扫描排除 rolling_back 单（见仓库查询），同一目标不会被两条路径同时下发。
+// 不做自动收单——单可能长期停在 completed 而个别目标在回滚，收口是目标级的事，记录里逐台可见。
+func (s *DeliveryOrchestrator) advanceTargetRollbacks() {
+	orders, err := s.repo.ListOrdersWithPendingTargetRollback()
+	if err != nil {
+		slog.Error("交付编排装载目标级回滚单失败", "错误", err)
+		return
+	}
+	for i := range orders {
+		rt, e := s.loadOrderRuntime(&orders[i])
+		if e != nil {
+			slog.Error("交付编排装载目标级回滚单快照失败", "orderId", orders[i].ID, "错误", e)
+			continue
+		}
+		for j := range rt.targets {
+			t := &rt.targets[j]
+			switch t.RollbackStatus {
+			case model.RollbackStatusPending:
+				s.dispatchRollback(rt, t)
+			case model.RollbackStatusRunning:
+				s.reconcileRollback(rt, t)
+			}
+		}
+	}
+}
+
+// —— 回滚动作记录（FR-270 / FR-271，spec delivery-rollback-resilience §3.1 / §3.6）——
+
+// rollbackRecordTargetRows 由目标快照生成逐台结果行：初始结果取目标当时的真实回滚态
+// （备份缺失在入态时已是 failed，故无需二次回填初始结果）。
+func rollbackRecordTargetRows(targets []*model.ChangeTarget) []model.ChangeRollbackRecordTarget {
+	rows := make([]model.ChangeRollbackRecordTarget, 0, len(targets))
+	for _, t := range targets {
+		rows = append(rows, model.ChangeRollbackRecordTarget{
+			ServerID: t.ServerID, Result: t.RollbackStatus, Error: t.RollbackError,
+		})
+	}
+	return rows
+}
+
+// recordRollbackTargetResult 把某台目标的终态结果写回**它所属那次回滚动作**的逐台行（FR-271）。
+// 归属定位见仓库方法注释；本写回在推进事务**之外**执行（推进本身走 CAS 逐台提交，不为留痕改写事务边界），
+// 故写失败不阻断推进（记录是留痕，不是推进前置条件），仅告警——否则一次记录写失败会卡住真实回滚。
+func (s *DeliveryOrchestrator) recordRollbackTargetResult(orderID uint, serverID, result, reason string) {
+	if err := s.repo.UpdateRollbackRecordTargetResult(orderID, serverID, result, reason); err != nil {
+		slog.Warn("交付编排写回滚动作逐台结果失败", "orderId", orderID, "serverId", serverID, "错误", err)
+	}
 }
 
 // —— 回滚状态 CAS（rollback_status 独立于主状态，就地更新快照）——
@@ -183,6 +292,13 @@ func (s *DeliveryOrchestrator) casRollback(rt *orderRuntime, t *model.ChangeTarg
 		return false
 	}
 	t.RollbackStatus = to
+	reason := ""
+	if raw, has := extra["rollback_error"]; has {
+		reason, _ = raw.(string)
+	}
+	t.RollbackError = reason
+	// 逐台结果写回本次动作记录：状态墙看「现在」，记录看「每次动作各自的结果」（FR-271）。
+	s.recordRollbackTargetResult(rt.order.ID, t.ServerID, to, reason)
 	s.emitTargetEvent(rt, t)
 	return true
 }

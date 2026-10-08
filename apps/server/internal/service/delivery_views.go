@@ -161,12 +161,56 @@ type ChangeTargetView struct {
 	Error            *string    `json:"error"`
 	RollbackStatus   *string    `json:"rollbackStatus"`
 	RollbackError    *string    `json:"rollbackError"`
+	// 该服当前交付版本（FR-271）：该服最近一条 activated 且未被回滚的交付记录；无记录为 null
+	DeliveredVersion *DeliveredVersionView `json:"deliveredVersion"`
+}
+
+// DeliveredVersionView 是某服「当前交付版本」投影（FR-271）：单号 / 单标题 / 生效时间。
+type DeliveredVersionView struct {
+	ServerID    string    `json:"serverId"`
+	OrderID     uint      `json:"orderId"`
+	OrderTitle  string    `json:"orderTitle"`
+	ActivatedAt time.Time `json:"activatedAt"`
+}
+
+// DeliveredVersionListResponse 是交付版本批量查询响应（键名与其它列表端点一致，items 非 null）。
+type DeliveredVersionListResponse struct {
+	Items []DeliveredVersionView `json:"items"`
+}
+
+// ChangeRollbackRecordView 是一次回滚动作记录（FR-270 / FR-271）：谁 / 何时 / 为何 / 台数 / 是否回退配置 / 逐台结果。
+type ChangeRollbackRecordView struct {
+	ID               uint                             `json:"id"`
+	Kind             string                           `json:"kind"`
+	Reason           string                           `json:"reason"`
+	Operator         string                           `json:"operator"`
+	ConfigRolledBack bool                             `json:"configRolledBack"`
+	TargetCount      int                              `json:"targetCount"`
+	CreatedAt        time.Time                        `json:"createdAt"`
+	Targets          []ChangeRollbackRecordTargetView `json:"targets"`
+}
+
+// ChangeRollbackRecordTargetView 是回滚动作内的逐台结果。
+type ChangeRollbackRecordTargetView struct {
+	ServerID string  `json:"serverId"`
+	Result   string  `json:"result"`
+	Error    *string `json:"error"`
+}
+
+// ChangeRollbackRecordListResponse 是回滚动作记录列表响应（倒序，items 非 null）。
+type ChangeRollbackRecordListResponse struct {
+	Items []ChangeRollbackRecordView `json:"items"`
 }
 
 // ChangeTargetPageView 是目标分页响应（对齐 contracts Paged<ChangeTarget>）。
 type ChangeTargetPageView struct {
 	Items []ChangeTargetView `json:"items"`
 	Total int64              `json:"total"`
+	// 本单可回滚目标总数（曾覆盖磁盘 = pushed_at 非空，spec §4.7.2）。
+	// 与 total 不是一回事：total 含从未推送的目标。前端「全选等价整单回滚」的判定必须以本字段为基数——
+	// 用 total 判会在「存在未推送台」时把全覆盖误判成子集（界面说「配置不回退」而后端按整单执行，语义相反），
+	// 按批筛选时又会把子集误判成整单。
+	RollbackEligibleCount int64 `json:"rollbackEligibleCount"`
 }
 
 // ChangeOrderDetailView 对齐 contracts ChangeOrderDetail（Summary + selector + items + 批次 + 计数）。
@@ -340,16 +384,60 @@ func changeBatchViews(batches []model.ChangeBatch) []ChangeBatchView {
 }
 
 // changeTargetViews 把目标实体批量映射为视图（batch_id → batch_no 经批次映射换算）。
-func changeTargetViews(targets []model.ChangeTarget, batchNoByID map[uint]int) []ChangeTargetView {
+// deliveredVersions 为各服当前交付版本（FR-271，键 = serverId），由批量读模型传入以避免逐行查库；缺失即不投影该键。
+func changeTargetViews(targets []model.ChangeTarget, batchNoByID map[uint]int,
+	deliveredVersions map[string]model.CurrentDeliveredVersion) []ChangeTargetView {
 	views := make([]ChangeTargetView, 0, len(targets))
 	for i := range targets {
 		t := &targets[i]
-		views = append(views, ChangeTargetView{
+		view := ChangeTargetView{
 			ServerID: t.ServerID, BatchNo: batchNoByID[t.BatchID], Status: t.Status,
 			PushedAt: t.PushedAt, ActivatedAt: t.ActivatedAt,
 			ChangedFileCount: t.ChangedFileCount, SkippedFileCount: t.SkippedFileCount,
 			BackupPresent: t.BackupPresent, Error: nilIfEmpty(t.Error),
 			RollbackStatus: nilIfEmpty(t.RollbackStatus), RollbackError: nilIfEmpty(t.RollbackError),
+		}
+		if version, ok := deliveredVersions[t.ServerID]; ok {
+			view.DeliveredVersion = &DeliveredVersionView{
+				ServerID: version.ServerID, OrderID: version.OrderID,
+				OrderTitle: version.OrderTitle, ActivatedAt: version.ActivatedAt,
+			}
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+// deliveredVersionIndex 把「当前交付版本」列表按 serverId 建索引（视图映射用）。
+func deliveredVersionIndex(versions []model.CurrentDeliveredVersion) map[string]model.CurrentDeliveredVersion {
+	index := make(map[string]model.CurrentDeliveredVersion, len(versions))
+	for _, version := range versions {
+		index[version.ServerID] = version
+	}
+	return index
+}
+
+// changeRollbackRecordViews 把回滚动作记录与逐台结果组合成视图（FR-271）：
+// 一次动作一条，逐台结果按 record_id 归并，保持「哪些台 / 每台结果」在同一动作下可读。
+func changeRollbackRecordViews(records []model.ChangeRollbackRecord,
+	rows []model.ChangeRollbackRecordTarget) []ChangeRollbackRecordView {
+	targetsByRecord := make(map[uint][]ChangeRollbackRecordTargetView, len(records))
+	for _, row := range rows {
+		targetsByRecord[row.RecordID] = append(targetsByRecord[row.RecordID], ChangeRollbackRecordTargetView{
+			ServerID: row.ServerID, Result: row.Result, Error: nilIfEmpty(row.Error),
+		})
+	}
+	views := make([]ChangeRollbackRecordView, 0, len(records))
+	for i := range records {
+		record := &records[i]
+		targets := targetsByRecord[record.ID]
+		if targets == nil {
+			targets = []ChangeRollbackRecordTargetView{}
+		}
+		views = append(views, ChangeRollbackRecordView{
+			ID: record.ID, Kind: record.Kind, Reason: record.Reason, Operator: record.Operator,
+			ConfigRolledBack: record.ConfigRolledBack, TargetCount: record.TargetCount,
+			CreatedAt: record.CreatedAt, Targets: targets,
 		})
 	}
 	return views

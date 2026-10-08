@@ -591,7 +591,71 @@ func (s *DeliveryOrderService) Targets(id uint, q repository.ChangeTargetQuery) 
 	if err != nil {
 		return nil, err
 	}
-	return &ChangeTargetPageView{Items: changeTargetViews(targets, batchNoByID), Total: total}, nil
+	// 每行补该服「当前交付版本」（FR-271）：批量一次取齐，不逐行查库。
+	serverIDs := make([]string, 0, len(targets))
+	for i := range targets {
+		serverIDs = append(serverIDs, targets[i].ServerID)
+	}
+	versions, err := s.repo.FindCurrentDeliveredVersions(serverIDs)
+	if err != nil {
+		return nil, err
+	}
+	// 可回滚目标总数（曾推送）：前端「全选等价整单回滚」的判定基数，与服务端 eligible 口径同源。
+	eligibleCount, err := s.repo.CountTargetsToRollback(order.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &ChangeTargetPageView{
+		Items: changeTargetViews(targets, batchNoByID, deliveredVersionIndex(versions)), Total: total,
+		RollbackEligibleCount: eligibleCount,
+	}, nil
+}
+
+// DeliveredVersions 批量查各服当前交付版本（GET .../delivered-versions，FR-271）：
+// 服务器详情与目标列表同源取值。serverIds 去重后上限 100，避免一次查询无界放大。
+func (s *DeliveryOrderService) DeliveredVersions(serverIDs []string) (*DeliveredVersionListResponse, error) {
+	unique, err := normalizeServerIDs(serverIDs, deliveredVersionQueryLimit, deliveredVersionScope)
+	if err != nil {
+		return nil, err
+	}
+	versions, err := s.repo.FindCurrentDeliveredVersions(unique)
+	if err != nil {
+		return nil, err
+	}
+	// 无交付记录的服不回行（由调用方按「无交付记录」展示），避免把「查不到」伪装成一条空版本。
+	items := make([]DeliveredVersionView, 0, len(versions))
+	for _, version := range versions {
+		items = append(items, DeliveredVersionView{
+			ServerID: version.ServerID, OrderID: version.OrderID,
+			OrderTitle: version.OrderTitle, ActivatedAt: version.ActivatedAt,
+		})
+	}
+	return &DeliveredVersionListResponse{Items: items}, nil
+}
+
+// RollbackRecords 取某单全部回滚动作记录与逐台结果（GET .../rollback-records，FR-271）。
+func (s *DeliveryOrderService) RollbackRecords(id uint) (*ChangeRollbackRecordListResponse, error) {
+	order, err := s.requireOrder(id)
+	if err != nil {
+		return nil, err
+	}
+	records, err := s.repo.ListRollbackRecords(order.ID)
+	if err != nil {
+		return nil, err
+	}
+	recordIDs := make([]uint, 0, len(records))
+	for i := range records {
+		recordIDs = append(recordIDs, records[i].ID)
+	}
+	rows, err := s.repo.ListRollbackRecordTargets(recordIDs)
+	if err != nil {
+		return nil, err
+	}
+	views := changeRollbackRecordViews(records, rows)
+	if views == nil {
+		views = []ChangeRollbackRecordView{}
+	}
+	return &ChangeRollbackRecordListResponse{Items: views}, nil
 }
 
 // Observe 当前批观察窗数据（GET .../observe）：装配推进器后由其内存缓冲接真（当前批逐目标健康 / TPS / 告警序列，

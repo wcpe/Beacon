@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ServersPage from '../../pages/servers'
 import IdentityDetailSheet from '../../pages/servers/identity-detail-sheet'
+import { fetchDeliveredVersions } from '../../api/delivery-changes'
 import { createTestServer, renderPage, useScenario } from './harness'
 import { uuidFrom } from '@beacon/devmock/support'
 
@@ -206,10 +207,22 @@ describe('/servers 服务器页', () => {
 
     // 抽屉打开并加载因子分解内容
     expect(await screen.findByText('因子分解')).toBeInTheDocument()
+    // 交付区块（FR-271）：服务器详情显示该服「当前交付版本」，无交付记录时显式说明而非留空
+    expect(screen.getByText('当前交付版本')).toBeInTheDocument()
     // 加宽类已应用（jsdom 无布局，按既有约定锁类名断言）
     const content = document.querySelector('[data-slot="sheet-content"]')
     expect(content).not.toBeNull()
     expect((content as HTMLElement).className).toContain('max-w-[min(32rem,90vw)]')
+  })
+
+  it('交付版本批量查询端点与变更单路由同前缀不冲突（FR-271）', async () => {
+    useScenario('normal')
+    // delivered-versions 与 /change-orders/{id} 同前缀，若演示模式把前者当 {id} 匹配会 404 / 报「单不存在」。
+    const view = await fetchDeliveredVersions(['lobby-1', 'nope-1'])
+    expect(Array.isArray(view.items)).toBe(true)
+    // 无交付记录的服不回行（调用方据此区分「无记录」与「查出空版本」）
+    expect(view.items.every((item) => typeof item.orderId === 'number')).toBe(true)
+    expect(view.items.some((item) => item.serverId === 'nope-1')).toBe(false)
   })
 
   it('不适用因子区分「角色不适用」与「未上报」（FR-228 §4 接线）', async () => {

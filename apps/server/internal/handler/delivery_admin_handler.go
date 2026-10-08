@@ -219,6 +219,15 @@ func decodeReason(r *http.Request) string {
 	return body.Reason
 }
 
+// decodeJSONBody 解析必填结构的请求体：非法 JSON 返 400（不静默吞成空参数，
+// 否则「请求体写错」会被当成「没选目标」而给出误导性的拒绝原因）。
+func decodeJSONBody(r *http.Request, out any) error {
+	if err := json.NewDecoder(r.Body).Decode(out); err != nil {
+		return apperr.ErrInvalidParam
+	}
+	return nil
+}
+
 // Submit 处理 POST /admin/v2/change-orders/{id}/submit：冻结草稿并创建唯一的统一审批申请。
 func (h *DeliveryAdminHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "id")
@@ -359,6 +368,55 @@ func (h *DeliveryAdminHandler) ConfirmBatch(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	render.WriteJSON(w, http.StatusAccepted, ticket)
+}
+
+// RollbackTargets 处理 POST /admin/v2/change-orders/{id}/rollback/targets：创建目标级（子集）回滚审批申请（FR-270）。
+// 只回滚选中目标**的文件**、配置版本不回退——申请票据与界面均据此提示，避免调用方按整单回滚的风险预期决策。
+func (h *DeliveryAdminHandler) RollbackTargets(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	var body struct {
+		Reason    string   `json:"reason"`
+		ServerIDs []string `json:"serverIds"`
+	}
+	if err := decodeJSONBody(r, &body); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	ticket, err := h.orch.RequestRollbackTargets(id, body.ServerIDs, body.Reason, requestPrincipal(r),
+		r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, ticket)
+}
+
+// DeliveredVersions 处理 GET /admin/v2/change-orders/delivered-versions：批量查各服当前交付版本（FR-271）。
+// serverIds 逗号分隔、上限 100；无交付记录的服不回行（由调用方展示「无交付记录」）。
+func (h *DeliveryAdminHandler) DeliveredVersions(w http.ResponseWriter, r *http.Request) {
+	view, err := h.orders.DeliveredVersions(splitCSV(r.URL.Query().Get("serverIds")))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
+}
+
+// RollbackRecords 处理 GET /admin/v2/change-orders/{id}/rollback-records：回滚动作记录与逐台结果（FR-271）。
+func (h *DeliveryAdminHandler) RollbackRecords(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	view, err := h.orders.RollbackRecords(id)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
 }
 
 // Targets 处理 GET /admin/v2/change-orders/{id}/targets：目标分页（batch / status / serverId 过滤；未启动为空页）。

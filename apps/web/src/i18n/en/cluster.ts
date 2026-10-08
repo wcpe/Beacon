@@ -113,6 +113,11 @@ export const cluster = {
       notReported: 'Not reported',
       reasons: 'Not-schedulable reasons',
       weightsRev: 'Weights revision',
+      // 当前交付版本（FR-271）
+      deliveredVersion: 'Current delivered version',
+      deliveredVersionValue: 'Order #{{orderId}} · {{title}} · {{at}}',
+      deliveredVersionNone: 'No delivery record',
+      deliveredVersionUnknown: '—',
       level_healthy: 'Healthy',
       level_degraded: 'Degraded',
       level_unhealthy: 'Unhealthy',

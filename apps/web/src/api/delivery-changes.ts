@@ -11,11 +11,9 @@ import type {
   ChangeOrderItem,
   ChangeOrderListResponse,
   ChangeSelector,
-  ChangeTarget,
   ConfigChangeInput,
   DeliveryApprovalTicket,
   FileDiffResponse,
-  Paged,
 } from '@beacon/contracts'
 
 import { ApiClientError, buildQuery, request } from './request'
@@ -37,14 +35,26 @@ export type {
   ChangeOrderListResponse,
   ChangeOrderStatus,
   ChangeOrderSummary,
+  ChangeRollbackRecord,
+  ChangeRollbackRecordListResponse,
+  ChangeRollbackRecordTarget,
   ChangeSelector,
   ChangeTarget,
+  ChangeTargetPage,
   ChangeTargetStatus,
   ConfigChangeInput,
+  DeliveredVersion,
+  DeliveredVersionListResponse,
   DeliveryApprovalTicket,
   DeliveryImpactSummary,
   FileDiffResponse,
   PayloadState,
+} from '@beacon/contracts'
+
+import type {
+  ChangeRollbackRecordListResponse,
+  ChangeTargetPage,
+  DeliveredVersionListResponse,
 } from '@beacon/contracts'
 
 /** 事件端点响应：SSE 的轮询替代形态（一次性数组） */
@@ -249,6 +259,36 @@ export function finishRollbackChangeOrder(
   })
 }
 
+// ---- 目标级（子集）回滚（FR-270）：只回滚选中目标的文件，配置版本不回退 ----
+
+export function rollbackChangeTargets(
+  id: number,
+  serverIds: string[],
+  reason: string,
+  idempotencyKey: string,
+): Promise<DeliveryApprovalTicket> {
+  return request(
+    'POST',
+    `/admin/v2/change-orders/${String(id)}/rollback/targets`,
+    { reason, serverIds },
+    { headers: { 'Idempotency-Key': idempotencyKey } },
+  )
+}
+
+// ---- 回滚动作记录（FR-271）与当前交付版本（FR-271）----
+
+export function fetchRollbackRecords(id: number): Promise<ChangeRollbackRecordListResponse> {
+  return request('GET', `/admin/v2/change-orders/${String(id)}/rollback-records`)
+}
+
+/** 批量查各服当前交付版本：serverIds 上限 100，无记录的服不回行（由调用方展示「无交付记录」） */
+export function fetchDeliveredVersions(serverIds: string[]): Promise<DeliveredVersionListResponse> {
+  return request(
+    'GET',
+    `/admin/v2/change-orders/delivered-versions${buildQuery({ serverIds: serverIds.join(',') })}`,
+  )
+}
+
 // ---- 目标分页（批次 / 状态 / serverId 过滤）----
 
 export interface ChangeTargetQuery {
@@ -259,10 +299,7 @@ export interface ChangeTargetQuery {
   pageSize?: number
 }
 
-export function fetchChangeTargets(
-  id: number,
-  query: ChangeTargetQuery,
-): Promise<Paged<ChangeTarget>> {
+export function fetchChangeTargets(id: number, query: ChangeTargetQuery): Promise<ChangeTargetPage> {
   return request('GET', `/admin/v2/change-orders/${String(id)}/targets${buildQuery({ ...query })}`)
 }
 

@@ -729,6 +729,10 @@ func registerV2DeliveryAdminRoutes(r chi.Router, h Handlers) {
 	// 整单回滚（FR-167，spec §4.8.1 高级：权限 + 原因 + 高摩擦确认）：显式挂 requireFullRole 挡 readonly。
 	r.With(requireFullRole).Post("/change-orders/{id}/rollback", h.Delivery.Rollback)
 	r.With(requireFullRole).Post("/change-orders/{id}/rollback/finish", h.Delivery.RollbackFinish)
+	// 目标级（子集）回滚（FR-270）与回滚记录 / 交付版本读模型（FR-271）。
+	r.With(requireFullRole).Post("/change-orders/{id}/rollback/targets", h.Delivery.RollbackTargets)
+	r.Get("/change-orders/{id}/rollback-records", h.Delivery.RollbackRecords)
+	r.Get("/change-orders/delivered-versions", h.Delivery.DeliveredVersions)
 	r.Get("/change-orders/{id}/targets", h.Delivery.Targets)
 	r.Get("/change-orders/{id}/observe", h.Delivery.Observe)
 	r.Get("/change-orders/{id}/events", h.Delivery.Events)

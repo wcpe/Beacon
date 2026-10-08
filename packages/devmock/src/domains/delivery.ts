@@ -21,10 +21,14 @@ import type {
   ChangeOrderListResponse,
   ChangeOrderStatus,
   ChangeOrderSummary,
+  ChangeRollbackRecord,
+  ChangeRollbackRecordListResponse,
   ChangeSelector,
   ChangeTarget,
   ChangeTargetStatus,
   ConfigChangeInput,
+  DeliveredVersion,
+  DeliveredVersionListResponse,
   DeliveryApprovalTicket,
   DeliveryImpactSummary,
   Paged,
@@ -44,6 +48,8 @@ interface OrderState extends ChangeOrderDetail {
    * mock 只拿它把「审批通过」回拨到对应单据；前端不得依赖该字段（审批进度按单号反查）。
    */
   approvalRequestId: string | null
+  /** 回滚动作记录（FR-271）：真机为 change_rollback_record 一对多两张表，mock 内嵌在单上即可 */
+  rollbackRecords: ChangeRollbackRecord[]
 }
 
 interface DeliveryState {
@@ -199,6 +205,8 @@ function makeExecution(
       const failed = isBroken && memberIndex < failedCount
       const finished = done || isCurrent
       const targetStatus: ChangeTargetStatus = failed ? 'failed' : finished ? 'activated' : 'pending'
+      const rollbackStatus: ChangeTarget['rollbackStatus'] =
+        shape === 'rolled_back' ? (hashString(`rb:${String(order.id)}:${serverId}`) % 29 === 0 ? 'failed' : 'rolled_back') : null
       order.targets.push({
         serverId,
         batchNo: b,
@@ -209,11 +217,18 @@ function makeExecution(
         skippedFileCount: finished ? 2 : 0,
         backupPresent: (finished || failed) && !(missingBackup && b === 1 && memberIndex === 0),
         error: failed ? '生效超时：重启后 300 秒内心跳未回归' : null,
-        rollbackStatus:
-          shape === 'rolled_back' ? (hashString(`rb:${String(order.id)}:${serverId}`) % 29 === 0 ? 'failed' : 'rolled_back') : null,
+        rollbackStatus,
         rollbackError:
-          shape === 'rolled_back' && hashString(`rb:${String(order.id)}:${serverId}`) % 29 === 0
-            ? '备份不存在（已被保留策略清理），无法文件回滚'
+          rollbackStatus === 'failed' ? '备份不存在（已被保留策略清理），无法文件回滚' : null,
+        // 当前交付版本（FR-271）：已生效且未被回滚的台指向本单，其余为 null（mock 只持有本单事实）。
+        deliveredVersion:
+          targetStatus === 'activated' && rollbackStatus !== 'rolled_back'
+            ? {
+                serverId,
+                orderId: order.id,
+                orderTitle: order.title,
+                activatedAt: isoOffset(-2 * HOUR + b * 600_000 + 240_000),
+              }
             : null,
       })
     })
@@ -278,6 +293,7 @@ function makeOrder(
     targets: [],
     events: [],
     approvalRequestId: null,
+    rollbackRecords: [],
   }
   if (executed && options.serverIds && options.serverIds.length > 0) {
     const shape = status === 'rolling' ? 'rolling' : status === 'paused' ? 'paused' : status === 'rolled_back' || status === 'rolling_back' ? 'rolled_back' : 'completed'
@@ -568,6 +584,11 @@ function applyApprovedSpec(spec: DeliveryApprovalSpec): void {
       applyConfirmApproved(order, spec.batchNo)
       return
     case 'delivery.rollback':
+      // 目标级子集回滚（FR-270）与整单回滚共用同一 operationKey，按登记的 serverIds 分流。
+      if (spec.serverIds !== undefined && spec.serverIds.length > 0) {
+        applyTargetRollbackApproved(order, spec.serverIds, spec.reason)
+        return
+      }
       applyRollbackApproved(order, spec.reason)
       return
     case 'delivery.rollback_finish':
@@ -620,6 +641,46 @@ function applyConfirmApproved(order: OrderState, batchNo: number | undefined): v
   order.updatedAt = isoOffset(0)
 }
 
+// 目标级（子集）回滚批准（FR-270）：只回滚选中目标的**文件**，配置版本不回退、单主状态不变；
+// 结果落目标级 rollback_status / rollback_error 与一条 kind=targets 的动作记录。
+function applyTargetRollbackApproved(order: OrderState, serverIds: string[], reason: string): void {
+  const allowed: ChangeOrderStatus[] = ['completed', 'paused', 'cancelled']
+  if (!allowed.includes(order.status)) {
+    return
+  }
+  const picked = order.targets.filter((t) => serverIds.includes(t.serverId) && t.pushedAt !== null)
+  if (picked.length === 0) {
+    return
+  }
+  for (const target of picked) {
+    if (target.backupPresent) {
+      target.rollbackStatus = 'rolled_back'
+      target.rollbackError = null
+      target.deliveredVersion = null
+    } else {
+      target.rollbackStatus = 'failed'
+      target.rollbackError = '备份不存在（已被保留策略清理），无法文件回滚'
+    }
+  }
+  refreshCounts(order)
+  order.updatedAt = isoOffset(0)
+  order.rollbackRecords.unshift({
+    id: order.rollbackRecords.length + 1,
+    kind: 'targets',
+    reason,
+    operator: 'admin',
+    configRolledBack: false,
+    targetCount: picked.length,
+    createdAt: isoOffset(0),
+    targets: picked.map((t) => ({
+      serverId: t.serverId,
+      result: t.rollbackStatus ?? '',
+      error: t.rollbackError,
+    })),
+  })
+  pushEvent(order, 'target_status', `目标级回滚：${String(picked.length)} 台（配置版本未回退）`)
+}
+
 // 整单回滚批准：逐目标回滚（无备份目标失败），全部成功即收单
 function applyRollbackApproved(order: OrderState, reason: string): void {
   const allowed: ChangeOrderStatus[] = ['completed', 'paused', 'cancelled', 'rolling_back']
@@ -637,6 +698,8 @@ function applyRollbackApproved(order: OrderState, reason: string): void {
       if (target.backupPresent) {
         target.rollbackStatus = 'rolled_back'
         target.rollbackError = null
+        // 被回滚的台不再持有「当前交付版本」（FR-271）：展示回退到上一单（mock 无更早单即显示无记录）
+        target.deliveredVersion = null
       } else {
         target.rollbackStatus = 'failed'
         target.rollbackError = '备份不存在（已被保留策略清理），无法文件回滚'
@@ -645,6 +708,18 @@ function applyRollbackApproved(order: OrderState, reason: string): void {
   }
   refreshCounts(order)
   pushEvent(order, 'order_status', 'rolling_back')
+  order.rollbackRecords.unshift({
+    id: order.rollbackRecords.length + 1,
+    kind: 'order',
+    reason,
+    operator: 'admin',
+    configRolledBack: true,
+    targetCount: order.targets.filter((t) => t.pushedAt !== null).length,
+    createdAt: isoOffset(0),
+    targets: order.targets
+      .filter((t) => t.pushedAt !== null)
+      .map((t) => ({ serverId: t.serverId, result: t.rollbackStatus ?? '', error: t.rollbackError })),
+  })
   if (order.targets.every((t) => t.rollbackStatus !== 'failed')) {
     order.status = 'rolled_back'
     order.finishedAt = isoOffset(0)
@@ -784,6 +859,7 @@ export const deliveryHandlers: HttpHandler[] = [
       targets: [],
       events: [],
       approvalRequestId: null,
+      rollbackRecords: [],
     }
     state.nextId += 1
     state.orders.unshift(order)
@@ -1048,6 +1124,51 @@ export const deliveryHandlers: HttpHandler[] = [
     return HttpResponse.json(ticket, { status: 202 })
   }),
 
+  // 目标级（子集）回滚申请（202 票据，FR-270）：只回滚选中目标的文件，配置版本不回退、单主状态不变。
+  mockPost('/admin/v2/change-orders/:id/rollback/targets', async (info) => {
+    const body = await readBody<{ reason?: string; serverIds?: string[] }>(info.request)
+    if (!body.reason) {
+      return jsonError(400, 'missing_reason', '目标级回滚原因必填')
+    }
+    const order = findOrder(info)
+    if (!order) {
+      return orderNotFound()
+    }
+    const allowed: ChangeOrderStatus[] = ['completed', 'paused', 'cancelled']
+    if (!allowed.includes(order.status)) {
+      return illegalState(order.status, '目标级回滚')
+    }
+    if (!validIdempotencyKey(info.request.headers.get('Idempotency-Key') ?? '')) {
+      return jsonError(400, 'INVALID_PARAM', '缺少或非法的幂等键（Idempotency-Key）')
+    }
+    const selected = [...new Set((body.serverIds ?? []).map((id) => id.trim()).filter((id) => id !== ''))]
+    if (selected.length === 0) {
+      return jsonError(400, 'missing_targets', '必须至少选择一个目标')
+    }
+    // 与真机同形：选中集合必须完整落在本单可回滚目标（曾推送）内，越界整单拒绝、不部分执行。
+    const eligible = new Set(order.targets.filter((t) => t.pushedAt !== null).map((t) => t.serverId))
+    const outOfScope = selected.filter((id) => !eligible.has(id))
+    if (outOfScope.length > 0) {
+      return jsonError(
+        400,
+        'invalid_rollback_target',
+        `目标 ${outOfScope.join('、')} 不在本单可回滚目标内（未启动或从未推送）`,
+      )
+    }
+    // 全选（覆盖全部可回滚目标）等价整单回滚：登记时不带 serverIds，批准后走整单副作用（含配置版本回退）。
+    // 这与真机同判定口径（真机执行期也回落整单路径），只是把分流提前到登记时刻。
+    const coversAll = selected.length === eligible.size
+    const ticket = issueTicket(order, {
+      operationKey: 'delivery.rollback',
+      reason: body.reason,
+      ...(coversAll ? {} : { serverIds: selected }),
+      safeSummary: coversAll
+        ? `选中集合覆盖本单全部 ${String(eligible.size)} 台可回滚目标 → 等价整单回滚（含配置版本回退）`
+        : `目标级子集回滚变更单 #${String(order.id)}：${String(selected.length)} 台（仅文件，配置版本不回退）`,
+    })
+    return HttpResponse.json(ticket, { status: 202 })
+  }),
+
   // 残留失败时人工结束回滚（202 申请票据）
   mockPost('/admin/v2/change-orders/:id/rollback/finish', (info) => {
     const order = findOrder(info)
@@ -1066,6 +1187,36 @@ export const deliveryHandlers: HttpHandler[] = [
       safeSummary: `结束变更单 #${String(order.id)} 的回滚，残留失败目标人工收单`,
     })
     return HttpResponse.json(ticket, { status: 202 })
+  }),
+
+  // 回滚动作记录（FR-271）：整单 / 子集 / 重试各一条，含逐台结果；倒序。
+  mockGet('/admin/v2/change-orders/:id/rollback-records', (info) => {
+    const order = findOrder(info)
+    if (!order) {
+      return orderNotFound()
+    }
+    return HttpResponse.json({ items: order.rollbackRecords } satisfies ChangeRollbackRecordListResponse)
+  }),
+
+  // 当前交付版本批量查询（FR-271）：serverIds 逗号分隔、上限 100；无交付记录的服不回行。
+  mockGet('/admin/v2/change-orders/delivered-versions', (info) => {
+    const url = new URL(info.request.url)
+    const requested = (queryStr(url, 'serverIds') ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id !== '')
+    const state = getDeliveryState()
+    const items: DeliveredVersion[] = []
+    for (const serverId of requested) {
+      for (const order of state.orders) {
+        const version = order.targets.find((t) => t.serverId === serverId)?.deliveredVersion ?? null
+        if (version !== null) {
+          items.push(version)
+          break
+        }
+      }
+    }
+    return HttpResponse.json({ items } satisfies DeliveredVersionListResponse)
   }),
 
   // 目标分页（批次 / 状态过滤）

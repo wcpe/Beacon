@@ -34,7 +34,7 @@ import BatchFlow from '../../features/delivery/batch-flow'
 import EventsTimeline from '../../features/delivery/events-timeline'
 import OrderChangePreview from '../../features/delivery/order-change-preview'
 import OrderOrchestration from '../../features/delivery/order-orchestration'
-import { OrderRollbackActions, RollbackBanner } from '../../features/delivery/order-rollback'
+import { OrderRollbackActions, RollbackBanner, RollbackRecordsSection } from '../../features/delivery/order-rollback'
 import { TargetStatusBadge } from '../../features/delivery/status-badges'
 import StatusBadge from './status-badge'
 
@@ -73,8 +73,9 @@ export default function DetailView({ orderId }: DetailViewProps) {
         </div>
       </div>
 
-      {/* 回滚信息横幅 + 回滚中逐目标进度 */}
+      {/* 回滚信息横幅 + 回滚中逐目标进度 + 回滚动作记录（FR-271） */}
       {detail && <RollbackBanner order={detail} />}
+      {detail && <RollbackRecordsSection orderId={detail.id} />}
 
       <AsyncSection isLoading={detailQuery.isLoading} isError={detailQuery.isError} error={detailQuery.error}>
         {detail && (

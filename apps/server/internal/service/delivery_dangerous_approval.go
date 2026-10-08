@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -51,6 +52,11 @@ type deliveryRollbackPayload struct {
 	Reason         string `json:"reason"`
 	Operator       string `json:"operator"`
 	ClientIP       string `json:"clientIP"`
+	// Retry 标记本次为回滚重试（FR-262r）：仅重推失败目标，不重做配置版本回退。为空即首次整单回滚。
+	Retry bool `json:"retry,omitempty"`
+	// ServerIDs 非空即目标级（子集）回滚（FR-270）：只回滚这几台的文件，配置版本不回退。
+	// 省略即整单回滚——历史申请不带该字段，行为逐字不变。
+	ServerIDs []string `json:"serverIds,omitempty"`
 }
 
 type deliveryConfirmBatchPayload struct {
@@ -347,8 +353,15 @@ func executeDeliveryRollbackInTx(tx *gorm.DB, req authz.ApprovalRequest, orchest
 	if err != nil || order == nil || order.Status != payload.ExpectedStatus {
 		return nil, apperr.ErrApprovalTargetChanged
 	}
-	if err := orchestrator.applyRollbackInTx(tx, order, payload.Reason, req.Actor, payload.ClientIP); err != nil {
-		return nil, err
+	// 带 serverIds 即目标级（子集）回滚（FR-270）；否则整单回滚——整单路径自身按单状态分流「首次进入 / 重试」。
+	var applyErr error
+	if len(payload.ServerIDs) > 0 {
+		applyErr = orchestrator.applyRollbackTargetsInTx(tx, order, payload.ServerIDs, payload.Reason, req.Actor, payload.ClientIP)
+	} else {
+		applyErr = orchestrator.applyRollbackInTx(tx, order, payload.Reason, req.Actor, payload.ClientIP)
+	}
+	if applyErr != nil {
+		return nil, applyErr
 	}
 	receipt := &model.ApprovalExecutionReceipt{RequestID: req.RequestID, OperationKey: req.OperationKey,
 		PayloadHash: req.PayloadHash, ResultRef: "change-order-" + strconv.FormatUint(uint64(order.ID), 10)}
@@ -430,6 +443,9 @@ func (s *DeliveryOrchestrator) RequestResume(id uint, mode, reason string, princ
 }
 
 // RequestRollback 冻结可回滚单的当前状态和原因，创建统一审批申请。
+// 已在 rolling_back 的单同样可申请——这是 §4.7.2「失败目标可重试」的**生产入口**（FR-262r）：
+// 重试与首次回滚副作用同质（都会覆盖线上文件），故复用同一 operation、同样要求原因与幂等键，
+// 由执行适配器按 expectedStatus 分流出「首次进入」与「仅重置失败目标」两条路径。
 func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal auth.Principal,
 	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
 	if s.approval == nil {
@@ -443,19 +459,30 @@ func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
-	if order.Status != model.ChangeOrderStatusCompleted && order.Status != model.ChangeOrderStatusPaused && order.Status != model.ChangeOrderStatusCancelled {
+	retry := order.Status == model.ChangeOrderStatusRollingBack
+	if !retry && order.Status != model.ChangeOrderStatusCompleted && order.Status != model.ChangeOrderStatusPaused &&
+		order.Status != model.ChangeOrderStatusCancelled {
 		return DeliveryApprovalTicketView{}, changeIllegalState(order.Status, "申请整单回滚")
+	}
+	if err := checkRollbackPreconditions(s.repo, order, retry); err != nil {
+		return DeliveryApprovalTicketView{}, err
 	}
 	summary, err := deliveryImpactSummary(s.repo, order.ID)
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
 	payload := map[string]any{"orderId": order.ID, "expectedStatus": order.Status, "reason": reason,
-		"operator": operator, "clientIP": clientIP}
+		"retry": retry, "operator": operator, "clientIP": clientIP}
+	evidence := []authz.ApprovalEvidenceLine{{Label: "变更单", Value: strconv.FormatUint(uint64(order.ID), 10)},
+		{Label: "当前状态", Value: order.Status}}
+	if retry {
+		// 重试的审批人需要看见「这次只重推失败目标、配置版本不会再回退」，否则会按首次回滚的风险预期决策。
+		evidence = append(evidence, authz.ApprovalEvidenceLine{Label: "动作", Value: "回滚重试（仅重推失败目标，配置版本不再次回退）"})
+	}
 	created, err := s.approval.Request(authz.Operation{Kind: authz.OperationDeliveryRollback,
 		NamespaceID: &order.NamespaceID, Resource: model.TargetTypeChangeOrder,
 		ResourceID: strconv.FormatUint(uint64(order.ID), 10), IdempotencyKey: idempotencyKey, RiskLevel: "critical", Reason: reason,
-		EvidenceSnapshot: []authz.ApprovalEvidenceLine{{Label: "变更单", Value: strconv.FormatUint(uint64(order.ID), 10)}, {Label: "当前状态", Value: order.Status}}}, payload, principal, clientIP)
+		EvidenceSnapshot: evidence}, payload, principal, clientIP)
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
@@ -463,6 +490,94 @@ func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal
 		ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey,
 		OrderID: order.ID, ImpactSummary: summary,
 	}, nil
+}
+
+// RequestRollbackTargets 冻结目标子集与原因，创建统一审批申请（FR-270 目标级 / 子集回滚）。
+// 与整单回滚同 operation（`delivery.rollback`）、同原因要求、同幂等键语义——只回滚选中目标的**文件**，
+// 配置版本不回退、单主状态不变；选中集合若覆盖全部可回滚目标，执行时回落整单回滚路径（全选等价整单）。
+// 申请阶段即预检选中目标落在本单可回滚目标内，避免运维等到审批通过才发现选错了台。
+func (s *DeliveryOrchestrator) RequestRollbackTargets(id uint, serverIDs []string, reason string, principal auth.Principal,
+	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
+	if s.approval == nil {
+		return DeliveryApprovalTicketView{}, apperr.ErrInternal
+	}
+	if strings.TrimSpace(reason) == "" {
+		return DeliveryApprovalTicketView{}, apperr.ErrApprovalReasonRequired
+	}
+	selected, err := normalizeServerIDs(serverIDs, rollbackTargetLimit, rollbackTargetScope)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	order, err := requireChangeOrder(s.repo, id)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	if order.Status != model.ChangeOrderStatusCompleted && order.Status != model.ChangeOrderStatusPaused &&
+		order.Status != model.ChangeOrderStatusCancelled {
+		return DeliveryApprovalTicketView{}, changeIllegalState(order.Status, "申请目标级回滚")
+	}
+	eligible, err := s.rollbackEligibleServerIDs(order.ID)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	for _, serverID := range selected {
+		target, ok := eligible[serverID]
+		if !ok {
+			return DeliveryApprovalTicketView{}, apperr.New(http.StatusBadRequest, "invalid_rollback_target",
+				fmt.Sprintf("目标 %s 不在本单可回滚目标内（未启动或从未推送）", serverID))
+		}
+		// 申请期前置在途守卫（P2，与执行期 CAS 同口径）：在途目标注定在执行期被拒，
+		// 申请阶段就回 409，不让调用方白走一次审批往返。
+		if target.RollbackStatus == model.RollbackStatusPending || target.RollbackStatus == model.RollbackStatusRunning {
+			return DeliveryApprovalTicketView{}, rollbackInFlightError(serverID)
+		}
+	}
+	summary, err := deliveryImpactSummary(s.repo, order.ID)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	payload := map[string]any{"orderId": order.ID, "expectedStatus": order.Status, "reason": reason,
+		"serverIds": selected, "operator": operator, "clientIP": clientIP}
+	evidence := []authz.ApprovalEvidenceLine{
+		{Label: "变更单", Value: strconv.FormatUint(uint64(order.ID), 10)},
+		{Label: "当前状态", Value: order.Status},
+		{Label: "回滚范围", Value: fmt.Sprintf("目标级子集 %d 台（仅文件，配置版本不回退）", len(selected))},
+	}
+	if len(selected) == len(eligible) {
+		// 全选：执行时会回落整单回滚，审批人必须按整单风险预期决策（含配置版本回退）。
+		evidence[2] = authz.ApprovalEvidenceLine{Label: "回滚范围",
+			Value: fmt.Sprintf("选中集合覆盖本单全部 %d 台可回滚目标 → 等价整单回滚（含配置版本回退）", len(eligible))}
+	}
+	created, err := s.approval.Request(authz.Operation{Kind: authz.OperationDeliveryRollback,
+		NamespaceID: &order.NamespaceID, Resource: model.TargetTypeChangeOrder,
+		ResourceID: strconv.FormatUint(uint64(order.ID), 10), IdempotencyKey: idempotencyKey, RiskLevel: "critical", Reason: reason,
+		EvidenceSnapshot: evidence}, payload, principal, clientIP)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	return DeliveryApprovalTicketView{
+		ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey,
+		OrderID: order.ID, ImpactSummary: summary,
+	}, nil
+}
+
+// rollbackEligibleServerIDs 取本单可回滚目标集合（曾覆盖磁盘，spec §4.7.2），键为 serverId、值为目标行。
+// 返回目标行而不仅是集合：调用方还要按当前回滚态做申请期在途守卫，省一次查询。
+func (s *DeliveryOrchestrator) rollbackEligibleServerIDs(orderID uint) (map[string]*model.ChangeTarget, error) {
+	targets, err := s.repo.ListTargetsByOrder(orderID)
+	if err != nil {
+		return nil, err
+	}
+	eligible := make(map[string]*model.ChangeTarget, len(targets))
+	for i := range targets {
+		if targets[i].PushedAt != nil {
+			eligible[targets[i].ServerID] = &targets[i]
+		}
+	}
+	if len(eligible) == 0 {
+		return nil, apperr.ErrChangeNoRollbackTarget
+	}
+	return eligible, nil
 }
 
 // RequestConfirmBatch 冻结当前待确认批和目标状态哈希，创建统一审批申请。
@@ -577,4 +692,34 @@ func deliveryOrderSnapshotHash(repo *repository.ChangeOrderRepository, order *mo
 	}
 	sum := sha256.Sum256(raw)
 	return fmt.Sprintf("%x", sum[:]), nil
+}
+
+// checkRollbackPreconditions 整单回滚的申请期前置校验（与执行期 CAS 同口径，
+// 让运维在**申请阶段**就知道结果，而不是等审批通过后才在执行期失败）。
+//
+// retry = true 表示这是对已失败目标的**重试**申请；false 表示首次进入的整单回滚。
+func checkRollbackPreconditions(
+	repo *repository.ChangeOrderRepository,
+	order *model.ChangeOrder,
+	retry bool,
+) error {
+	if !retry {
+		// 单内已有目标在回滚中（例如并发的子集回滚）→ 整单回滚注定在执行期被拒。
+		targets, err := repo.ListTargetsByOrder(order.ID)
+		if err != nil {
+			return err
+		}
+		if inFlight := firstInFlightRollbackTarget(targets); inFlight != nil {
+			return rollbackInFlightError(inFlight.ServerID)
+		}
+		return nil
+	}
+	counts, err := repo.CountTargetsByRollbackStatus(order.ID)
+	if err != nil {
+		return err
+	}
+	if counts[model.RollbackStatusFailed] == 0 {
+		return apperr.New(http.StatusBadRequest, "no_failed_rollback_target", "单内无回滚失败目标可重试")
+	}
+	return nil
 }
