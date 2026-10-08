@@ -126,6 +126,9 @@
 
 ## 7. 风险 / 待定
 
-- **版本下限取值**：默认取 FR-165 落地版本（0.29.0）。真机上 agent 上报的是 `apps/agent/gradle.properties` 的 `version`（当前 0.1.0），与服务端 `VERSION` 不同源——**真机须先确认 agent 上报串的实际形态**再定默认值；运维可用 `delivery.min-agent-version` 空串临时关闭守卫。
-- **孤儿扫描成本**：`blobs/` 目录遍历是 O(文件数)，默认保留 7 天 + 20 GiB 上限下规模可控；超大部署若成热瓶颈，可降频（复用现有清理间隔设置）。
+- **版本下限取值（已核对，结论：默认关闭）**：agent 上报的版本串来源是 **TabooLib `pluginVersion`**（`BeaconAgentBukkit.kt` 经 `pluginVersion` 注入 `AgentBootstrap`），**不是** Gradle 坐标——`apps/agent/gradle.properties` 的 `version=0.1.0` 被根构建脚本的 `beaconVersion`（读仓库根 `VERSION`）覆盖，故 Gradle 侧 0.1.0 对上报串**不生效**，实际串形态度未经真机实测。
+  由于守卫是 fail-closed（未上报版本一律拒），**拍一个猜测值作默认等于上线即全量拒服**：一旦真机上报串不符，全部目标被拒、首日无任何已批准单能启动。故 `deliveryDefaultMinAgentVersion = ""`（默认不校验，显式配置才启用）。
+  **真机待办**：确认上报串形态后，由运维把 `delivery.min-agent-version` 设为确定值（FR-165 数据面落地版本 `0.29.0` 是候选，须以真机实测串为准再定）。
+- **孤儿扫描成本**：`blobs/` 目录遍历是 O(文件数)。已做两重约束——元数据状态**批量**取回（消除 N+1）、单轮扫描文件数上限 5000（超出留待下轮）。超大部署若仍成热瓶颈，可降频（复用现有清理间隔设置）。
+- **`MarkReady` 的方言差异**：已显式规避——MySQL 的 `RowsAffected` 计「真正被修改」的行数、sqlite 计「匹配」的行数，故丢槽判据取「行是否存在」而非 `RowsAffected > 0`。跨方言行为由单测锁定。
 - **不做**分布式锁：多控制面实例并发下发仍可能建出同键命令（既有行为），需多实例部署时另立 FR。
