@@ -98,9 +98,8 @@
 
 ### 3.4 FR-265：内存释放与预热防呆
 
-- `clearObserve` 顺带 `clearStall(orderID)`：单已收口即不再会停滞，留着只是内存垃圾；
-- `autoFinishRollback` 在置终态成功之后调 `s.clearObserve(rt.order.ID)`——这是自动收单唯一缺失的释放点；
-- `validateObserveWindowCombination` 在 `applyOrderInput` 末尾（创建与编辑共用）拒绝 `restart` + `unhealthyRateThresholdPercent > 0` + `observeWindowSec < 90` 的组合，错误文案点明「健康恶化熔断永不触发」。
+- **统一终态释放出口**：观察窗缓冲与停滞观测都按单索引，故收敛到 `releaseTerminalMemory`（内部调 `clearObserve`），由**全部**终态出口调用——人工终止、确认末批、自动收单、人工结束回滚。逐个调用点补 `clearObserve` 既容易漏（人工结束回滚就漏了），也断言不出「全部出口都释放」。
+- **预热防呆只对触及相关字段的请求生效**：`validateObserveWindowCombination(order, touched)` 拒绝 `restart` + `unhealthyRateThresholdPercent > 0` + `observeWindowSec < 90` 的组合，错误文案点明「健康恶化熔断永不触发」；`touched` 为假（本次未动 `activationMethod` / `unhealthyRateThresholdPercent` / `observeWindowSec`）时跳过，避免存量短窗单变成死单（理由见 §7）。
 
 ## 4. UX / 交互
 
@@ -134,15 +133,22 @@
   10. 批进 `awaiting_confirm` 后：未到 5 min 不告警 → 过 5 min 告警一次且含「推进门」「等待人工确认」 → 未到 30 min 不重复 → 过 30 min 再提醒 → 人工确认完成（单 `completed`）后不再提醒且停滞观测被清；
   11. rolling 单无活动批：未到 2 min 不告警 → 过 2 min 告警且含「没有活动批」；
   12. 正常推进（批 running 或有目标在途）不告警且不留停滞观测；
-  13. 批 CAS 未命中时 `tripBreaker` 回滚事务、`resumeCircuitBatch` 报冲突，均不再落到半截状态。
+  13. 批 CAS 未命中时 `tripBreaker` 回滚事务、`resumeCircuitBatch` 报冲突，均不再落到半截状态；
+  14. `-race` 下「推进器推进」与「审批 afterCommit 清观察窗」并发跑同一单不报数据竞争（P0 回归）。
 - **FR-265**
-  14. 自动收单（`rolling_back` → `rolled_back` 全自动出口）后释放观察窗缓冲与停滞观测；
-  15. `restart` + 健康恶化阈值 > 0 + 观察窗 60s → 编辑与创建均被拒；观察窗 90s（等于预热宽限）→ 放行；关闭健康恶化阈值或非 restart 生效方式 → 短窗放行。
+  15. 自动收单（`rolling_back` → `rolled_back` 全自动出口）后释放观察窗缓冲与停滞观测；
+  16. 人工「结束回滚」同样是终态出口，收单后同样释放两者；
+  17. `restart` + 健康恶化阈值 > 0 + 观察窗 60s → 编辑与创建均被拒；观察窗 90s（等于预热宽限）→ 放行；关闭健康恶化阈值或非 restart 生效方式 → 短窗放行；
+  18. 存量短窗单（库内已带 `restart` + 30s）在未触及三字段时**仍可编辑**无关字段（改标题不被拒），但本次改观察窗 / 改成 `restart` 时冲突照样暴露。
 
 ## 7. 风险 / 待定
 
-- **自愈的幂等边界**：形态二放行重提依赖「审批申请已终结」这一判据。若某条申请的 worker 正在 `executing`（lease 未释放），它确实仍会产出副作用，此时重提被拒是正确的；但 lease 过期而未终绪的申请会被判为未终结从而长期挡住重提（worker 会重试并最终置终态，故最终自愈）。待定：是否需要给「长时间 `executing` 且 lease 过期」加一条强制回收。
-- **终止收口取 `failed` 对界面的影响**：状态墙上这些目标从「在途」变「失败」，止损后一眼看到的失败数会上升。这是刻意取舍——真盘面已动过，`skipped` 是假象。若将来界面要区分「终止导致」与「执行失败」，应展 / expand `error` 文案（已含「已紧急终止」），而不是改状态值。
+- **FR-262 本组只做可见化，不做自动推进（标题「自愈」的边界）**：本组实现的「自愈」= **让停滞被发现**（WARN + 停滞类型 + 停滞时长），**不包含**任何自动推进动作——不会自动放行推进门、不会自动补建活动批、不会自动改状态。刻意如此：推进门的存在意义就是「人工确认后才放量下一批」，自动放行等于取消这道闸；「无活动批」往往是数据不一致的信号，自动补批会把不一致固化成更难查的状态。若将来要做自动推进，必须另立 FR 并重新评估推进门的语义（而不是在本组顺手加）。
+- **自愈的幂等边界**：形态二放行重提依赖「审批申请已终结」这一判据。若某条申请的 worker 正在 `executing`（lease 未释放），它确实仍会产出副作用，此时重提被拒是正确的；但 lease 过期而未终结的申请会被判为未终结从而长期挡住重提（worker 会重试并最终置终态，故最终自愈）。待定：是否需要给「长时间 `executing` 且 lease 过期」加一条强制回收。
+- **终止收口取 `failed` 对界面的影响**：状态墙上这些目标从「在途」变「失败」，止损后一眼看到的失败数会上升。这是刻意取舍——真盘面已动过，`skipped` 是假象。若将来界面要区分「终止导致」与「执行失败」，应展开 `error` 文案（已含「已紧急终止」），而不是改状态值。
 - **停滞只报日志、不进告警事件流**：本组只用 `slog.Warn`，不接入告警中心（否则「正常等人工确认」会在告警中心刷屏）。若将来运维要求「卡住就告警」，应先确定阈值口径与降噪策略（同一单去重、相邻时段合并），再单独立项。
+- **停滞观测必须独立加锁**：`stallByOrder` 由 `stallMu` 保护而**不复用 `s.mu`**——`clearObserve` 的调用方之一（审批执行适配器的 `afterCommit`）由审批 worker 在事务提交后执行、全程不持 `s.mu`，而推进器在 `mu` 下经 `detectStall` 读写同一张表；Go 互斥锁不可重入，复用 `mu` 会让已持 `mu` 的 `Cancel` / `applyConfirmBatch` 路径直接死锁。锁序 `mu → stallMu`（与 `mu → observeMu` 同向）。`-race` 并发用例锁定。
 - **观察窗 / 预热组合的边界**：90s 是 `restartHealthWarmup` 的当前取值与默认观察窗 120s 之间的差；若将来调整任一值，本防呆的条件需同步审查（放置在一个函数内便于改动）。
+- **组合防呆只对触及相关字段的请求生效（存量单豁免）**：存量单可能带着历史上合法的短观察窗（`restart` + 30s），无条件校验会让它们连改标题都被 `400` 拒死——错误文案只谈观察窗、运维走不出来，等于把活单变成死单。故只在入参触及 `activationMethod` / `unhealthyRateThresholdPercent` / `observeWindowSec` 三者之一时校验：存量单可继续编辑无关字段，但一旦本次动到相关字段，冲突照样暴露（不会永久隐身）。默认观察窗 120s 下新建单不会命中该组合，存量命中面取决于历史数据，交付后建议按 `restart + observe_window_sec < 90 AND unhealthy_rate_threshold_percent > 0` 查一次存量并在需要时人工调窗。
+- **终态内存释放走统一出口**：终态化路径有多条（人工终止、确认末批、自动收单、人工结束回滚……），故统一收敛到 `releaseTerminalMemory`，而不是逐个调用点补 `clearObserve`——逐个补点既容易漏，也断言不出「全部出口都释放」。
 - **真机维度**：本组尚未跑真机演练，上述验收仅在单测层验证，真机结论见汇报。
