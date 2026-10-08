@@ -54,6 +54,8 @@ class BukkitPlatformAdapter(
         }
     }
 
+    override val gracefulShutdownSupported: Boolean = true
+
     override fun gracefulShutdown(reason: String) {
         // restart 生效（FR-171，见 ADR-0070）：切主线程广播关服提示 + 全 world save-all + Bukkit.shutdown()，
         // 存档落盘后再停避免丢档；进程重启交宿主自启脚本，本类无 Runtime.exec/ProcessBuilder（ADR-0011 决策 2 铁律）。

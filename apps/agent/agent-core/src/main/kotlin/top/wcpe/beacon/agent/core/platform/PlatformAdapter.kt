@@ -147,6 +147,18 @@ interface PlatformControl {
     }
 
     /**
+     * 优雅关服原语能力探测（fail-closed，FR-266，见 ADR-0070）。
+     *
+     * **默认 false**：未覆写 [gracefulShutdown] 的平台（测试桩、只读壳、后续新平台）一律视为「不支持关服」——
+     * 交付执行器据此**明确回执 failed 并给出可读原因**，绝不回执 success。这是刻意的 fail-closed：默认空实现
+     * 既不关服也不抛异常，若照旧回执 success，控制面会因进程仍在心跳而判 activated（假成功且无告警）。
+     *
+     * 实现了关服的平台（Bukkit / Bungee 壳）覆写为 true。改动面限 agent 侧：新增平台必须显式声明能力。
+     */
+    val gracefulShutdownSupported: Boolean
+        get() = false
+
+    /**
      * 优雅关服（restart 生效方式的平台原语，FR-171，见 ADR-0070）。
      *
      * 语义：广播关服提示 + 存档落盘后停止本进程，交由宿主自启脚本（docker `--restart` / systemd `Restart=` /
@@ -155,7 +167,8 @@ interface PlatformControl {
      * 生效判定归控制面观测心跳回归（注册 / 健康真源 = Go 进程内存），非本次关服回执成功（ADR-0070 决策 3）。
      *
      * 关服须在平台主线程执行（存档落盘、`Bukkit.shutdown()` 均要求主线程）：壳层经 [PlatformScheduler.runSync] 切主线程后调平台原语。
-     * 默认空实现：未实现关服的平台 / 测试桩不动作（restart 生效能力不上线），与 [dispatchConsoleCommand] 同构。
+     * 默认空实现：未实现关服的平台 / 测试桩不动作（restart 生效能力不上线），与 [dispatchConsoleCommand] 同构；
+     * **必须同时覆写 [gracefulShutdownSupported] 为 true**，否则调用方按 fail-closed 拒绝进入 restart 生效。
      *
      * @param reason 关服原因（广播文案 / 日志用，便于运维在服务器日志看清是 Beacon 交付生效触发的重启）
      */

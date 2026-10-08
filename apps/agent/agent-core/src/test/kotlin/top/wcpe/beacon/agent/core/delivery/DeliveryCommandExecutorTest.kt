@@ -224,6 +224,56 @@ class DeliveryCommandExecutorTest {
     }
 
     @Test
+    fun `restart 生效在关服原语成功下发后单次回执 success`() {
+        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
+        exec.execute(activateCommand("restart"))
+
+        // 关服原语下发前绝不回执 success：否则进程没关也回报「已开始生效」，控制面据残留心跳判 activated（假成功）。
+        assertEquals(1, adapter.delayedCount(), "应恰好调度一个延迟优雅关服任务")
+        assertTrue(resultBodies.isEmpty(), "关服原语成功下发前不得回执：$resultBodies")
+        assertEquals(0, adapter.shutdownReasons.size, "延迟任务执行前绝不应已关服")
+
+        // 推进延迟任务 → 触发优雅关服并回执一次「开始生效」。
+        adapter.drainOne()
+        assertEquals(1, adapter.shutdownReasons.size, "延迟任务执行后应优雅关服一次")
+        assertTrue(adapter.shutdownReasons.first().contains("#1"), "关服原因应含 orderId：${adapter.shutdownReasons.first()}")
+        val body = resultBodies.single()
+        assertTrue(body.contains("phase=activate"), "应回执 activate 阶段：$body")
+        assertTrue(body.contains("status=success"), "关服原语下发成功后回执 success「开始生效」：$body")
+    }
+
+    @Test
+    fun `restart 关服原语抛异常时单次回执 failed`() {
+        adapter.shutdownError = RuntimeException("调度器不可用")
+        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
+        exec.execute(activateCommand("restart"))
+
+        assertEquals(1, adapter.delayedCount())
+        // 执行关服 → 原语抛异常 → 只回执 activate failed（控制面据「关服指令回执失败」判 failed 熔断止血）。
+        adapter.drainOne()
+        assertEquals(1, adapter.shutdownReasons.size, "关服原语已被尝试")
+        val body = resultBodies.single()
+        assertTrue(body.contains("phase=activate"), "失败回执仍为 activate 阶段：$body")
+        assertTrue(body.contains("status=failed"), "关服抛异常应回执 failed：$body")
+        assertTrue(body.contains("优雅关服失败"), "失败原因应指明关服失败：$body")
+        assertFalse(body.contains("status=success"), "同一命令绝不出现「先 success 后 failed」的双回执：$body")
+    }
+
+    @Test
+    fun `restart 平台未实现关服原语时回执 failed 且不调度关服`() {
+        adapter.gracefulShutdownSupported = false
+        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
+
+        exec.execute(activateCommand("restart"))
+
+        assertEquals(0, adapter.delayedCount(), "不支持关服的平台不得调度关服")
+        assertEquals(0, adapter.shutdownReasons.size, "不支持关服的平台绝不调用关服原语")
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=failed"), "能力探测 fail-closed 必须明确回执 failed：$body")
+        assertTrue(body.contains("未实现优雅关服原语"), "失败原因应可读：$body")
+    }
+
+    @Test
     fun `manifest sourceKind 缺失兼容 file_diff 并解析 config_artifact`() {
         val tree =
             manifestTree(
@@ -348,6 +398,24 @@ class DeliveryCommandExecutorTest {
     }
 
     @Test
+    fun `restart 回滚还原备份后单次回执并优雅关服`() {
+        val backupManager = seededBackup()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray()) // 模拟正推覆盖
+
+        executorWith(backupManager).execute(rollbackCommand("restart"))
+
+        assertEquals("OLD", File(serverRoot, "plugins/upd.txt").readText(), "回滚应从备份还原旧内容")
+        assertEquals(1, adapter.delayedCount(), "restart 回滚应调度一个延迟优雅关服")
+        assertTrue(resultBodies.isEmpty(), "关服原语下发前不得回执：$resultBodies")
+        adapter.drainOne()
+        assertEquals(1, adapter.shutdownReasons.size, "延迟任务执行后应优雅关服一次")
+        val body = resultBodies.single()
+        assertTrue(body.contains("phase=rollback"), "应回执 rollback 阶段：$body")
+        assertTrue(body.contains("status=success"), "还原 + 关服原语下发成功回执 success：$body")
+        assertTrue(body.contains("backupPresent=true"), "回滚成功应保留既有回执语义：$body")
+    }
+
+    @Test
     fun `push_only 回滚还原不关服`() {
         val backupManager = seededBackup()
         DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray())
@@ -399,6 +467,22 @@ class DeliveryCommandExecutorTest {
         assertTrue(body.contains("status=failed"), "备份缺失应回执 failed：$body")
         assertTrue(adapter.configChanges.isEmpty(), "备份还原失败不应通知配置")
         assertEquals(0, adapter.shutdownReasons.size, "备份缺失不关服")
+    }
+
+    @Test
+    fun `hot_reload 通知失败按部分成功回执保留变更计数与备份标记`() {
+        val backupManager = seededBackup()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray())
+        adapter.configChangeError = RuntimeException("事件总线不可用")
+        val tree = manifestTree(listOf(configFileNode("plugins/upd.txt", DeliveryTestSupport.sha256("NEW".toByteArray()))))
+
+        executorWith(backupManager, tree).execute(rollbackCommand("hot_reload"))
+
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=failed"), "通知失败仍是失败：$body")
+        assertTrue(body.contains("changedFileCount=1"), "文件已落盘：失败回执须保留真实变更计数：$body")
+        assertTrue(body.contains("backupPresent=true"), "文件已落盘：失败回执须保留备份标记（可否回滚）：$body")
+        assertTrue(body.contains("已落盘"), "原因应点明「已落盘、仅通知失败」，便于决定回滚还是手工重载：$body")
     }
 
     /** 造一份 update 项备份（旧内容 OLD），返回其 backupManager 供回滚测试复用（往返 codec）。 */

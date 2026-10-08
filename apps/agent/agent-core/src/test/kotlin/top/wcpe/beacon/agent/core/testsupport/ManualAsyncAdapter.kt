@@ -13,6 +13,9 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     val warns = mutableListOf<String>()
     val errors = mutableListOf<String>()
 
+    /** 关服原语能力探测（FR-266）：默认 true（模拟已实现关服的平台）；置 false 验 fail-closed 拒绝路径。 */
+    override var gracefulShutdownSupported: Boolean = true
+
     /** 记录每次优雅关服（restart 生效，FR-171/ADR-0070）的原因，供时序断言（回执在前、关服在后）。 */
     val shutdownReasons = mutableListOf<String>()
 

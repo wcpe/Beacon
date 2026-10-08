@@ -237,11 +237,9 @@ class DeliveryCommandExecutor(
     /**
      * 生效编排（FR-171，M4，见 ADR-0070 / spec §4.6.1）：按 activation_method 分派。
      *
-     * - **restart**（真生效）：**先同步回执 activate success「开始生效」**（语义 = 我要关服了、非生效完成）→ 极短延迟后
-     *   切平台原语优雅关服 → 宿主自启拉起 → agent 随进程重启重新注册 / 心跳回归。
-     *   关服前必须先把回执发出（关服后进程没了就发不出）：[postResult] 同步阻塞至控制面收到才返回，保证送达在关服前；
-     *   activated 由控制面观测心跳回归判定、**非本回执成功**（决策 3，注册 / 健康真源 = Go 进程内存）；
-     *   关服原语调用本身抛异常（极少见）→ 回执 activate failed，让控制面据「关服指令回执失败」判 failed 并熔断止血。
+     * - **restart**（真生效）：能力探测 fail-closed → 极短延迟后切平台原语优雅关服 → 宿主自启拉起 →
+     *   agent 随进程重启重新注册 / 心跳回归。回执语义 =「已开始生效」（非生效完成）；
+     *   activated 由控制面观测心跳回归判定、**非本回执成功**（决策 3，注册 / 健康真源 = Go 进程内存）。
      * - **hot_reload**：重拉差异清单，仅提取 config_artifact，直接派发平台配置变更通知后回执 success；无配置工件成功 no-op。
      * - 其它（push_only 控制面侧立即 activated、不下发 activate；空 / 未知值）：诚实回执 failed，暴露非预期。
      */
@@ -250,21 +248,54 @@ class DeliveryCommandExecutor(
         activationMethod: String,
     ) {
         when (activationMethod) {
-            ACTIVATION_RESTART -> {
-                adapter.info("交付 restart 生效：回执「开始生效」后将优雅关服，等宿主自启拉起并心跳回归：orderId=$orderId")
-                // 关服前先同步回执「开始生效」：postResult 阻塞至送达，返回即已抵达控制面（关服后进程消失便发不出）。
-                postResult(orderId, DeliveryStageReport(PHASE_ACTIVATE, STATUS_SUCCESS, 0, 0, false, ""))
-                // 极短延迟后关服：让本命令执行调用栈（单飞门释放 / 委派方）先解开，再触发关服原语（平台原语内部切主线程执行）。
-                adapter.runAsyncDelayed(RESTART_SHUTDOWN_DELAY_MS) {
-                    try {
-                        adapter.gracefulShutdown("交付变更单 #$orderId restart 生效")
-                    } catch (e: Exception) {
-                        failResult(orderId, PHASE_ACTIVATE, "优雅关服失败：${reasonOf(e)}")
-                    }
-                }
-            }
+            ACTIVATION_RESTART -> restartForActivate(orderId)
             ACTIVATION_HOT_RELOAD -> runHotReload(orderId, PHASE_ACTIVATE, 0, false)
             else -> runUnsupportedSkeleton(orderId, PHASE_ACTIVATE, "未知生效方式「$activationMethod」")
+        }
+    }
+
+    /** restart 正推生效：回执语义为「已开始生效」（changed/backup 计数对生效阶段无意义，均为 0 / false）。 */
+    private fun restartForActivate(orderId: Long) {
+        adapter.info("交付 restart 生效：优雅关服后等宿主自启拉起并心跳回归：orderId=$orderId")
+        restartWithShutdown(
+            orderId = orderId,
+            phase = PHASE_ACTIVATE,
+            reason = "交付变更单 #$orderId restart 生效",
+            success = { DeliveryStageReport(PHASE_ACTIVATE, STATUS_SUCCESS, 0, 0, false, "") },
+        )
+    }
+
+    /**
+     * restart 类生效（正推 / 回滚）的公共时序（FR-266）：**能力探测 fail-closed → 延迟触发关服 → 依关服结果单次回执**。
+     *
+     * 三处语义都是刻意的：
+     * 1. **能力探测先行**：[PlatformControl.gracefulShutdownSupported]（默认 false）为假时**绝不回执 success**——
+     *    否则原语不动、进程不关，控制面却继续收到心跳并据此判 activated（假成功且无告警）；改为明确回执 failed
+     *    并给出可读原因，让控制面按「关服指令回执失败」判 failed 并熔断止血。
+     * 2. **关服原语成功下发后才回执 success**：控制面按命令 CAS（fetched → done / failed）接收回执，同一命令的
+     *    第二条相反回执必被拒（落在「命令态不符」的 warn 里）——所以「先回执 success、关服抛异常再回执 failed」
+     *    的旧写法等于把失败信号丢进黑洞（进程没关、心跳照发、控制面判 activated）。改为原语抛异常时只回执 failed。
+     * 3. **延迟触发**：让本命令执行调用栈（单飞门释放 / 委派方排空）先解开，再触发关服原语（平台原语内部切主线程执行）；
+     *    回执在该延迟任务内、进程真正退出前发出（关服原语返回即已下发，平台随后的停机序列才终止进程）。
+     */
+    private fun restartWithShutdown(
+        orderId: Long,
+        phase: String,
+        reason: String,
+        success: () -> DeliveryStageReport,
+    ) {
+        if (!adapter.gracefulShutdownSupported) {
+            failResult(orderId, phase, "当前平台未实现优雅关服原语，restart 生效不可用（进程不会重启）：请改用宿主机手工重启，或改选 hot_reload / push_only")
+            return
+        }
+        adapter.runAsyncDelayed(RESTART_SHUTDOWN_DELAY_MS) {
+            try {
+                adapter.gracefulShutdown(reason)
+            } catch (e: Exception) {
+                failResult(orderId, phase, "优雅关服失败：${reasonOf(e)}")
+                return@runAsyncDelayed
+            }
+            postResult(orderId, success())
         }
     }
 
@@ -291,20 +322,18 @@ class DeliveryCommandExecutor(
         }
     }
 
-    /** restart 回滚：先回执，再延迟触发优雅关服。 */
+    /** restart 回滚：还原已落盘，按 restart 公共时序（能力探测 → 关服 → 单次回执）触发重启生效。 */
     private fun restartAfterRollback(
         orderId: Long,
         restored: Int,
     ) {
-        adapter.info("交付 restart 回滚：还原备份后回执并优雅关服，等宿主自启拉起并心跳回归：orderId=$orderId，还原=$restored")
-        postResult(orderId, DeliveryStageReport(PHASE_ROLLBACK, STATUS_SUCCESS, restored, 0, true, ""))
-        adapter.runAsyncDelayed(RESTART_SHUTDOWN_DELAY_MS) {
-            try {
-                adapter.gracefulShutdown("交付变更单 #$orderId 回滚后重启生效")
-            } catch (e: Exception) {
-                failResult(orderId, PHASE_ROLLBACK, "回滚后优雅关服失败：${reasonOf(e)}")
-            }
-        }
+        adapter.info("交付 restart 回滚：还原备份后优雅关服，等宿主自启拉起并心跳回归：orderId=$orderId，还原=$restored")
+        restartWithShutdown(
+            orderId = orderId,
+            phase = PHASE_ROLLBACK,
+            reason = "交付变更单 #$orderId 回滚后重启生效",
+            success = { DeliveryStageReport(PHASE_ROLLBACK, STATUS_SUCCESS, restored, 0, true, "") },
+        )
     }
 
     /** push_only（及其它非 restart）回滚：还原即够，随目标下次自然重启读盘。 */
@@ -333,7 +362,7 @@ class DeliveryCommandExecutor(
             return
         }
         val configFiles = normalizedConfigFiles(manifest.files)
-        if (publishConfigChanged(orderId, phase, configFiles)) {
+        if (publishConfigChanged(orderId, phase, configFiles, changedFileCount, backupPresent)) {
             postResult(orderId, DeliveryStageReport(phase, STATUS_SUCCESS, changedFileCount, 0, backupPresent, ""))
             adapter.info("交付 hot_reload 完成：orderId=$orderId，phase=$phase，配置工件=${configFiles.size}")
         }
@@ -370,11 +399,19 @@ class DeliveryCommandExecutor(
             .sortedWith(compareBy<DeliveryManifestFile> { it.path }.thenBy { it.sha256 })
             .distinctBy { it.path }
 
-    /** 有配置工件时派发一次通知；无配置工件成功 no-op。 */
+    /**
+     * 有配置工件时派发一次通知；无配置工件成功 no-op。
+     *
+     * 通知失败按**部分成功**回执（FR-266）：文件在推送阶段已落盘、只是生效通知没送到，与「什么都没做」是两回事——
+     * 故失败回执仍带上真实变更计数与 backupPresent，并在原因里点明「文件已落盘，仅通知失败、可按需回滚」，
+     * 让运维 / 机器主体知道盘上已经变了、该回滚还是该手工重载，而不是只看到一句无上下文的失败。
+     */
     private fun publishConfigChanged(
         orderId: Long,
         phase: String,
         configFiles: List<DeliveryManifestFile>,
+        changedFileCount: Int,
+        backupPresent: Boolean,
     ): Boolean {
         if (configFiles.isEmpty()) return true
         val changed = configFiles.mapTo(linkedSetOf()) { it.path }
@@ -382,7 +419,13 @@ class DeliveryCommandExecutor(
             adapter.publishConfigChanged(changed, configArtifactMd5(configFiles))
             true
         } catch (e: Exception) {
-            failResult(orderId, phase, "配置变更通知失败：${reasonOf(e)}")
+            failResultWithState(
+                orderId = orderId,
+                phase = phase,
+                changedFileCount = changedFileCount,
+                backupPresent = backupPresent,
+                error = "文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：${reasonOf(e)}；可整单回滚还原，或手工重载后重试",
+            )
             false
         }
     }
@@ -452,8 +495,22 @@ class DeliveryCommandExecutor(
         phase: String,
         error: String,
     ) {
+        failResultWithState(orderId, phase, 0, false, error)
+    }
+
+    /**
+     * 回执一条失败结果并保留已发生的事实（FR-266 部分成功语义）：[changedFileCount] 与 [backupPresent] 原样上报——
+     * 「已落盘仅通知失败」这类失败必须让控制面与运维看到盘上确实变了多少、有无备份可回滚。
+     */
+    private fun failResultWithState(
+        orderId: Long,
+        phase: String,
+        changedFileCount: Int,
+        backupPresent: Boolean,
+        error: String,
+    ) {
         adapter.error("交付阶段失败：orderId=$orderId，phase=$phase，原因=$error", null)
-        postResult(orderId, DeliveryStageReport(phase, STATUS_FAILED, 0, 0, false, error))
+        postResult(orderId, DeliveryStageReport(phase, STATUS_FAILED, changedFileCount, 0, backupPresent, error))
     }
 
     companion object {
@@ -475,7 +532,7 @@ class DeliveryCommandExecutor(
         private const val MISSING_FILE_MARKER = "<missing>"
 
         /**
-         * restart 回执「开始生效」后到触发优雅关服的极短延迟（毫秒）。
+         * restart 调关服原语前的极短延迟（毫秒）。
          *
          * 仅用于让本命令执行调用栈（单飞门释放 / 委派方）先行解开再关服，非契约、无需外置配置。
          */

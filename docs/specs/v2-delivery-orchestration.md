@@ -347,7 +347,7 @@ agent 面两个清单端点（`upload-manifest` / `manifest`）的非 200 响应
 
 | 方式 | agent 动作 | activated 判据 | failed 判据 |
 |---|---|---|---|
-| `restart` | 回执「开始生效」→ 优雅关服（广播、save-all、shutdown）→ 依赖宿主自启脚本拉起 → agent 随进程重启后重新注册 / 心跳回归 | 控制面在 `activate_timeout_sec` 内观测到该 identity 心跳回归且状态 online（注册 / 健康真源 = Go 进程内存） | 超时未回归；或关服指令回执失败 |
+| `restart` | **能力探测（fail-closed）** → 优雅关服（广播、save-all、shutdown）**成功下发**后回执「开始生效」→ 依赖宿主自启脚本拉起 → agent 随进程重启后重新注册 / 心跳回归（细节见 §4.6.4） | 控制面在 `activate_timeout_sec` 内观测到该 identity 心跳回归且状态 online（注册 / 健康真源 = Go 进程内存） | 超时未回归；或关服指令回执失败（含平台未实现关服原语、关服原语抛异常） |
 | `hot_reload` | 普通文件与 V2 配置冻结工件均已在推送阶段落盘；生效阶段重拉 manifest，仅收集 `sourceKind=config_artifact` 的路径并触发一次 agent 配置变更回调，摘要按回调时磁盘实际状态确定；无配置工件则成功 no-op | `delivery_activate` 成功回执使命令进入 `done`，控制面据此将目标置 `activated` | manifest 拉取失败、回调抛错或失败回执使命令进入 `failed`；命令已 `expired`；或命令仍为 `pending` / `fetched` 且超过 `activate_timeout_sec`（控制面将目标置 `failed`，并尽力把在途命令置 `expired`） |
 | `push_only` | 无生效动作 | pushed 后立即置 activated（语义 = 随目标下次自然重启生效） | —— |
 
@@ -370,6 +370,15 @@ agent 面两个清单端点（`upload-manifest` / `manifest`）的非 200 响应
 #### 4.6.3 观察窗数据
 
 观察窗内控制面按 5s 粒度为批内目标聚合快照序列：健康分、健康等级、TPS、告警计数（数据源见 §6），内存保留当前批全窗数据供 `GET .../observe` 展示与熔断判定；批终态后仅保留末次汇总（落 break_reason / 批计数），不长期入库——历史指标查询走指标域自己的存储。
+
+#### 4.6.4 agent 侧生效与回执语义（FR-266）
+
+三类生效方式在 agent 侧的编排语义与**回执纪律**（控制面按命令 CAS `fetched → done / failed` 接收回执，**同一条命令只认第一条回执**）：
+
+1. **关服能力探测 fail-closed**：`restart` 生效前先探测平台是否实现优雅关服原语（`PlatformAdapter` 侧能力标志，**默认不支持**）。不支持 → **绝不回执 success**，改为回执 `failed` 并给出可读原因（提示改用手工重启 / `hot_reload` / `push_only`）。理由是默认空实现既不关服也不抛异常，若照旧回执 success，进程继续跑、心跳照发，控制面会据「心跳回归」判 `activated` —— 假成功且无告警。
+2. **单回执收敛**：`restart`（正推与回滚）在**关服原语成功下发之后**才回执 success（语义 =「已开始生效」）；原语抛异常则只回执 `failed`。**禁止**「先回执 success、再在关服失败时补一条 failed」——第二条回执必被命令前态 CAS 拒绝，等于把失败信号丢进黑洞（进程没关、心跳照发、控制面判 `activated`）。延迟触发关服仍是刻意的：让本命令执行调用栈（单飞门释放 / 委派方排空）先解开再关服；回执在进程真正退出前发出。
+3. **部分成功语义**：`hot_reload` 的配置变更通知失败时，**文件其实已在推送阶段落盘**。此时回执仍为 `failed`（通知确实没送到），但必须携带**真实变更计数**与 `backup_present`，并在原因里点明「文件已落盘、仅通知失败，可整单回滚或手工重载后重试」——不允许把「已改盘」与「什么都没做」回成同一条零信息失败。
+4. **可回执范围的边界**：阶段回执端点以**单号定位**（`.../orders/{orderId}/result`）。命令载荷缺失或 `orderId` 非法时 agent **无处挂回执**（通用命令结果端点按控制面类型口径只接受 resync 类命令），故以 ERROR 级日志作为可达的可见通道，命令交控制面超时清理；并发重复被单飞门拒收的命令仍**必须回执 `failed`**（否则一直挂在 `fetched` 等过期，运维只看到「卡住」）。
 
 ### 4.7 备份与整单回滚
 
