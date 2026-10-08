@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -201,12 +203,17 @@ func TestMCPDeliverySubmitTicketCarriesOrderIDAndImpactSummary(t *testing.T) {
 // ── §3.6 B：审批视图两档与机器主体隔离 ──
 
 // seedRequest 直插一条审批行（绕开服务默认值，便于构造带失败原因与决定时间线的存量行）。
+// 幂等键由 requestID 派生：同一主体可播种多条而互不撞 (主体, operation, 幂等键) 唯一约束。
+// 冻结载荷哈希按「payload 原文的 sha256」填真值——撤回 / 拒绝的终态回调会校验它，缺了会被拒。
 func (f *mcpDeliveryApprovalFixture) seedRequest(t *testing.T, requestID, requesterID string) {
 	t.Helper()
+	payload := `{"orderId":87}`
+	sum := sha256.Sum256([]byte(payload))
 	if err := f.db.Create(&model.ApprovalRequest{
 		RequestID: requestID, OperationKey: authz.OperationDeliveryApprove, OperationKind: authz.OperationDeliveryApprove,
 		SchemaVersion: 1, RequiredCapability: auth.CapabilityApprovalRequest, RiskLevel: "high",
-		ResourceType: model.TargetTypeChangeOrder, ResourceID: "87", Payload: `{"orderId":87}`,
+		ResourceType: model.TargetTypeChangeOrder, ResourceID: "87", Payload: payload,
+		FrozenPayloadSHA256: hex.EncodeToString(sum[:]), IdempotencyKey: "seed-" + requestID,
 		Status: model.ApprovalStatusPending, RequesterType: auth.PrincipalKindMCP, RequesterID: requesterID,
 		RequestedBy: "mcp:" + requesterID, Version: 1,
 	}).Error; err != nil {
@@ -298,6 +305,74 @@ func TestMCPOwnApprovalViewsStayIsolatedPerMachinePrincipal(t *testing.T) {
 	res, err := callMCPTool(t, server, "beacon.approvals.own.get", map[string]any{"requestId": "apr_fr249_other"})
 	if err == nil && !res.IsError {
 		t.Fatalf("读取他人申请应被拒绝，实际返回: %+v", res)
+	}
+}
+
+// ── §3.6 B：写工具沿用轻量档 ──
+
+// assertLightweightApprovalResponse 断言某工具的响应用的是轻量档：
+// 字段集与列表档逐键一致，且不含详情档独有键——审批理由、审批主体与执行时间线只由 own.get 给出。
+func assertLightweightApprovalResponse(t *testing.T, tool string, out map[string]any) {
+	t.Helper()
+	want := []string{"approvalRequestId", "status", "operation", "resultRef", "createdAt", "expiresAt", "failureSummary", "finishedAt"}
+	if len(out) != len(want) {
+		t.Fatalf("%s 响应用轻量档，字段数应为 %d，实际 %d: %v", tool, len(want), len(out), out)
+	}
+	for _, key := range want {
+		if _, ok := out[key]; !ok {
+			t.Fatalf("%s 响应缺轻量档字段 %s: %v", tool, key, out)
+		}
+	}
+	for _, key := range []string{"rejectReason", "decisionReason", "approvedBy", "decidedAt", "approvedAt", "executedAt", "impactSummary", "safeSummary"} {
+		if _, ok := out[key]; ok {
+			t.Fatalf("%s 响应混入详情档字段 %s: %v", tool, key, out)
+		}
+	}
+}
+
+// TestMCPApprovalWriteToolsReuseLightweightView 锁定 own.withdraw / approve / reject 三个写工具
+// 沿用轻量档：响应字段集与 own.list 行一致、不含详情档独有键。
+//
+// 三者都回"刚操作完的那条申请"，若其中任一偷偷换成全量档，AI 会在一次写调用里拿到
+// 本该按需拉取的审批理由与时间线——档位划分就在写路径上破了口。
+func TestMCPApprovalWriteToolsReuseLightweightView(t *testing.T) {
+	// 审批决定工具仅当显式开启 mcp.allow-approval-decide 时才注册（与内网闭环部署一致），用后复位。
+	t.Cleanup(func() { auth.SetMCPApprovalDecide(false) })
+	auth.SetMCPApprovalDecide(true)
+
+	f := newMCPDeliveryApprovalFixture(t)
+	// 主体须在开关开启后构造，能力集合才含 approval.decide。
+	principal := auth.MCPPrincipal("client-fr249-write", "写工具客户端", model.MCPClientProfileAutomation)
+	server := f.registry.NewMCPServer(principal)
+	f.seedRequest(t, "apr_fr249_withdraw", "client-fr249-write")
+	f.seedRequest(t, "apr_fr249_approve", "client-fr249-write")
+	f.seedRequest(t, "apr_fr249_reject", "client-fr249-write")
+
+	cases := []struct {
+		tool   string
+		args   map[string]any
+		status string
+	}{
+		{"beacon.approvals.own.withdraw", map[string]any{"requestId": "apr_fr249_withdraw"}, model.ApprovalStatusWithdrawn},
+		{"beacon.approvals.approve", map[string]any{"requestId": "apr_fr249_approve"}, model.ApprovalStatusExecuting},
+		{"beacon.approvals.reject", map[string]any{"requestId": "apr_fr249_reject", "reason": "风险过高"}, model.ApprovalStatusRejected},
+	}
+	for _, tc := range cases {
+		out := mcpStructuredMap(t, mustCallMCPTool(t, server, tc.tool, tc.args))
+		// 先确认工具真的做了事（状态已迁移），再判档位——否则"空响应"会被误判成轻量档。
+		if out["status"] != tc.status {
+			t.Fatalf("%s 后状态应为 %s，实际 %v（%v）", tc.tool, tc.status, out["status"], out)
+		}
+		assertLightweightApprovalResponse(t, tc.tool, out)
+	}
+
+	// 与 own.list 行逐键比对：写工具响应就是列表档的那一份投影。
+	rows := mcpItems(t, mcpStructuredMap(t, mustCallMCPTool(t, server, "beacon.approvals.own.list", map[string]any{})))
+	if len(rows) != len(cases) {
+		t.Fatalf("列表应回 %d 条自己的申请，实际 %d 条: %v", len(cases), len(rows), rows)
+	}
+	for _, row := range rows {
+		assertLightweightApprovalResponse(t, "beacon.approvals.own.list 行", row)
 	}
 }
 
