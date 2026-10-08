@@ -21,10 +21,12 @@ afterAll(() => {
 describe('变更单提审请求体', () => {
   it('submitChangeOrder 以 { reason } 作为请求体发出', async () => {
     useScenario('normal')
+    // 以原始文本捕获：无请求体时记 null（而非在 handler 里解析空 body 抛异常），失败差异更直白
     let captured: unknown = null
     server.use(
       http.post('*/admin/v2/change-orders/:id/submit', async ({ request }) => {
-        captured = await request.json()
+        const raw = await request.text()
+        captured = raw === '' ? null : (JSON.parse(raw) as unknown)
         // 直接回成功体，用例只关心请求侧契约
         return HttpResponse.json({ id: 5001 }, { status: 200 })
       }),
