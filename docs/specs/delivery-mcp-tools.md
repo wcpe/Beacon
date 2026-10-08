@@ -1,10 +1,10 @@
 # 功能规格：交付 MCP 工具集与审批面
 
-> 状态：草拟（本波施工 FR-245 / FR-249；FR-246/247/248 由第二波按本规格施工）
+> 状态：已交付（FR-245 / FR-246 / FR-247 / FR-248 / FR-249；FR-250 的入参与审计口径收口项一并落地）
 > 关联 PRD：FR-245、FR-246、FR-247、FR-248、FR-249
-> 分支：feature/fr-245-mcp-read-tools、feature/fr-249-approval-surface（第二波另开）
+> 分支：feature/fr-245-mcp-read-tools、feature/fr-249-approval-surface、feature/fr-246-mcp-write-tools
 > 决策依据：FR-220 / FR-236 / FR-237 / FR-242 既有 MCP 架构；本规格不引入新 ADR
-> 批次口径：PRD 的「交付优化批 1 / 批 2」是验收批次；本规格的「本波 / 第二波」是批内开发节奏——FR-246/247/248 属批 1、第二波开工。
+> 批次口径：PRD 的「交付优化批 1 / 批 2」是验收批次；本规格按 FR 编号组织施工（FR-245 / FR-249 与 FR-246 / FR-247 / FR-248 同属批 1）。
 
 ## 1. 背景与目标
 
@@ -41,19 +41,19 @@
 
 命名统一遵循既有规范 `beacon.<域>.<资源>.<动词>`（先例：`beacon.metrics.health.list`、`beacon.topology.snapshot.get`），**一律 4 段、动词结尾**（仓库既有 81 项最长为 4 段）。
 
-| 工具名 | 语义 | 风险 | AutomationOnly | OperationKind | 写语义 | 波次 |
+| 工具名 | 语义 | 风险 | AutomationOnly | OperationKind | 写语义 | 归属 FR（状态） |
 |---|---|---|---|---|---|---|
-| `beacon.delivery.order.list` | 变更单列表（分页筛选） | low | 否（observer 可见） | 空 | 只读 | 本波 |
-| `beacon.delivery.order.get` | 变更单详情（含计数摘要） | low | 否（observer 可见） | 空 | 只读 | 本波 |
-| `beacon.delivery.targets.list` | 目标分页（含逐台状态/失败原因/备份标记） | low | 否（observer 可见） | 空 | 只读 | 本波 |
-| `beacon.delivery.impact.get` | 影响预览（汇总+逐目标） | low | 否（observer 可见） | 空 | 只读 | 本波 |
-| `beacon.delivery.observe.get` | 当前批观察窗序列 | low | 否（observer 可见） | 空 | 只读 | 本波 |
-| `beacon.delivery.events.list` | 进度事件（有界条数） | low | 否（observer 可见） | 空 | 只读 | 本波 |
-| `beacon.delivery.order.create` | 建 draft（含 configChanges 一次成型） | low | 是 | 空 | direct + 审计 | 第二波 |
-| `beacon.delivery.order.update` | 编辑 draft | low | 是 | 空 | direct + 审计 | 第二波 |
-| `beacon.delivery.order.diff-scan` | 同步重扫差异 | low | 是 | 空 | direct + 审计 | 第二波 |
-| `beacon.delivery.order.pause` | 人工暂停（止损） | high | 是 | 空 | direct + 强审计 | 第二波 |
-| `beacon.delivery.order.cancel` | 紧急终止（止损，原因必填） | high | 是 | 空 | direct + 强审计 | 第二波 |
+| `beacon.delivery.order.list` | 变更单列表（分页筛选） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
+| `beacon.delivery.order.get` | 变更单详情（含计数摘要） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
+| `beacon.delivery.targets.list` | 目标分页（含逐台状态/失败原因/备份标记） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
+| `beacon.delivery.impact.get` | 影响预览（汇总+逐目标） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
+| `beacon.delivery.observe.get` | 当前批观察窗序列 | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
+| `beacon.delivery.events.list` | 进度事件（有界条数） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
+| `beacon.delivery.order.create` | 建 draft（含 configChanges 一次成型） | low | 是 | 空 | direct + 审计 | FR-246（已交付） |
+| `beacon.delivery.order.update` | 编辑 draft | low | 是 | 空 | direct + 审计 | FR-246（已交付） |
+| `beacon.delivery.order.diff-scan` | 同步重扫差异 | low | 是 | 空 | direct + 审计 | FR-246（已交付） |
+| `beacon.delivery.order.pause` | 人工暂停（止损） | high | 是 | 空 | direct + 强审计 | FR-247（已交付） |
+| `beacon.delivery.order.cancel` | 紧急终止（止损，原因必填） | high | 是 | 空 | direct + 强审计 | FR-247（已交付） |
 
 定级与可见性依据（对齐既有先例）：
 
@@ -81,22 +81,24 @@
 - `orderId` 的字段名统一为 `orderId`（交付域内一致；与 HTTP 面路径参数同名，便于映射）。
 - `namespaceId` 必填（对齐 `beacon.topology.snapshot.get` 的 namespace 定位方式，禁止用可选参数留观测越界口子）；其余工具由 `orderId` 定位、服务端做 namespace 归属校验（跨 namespace 拒绝）。
 
-### 3.3 组单工具契约（FR-246，第二波）
+### 3.3 组单工具契约（FR-246）
 
 | 工具 | 输入 | 输出 | 说明 |
 |---|---|---|---|
-| `order.create` | `namespaceId`、`title`、`description?`、`sourceServerId?`、`scanDir?`、`selector`（JSON 对象）、`batchMode`、`batchSizes`、`activationMethod`、`observeWindowSec?`、`activateTimeoutSec?`、`failureRateThresholdPercent?`、`unhealthyRateThresholdPercent?`、`configChanges?`（`[{configFileId, scopeKind, scopeRefId, toVersionId}]`） | `{orderId, status}` | **修复点**：`Create` 现忽略 `configChanges`（service 注释明示），本项使其一次成型；无 `configChanges` 即纯文件单 |
+| `order.create` | `namespaceId`、`title`、`description?`、`sourceServerId?`、`scanDir?`、`selector`（JSON 对象）、`batchMode`、`batchSizes`、`activationMethod`、`observeWindowSec?`、`activateTimeoutSec?`、`failureRateThresholdPercent?`、`unhealthyRateThresholdPercent?`、`configChanges?`（`[{configScopeKind, configScopeId, configToVersionId}]`） | `{orderId, status}` | **修复点**：`Create` 现忽略 `configChanges`（service 注释明示），本项使其一次成型；无 `configChanges` 即纯文件单 |
 | `order.update` | `orderId` + 可改字段子集（同 create 除去 `namespaceId`） | `{orderId, status}` | 仅 draft 可改（领域守卫不变） |
 | `order.diff-scan` | `orderId` | `{add, update, delete, total, snapshotAt}` | 同步扫描；要求 draft + 有模板源（错误走 §3.5 映射） |
 
-### 3.4 止损工具契约（FR-247，第二波）
+> **勘误（FR-246 施工期）**：上表 `configChanges` 的元素键名以 **HTTP 面真源**为准——`configScopeKind` / `configScopeId` / `configToVersionId`（`apps/server/internal/handler/delivery_admin_handler.go` 的 `changeConfigChangeInput`、contracts 的 `ConfigChangeInput`）；`configFromVersionId` 由服务端按 ADR-0071 计算、客户端携带不采信。本规格初稿写的 `configFileId` / `scopeKind` / `scopeRefId` / `toVersionId` 是拟定简写，从未落地，不得据此实现（§3.2 的「输出键名一律沿用既有 HTTP 视图字段名，不得自造键名」同样适用于入参）。
+
+### 3.4 止损工具契约（FR-247）
 
 | 工具 | 输入 | 输出 | 说明 |
 |---|---|---|---|
 | `order.pause` | `orderId` | `{orderId, status}` | rolling → paused（人工）；无原因要求（与 HTTP 面一致） |
 | `order.cancel` | `orderId`、`reason`（必填） | `{orderId, status}` | rolling/paused → cancelled；原因入审计 |
 
-### 3.5 错误理由映射（FR-248，第二波）
+### 3.5 错误理由映射（FR-248）
 
 交付系全部 MCP 工具的拒绝路径由 `mcpRejectedResult`（硬编码文案、丢弃 err）改为 `mcpRejectedResultWithReason`（对齐 `mcp_alert_tools.go` 先例），把领域错误映射为稳定中文短语：
 
@@ -122,7 +124,7 @@
 
 实现约束：映射表以**一处常量表**维护（与 `apperr` 的 code 对齐，测试断言每个交付错误码在表内有条目）；映射不出 `apperr` 之外的第二真源（只做 code → 中文短语的稳定映射，不复制错误语义）。
 
-### 3.6 票据与审批视图扩字段（FR-249，本波）
+### 3.6 票据与审批视图扩字段（FR-249）
 
 **A. 交付申请票据 `DeliveryApprovalTicketView`（HTTP 与 MCP 共用结构体）扩两字段**：
 
@@ -161,7 +163,7 @@
 - 11 个新工具全部登记 `mcpToolCatalog`（含风险等级、`AutomationOnly`、`OperationKind` 留空）；无一项 `RequireApprovalDecide`、无一项 critical——生产模式门禁对 low/high 无影响。
 - 注册一律走 `mcpAddTool`（fail-closed；未登记即不注册并有痕迹），执行面 guard 自动覆盖。
 - 既有覆盖测试（catalog ↔ 真实注册集合双向一致、等级 ≥ descriptor、observer 集合不变、未登记留痕）自动守护新增项。**注意 `wantChecked`（现 49）为人工精确值**：本批新工具 `OperationKind` 全部留空故该值不变；若实现者给任何新工具挂了 kind，必须同步核对并更新该值（测试失败文案已提示）。
-- 本波另补测试：只读 6 工具 observer 可见断言、写工具 observer 不可见断言（FR-245 验收）、拒绝文案断言（FR-248，第二波）。
+- 另补测试：只读 6 工具 observer 可见断言、写工具 observer 不可见断言（FR-245 验收）、拒绝文案断言（FR-248）、只建申请的业务表零副作用与同幂等键幂等断言（FR-246 / FR-247）。
 
 ## 4. UX / 交互
 
@@ -169,14 +171,14 @@
 
 ## 5. 任务拆分
 
-**本波（FR-245 / FR-249）**：
+**FR-245 / FR-249：**
 
 - [ ] 任务 A1：六个只读工具实现（投影层 + 注册 + 目录登记）
 - [ ] 任务 A2：只读工具测试（observer/automation 可见性、投影有界性、跨 namespace 拒绝）
 - [ ] 任务 A3：文档同步（FR-245 专属：`docs/API.md` MCP 工具清单补六个只读工具；`docs/specs/mcp-tool-risk-grading.md` §3.3 清单与合计（81 → 92 项中 +6 low）同步；PRD FR-245 行状态翻「开发中」；CHANGELOG 末尾追加）
 - [ ] 任务 B1：`DeliveryApprovalTicketView` 扩 `orderId` + `impactSummary`（六类申请点接入 + `mcpDeliveryTicketView` 同步补键）
 - [ ] 任务 B2：`own.get/list` 投影扩字段（`mcpApprovalView` 拆分轻量/全量档 + 字段投影）
-- [ ] 任务 B3：本波测试（票据字段、视图字段、机器主体隔离不变）
+- [ ] 任务 B3：票据与审批视图测试（票据字段、视图字段、机器主体隔离不变）
 - [ ] 任务 B4：文档同步（FR-249 专属：`docs/API.md` 票据/审批视图字段段——与 FR-245 的工具清单段不重叠；PRD FR-249 行状态；CHANGELOG 末尾追加）
 
 **文件边界（并行防冲突）**：
@@ -185,18 +187,18 @@
 - **B（FR-249）改**：`apps/server/internal/server/mcp_tools.go`（`mcpApprovalView` 拆分与扩字段、`mcpDeliveryTicketView` 补键）+ `delivery_order_service.go` / `delivery_dangerous_approval.go`（ticket 结构体与六类申请点）+ 对应测试；文档：`API.md` 票据/审批视图字段段。
 - 共享文件**无重叠**（catalog 仅 A 改、mcp_tools.go 仅 B 改）；PRD 各改自己那行、CHANGELOG 各自末尾追加。
 
-**第二波（FR-246 / FR-247 / FR-248）**：
+**FR-246 / FR-247 / FR-248（已交付）：**
 
-- [ ] 任务 D：组单三工具（含 `Create` 支持 `configChanges`）
-- [ ] 任务 E：止损两工具
-- [ ] 任务 F：错误映射表 + 全交付系工具接入
-- [ ] 任务 G：第二波测试（零副作用断言、幂等断言、拒绝文案断言）+ API.md 更新 + `mcp-tool-risk-grading.md` §3.3 合计二次同步（81 → 92 项中再 +5）
+- [x] 任务 D：组单三工具（含 `Create` 支持 `configChanges`）
+- [x] 任务 E：止损两工具
+- [x] 任务 F：错误映射表 + 全交付系工具接入
+- [x] 任务 G：交付写工具测试（只建申请的业务表零副作用断言、同幂等键幂等断言、逐错误码拒绝文案断言）+ `API.md` 更新 + `mcp-tool-risk-grading.md` §3.3 合计二次同步（92 项 = critical 10 + high 48 + low 34）
 
 ## 6. 验收标准
 
 - **FR-245**：MCP `tools/list`（automation）可见六个只读工具，**observer 同样可见**；实调 `order.list`→`order.get`→`targets.list`→`impact.get`→`observe.get`→`events.list` 全链路可读且返回有界；跨 namespace `orderId` 被拒；真机 MCP 客户端实测通过。
 - **FR-249**：任意交付申请创建响应含 `orderId` 与 `impactSummary`（HTTP 与 MCP 两侧同名键均可见）；`own.get` 可见失败原因/审批主体/时间线；`own.list` 保持轻量；机器主体只见自己的申请（负向）；真机实测。
-- **FR-246/247/248（第二波）**：AI 可建单（含配置变更一次成型）、编辑、扫描；可暂停/终止且落强审计；被拒调用返回 §3.5 表中的稳定短语；单测逐错误码断言。
+- **FR-246 / FR-247 / FR-248**：AI 可建单（含配置变更一次成型）、编辑、扫描；可暂停/终止且落强审计；被拒调用返回 §3.5 表中的稳定短语；单测逐错误码断言。
 - 共同硬闸：`go test ./...` 全绿 + `mcp_tool_catalog_test` 覆盖测试通过 + 真机维度真机过（无真机环境时如实标"待真机验"，不冒充完成）。
 
 ## 7. 风险 / 待定
@@ -204,4 +206,4 @@
 - **只读返回体规模**：`order.get` 的计数与 `impact.get` 的逐目标字段需按既有 view 裁剪，防止大单（1000+ 目标）返回体过大——实现时以分页 + 计数为界，禁止全量展开。
 - **风险定级可复核**：组单 3 项定 low 的依据是"draft 无生产副作用 + 领域守卫限界"；若评审认为应升 high，仅需改 catalog 一行（不影响实现）。
 - **`impactSummary` 实现路径**：六类申请点的冻结 payload 现仅含 orderId/expectedStatus/snapshotHash 等定位字段（**无计数**）——需在各申请点**新增计数查询**（targets/items/batches 计数）并随申请响应返回；**不写入冻结 payload**（票据是创建时刻的即时读数，无需冻结语义）；该键仅用于票据对象，与审批 request 的 text 列不重名（见 §3.6 B）。
-- **跨波文件热点**：本波 A/B 边界已隔离（见 §5）；第二波（D/E/F）与第一波在 `mcp_tool_catalog.go` 有交集（D/E 需登记新工具）——第二波开工前先 rebase 第一波结果。
+- **跨批文件热点（已化解）**：FR-245 / FR-249 的 A/B 文件边界无重叠（见 §5）；FR-246 / FR-247 与它们在 `mcp_tool_catalog.go` 有交集（新增工具需登记），已按「先 rebase 前序结果再开工」的做法施工，无冲突。

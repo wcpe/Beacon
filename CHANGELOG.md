@@ -20,13 +20,13 @@
   - **测试**：六类申请点逐类断言 `orderId` 与四项计数，并断言计数**未进**冻结 payload；MCP 协议路径实测 `beacon.delivery.order.submit` 的结构化输出带两键；列表 / 详情字段集合逐键锁定（含两档字段数）与主体隔离负向用例。
 
 - **MCP 交付组单与止损工具（FR-246 / FR-247）**：只读侧补齐（FR-245）后，交付域机器主体仍**建不了单、也止不了血**——HTTP 面 21 项操作里最常用的组单与止损只对人类管理台开放，AI 发现问题后没有任何处置手段。现补上五个**直接执行**（不创建审批票据）的工具，语义与 `/admin/v2/change-orders` 系列端点逐一对齐：组单三项 `beacon.delivery.order.create` / `.order.update` / `.order.diff-scan`（`low`）、止损两项 `beacon.delivery.order.pause` / `.order.cancel`（`high`）。规格见 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md) §3.3 / §3.4。
-  - **组单一次成型**：`create` 可携带 `configChanges`，配置项与单在同一事务内落库（任一配置项非法则整单不落）；未提供即纯文件单。`update` 支持 `configChanges` 整组替换（传空数组即清空）。`diff-scan` 只回**计数聚合** `{add,update,delete,total,snapshotAt}`——逐文件明细在大单（上千差异项）下会撑爆返回体，明细仍走 HTTP 面。
+  - **组单一次成型**：`create` 可携带 `configChanges`，配置项与单在同一事务内落库（任一配置项非法则整单不落）；未提供即纯文件单。`update` 支持 `configChanges` 整组替换（传空数组即清空）。显式传入空 `batchSizes` 不会被当成「未提供」静默忽略，而是原样交给领域层拒绝（`batchSizes 不能为空`）——否则客户端以为改成了零批次、实际沿用默认值，成功与失败都看不出来。`diff-scan` 只回**计数聚合** `{add,update,delete,total,snapshotAt}`——逐文件明细在大单（上千差异项）下会撑爆返回体，明细仍走 HTTP 面。
   - **止损直执**：`pause` 把 `rolling` 打成 `paused(manual)` 且不打断在途目标；`cancel` 把 `rolling` / `paused` 打成 `cancelled`，`reason` **必填**（与 HTTP 面一致）并入审计与单据。两项均为可逆操作（可 resume / 可回滚），故取 `high` 而非 `low`。
   - **观测范围与只读工具同源**：建单必须落在调用者可观测的 namespace 内；其余四项按单所属 namespace 判归属，**跨 namespace 的 `orderId` 与不存在的单共用同一条拒绝文案**（不把范围校验变成存在性探针）。
   - **门禁**：五项全部登记 `mcpToolCatalog`（组单 `low` / 止损 `high`、均带 `AutomationOnly`、`OperationKind` 留空），走 `mcpAddTool` 唯一注册入口；`observer` 一个都不可见。
   - **测试**：目录等级与可见性、真实注册路径、一次成型（含非法配置项整单回滚）、差异扫描计数聚合、暂停/终止真效果与审计、拒绝文案逐条断言、跨 namespace 与不存在同文案。
 
-- **交付系工具的拒绝理由透出（FR-248）**：交付系工具（既有六项申请类 + 本波五项直执）被拒时此前**一律回硬编码文案并丢弃领域错误**，AI 只能得知「被拒了」而不知为何——而状态不允许、缺模板源、无目标、缺原因这几类的处置方向完全不同（等状态 / 补源 / 改 selector / 补参数）。现改为回**可区分的中文原因**，与告警域先例对齐。
+- **交付系工具的拒绝理由透出（FR-248）**：交付系工具（六项既有申请类 + FR-246 / FR-247 的五项直执工具）被拒时此前**一律回硬编码文案并丢弃领域错误**，AI 只能得知「被拒了」而不知为何——而状态不允许、缺模板源、无目标、缺原因这几类的处置方向完全不同（等状态 / 补源 / 改 selector / 补参数）。现改为回**可区分的中文原因**，与告警域先例对齐。
   - **一处常量表**：领域错误码 → 稳定短语集中在 `mcpDeliveryRejectedReasons`（覆盖规格 §3.5 全部 16 个错误码，含大写的 `FORBIDDEN` 与 `not_creator`，另含交付域自身产出的 `missing_reason`）；code 取自既有真源（多数直接用 `apperr` 定义，改名即编译失败），短语不随领域内部措辞漂移。`illegal_state` 额外拼上**当前状态与目标动作**（如 `当前状态不允许该操作：当前状态 rolling 不允许 编辑`），便于直接定位卡点。
   - **不回空文案**：未列入表的错误沿用领域错误自带的中文说明（已按 [ADR-0057](docs/adr/0057-surface-desensitized-errors.md) 脱敏），非领域错误（存储层等）回统一兜底文案，不透传内部细节。
   - **测试**：逐错误码断言表内条目与映射结果（并断言表条目数精确匹配，防止静默增删）、兜底三条路径（领域说明 / 空说明 / 非领域错误）、以及经真实拒绝路径的逐工具文案断言。
