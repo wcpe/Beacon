@@ -54,6 +54,27 @@
 
 ### 修复
 
+- **交付提交事务化与 `pending_approval` 死结自愈（FR-259）**：提审是「冻结单据」+「创建审批申请」两步且各自开事务，第二步失败时第一步已提交——单被冻结在 `pending_approval` 却**没有对应的审批申请**：推不动（没有申请可批准）也退不回（`submit` / `cancel` 均 `illegal_state`），只能人工改库。真机两轮验收各撞一次：批 1 验收前端漏带 `Idempotency-Key` → `400 INVALID_PARAM`，单 1 / 单 4 当场冻死；波次 A 验收 O1 里审批票据**执行失败**（`start_conflict` 目标集冲突）后票据已 `failed`（终态、不可撤回），单 #14 / #19 同样卡在「有状态无申请」。
+  - **两步同事务**：`RequestSubmit` 改为在同一事务内先 `prepareSubmit`（`draft → pending_approval`，含前置校验 + CAS + 提审计）再 `requestApprovePending`（建申请），任一步失败即整体回滚，单停在可编辑的 `draft`，运维修正后可原样重试，**不留审批申请也不留提审计**。
+  - **审批服务必须绑同一 tx**：`ApprovalService.request` 自身会开事务，在外层事务里嵌套调用会让单连接库（sqlite）自锁、MySQL 上退化为两个独立事务——两步又变回非事务。故用同包副本写法（`withTx`）把 `db` / `repo` / `audit` 一起绑上去。
+  - **死结自愈**：`pending_approval` 且 `delivery.approve` 下**无未终结申请**（`pending` / `executing`）时放行重提补建申请；仍有未终结申请时回 `409 illegal_state`，避免叠出两条并行的同单审批。未终结口径刻意只取这两态——`rejected` / `withdrawn` / `expired` / `failed` 已不再推进，不构成重提冲突。
+  - **测试**：缺幂等键提审后单仍为 `draft` 且库内 0 申请 0 审计；补键重试成功且单 `pending_approval`；票据执行失败的死结单重提被接受、未终结申请恰 1 条；有未终结申请时重提被拒且不建第二条。规格见 [delivery-orchestration-reliability](docs/specs/delivery-orchestration-reliability.md)。
+
+- **变更单终止的目标收口（FR-260）**：`cancel` 只把 `pending` 目标置 `skipped`，不处置 `pushing` / `pushed` / `activating`；而 `cancelled` **不在**推进器装载集 `deliveryActiveOrderStatuses` 内——终止后推进器永不再看这张单，这些在途目标既不通向 `activated` 也不通向 `failed`，成为「既不推进也不收尸」的孤儿：状态墙长期停在中间态，运维也分不清这台到底动没动盘。现在终止事务内按 `cancelInFlightStatuses` 逐个批量 CAS 把它们收口为 `failed` 并落统一脱敏原因「变更单已紧急终止，目标未确认生效」。
+  - **收口取 `failed` 而非 `skipped` 是刻意的**：`skipped` 的语义是「从未开始、未动盘」，而这三态都**已经动了盘**（推送覆盖或已下发生效命令），标 `skipped` 会让运维误判「这台没被碰过」从而错过回滚；且这些目标 `pushed_at` 已非空、属回滚候选，只有 `failed` 与「曾覆盖磁盘」的事实自洽。
+  - **批一并收终态**：承载在途目标的活动批（`running` / `observing` / `awaiting_confirm`）同样收 `skipped` 并补 `finished_at`——批停在非终态会使其 `finished_at` 恒空、终态批事件永不派生，也与同单已收口的批形态不一致。收口计数进审计 `detail.settled` 使「终止时扫了多少在途目标」可追溯。
+  - **测试**：三台分别处 `pushing` / `pushed` / `activating` 时终止 → 全部 `failed` 且带终止原因、库内无在途态残留、批全 `skipped` 且 `finished_at` 非空、终止后再跑两轮推进器目标态不再变化；从未开始的 `pending` 目标仍置 `skipped`（既有语义不回退）。
+
+- **编排推进器停滞检测与自愈（FR-262）**：推进器每 2s 空转一轮，两类「已无事可做且**不会自行恢复**」的停滞此前**没有任何日志 / 告警 / 事件**——运维只看到「单还 rolling 但不动了」，只能翻库猜原因。
+  - **两类停滞可见化**：批已到 `awaiting_confirm` 等人工确认（首报 5 min、此后每 30 min 重复）；rolling 且 payload ready 却**根本没有活动批**（批被并发迁走或数据不一致，首报 2 min、此后每 10 min 重复）。WARN 携单号 / 批号 / 停滞时长，并点明卡在哪一类等待上。节律去重，不会每 2s 刷屏；停滞解除（人工确认 / 单终态化）即停止提醒并释放观测状态；正常推进不得误报。
+  - **只报日志、不进告警事件流**：否则「正常等人工确认」会在告警中心刷屏。若将来要「卡住就告警」，需先定阈值口径与降噪策略再单独立项。
+  - **CAS 口径统一**：`tripBreaker` 与 `resumeCircuitBatch` 此前丢弃 `UpdateBatchCAS` 的命中结果，并发迁移时照样提交，落到「批未 failed 而单已 paused / rolling」的半截状态且无人知晓；现改为显式判命中——未命中分别走 `errCASSkip`（回滚事务）与 `409 illegal_state`（回报冲突）。
+  - **测试**：确认门「未到点不报 → 到点报一次 → 未到间隔不重复 → 过间隔再报 → 确认完成后停报且清观测」四条节律；无活动批的两段阈值；正常推进不误报且不留观测；批 CAS 未命中不再落半截状态。
+
+- **观察窗内存释放与预热口径防呆（FR-265）**：① 自动收单（`advanceRollingBack` 的 `autoFinishRollback`）是唯一不经审批执行适配器的终态出口，而 `clearObserve` 只在确认批与人工终止两条路径上被调用——控制面长跑时终态单的观察窗缓冲与停滞观测**无界累积**；现补上释放。② `restartHealthWarmup`（90s）大于过短的观察窗时，restart 目标在**整段**观察窗里都被排除出健康恶化评估，健康恶化熔断**恒不触发**（分母恒为 0），而界面完全看不出「配了但永不生效」；现在组单 / 编辑期（`applyOrderInput`，创建与编辑共用）拒绝 `restart` + `unhealthyRateThresholdPercent > 0` + `observeWindowSec < 90` 的组合，错误文案直陈后果，让运维当场知道该调大观察窗还是改用非 restart 生效方式。关闭阈值或改用 `push_only` / `hot_reload`（无重启预热期）时短观察窗不受约束。
+  - **测试**：自动收单后观察窗缓冲与停滞观测均被释放；短窗高危组合在创建与编辑两侧均被拒、观察窗恰为 90s 放行、关闭阈值或非 restart 时短窗放行。
+
+
 - **交付 restart 生效与回执语义收口（FR-266）**：`restart` 生效链路此前有三处会「看着成功、实际没生效」的语义漏洞。① `PlatformAdapter.gracefulShutdown` 是**默认空实现且不抛异常**：未覆写该原语的平台（测试桩、只读壳、后续新平台）会走到「回执 success 但进程不关」，控制面据「心跳回归」直接把目标判成 `activated`——**假成功且无任何告警**。现补**能力探测 fail-closed**（`gracefulShutdownSupported` 默认 false，Bukkit / Bungee 壳显式覆写），探测不通过时**绝不回执 success**，改为回执 `failed` 并给出可读原因（提示改用手工重启或 `hot_reload` / `push_only`），控制面据此按「关服指令回执失败」判 failed 并熔断止血。② **双回执收敛**：原实现「先回执 success『开始生效』、关服原语抛异常再回执 failed」，而控制面按命令前态 CAS（`fetched → done / failed`）只认第一条回执——第二条必被拒，失败信号等于丢进黑洞（进程没关、心跳照发、目标仍被判 `activated`）。现改为**关服原语成功下发之后**才回执 success、原语抛异常时只回执 failed，同一命令永远只有一条回执。③ **「已落盘仅通知失败」的部分成功语义**：`hot_reload` 的配置变更通知失败时文件其实已在推送阶段落盘，旧实现回一条计数全零的失败，无法与「什么都没做」区分；现失败回执保留**真实变更计数**与 `backup_present`，并在原因里按 phase 给出**可核实的**处置建议——改动前写死的「可整单回滚或手工重载后重试」在正推阶段并不成立（是否下发回滚由控制面预检决定），故正推只提「手工重载 / 按同版本重推」，回滚阶段才提回滚。规格见 [v2-delivery-orchestration](docs/specs/v2-delivery-orchestration.md) §4.6.4。
   - **可回执范围的边界写明**：阶段回执端点以**单号定位**（且按「该身份 + 该单 + 该 phase 类型最新的在途 `fetched` 命令」定位），命令载荷缺失 / `orderId` 非法的交付命令 agent **无处挂回执**（通用命令结果端点按控制面类型口径只接受 resync 类命令），故以 ERROR 级日志作为可达的可见通道并交控制面超时清理；被单飞门 / 启动清扫拒收的命令仍**回执 failed**（否则一直挂在 `fetched` 等过期，运维只看到「卡住」）。
   - **计数贯通到控制面 + 下界口径**：生效阶段的变更计数改取 `max(入参计数, 配置工件数)` 作**下界**（原实现正推恒传 0，失败目标在控制面上与「什么都没做」同形）；控制面 `failTargetWithResult` 把回执携带的计数与备份标记落到目标行 `changed_file_count` / `backup_present`（**只增不减**：0 计数回执不清零推送阶段已落定的事实），目标视图如实透出。

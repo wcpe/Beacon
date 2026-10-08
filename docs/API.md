@@ -316,13 +316,13 @@ agent 面：
 | DELETE | `/admin/v2/change-orders/{id}` | 创建 draft 删除统一审批申请，返回 `202 + approvalRequestId` |
 | POST | `/admin/v2/change-orders/{id}/diff-scan` | 同步读最新快照重算差异返回 items；重扫另设（复用文件资产域 asset-rescan） |
 | GET | `/admin/v2/change-orders/{id}/impact` | 影响预览（汇总 + 逐目标分页） |
-| POST | `/admin/v2/change-orders/{id}/submit` | 冻结变更单与 items 摘要并创建唯一统一审批申请（原因必填，缺则 `400 approval_reason_required`；须带 `Idempotency-Key`，缺或非法则 `400 INVALID_PARAM`），返回 `202 + approvalRequestId` |
+| POST | `/admin/v2/change-orders/{id}/submit` | 冻结变更单并创建唯一统一审批申请（**两步在同一事务内**：原因必填，缺则 `400 approval_reason_required`；须带 `Idempotency-Key`，缺或非法则 `400 INVALID_PARAM`），返回 `202 + approvalRequestId`。建申请失败时**单仍为 `draft`**（不被冻结、无审批申请与提审计残留），补上幂等键后可原样重试。`pending_approval` 单在**无未终结（`pending`/`executing`）审批申请**时可重提自愈（补建申请）；仍有未终结申请时重提回 `409 illegal_state`（FR-259） |
 | POST | `/admin/v2/change-orders/{id}/withdraw` | 旧入口，统一返回 `403`；创建人应调用对应统一审批申请的 withdraw |
 | POST | `/admin/v2/change-orders/{id}/approve` | 旧第二步审批入口，统一返回 `403`；审批决定只能在审批中心完成 |
 | POST | `/admin/v2/change-orders/{id}/reject` | 旧入口，统一返回 `403`；审批人应调用对应统一审批申请的 reject |
 | POST | `/admin/v2/change-orders/{id}/pause` | 人工暂停 |
 | POST | `/admin/v2/change-orders/{id}/resume` | 创建继续灰度审批申请，返回 `202 + approvalRequestId`；批准 worker 执行冻结的 mode / reason |
-| POST | `/admin/v2/change-orders/{id}/cancel` | 紧急终止（原因必填） |
+| POST | `/admin/v2/change-orders/{id}/cancel` | 紧急终止（原因必填）。除未开始的 `pending` 目标置 `skipped` 外，**在途目标（`pushing` / `pushed` / `activating`）一并收口为 `failed`** 并落「已紧急终止」脱敏原因（保留 `pushed_at` 以维持回滚资格），承载它们的活动批（`running` / `observing` / `awaiting_confirm`）同样收 `skipped` + `finished_at`；收口计数进审计 `detail.settled`（FR-260） |
 | POST | `/admin/v2/change-orders/{id}/batches/{batchNo}/confirm` | 创建推进门审批申请，返回 `202 + approvalRequestId`；批准 worker 核对冻结批和目标状态后执行 |
 | POST | `/admin/v2/change-orders/{id}/rollback` | 创建整单回滚审批申请，返回 `202 + approvalRequestId`；批准 worker 事务内执行。**单已在 `rolling_back` 时同端点即回滚重试**（原因必填；只重置失败目标重推，不重做配置版本回退、不改单主状态）；单内无失败目标时拒绝 `400 no_failed_rollback_target` |
 | POST | `/admin/v2/change-orders/{id}/rollback/finish` | 残留失败时人工结束回滚 |
@@ -335,6 +335,8 @@ agent 面：
 | GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 旧变更项正文预览入口，固定 `409 operation_requires_approval` |
 
 > 文件内容结果只能经 FR-209 批准后的命令与一次性 grant 返回；旧 file-diff 不再下发 `asset-read`、不再写内容查看审计。双文件 diff 的受控结果契约尚未接入前保持失败关闭。
+
+**观察窗与生效方式的组合防呆（FR-265）**：创建（`POST /change-orders`）与编辑（`PATCH /change-orders/{id}`）的策略字段里，`observeWindowSec` 除取值范围 `1~86400` 外另有一条组合约束——`activationMethod=restart` 且 `unhealthyRateThresholdPercent > 0` 时 `observeWindowSec` 必须 **≥ 90**（`restartHealthWarmup`，重启预热宽限），否则 `400 invalid_param`。原因是 restart 目标在重启预热期内被整体排除出健康恶化评估，观察窗短于 90s 会让该目标在**整段**观察窗里都被排除，健康恶化熔断恒不触发（分母恒为 0），而界面完全看不出「配了但永不生效」。关闭健康恶化阈值（设为 0）或改用 `push_only` / `hot_reload` 生效方式时短观察窗不受此约束（无重启预热期 / 熔断本就不评健康）。
 
 **交付申请票据（FR-249）**：上表中六类申请入口——`DELETE /change-orders/{id}`、`/submit`、`/resume`、`/batches/{batchNo}/confirm`、`/rollback`、`/rollback/finish`——的 `202` 票据统一为 `{approvalRequestId, status, operationKey, orderId, impactSummary}`（规格见 [delivery-mcp-tools](specs/delivery-mcp-tools.md) §3.6）。`operationKey` 为**本面键名**，MCP 侧同值为 `operation`（既有键名两侧都不变，只新增后两键）。`orderId` 是票据归属的变更单号（六类交付申请恒有）。`impactSummary` 为**对象** `{targetCount, batchCount, payloadFiles, payloadConfigs}`，取值是**创建申请那一刻**的即时读数：只统计当前落库的 targets / batches 行与 items（`file_diff` / `config_change` 分计），故 draft 阶段的提交与删除两类计数为 0（目标与批次要等启动才固化），计数为 0 时保留 0 而不省略键。该摘要**不写入冻结 payload**，不随后续推进漂移——需要最新影响面请读 `GET /change-orders/{id}/impact`。
 
