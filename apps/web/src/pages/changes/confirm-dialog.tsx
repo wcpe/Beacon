@@ -1,5 +1,5 @@
 // 变更单生命周期写操作确认弹窗：可选原因必填 + 可选恢复方式单选 + 内联脱敏错误。
-// 承 UX §4 二次确认；原因 / 恢复方式按操作决定是否展示（reject/cancel 必填原因，
+// 承 UX §4 二次确认；原因 / 恢复方式按操作决定是否展示（submit/reject/cancel 等必填原因，
 // 熔断恢复必填 mode+reason，普通迁移仅确认）。
 
 import { useEffect, useState } from 'react'

@@ -582,6 +582,8 @@ export const delivery = {
         lead: 'Final check of the delivery content and impact surface. After submission it enters pending approval; once approved and started, rollout proceeds by batches.',
         titleLabel: 'Change order title',
         titlePlaceholder: 'Give this delivery a name you can recognize at a glance',
+        reasonLabel: 'Submission reason',
+        reasonPlaceholder: 'Enter a reason for this submission (required; recorded in the approval request and audit)',
         defaultTitle: {
           files: 'File update (template source {{source}})',
           configs: 'Config update ({{count}} files)',
@@ -777,7 +779,7 @@ export const delivery = {
     },
     confirm: {
       submitTitle: 'Submit for approval',
-      submitDesc: 'Once submitted, the order is pending approval and can only start after approval.',
+      submitDesc: 'Once submitted the order is pending approval and can only start after approval; a reason is required.',
       approveTitle: 'Approve',
       approveDesc: 'After approval, the Change order can be started for rollout.',
       rejectTitle: 'Reject Change order',

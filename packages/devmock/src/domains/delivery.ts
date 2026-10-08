@@ -717,14 +717,20 @@ export const deliveryHandlers: HttpHandler[] = [
     return HttpResponse.json(response)
   }),
 
-  // 提交审批
-  mockPost('/admin/v2/change-orders/:id/submit', (info) => {
+  // 提交审批（提审原因必填）→ pending_approval
+  // mock 对齐后端 RequestSubmit 的守卫：reason 去空白后为空即 400，避免演示模式下
+  // 缺少原因也能提审、掩盖真机 400 approval_reason_required。
+  mockPost('/admin/v2/change-orders/:id/submit', async (info) => {
     const order = findOrder(info)
     if (!order) {
       return orderNotFound()
     }
     if (order.status !== 'draft') {
       return illegalState(order.status, '提交审批')
+    }
+    const body = await readBody<{ reason?: string }>(info.request)
+    if ((body.reason ?? '').trim() === '') {
+      return jsonError(400, 'approval_reason_required', '审批原因不能为空')
     }
     order.status = 'pending_approval'
     order.submittedAt = isoOffset(0)

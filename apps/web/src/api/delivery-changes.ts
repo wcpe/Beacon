@@ -145,8 +145,10 @@ export function fetchChangeImpact(
 
 // ---- 生命周期迁移 ----
 
-export function submitChangeOrder(id: number): Promise<ChangeOrderDetail> {
-  return request('POST', `/admin/v2/change-orders/${String(id)}/submit`)
+// 提审原因必填：后端 RequestSubmit 校验 reason 非空（缺则 400 approval_reason_required），
+// 故 reason 与 delete / reject / cancel 同形为必传参数，由调用方（详情页 / 引导向导）收集后随 body 发送。
+export function submitChangeOrder(id: number, reason: string): Promise<ChangeOrderDetail> {
+  return request('POST', `/admin/v2/change-orders/${String(id)}/submit`, { reason })
 }
 
 export function withdrawChangeOrder(id: number): Promise<ChangeOrderDetail> {

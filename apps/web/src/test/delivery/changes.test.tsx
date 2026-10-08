@@ -1,6 +1,7 @@
-// /changes 变更单页测试：常规列表渲染、空态引导、审批写闭环、批次推进写闭环。
+// /changes 变更单页测试：常规列表渲染、空态引导、审批写闭环、批次推进写闭环、提审必填原因。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ChangesPage from '../../pages/changes'
@@ -233,6 +234,68 @@ describe('/changes 变更单页', () => {
       await within(jarRow).findByText('二进制文件不支持内容对比，仅展示元数据'),
     ).toBeInTheDocument()
     expect(within(jarRow).queryByText(/max-players/)).not.toBeInTheDocument()
+  }, 20_000)
+
+  it('详情页提审必填原因：未填写不可确认，填写后提审进入待审批', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    // 进入「大厅插件升级 v2.4」（draft）详情
+    const row = (await screen.findByText('大厅插件升级 v2.4')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    // 草稿单「提交审批」→ 确认弹窗带必填原因输入（与驳回 / 终止同形）
+    await user.click(await screen.findByRole('button', { name: '提交审批' }))
+    const dialog = await screen.findByRole('alertdialog')
+    const confirmButton = within(dialog).getByRole('button', { name: '提交审批' })
+    expect(confirmButton).toBeDisabled()
+
+    await user.type(within(dialog).getByRole('textbox'), '插件已在模板源验证通过，申请审批')
+    expect(confirmButton).toBeEnabled()
+    await user.click(confirmButton)
+
+    // 提审成功：弹窗关闭、状态迁移为待审批（devmock 已对齐后端，缺原因会 400 并停在此处）
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    expect((await screen.findAllByText('待审批')).length).toBeGreaterThan(0)
+  }, 20_000)
+
+  it('提审被后端拒绝时内联展示脱敏错误，弹窗不关闭且单据仍为草稿', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    // 模拟真实控制面以缺原因拒绝提审（前端不得静默吞掉写操作错误）
+    server.use(
+      http.post('*/admin/v2/change-orders/:id/submit', () =>
+        HttpResponse.json(
+          { code: 'approval_reason_required', message: '审批原因不能为空', traceId: 'trace-test' },
+          { status: 400 },
+        ),
+      ),
+    )
+    renderPage(<ChangesPage />)
+
+    const row = (await screen.findByText('大厅插件升级 v2.4')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    await user.click(await screen.findByRole('button', { name: '提交审批' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByRole('textbox'), '插件已验证，申请审批')
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+
+    // 失败原因（后端脱敏文案）内联可见，弹窗保持打开供重试，单据未迁移
+    expect(await within(dialog).findByText('审批原因不能为空')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.getAllByText('草稿').length).toBeGreaterThan(0)
   }, 20_000)
 
   it('?order= 深链自动选中该单并打开详情面板', async () => {

@@ -1,5 +1,5 @@
 // 变更单详情视图：标题 + 状态徽标 + 生命周期操作区（按 status 显示可用动作）+ 五个 Tab。
-// 每个写操作走确认弹窗；reject/cancel 必填原因，熔断恢复必填 mode+reason。
+// 每个写操作走确认弹窗；submit/reject/cancel/delete 必填原因，熔断恢复必填 mode+reason。
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -70,7 +70,7 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
     mutationFn: ({ kind, result }: { kind: ActionKind; result: ConfirmResult }) => {
       switch (kind) {
         case 'submit':
-          return submitChangeOrder(orderId)
+          return submitChangeOrder(orderId, result.reason)
         case 'delete':
           return deleteChangeOrder(orderId, result.reason)
         case 'withdraw':
@@ -238,10 +238,11 @@ function availableActions(status: ChangeOrderDetail['status']): ActionKind[] {
   }
 }
 
-// 需要填写原因的动作：驳回 / 终止
+// 需要填写原因的动作：提审 / 驳回 / 终止 / 删除
 function needsReason(kind: ActionKind): boolean {
-  // 高风险操作填原因入审计（spec §4.8.1）：驳回 / 紧急终止 / 删除 draft 单。
-  return kind === 'reject' || kind === 'cancel' || kind === 'delete'
+  // 提审、高风险操作填原因入审计（spec §4.8.1）：提交审批（后端 RequestSubmit 强制非空）、
+  // 驳回 / 紧急终止 / 删除 draft 单。
+  return kind === 'submit' || kind === 'reject' || kind === 'cancel' || kind === 'delete'
 }
 
 function confirmConfig(

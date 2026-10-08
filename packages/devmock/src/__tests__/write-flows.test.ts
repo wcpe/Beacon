@@ -236,7 +236,10 @@ describe('变更单生命周期闭环', () => {
     expect(created.status).toBe(201)
     const orderId = (created.json as { id: number }).id
 
-    expect((await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/submit`)).status).toBe(200)
+    expect(
+      (await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/submit`, { reason: '演示提审' }))
+        .status,
+    ).toBe(200)
     expect((await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/approve`)).status).toBe(200)
 
     const started = await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/start`)
@@ -260,6 +263,30 @@ describe('变更单生命周期闭环', () => {
     expect((rolledBack.json as { status: string }).status).toBe('rolled_back')
   })
 
+  it('提审缺原因（含纯空白）被 400 拒绝，补原因后可正常提审', async () => {
+    const created = await callJson('POST', '/admin/v2/change-orders', {
+      namespaceId: 1,
+      title: '缺原因提审演示',
+      selector: { servers: ['pvp-1'] },
+    })
+    const orderId = (created.json as { id: number }).id
+    const path = `/admin/v2/change-orders/${String(orderId)}/submit`
+
+    // 无 body 与纯空白原因都按「原因不能为空」拒绝（对齐后端 RequestSubmit）
+    const noBody = await callJson('POST', path)
+    expect(noBody.status).toBe(400)
+    expect((noBody.json as { code: string }).code).toBe('approval_reason_required')
+
+    const blank = await callJson('POST', path, { reason: '   ' })
+    expect(blank.status).toBe(400)
+    expect((blank.json as { code: string }).code).toBe('approval_reason_required')
+
+    // 被拒后仍是 draft，补原因即提审成功
+    const ok = await callJson('POST', path, { reason: '补原因提审' })
+    expect(ok.status).toBe(200)
+    expect((ok.json as { status: string }).status).toBe('pending_approval')
+  })
+
   it('目标集与活动单交叠时启动被 409 拒绝（冲突守卫）', async () => {
     // game-1 属于常规态 rolling 单的目标集
     const created = await callJson('POST', '/admin/v2/change-orders', {
@@ -268,7 +295,7 @@ describe('变更单生命周期闭环', () => {
       selector: { servers: ['game-1'] },
     })
     const orderId = (created.json as { id: number }).id
-    await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/submit`)
+    await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/submit`, { reason: '冲突守卫演示提审' })
     await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/approve`)
     const started = await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/start`)
     expect(started.status).toBe(409)
