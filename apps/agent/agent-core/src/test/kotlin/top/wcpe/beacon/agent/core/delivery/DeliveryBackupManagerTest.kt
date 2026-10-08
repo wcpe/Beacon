@@ -174,7 +174,30 @@ class DeliveryBackupManagerTest {
         assertEquals("NEW", File(serverRoot, "plugins/upd.txt").readText(), "校验不符绝不覆盖目标")
     }
 
-    /** 铺一条备份条目 + 备份内容（内容与 manifest 声明可故意不符，用于校验用例）。 */
+    @Test
+    fun `还原目录条目只校验存在与类型不被空哈希误判损坏`() {
+        // 真机验收 O4：目录无法哈希，备份时只建空目录，manifest 的 sha256 天生为空（既有形态，非损坏）。
+        // 若对目录条目也严格比对 sha256 / size，任何含目录的交付单整单回滚都会被拒（安全但功能退化）。
+        val entry = entry("plugins/cfgdir", "update", "", 0L)
+        val manager = DeliveryBackupManager(backupRoot, resolver, FixedManifestCodec(listOf(entry)), adapter)
+        seedBackupDir("plugins/cfgdir")
+        // 目标已被交付覆盖成文件（或缺失），还原应把它恢复为目录而非抛异常。
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/cfgdir", "NEW".toByteArray())
+
+        manager.restore(1L)
+
+        assertTrue(File(serverRoot, "plugins/cfgdir").isDirectory, "目录条目应还原为目录，不得被空哈希挡下")
+    }
+
+    /** 铺一条**目录**备份条目（备份区里该项是空目录，manifest 的 sha256 为空）。 */
+    private fun seedBackupDir(relPath: String) {
+        File(backupRoot, "1").mkdirs()
+        File(backupRoot, "1/manifest.json").writeText("stub")
+        File(backupRoot, "1/files").mkdirs()
+        assertTrue(File(File(backupRoot, "1/files"), relPath).mkdirs(), "备份区应铺出目录条目")
+    }
+
+    /** 组装一条 manifest 条目（校验用例自定 sha / size）。 */
     private fun seedBackupFile(
         relPath: String,
         content: ByteArray,

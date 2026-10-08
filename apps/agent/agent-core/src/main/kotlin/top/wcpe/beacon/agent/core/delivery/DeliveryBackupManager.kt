@@ -132,13 +132,18 @@ class DeliveryBackupManager(
     }
 
     /**
-     * 还原单条：add 项删目标文件（还原为不存在）；update / delete 项先按 manifest 记录校验备份内容
-     * （sha256 + size，FR-267）再从备份复制旧内容回目标（经 resolver 路径校验）。
+     * 还原单条：add 项删目标文件（还原为不存在）；update / delete 项先校验再复制回目标。
      *
-     * 校验先于复制：备份内容损坏 / 被截断时抛 [IOException]，**绝不把损坏内容写回目标**——
+     * **校验按条目类型分流（FR-267 真机验收 O4 修正）**：
+     * - **目录条目**（备份区里该项是目录）→ 只校验存在性与类型一致（必须仍是目录），**不比对 sha256 / size**。
+     *   原因：备份目录时 `Files.copy` 只建空目录（不递归内容），`DeliverySha256.ofFile` 读目录必然失败，
+     *   manifest 里该条目的 `sha256` 天生为空、`size` 也不可信（这是**既有形态**，非损坏）。
+     *   若对目录条目也做严格比对，则任何含目录的交付单回滚会被整单拒绝——安全但功能退化。
+     * - **文件条目** → 保持严格校验：`sha256` / `size` 缺失或与磁盘不符即抛 [IOException]。
+     *
+     * 校验先于复制：文件备份损坏 / 被截断时抛 [IOException]，**绝不把损坏内容写回目标**——
      * 逐条回滚的语义是「要么忠实还原，要么明确失败」，不做半真半假的写入。
      */
-    @Suppress("ThrowsCount") // 还原每步校验（条目结构 / 目标路径 / 备份内容）失败均须 IOException 上抛且各携可读原因
     private fun restoreOne(
         entry: Map<String, Any?>,
         filesDir: File,
@@ -147,15 +152,20 @@ class DeliveryBackupManager(
         val action = manifestField(entry, "action")
         val target = resolver.resolve(path) ?: throw IOException("回滚目标路径非法：$path")
         if (action == DeliveryManifestFile.ACTION_ADD) {
-            // add 项还原 = 删除本单新增的文件（本单没动过的路径不在此列）。
-            if (target.exists() && !target.delete()) {
-                throw IOException("回滚删除新增文件失败：$path")
-            }
+            // add 项还原 = 撤销新增：删除本单新增的文件 / 目录（本单没动过的路径不在此列）。
+            removeThenEnsure(target, path, ensureDir = false, failurePrefix = "回滚删除新增文件失败")
             return
         }
         val backupFile = File(filesDir, path)
         if (!backupFile.exists()) {
             throw IOException("回滚备份内容缺失：$path")
+        }
+        // 目录条目（备份区里该项是目录 → 备份时原目标就是目录）：只校验目标当前仍是目录，不比对 sha256 / size——
+        // 目录无法哈希，其 manifest 的 sha256 天生为空（既有形态，非损坏）；若在此做严格比对，
+        // 任何含目录的交付单整单回滚都会被拒（安全但功能退化，真机验收 O4）。
+        if (backupFile.isDirectory) {
+            removeThenEnsure(target, path, ensureDir = true, failurePrefix = "回滚还原目录失败")
+            return
         }
         verifyBackupContent(backupFile, entry, path)
         target.parentFile?.mkdirs()
@@ -229,5 +239,30 @@ class DeliveryBackupManager(
 
         /** 一天的毫秒数。 */
         private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1000L
+    }
+}
+
+/**
+ * 按目标类型处置目标位置：**先清掉现存项，再按需重建目录**。
+ *
+ * - `ensureDir = true`（还原目录条目）：目录无法参与哈希校验，故只做存在性与类型处置。
+ *   交付可能已把该目录替换成同名**文件**（合法覆盖形态），须先清掉占位文件再建目录，
+ *   否则 `mkdirs()` 恒失败、含目录的交付单整单回滚会被挡（真机验收 O4）；
+ * - `ensureDir = false`（还原 add 项）：仅撤销新增，把目标删回不存在。
+ */
+private fun removeThenEnsure(
+    target: File,
+    path: String,
+    ensureDir: Boolean,
+    failurePrefix: String,
+) {
+    if (ensureDir && target.isDirectory) {
+        return
+    }
+    if (target.exists() && !target.deleteRecursively()) {
+        throw IOException("$failurePrefix：$path")
+    }
+    if (ensureDir && !target.mkdirs()) {
+        throw IOException("$failurePrefix：$path")
     }
 }
