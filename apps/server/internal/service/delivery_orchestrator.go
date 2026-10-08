@@ -81,8 +81,8 @@ type DeliveryOrchestrator struct {
 	// stallByOrder 记录各单「推进停滞」的观测状态（推进器每轮检查，mu 保护，FR-262）。
 	// 停滞 = 单在装载集里、但推进器已无事可做且无人来推：确认门等人确认、或根本没有活动批。
 	// 这两类都不会自行恢复（推进器只会重复空转），此前完全静默——运维只能靠「感觉单卡住了」去翻库。
-	stallByOrder  map[uint]*deliveryStallState
-	approval      *ApprovalService
+	stallByOrder map[uint]*deliveryStallState
+	approval     *ApprovalService
 	// config 配置版本回退能力（整单回滚记账用，ConfigCenterService 实现；未装配则跳过 config 回退，测试兼容）
 	config configRollbacker
 	// cfgVers 配置版本仓库（回滚 from==nil 项撤销贡献时反查 configFileID）
