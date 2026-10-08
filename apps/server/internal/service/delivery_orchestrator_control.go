@@ -212,6 +212,10 @@ func (s *DeliveryOrchestrator) resumeBody(tx *gorm.DB, repoTx *repository.Change
 }
 
 // resumeCircuitBatch 恢复熔断批：retry_failed 把批回 running 并重置失败 / skipped 目标为 pending；skip_failed 批进推进门。
+//
+// CAS 口径统一（FR-262）：本函数全程走 CAS 而非「先查后写」，与 tripBreaker / persistConfirmInTx
+// 同口径。此前 UpdateBatchCAS 的返回值被丢弃，两次并发恢复（或恢复撞上推进器自己的迁移）会静默失败——
+// 批留在 failed 而单已回 rolling，推进器再也找不到活动批，单就此停摆且无任何告警。
 func (s *DeliveryOrchestrator) resumeCircuitBatch(repoTx *repository.ChangeOrderRepository, order *model.ChangeOrder, mode string) error {
 	batch, err := s.findFailedBatch(repoTx, order.ID)
 	if err != nil || batch == nil {
@@ -219,9 +223,16 @@ func (s *DeliveryOrchestrator) resumeCircuitBatch(repoTx *repository.ChangeOrder
 	}
 	if mode == resumeModeSkipFailed {
 		// skip_failed：保留失败记录，熔断批进推进门等待人工确认后放行下一批（spec §4.4.5，本域取「进推进门」口径）。
-		_, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusFailed},
+		ok, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusFailed},
 			map[string]any{"status": model.ChangeBatchStatusAwaitingConfirm, "break_reason": ""})
-		return e
+		if e != nil {
+			return e
+		}
+		if !ok {
+			// 批已被并发迁移（不再 failed）：不再静默吞掉，按冲突回报，避免单回 rolling 却无活动批。
+			return changeIllegalState(batch.Status, "继续")
+		}
+		return nil
 	}
 	// retry_failed：熔断批回 running，批内 failed / skipped 目标重置 pending 重推。
 	// 注意：这里**刻意不清 `changed_file_count` / `backup_present`**（只清 error / pushed_at / activated_at）——
@@ -231,9 +242,15 @@ func (s *DeliveryOrchestrator) resumeCircuitBatch(repoTx *repository.ChangeOrder
 		map[string]any{"status": model.ChangeTargetStatusPending, "error": "", "pushed_at": nil, "activated_at": nil}); e != nil {
 		return e
 	}
-	_, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusFailed},
+	ok, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusFailed},
 		map[string]any{"status": model.ChangeBatchStatusRunning, "break_reason": "", "finished_at": nil})
-	return e
+	if e != nil {
+		return e
+	}
+	if !ok {
+		return changeIllegalState(batch.Status, "继续")
+	}
+	return nil
 }
 
 // findFailedBatch 取单内唯一的熔断批（status=failed）；无则 (nil, nil)。
