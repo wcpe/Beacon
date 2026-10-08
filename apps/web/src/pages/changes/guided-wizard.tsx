@@ -13,6 +13,7 @@ import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, cn } from '@b
 
 import { fetchZoneTree } from '../../api/cluster'
 import { ApiClientError } from '../../api/delivery'
+import { randomId } from '../../lib/random-id'
 import {
   createChangeOrder,
   deleteChangeOrder,
@@ -89,6 +90,8 @@ export default function GuidedWizard({
   const [errorText, setErrorText] = useState<string | null>(null)
   // 提交成功后关闭时不再删除草稿
   const keepOrderRef = useRef(false)
+  // 提审幂等键：同一次提审重试复用同一键（后端据此去重），重开向导即作废重来
+  const submitKeyRef = useRef<string | null>(null)
 
   // 每次打开重置全部状态并应用预选类型
   useEffect(() => {
@@ -108,6 +111,7 @@ export default function GuidedWizard({
       setPrepared(0)
       setErrorText(null)
       keepOrderRef.current = false
+      submitKeyRef.current = null
     }
   }, [open, initialContent])
 
@@ -206,14 +210,17 @@ export default function GuidedWizard({
     },
   })
 
-  // 第 5 步「提交审批」：落最终标题后携必填原因提审，成单交回父级打开详情
+  // 第 5 步「提交审批」：落最终标题后携必填原因 + 幂等键提审，成单交回父级打开详情
   const submitMutation = useMutation({
     mutationFn: async () => {
       if (orderId === null) {
         throw new Error(t('delivery.changes.wizard.review.notReady'))
       }
       await updateChangeOrder(orderId, { title: resolvedTitle() })
-      return submitChangeOrder(orderId, reason.trim())
+      // 幂等键必须携带（缺则后端 400 INVALID_PARAM，且单据会卡在 pending_approval）
+      const key = submitKeyRef.current ?? randomId()
+      submitKeyRef.current = key
+      return submitChangeOrder(orderId, reason.trim(), key)
     },
     onSuccess: async (detail) => {
       keepOrderRef.current = true

@@ -145,10 +145,20 @@ export function fetchChangeImpact(
 
 // ---- 生命周期迁移 ----
 
-// 提审原因必填：后端 RequestSubmit 校验 reason 非空（缺则 400 approval_reason_required），
-// 故 reason 与 delete / reject / cancel 同形为必传参数，由调用方（详情页 / 引导向导）收集后随 body 发送。
-export function submitChangeOrder(id: number, reason: string): Promise<ChangeOrderDetail> {
-  return request('POST', `/admin/v2/change-orders/${String(id)}/submit`, { reason })
+// 提审契约：reason 必填 + 必须携带 Idempotency-Key。
+// - 后端 RequestSubmit 校验 reason 非空（缺则 400 approval_reason_required）；
+// - 创建审批申请时校验幂等键（缺则 400 INVALID_PARAM，见 approval_service.go 的 validIdempotencyKey），
+//   而 submit 是「先冻结状态、后建申请」两步非事务，缺键会让单据卡死在 pending_approval。
+// 故 reason 与 delete / reject / cancel 同形传参，键由调用方用 randomId() 生成后传入
+// （与 createApiKey / createMcpClient 同一先例）。
+export function submitChangeOrder(
+  id: number,
+  reason: string,
+  idempotencyKey: string,
+): Promise<ChangeOrderDetail> {
+  return request('POST', `/admin/v2/change-orders/${String(id)}/submit`, { reason }, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
 }
 
 export function withdrawChangeOrder(id: number): Promise<ChangeOrderDetail> {

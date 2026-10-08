@@ -10,6 +10,9 @@ interface IdentityItem {
   status: string
 }
 
+// 提审测试用幂等键（对齐后端 validIdempotencyKey：非空、≤64、可打印 ASCII）
+const SUBMIT_KEY = 'test-idem-key-0001'
+
 async function findIdentity(serverId: string): Promise<IdentityItem | undefined> {
   const { json } = await callJson('GET', `/admin/v2/agent-identities?keyword=${serverId}&pageSize=100`)
   const paged = json as { items: IdentityItem[] }
@@ -237,8 +240,14 @@ describe('变更单生命周期闭环', () => {
     const orderId = (created.json as { id: number }).id
 
     expect(
-      (await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/submit`, { reason: '演示提审' }))
-        .status,
+      (
+        await callJson(
+          'POST',
+          `/admin/v2/change-orders/${String(orderId)}/submit`,
+          { reason: '演示提审' },
+          { 'Idempotency-Key': SUBMIT_KEY },
+        )
+      ).status,
     ).toBe(200)
     expect((await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/approve`)).status).toBe(200)
 
@@ -263,7 +272,7 @@ describe('变更单生命周期闭环', () => {
     expect((rolledBack.json as { status: string }).status).toBe('rolled_back')
   })
 
-  it('提审缺原因（含纯空白）被 400 拒绝，补原因后可正常提审', async () => {
+  it('提审缺原因（含纯空白）被 400 拒绝，补原因与幂等键后可正常提审', async () => {
     const created = await callJson('POST', '/admin/v2/change-orders', {
       namespaceId: 1,
       title: '缺原因提审演示',
@@ -271,6 +280,7 @@ describe('变更单生命周期闭环', () => {
     })
     const orderId = (created.json as { id: number }).id
     const path = `/admin/v2/change-orders/${String(orderId)}/submit`
+    const key = { 'Idempotency-Key': SUBMIT_KEY }
 
     // 无 body 与纯空白原因都按「原因不能为空」拒绝（对齐后端 RequestSubmit）
     const noBody = await callJson('POST', path)
@@ -281,8 +291,18 @@ describe('变更单生命周期闭环', () => {
     expect(blank.status).toBe(400)
     expect((blank.json as { code: string }).code).toBe('approval_reason_required')
 
-    // 被拒后仍是 draft，补原因即提审成功
-    const ok = await callJson('POST', path, { reason: '补原因提审' })
+    // 原因齐备但缺幂等键 → 400 INVALID_PARAM（对齐后端 validIdempotencyKey 前置校验）
+    const noKey = await callJson('POST', path, { reason: '缺幂等键提审' })
+    expect(noKey.status).toBe(400)
+    expect((noKey.json as { code: string }).code).toBe('INVALID_PARAM')
+
+    // 键超长（>64）同样按非法键拒绝
+    const longKey = await callJson('POST', path, { reason: '超长键提审' }, { 'Idempotency-Key': 'k'.repeat(65) })
+    expect(longKey.status).toBe(400)
+    expect((longKey.json as { code: string }).code).toBe('INVALID_PARAM')
+
+    // 被拒后仍是 draft，补原因 + 幂等键即提审成功
+    const ok = await callJson('POST', path, { reason: '补原因提审' }, key)
     expect(ok.status).toBe(200)
     expect((ok.json as { status: string }).status).toBe('pending_approval')
 
@@ -291,8 +311,8 @@ describe('变更单生命周期闭环', () => {
     expect(nonDraftNoReason.status).toBe(400)
     expect((nonDraftNoReason.json as { code: string }).code).toBe('approval_reason_required')
 
-    // 有原因而状态非法，才落到 409
-    const nonDraftWithReason = await callJson('POST', path, { reason: '重复提审' })
+    // 有原因而状态非法，才落到 409（状态判定先于幂等键判定）
+    const nonDraftWithReason = await callJson('POST', path, { reason: '重复提审' }, key)
     expect(nonDraftWithReason.status).toBe(409)
     expect((nonDraftWithReason.json as { code: string }).code).toBe('illegal_state')
   })
@@ -305,7 +325,12 @@ describe('变更单生命周期闭环', () => {
       selector: { servers: ['game-1'] },
     })
     const orderId = (created.json as { id: number }).id
-    await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/submit`, { reason: '冲突守卫演示提审' })
+    await callJson(
+      'POST',
+      `/admin/v2/change-orders/${String(orderId)}/submit`,
+      { reason: '冲突守卫演示提审' },
+      { 'Idempotency-Key': SUBMIT_KEY },
+    )
     await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/approve`)
     const started = await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/start`)
     expect(started.status).toBe(409)

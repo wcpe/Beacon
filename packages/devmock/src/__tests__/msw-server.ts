@@ -4,15 +4,16 @@ import { allHandlers, resetMockData, setMockScenario } from '../index'
 
 export const server = setupServer(...allHandlers)
 
-/** 便捷请求封装：路径拼到测试域名上（handler 按路径匹配，与域名无关） */
+/** 便捷请求封装：路径拼到测试域名上（handler 按路径匹配，与域名无关）；headers 供幂等键等用例 */
 export async function callJson(
   method: string,
   path: string,
   body?: unknown,
+  headers?: Record<string, string>,
 ): Promise<{ status: number; json: unknown }> {
   const response = await fetch(`http://beacon.test${path}`, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: body === undefined ? headers : { 'Content-Type': 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const text = await response.text()

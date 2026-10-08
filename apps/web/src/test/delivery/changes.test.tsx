@@ -259,11 +259,55 @@ describe('/changes 变更单页', () => {
     expect(confirmButton).toBeEnabled()
     await user.click(confirmButton)
 
-    // 提审成功：弹窗关闭、状态迁移为待审批（devmock 已对齐后端，缺原因会 400 并停在此处）
+    // 提审成功：弹窗关闭、状态迁移为待审批。devmock 已对齐后端的两道守卫（原因非空 +
+    // 幂等键合法），故这一条同时锁住「原因与 Idempotency-Key 都真的发出且合法」
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
     expect((await screen.findAllByText('待审批')).length).toBeGreaterThan(0)
+  }, 20_000)
+
+  it('详情页提审携带幂等键，且重试复用同一键', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    // 首次失败、二次成功，用于观察两次提审是否复用同一幂等键
+    const keys: (string | null)[] = []
+    let attempt = 0
+    server.use(
+      http.post('*/admin/v2/change-orders/:id/submit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'))
+        attempt += 1
+        if (attempt === 1) {
+          return HttpResponse.json({ code: 'internal_error', message: '模拟瞬时失败' }, { status: 500 })
+        }
+        return HttpResponse.json({ id: 5001 }, { status: 200 })
+      }),
+    )
+    renderPage(<ChangesPage />)
+
+    const row = (await screen.findByText('大厅插件升级 v2.4')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    await user.click(await screen.findByRole('button', { name: '提交审批' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByRole('textbox'), '插件已验证，申请审批')
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+
+    // 首次失败：脱敏错误内联可见、弹窗保持打开
+    expect(await within(dialog).findByText('模拟瞬时失败')).toBeInTheDocument()
+
+    // 同一提审意图原样重试：幂等键必须复用，后端据此去重（换键会让重试变成新申请）
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+    await waitFor(() => {
+      expect(keys).toHaveLength(2)
+    })
+    expect(keys[0]).not.toBeNull()
+    expect(keys[0] ?? '').not.toBe('')
+    expect(keys[1]).toBe(keys[0])
   }, 20_000)
 
   it('提审被后端拒绝时内联展示脱敏错误，弹窗不关闭且单据仍为草稿', async () => {
