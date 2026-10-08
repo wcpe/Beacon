@@ -208,6 +208,66 @@ func TestTouchReferencesProtectsActiveOrderBlob(t *testing.T) {
 	}
 }
 
+// TestCleanerReclaimsUnreferencedBlob 无人引用的 blob 不受保留期拖延（FR-261 补偿删除）：
+// 既孤儿盘 footprint 又滞留到保留期满是双重浪费——引用集合以外的 blob 下轮即回收。
+func TestCleanerReclaimsUnreferencedBlob(t *testing.T) {
+	svc, db, cleaner := newIntegritySvc(t, "unreferenced")
+	content := []byte("blob nobody references anymore")
+	sha := shaOf(content)
+	mustStore(t, svc, sha, content)
+	// 该 blob 不被任何变更单引用（配置项 / 文件项都没有相关行）。
+	var itemCount int64
+	db.Model(&model.ChangeOrderItem{}).Count(&itemCount)
+	if itemCount != 0 {
+		t.Fatalf("本用例前提是无任何变更项，实际 %d 条", itemCount)
+	}
+	// 推过短宽限（1 小时）但远未到保留期（7 天）：补偿删除应生效。
+	// 宽限不能为零——写入 blob 与「引用它的变更项落库」不在同一事务，零宽限会误删刚上传的 blob。
+	if err := db.Model(&model.DeliveryBlob{}).Where("sha256 = ?", sha).
+		Update("last_referenced_at", time.Now().UTC().Add(-2*time.Hour)).Error; err != nil {
+		t.Fatalf("回拨引用时间失败: %v", err)
+	}
+
+	cleaner.SweepOnce()
+
+	if _, err := svc.Head(sha); !errors.Is(err, apperr.ErrDeliveryBlobNotFound) {
+		t.Fatalf("无人引用的 blob 应立即回收，实际仍在: %v", err)
+	}
+	if _, err := os.Stat(svc.blobPath(sha)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("无人引用的 blob 磁盘文件应一并删除，实际 stat err=%v", err)
+	}
+}
+
+// TestCleanerGraceProtectsFreshUpload 宽限内的新鲜 blob 即便暂无人引用也不被回收——
+// 写入 blob 与「引用它的变更项落库」不在同一事务，零宽限会误删刚上传、马上要被消费的 blob。
+func TestCleanerGraceProtectsFreshUpload(t *testing.T) {
+	svc, _, cleaner := newIntegritySvc(t, "freshgrace")
+	content := []byte("just uploaded, references not committed yet")
+	sha := shaOf(content)
+	mustStore(t, svc, sha, content) // last_referenced_at = 现在
+
+	cleaner.SweepOnce()
+
+	if _, err := svc.Head(sha); err != nil {
+		t.Fatalf("宽限内的新鲜 blob 不应被回收，实际 %v", err)
+	}
+}
+
+// TestCleanerKeepsReferencedBlobBeforeRetention 受引用保护的反面对照：仍在保留期内且被引用 → 不删。
+func TestCleanerKeepsReferencedBlobBeforeRetention(t *testing.T) {
+	svc, db, cleaner := newIntegritySvc(t, "protected")
+	content := []byte("referenced and fresh")
+	sha := shaOf(content)
+	mustStore(t, svc, sha, content)
+	seedOrderWithFileItem(t, db, model.ChangeOrderStatusRolling, sha)
+
+	cleaner.SweepOnce()
+
+	if _, err := svc.Head(sha); err != nil {
+		t.Fatalf("保留期内且被活动单引用的 blob 不应被清理，实际 %v", err)
+	}
+}
+
 // TestTouchReferencesForOrdersNoop 批量刷新：空集合与不存在的单都不得报错（调用点可无条件挂载）。
 func TestTouchReferencesForOrdersNoop(t *testing.T) {
 	svc, _, _ := newIntegritySvc(t, "touchnoop")
