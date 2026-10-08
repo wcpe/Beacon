@@ -3,7 +3,10 @@ package service
 import (
 	"testing"
 
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
 // TestOrchestratorAutoFinishRollbackReleasesObserve 锁定 FR-265 观察窗内存释放：
@@ -40,9 +43,59 @@ func TestOrchestratorAutoFinishRollbackReleasesObserve(t *testing.T) {
 	}
 }
 
-// TestOrchestratorFinishRollbackReleasesTerminalMemory 锁定 P2-3：人工「结束回滚」同样是终态出口，
-// 也必须释放按单索引的内存（观察窗缓冲 + 停滞观测）。本组最初断言「自动收单是唯一不经释放的
-// 终态出口」不成立——人工结束回滚同样不释放，故改为在所有终态出口统一释放。
+// TestOrchestratorFinishRollbackViaApprovalWorkerReleasesMemory 走**生产路径**锁定终态释放（FR-265 / P1 复审）：
+// 申请结束回滚 → 批准 → 审批 worker 经 registry.ExecuteInTx 执行 → afterCommit 释放内存。
+//
+// 为什么必须走 worker：生产上结束回滚只能经统一审批执行（applyFinishRollback 明写「供同包测试复用」，
+// 全仓只有测试调用）。此前释放被修在 applyFinishRollback 上，而生产入口
+// executeDeliveryRollbackFinishInTx 返回 nil afterCommit —— 病换个出口复发，
+// 只测测试入口的用例完全拦不住这类偏差。本用例即为此存在。
+func TestOrchestratorFinishRollbackViaApprovalWorkerReleasesMemory(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	if err := h.env.db.AutoMigrate(&model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}); err != nil {
+		t.Fatalf("迁移审批表失败: %v", err)
+	}
+	order := h.completedPushOnlyOrder(t)
+	if err := h.env.db.Model(&model.ChangeOrder{}).Where("id = ?", order.ID).
+		Update("status", model.ChangeOrderStatusRollingBack).Error; err != nil {
+		t.Fatalf("准备回滚状态失败: %v", err)
+	}
+	registry := authz.NewApprovalRegistry()
+	RegisterDeliveryApprovalAdapter(registry, h.env.orders, h.orch)
+	approval := NewApprovalService(h.env.db, repository.NewApprovalRequestRepository(h.env.db),
+		repository.NewAuditLogRepository(h.env.db), registry)
+	h.orch.SetApprovalService(approval)
+
+	// 先塞入观察窗缓冲与停滞观测，验证生产路径的 afterCommit 会不会带走。
+	h.orch.markObserveStarted(order.ID, 1, h.clock)
+	h.orch.sampleObserve(order.ID, 1, h.f.nsID, []*model.ChangeTarget{})
+	h.orch.stallMu.Lock()
+	h.orch.stallByOrder[order.ID] = &deliveryStallState{kind: deliveryStallKindConfirmGate, since: h.clock}
+	h.orch.stallMu.Unlock()
+
+	ticket, err := h.orch.RequestFinishRollback(order.ID, auth.HumanPrincipal("ops"), "finish-release", "ops", "")
+	if err != nil {
+		t.Fatalf("创建结束回滚审批失败: %v", err)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("admin"), ""); err != nil {
+		t.Fatalf("批准结束回滚失败: %v", err)
+	}
+	if n, err := NewApprovalWorker(approval).RunOnce(); err != nil || n != 1 {
+		t.Fatalf("结束回滚 worker 执行失败: %d / %v", n, err)
+	}
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolledBack {
+		t.Fatalf("批准后单应 rolled_back，实际 %s", got.Status)
+	}
+	// afterCommit 已由 worker 执行：两侧内存都该被带走。
+	if _, ok := h.orch.observeByOrder[order.ID]; ok {
+		t.Fatal("生产路径结束回滚后应释放观察窗内存缓冲")
+	}
+	if _, ok := h.orch.stallByOrder[order.ID]; ok {
+		t.Fatal("生产路径结束回滚后应释放停滞观测")
+	}
+}
+
+// TestOrchestratorFinishRollbackReleasesTerminalMemory 锁定人工「结束回滚」终态出口的释放。
 func TestOrchestratorFinishRollbackReleasesTerminalMemory(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)

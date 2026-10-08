@@ -327,7 +327,8 @@ func (s *DeliveryOrchestrator) Cancel(id uint, reason, operator, clientIP string
 	if err != nil {
 		return nil, mapCASConflict(err, order.Status, "紧急终止")
 	}
-	s.clearObserve(order.ID)
+	// 紧急终止即单终态化：走统一释放出口（FR-265）。
+	s.releaseTerminalMemory(order.ID)
 	return s.detailView(order.ID)
 }
 
@@ -851,7 +852,8 @@ func (s *DeliveryOrchestrator) applyConfirmBatch(id uint, batchNo int, operator,
 	}); err != nil {
 		return nil, err
 	}
-	s.clearObserve(order.ID)
+	// 确认批后走统一释放出口（FR-265）：非末批切到下一批，旧批的观察窗缓冲不再需要。
+	s.releaseTerminalMemory(order.ID)
 	if !last {
 		s.wake() // 下一批已置 running，唤醒推进器下发
 	}

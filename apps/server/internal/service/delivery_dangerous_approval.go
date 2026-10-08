@@ -301,7 +301,12 @@ func executeDeliveryRollbackFinishInTx(tx *gorm.DB, req authz.ApprovalRequest, o
 	if err := tx.Create(receipt).Error; err != nil {
 		return nil, err
 	}
-	return nil, nil
+	// 结束回滚即单终态化：观察窗缓冲与停滞观测必须在这里释放（FR-265）。
+	// 本函数是生产上结束回滚的**唯一**执行点（applyFinishRollback 仅供同包测试复用），
+	// 释放只能挂在 afterCommit 上——事务内提前清没有意义（可能回滚），而放在
+	// applyFinishRollbackInTx 里又漏掉生产路径。releaseTerminalMemory 只取 observeMu /
+	// stallMu、不取 mu，在 afterCommit（不持 mu）里调用安全，与确认批的写法同款。
+	return func() { orchestrator.releaseTerminalMemory(order.ID) }, nil
 }
 
 func executeDeliveryConfirmBatchInTx(tx *gorm.DB, req authz.ApprovalRequest, orchestrator *DeliveryOrchestrator) (func(), error) {
