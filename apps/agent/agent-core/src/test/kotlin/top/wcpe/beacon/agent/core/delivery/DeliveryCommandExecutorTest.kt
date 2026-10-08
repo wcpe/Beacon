@@ -18,7 +18,6 @@ import top.wcpe.beacon.agent.core.transport.HttpResponse
 import top.wcpe.beacon.agent.core.transport.HttpTransport
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -26,9 +25,12 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
- * 交付命令执行器 [DeliveryCommandExecutor] 推送编排单测（FR-165，spec §4.5.3 / §4.7.1）：
+ * 交付命令执行器 [DeliveryCommandExecutor] 推送编排单测（FR-165，spec §4.5.3 / §4.7.1；FR-266~269 加固）：
  * - push 成功：下载 → 备份 → 覆盖 / 删除 / 跳过 → 清临时目录 → 回执 success（含 changed/skipped/backupPresent）；
- * - 备份失败：绝不覆盖原文件，回执 failed。
+ * - 备份失败：绝不覆盖原文件，回执 failed；失败路径同样清临时目录、保留清理不依赖本次备份；
+ * - 生效语义（FR-266）：关服原语能力探测 fail-closed、成功下发后单次回执、通知失败按部分成功回执；
+ * - 网络与错误透传（FR-269）：清单 raw 状态码 / 错误码进失败原因、清单与命令单号一致性校验、
+ *   被并发拒收与 orderId 非法的命令不静默丢。
  */
 class DeliveryCommandExecutorTest {
     private val serverRoot: File = DeliveryTestSupport.tempDir("delivery-exec-root")
@@ -39,7 +41,9 @@ class DeliveryCommandExecutorTest {
     private val updNew = "NEW-CONTENT".toByteArray()
     private val addContent = "ADD-CONTENT".toByteArray()
     private val same = "SAME".toByteArray()
-    private val resultBody = AtomicReference<String?>(null)
+
+    /** 全部回执体（按到达顺序）：用于断言「同一条命令只回执一次」与并发拒收回执。 */
+    private val resultBodies = mutableListOf<String>()
 
     @Test
     fun `push 成功编排下载备份覆盖并回执 success`() {
@@ -51,7 +55,7 @@ class DeliveryCommandExecutorTest {
         assertEquals("ADD-CONTENT", File(serverRoot, "plugins/new.txt").readText())
         assertFalse(File(serverRoot, "plugins/del.txt").exists(), "delete 项应被删")
         assertEquals("SAME", File(serverRoot, "plugins/skip.txt").readText(), "同 hash 项应跳过不动")
-        val body = resultBody.get() ?: error("未回执")
+        val body = resultBodies.single()
         assertTrue(body.contains("phase=push"))
         assertTrue(body.contains("status=success"))
         assertTrue(body.contains("changedFileCount=3"), "upd+new+del 三项变更：$body")
@@ -71,9 +75,81 @@ class DeliveryCommandExecutorTest {
 
         assertEquals("OLD", File(serverRoot, "plugins/upd.txt").readText(), "备份失败绝不覆盖原文件")
         assertTrue(File(serverRoot, "plugins/del.txt").exists(), "备份失败不删 delete 项")
-        val body = resultBody.get() ?: error("未回执")
+        val body = resultBodies.single()
         assertTrue(body.contains("status=failed"))
         assertTrue(body.contains("备份失败"), "失败原因应指明备份失败：$body")
+    }
+
+    @Test
+    fun `清单非 200 时失败原因保留状态码`() {
+        val exec =
+            executor(
+                backupRoot = File(dataDir, "delivery-backups"),
+                manifestStatus = 409,
+                manifestBody = """{"code":"config_artifact_missing","message":"配置渲染工件未就绪"}""",
+            )
+
+        exec.execute(pushCommand())
+
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=failed"), "非 200 清单必须回执 failed：$body")
+        assertTrue(body.contains("HTTP 409"), "失败原因应保留 HTTP 状态码（不再折叠成无信息文案）：$body")
+    }
+
+    @Test
+    fun `清单 orderId 与命令不一致时拒绝动盘`() {
+        seedServerRoot()
+        blob.onDownload = { url, _, sink -> writeBlob(url, sink) }
+        val mismatched = manifestTree().toMutableMap().apply { put("orderId", 2L) }
+
+        executor(File(dataDir, "delivery-backups"), mismatched).execute(pushCommand())
+
+        assertEquals("OLD", File(serverRoot, "plugins/upd.txt").readText(), "错单清单绝不动盘")
+        assertFalse(File(serverRoot, "plugins/new.txt").exists(), "错单清单绝不新增文件")
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=failed"), "单号不一致必须 fail-closed：$body")
+        assertTrue(body.contains("orderId"), "失败原因应点明单号不一致：$body")
+    }
+
+    @Test
+    fun `orderId 缺失的交付命令记 error 日志且无处回执`() {
+        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
+
+        exec.execute(
+            AgentCommand(
+                id = 9L,
+                type = AgentCommand.TYPE_DELIVERY_PUSH,
+                payload = IngestCommandPayload("", "", ""),
+                deliveryPayload = DeliveryCommandPayload(orderId = 0L),
+            ),
+        )
+
+        assertTrue(resultBodies.isEmpty(), "无 orderId 无处挂回执（回执端点以单号定位）：$resultBodies")
+        assertTrue(adapter.errors.any { it.contains("orderId 非法") }, "必须留下可见告警：${adapter.errors}")
+    }
+
+    @Test
+    fun `单飞门拒收的并发重复命令回执 failed 而非静默丢弃`() {
+        seedServerRoot()
+        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
+        // 在推送执行途中重入同一执行器一次：单飞门拒收后必须回执 failed（命令否则一直挂在控制面等过期）。
+        var reentered = false
+        blob.onDownload = { url, _, sink ->
+            if (!reentered) {
+                reentered = true
+                exec.execute(pushCommand())
+            }
+            writeBlob(url, sink)
+        }
+
+        exec.execute(pushCommand())
+
+        assertEquals(2, resultBodies.size, "被拒命令与正常命令各回执一次：$resultBodies")
+        assertTrue(
+            resultBodies.any { it.contains("status=failed") && it.contains("并发重复") },
+            "被拒命令应回执 failed 并给可读原因：$resultBodies",
+        )
+        assertTrue(resultBodies.any { it.contains("status=success") }, "原命令应照常完成：$resultBodies")
     }
 
     @Test
@@ -96,44 +172,8 @@ class DeliveryCommandExecutorTest {
         executor(File(dataDir, "delivery-backups"), tree).execute(pushCommand())
 
         assertEquals("OLD", File(serverRoot, "plugins/upd.txt").readText(), "未知来源类型不得触碰目标文件")
-        assertTrue(resultBody.get()!!.contains("status=failed"), "未知来源类型必须在 push 阶段 fail-closed")
+        assertTrue(resultBodies.single().contains("status=failed"), "未知来源类型必须在 push 阶段 fail-closed")
         assertFalse(File(dataDir, "delivery-backups/1").exists(), "校验失败前不应生成备份")
-    }
-
-    @Test
-    fun `restart 生效先同步回执开始生效再优雅关服`() {
-        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
-        exec.execute(activateCommand("restart"))
-
-        // 关服前：已同步回执 activate success「开始生效」（postResult 阻塞至送达）。
-        val body = resultBody.get() ?: error("未回执")
-        assertTrue(body.contains("phase=activate"), "应回执 activate 阶段：$body")
-        assertTrue(body.contains("status=success"), "restart 先回执 success「开始生效」：$body")
-        // 时序关键：回执已发但关服尚未执行——关服被排入延迟队列、还没触发。
-        assertEquals(0, adapter.shutdownReasons.size, "回执后、延迟任务执行前绝不应已关服")
-        assertEquals(1, adapter.delayedCount(), "应恰好调度一个延迟优雅关服任务")
-
-        // 推进延迟任务 → 真正触发优雅关服。
-        adapter.drainOne()
-        assertEquals(1, adapter.shutdownReasons.size, "延迟任务执行后应优雅关服一次")
-        assertTrue(adapter.shutdownReasons.first().contains("#1"), "关服原因应含 orderId：${adapter.shutdownReasons.first()}")
-    }
-
-    @Test
-    fun `restart 关服原语抛异常回执 failed`() {
-        adapter.shutdownError = RuntimeException("调度器不可用")
-        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
-        exec.execute(activateCommand("restart"))
-
-        // 先回执了 success「开始生效」，关服延迟任务入队。
-        assertEquals(1, adapter.delayedCount())
-        // 执行关服 → 原语抛异常 → 捕获后回执 activate failed（控制面据「关服指令回执失败」判 failed 熔断止血）。
-        adapter.drainOne()
-        assertEquals(1, adapter.shutdownReasons.size, "关服原语已被尝试")
-        val body = resultBody.get() ?: error("未回执")
-        assertTrue(body.contains("phase=activate"), "失败回执仍为 activate 阶段：$body")
-        assertTrue(body.contains("status=failed"), "关服抛异常应回执 failed：$body")
-        assertTrue(body.contains("优雅关服失败"), "失败原因应指明关服失败：$body")
     }
 
     @Test
@@ -153,8 +193,9 @@ class DeliveryCommandExecutorTest {
             )
 
         val manifest =
-            BeaconApiClient(RoutingTransport(resultBody), ManifestCodec(tree), settings())
-                .fetchDeliveryManifest(identity(), 1L) ?: error("未拉到清单")
+            BeaconApiClient(RoutingTransport(resultBodies), ManifestCodec(tree), settings())
+                .fetchDeliveryManifest(identity(), 1L)
+                .value ?: error("未拉到清单")
 
         assertEquals(DeliveryManifestFile.SOURCE_KIND_FILE_DIFF, manifest.files[0].sourceKind)
         assertEquals(DeliveryManifestFile.SOURCE_KIND_CONFIG_ARTIFACT, manifest.files[1].sourceKind)
@@ -169,7 +210,7 @@ class DeliveryCommandExecutorTest {
             .execute(activateCommand("hot_reload"))
 
         assertTrue(adapter.configChanges.isEmpty(), "非法来源类型不应触发配置回调")
-        assertTrue(resultBody.get()!!.contains("status=failed"), "显式非字符串来源类型必须 fail-closed")
+        assertTrue(resultBodies.single().contains("status=failed"), "显式非字符串来源类型必须 fail-closed")
     }
 
     @Test
@@ -184,7 +225,7 @@ class DeliveryCommandExecutorTest {
         executor(File(dataDir, "delivery-backups"), tree).execute(activateCommand("hot_reload"))
 
         assertTrue(adapter.configChanges.isEmpty(), "未知来源类型不应触发配置回调")
-        assertTrue(resultBody.get()!!.contains("status=failed"), "未知来源类型必须 fail-closed")
+        assertTrue(resultBodies.single().contains("status=failed"), "未知来源类型必须 fail-closed")
         assertEquals(0, adapter.shutdownReasons.size, "未知来源类型绝不关服")
     }
 
@@ -209,7 +250,7 @@ class DeliveryCommandExecutorTest {
         assertTrue(adapter.configChanges.isEmpty(), "普通文件与 jar 不应触发配置回调")
         assertEquals(0, adapter.shutdownReasons.size, "hot_reload 不应触发关服")
         assertEquals(0, adapter.delayedCount(), "hot_reload 不应调度关服任务")
-        val body = resultBody.get() ?: error("未回执")
+        val body = resultBodies.single()
         assertTrue(body.contains("phase=activate"))
         assertTrue(body.contains("status=success"), "无配置工件应成功 no-op：$body")
     }
@@ -232,7 +273,7 @@ class DeliveryCommandExecutorTest {
         assertEquals(listOf("plugins/A/config.yml", "plugins/Z/config.yml"), firstChange.first.toList())
         assertEquals(firstChange, secondChange, "配置摘要与 changed 顺序应稳定")
         assertTrue(firstChange.second.matches(Regex("[0-9a-f]{32}")), "配置摘要应为小写 md5")
-        assertTrue(resultBody.get()!!.contains("status=success"))
+        assertTrue(resultBodies.last().contains("status=success"), "最近一次回执应为 success：$resultBodies")
         assertEquals(0, adapter.shutdownReasons.size, "hot_reload 绝不关服")
     }
 
@@ -242,7 +283,7 @@ class DeliveryCommandExecutorTest {
             .execute(activateCommand("hot_reload"))
 
         assertTrue(adapter.configChanges.isEmpty())
-        assertTrue(resultBody.get()!!.contains("status=failed"))
+        assertTrue(resultBodies.single().contains("status=failed"))
         assertEquals(0, adapter.shutdownReasons.size, "拉取失败绝不关服")
     }
 
@@ -254,26 +295,9 @@ class DeliveryCommandExecutorTest {
         executor(File(dataDir, "delivery-backups"), tree).execute(activateCommand("hot_reload"))
 
         assertEquals(1, adapter.configChanges.size, "应尝试一次配置回调")
-        assertTrue(resultBody.get()!!.contains("status=failed"))
+        assertTrue(resultBodies.single().contains("status=failed"))
         assertEquals(0, adapter.shutdownReasons.size, "回调失败绝不关服")
         assertEquals(0, adapter.delayedCount(), "回调失败不应调度关服")
-    }
-
-    @Test
-    fun `restart 回滚还原备份后回执并优雅关服`() {
-        val backupManager = seededBackup()
-        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray()) // 模拟正推覆盖
-
-        executorWith(backupManager).execute(rollbackCommand("restart"))
-
-        assertEquals("OLD", File(serverRoot, "plugins/upd.txt").readText(), "回滚应从备份还原旧内容")
-        val body = resultBody.get() ?: error("未回执")
-        assertTrue(body.contains("phase=rollback"), "应回执 rollback 阶段：$body")
-        assertTrue(body.contains("status=success"), "还原成功先回执 success：$body")
-        assertEquals(0, adapter.shutdownReasons.size, "回执后、延迟任务前不应已关服")
-        assertEquals(1, adapter.delayedCount(), "restart 回滚应调度一个延迟优雅关服")
-        adapter.drainOne()
-        assertEquals(1, adapter.shutdownReasons.size, "延迟任务执行后应优雅关服一次")
     }
 
     @Test
@@ -285,7 +309,7 @@ class DeliveryCommandExecutorTest {
 
         assertEquals("OLD", File(serverRoot, "plugins/upd.txt").readText())
         assertEquals(0, adapter.delayedCount(), "push_only 回滚不关服")
-        assertTrue(resultBody.get()!!.contains("status=success"))
+        assertTrue(resultBodies.single().contains("status=success"))
     }
 
     @Test
@@ -304,7 +328,7 @@ class DeliveryCommandExecutorTest {
         val rollbackChange = adapter.configChanges.single()
         assertEquals(listOf("plugins/upd.txt"), rollbackChange.first.toList())
         assertNotEquals(activatedMd5, rollbackChange.second, "回滚后的摘要应反映还原后的磁盘状态，避免被监听方当作重复通知")
-        val body = resultBody.get() ?: error("未回执")
+        val body = resultBodies.last()
         assertTrue(body.contains("status=success"))
         assertTrue(body.contains("backupPresent=true"), "回滚成功应保留已有回执语义：$body")
         assertEquals(0, adapter.shutdownReasons.size, "hot_reload 回滚绝不关服")
@@ -324,7 +348,7 @@ class DeliveryCommandExecutorTest {
 
         executorWith(backupManager, tree).execute(rollbackCommand("hot_reload"))
 
-        val body = resultBody.get() ?: error("未回执")
+        val body = resultBodies.single()
         assertTrue(body.contains("status=failed"), "备份缺失应回执 failed：$body")
         assertTrue(adapter.configChanges.isEmpty(), "备份还原失败不应通知配置")
         assertEquals(0, adapter.shutdownReasons.size, "备份缺失不关服")
@@ -350,11 +374,11 @@ class DeliveryCommandExecutorTest {
         manifest: Map<String, Any?> = manifestTree(),
     ): DeliveryCommandExecutor {
         val resolver = DeliveryTargetResolver(serverRoot, dataDir)
-        val apiClient = BeaconApiClient(RoutingTransport(resultBody), ManifestCodec(manifest), settings())
+        val apiClient = BeaconApiClient(RoutingTransport(resultBodies), ManifestCodec(manifest), settings())
         val pipeline =
             DeliveryPipeline(
-                uploader = DeliveryUploader(blob, resolver, { it }, { emptyMap() }, adapter),
-                downloader = DeliveryDownloader(blob, { it }, { emptyMap() }, adapter),
+                uploader = DeliveryUploader(blob, resolver, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
+                downloader = DeliveryDownloader(blob, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
                 backupManager = backupManager,
                 overwriter = DeliveryOverwriter(resolver),
                 tempRoot = File(dataDir, "delivery-tmp"),
@@ -409,13 +433,20 @@ class DeliveryCommandExecutorTest {
         backupRoot: File,
         manifest: Map<String, Any?> = manifestTree(),
         manifestError: RuntimeException? = null,
+        manifestStatus: Int = 200,
+        manifestBody: String = "manifest",
     ): DeliveryCommandExecutor {
         val resolver = DeliveryTargetResolver(serverRoot, dataDir)
-        val apiClient = BeaconApiClient(RoutingTransport(resultBody, manifestError), ManifestCodec(manifest), settings())
+        val apiClient =
+            BeaconApiClient(
+                RoutingTransport(resultBodies, manifestError, manifestStatus, manifestBody),
+                ManifestCodec(manifest),
+                settings(),
+            )
         val pipeline =
             DeliveryPipeline(
-                uploader = DeliveryUploader(blob, resolver, { it }, { emptyMap() }, adapter),
-                downloader = DeliveryDownloader(blob, { it }, { emptyMap() }, adapter),
+                uploader = DeliveryUploader(blob, resolver, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
+                downloader = DeliveryDownloader(blob, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
                 backupManager = DeliveryBackupManager(backupRoot, resolver, ManifestCodec(manifestTree()), adapter),
                 overwriter = DeliveryOverwriter(resolver),
                 tempRoot = File(dataDir, "delivery-tmp"),
@@ -505,19 +536,21 @@ class DeliveryCommandExecutorTest {
             override = OverrideSettings(emptySet(), "ob"),
         )
 
-    /** 按 URL 路由：manifest → 200 清单体；result → 204 并记回执体。 */
+    /** 按 URL 路由：manifest → 可注入状态码 / 响应体；result → 204 并记回执体。 */
     private class RoutingTransport(
-        private val resultBody: AtomicReference<String?>,
+        private val resultBodies: MutableList<String>,
         private val manifestError: RuntimeException? = null,
+        private val manifestStatus: Int = 200,
+        private val manifestBody: String = "manifest",
     ) : HttpTransport {
         override fun execute(request: HttpRequest): HttpResponse =
             when {
                 request.url.endsWith("/manifest") -> {
                     manifestError?.let { throw it }
-                    HttpResponse(200, "manifest")
+                    HttpResponse(manifestStatus, manifestBody)
                 }
                 request.url.endsWith("/result") -> {
-                    resultBody.set(request.body)
+                    resultBodies.add(request.body ?: "")
                     HttpResponse(204, "")
                 }
 
@@ -530,5 +563,10 @@ class DeliveryCommandExecutorTest {
         override fun encode(value: Any?): String = value.toString()
 
         override fun decode(json: String): Any? = tree
+    }
+
+    private companion object {
+        /** 测试用退避设置：抖动归零、间隔极小，配合注入的空 sleep 使重试用例确定性且不真等。 */
+        private val TEST_BACKOFF = BackoffSettings(initialMs = 1, maxMs = 4, multiplier = 2.0, jitterRatio = 0.0)
     }
 }

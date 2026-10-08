@@ -11,11 +11,12 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     val delayed = ArrayDeque<() -> Unit>()
     val infos = mutableListOf<String>()
     val warns = mutableListOf<String>()
+    val errors = mutableListOf<String>()
 
     /** 记录每次优雅关服（restart 生效，FR-171/ADR-0070）的原因，供时序断言（回执在前、关服在后）。 */
     val shutdownReasons = mutableListOf<String>()
 
-    /** 注入关服原语失败：非 null 时 [gracefulShutdown] 记录后抛出，用于「关服抛异常 → 回执 failed」断言。 */
+    /** 注入关服原语失败：非 null 时 [gracefulShutdown] 记录后抛出，用于「关服抛异常 → 单次回执 failed」断言。 */
     var shutdownError: RuntimeException? = null
 
     /** 记录配置变更通知的路径集合与摘要，供热更新编排断言。 */
@@ -65,7 +66,9 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     override fun error(
         msg: String,
         t: Throwable?,
-    ) = Unit
+    ) {
+        errors.add(msg)
+    }
 
     /** 推进一个延迟任务（下一次 tick）。无任务则抛异常（暴露测试预期偏差）。 */
     fun drainOne() {

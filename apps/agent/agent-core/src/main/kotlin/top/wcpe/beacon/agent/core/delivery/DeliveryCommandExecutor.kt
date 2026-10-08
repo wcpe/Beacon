@@ -56,10 +56,11 @@ class DeliveryCommandExecutor(
 ) {
     private val running = AtomicBoolean(false)
 
-    /** 执行一条已拉到的交付命令（须在 async 线程调用）。单飞门兜底：并发进入则跳过（正常不应发生）。 */
+    /** 执行一条已拉到的交付命令（须在 async 线程调用）。单飞门兜底：并发进入则回执 failed（不静默丢弃）。 */
     fun execute(command: AgentCommand) {
         if (!running.compareAndSet(false, true)) {
-            adapter.warn("交付命令已有一条在执行，跳过（单飞门兜底）：id=${command.id}，type=${command.type}")
+            adapter.warn("交付命令已有一条在执行，本命令并发重复、不执行：id=${command.id}，type=${command.type}")
+            rejectConcurrent(command)
             return
         }
         try {
@@ -69,11 +70,28 @@ class DeliveryCommandExecutor(
         }
     }
 
-    /** 按类型分派；orderId 缺失或非法则忽略（不回执，控制面按命令超时清理）。 */
+    /**
+     * 并发重复命令回执 failed（FR-269）：单飞门拒收的命令若不回执，会一直挂在控制面 `fetched` 等过期清理——
+     * 运维只看到「卡住」而不知为何。交付回执端点按「该身份 + 该单 + 该类型**最新的** fetched 命令」定位
+     * （控制面 findDeliveryCommand 取 id 最大者），刚被拒的这条正是最新的那条，故失败能准确挂到它自己身上。
+     */
+    private fun rejectConcurrent(command: AgentCommand) {
+        val error = "同一 agent 已有交付命令在执行，本命令并发重复、已跳过（未执行）"
+        adapter.error("交付命令并发重复被拒：id=${command.id}，type=${command.type}", null)
+        val orderId = command.deliveryPayload?.orderId ?: 0L
+        if (orderId <= 0L) {
+            reportUnaddressable(command)
+            return
+        }
+        postResult(orderId, DeliveryStageReport(phaseOf(command.type), STATUS_FAILED, 0, 0, false, error))
+    }
+
+    /** 按类型分派；orderId 缺失或非法则回报告警（无 orderId 无处回执，见 [reportUnaddressable]）。 */
     private fun dispatch(command: AgentCommand) {
         val orderId = command.deliveryPayload?.orderId ?: 0L
         if (orderId <= 0L) {
             adapter.warn("交付命令缺少有效 orderId，忽略：id=${command.id}，type=${command.type}")
+            reportUnaddressable(command)
             return
         }
         when (command.type) {
@@ -85,11 +103,45 @@ class DeliveryCommandExecutor(
         }
     }
 
-    /** 上传流程（§4.5.2）：拉待传清单 → 逐文件 HEAD 去重 + 流式 PUT → 回执 upload。 */
+    /**
+     * orderId 缺失 / 非法的交付命令：**变更单号是交付回执端点的定位键**（`.../orders/{id}/result`），
+     * 没有它便无处挂回执；通用命令结果端点按控制面类型口径只接受 resync 类命令，同样不可达（改动面限 agent 侧）。
+     * 故此处以 ERROR 级日志作为可达的可见通道（运维可从 agent 日志视图看到），命令交控制面超时清理。
+     */
+    private fun reportUnaddressable(command: AgentCommand) {
+        adapter.error(
+            "交付命令载荷缺失或 orderId 非法（无法回执，命令将由控制面超时清理）：id=${command.id}，type=${command.type}",
+            null,
+        )
+    }
+
+    /** 命令类型 → 阶段回执 phase；非交付类型返回空串（调用方已在类型判别之后使用）。 */
+    private fun phaseOf(commandType: String): String =
+        when (commandType) {
+            AgentCommand.TYPE_DELIVERY_UPLOAD -> PHASE_UPLOAD
+            AgentCommand.TYPE_DELIVERY_PUSH -> PHASE_PUSH
+            AgentCommand.TYPE_DELIVERY_ACTIVATE -> PHASE_ACTIVATE
+            AgentCommand.TYPE_DELIVERY_ROLLBACK -> PHASE_ROLLBACK
+            else -> ""
+        }
+
+    /** 上传流程（§4.5.2）：拉待传清单 → 校验单号一致 → 逐文件 HEAD 去重 + 流式 PUT → 回执 upload。 */
     private fun runUpload(orderId: Long) {
-        val manifest =
-            apiClient.fetchDeliveryUploadManifest(identity, orderId)
-                ?: return failResult(orderId, PHASE_UPLOAD, "拉取待上传清单失败（控制面不可达 / 命令态不符）")
+        val fetched = apiClient.fetchDeliveryUploadManifest(identity, orderId)
+        val manifest = fetched.value
+        when {
+            manifest == null -> failResult(orderId, PHASE_UPLOAD, "拉取待上传清单失败：${fetched.error}")
+            manifest.orderId != orderId ->
+                failResult(orderId, PHASE_UPLOAD, "待上传清单 orderId=${manifest.orderId} 与命令 orderId=$orderId 不一致（拒绝按错单清单上传）")
+            else -> uploadManifest(orderId, manifest)
+        }
+    }
+
+    /** 单号校验通过后的逐项上传：任一项失败即整体失败回执（含已上传 / 去重计数）。 */
+    private fun uploadManifest(
+        orderId: Long,
+        manifest: DeliveryUploadManifest,
+    ) {
         val result = pipeline.uploader.upload(manifest.items)
         if (!result.ok) {
             failResult(orderId, PHASE_UPLOAD, result.error)
@@ -100,14 +152,16 @@ class DeliveryCommandExecutor(
     }
 
     /**
-     * 推送流程（§4.5.3 / §4.7.1）：拉清单 → 本地重判 → 全量下临时目录并校验 → 备份 → 覆盖 / 删除 →
+     * 推送流程（§4.5.3 / §4.7.1）：拉清单 → 校验单号一致 → 本地重判 → 全量下临时目录并校验 → 备份 → 覆盖 / 删除 →
      * 清临时目录 → 回执 push。失败经 [DeliveryPushException] / [IOException] 归到一处回执 failed；
      * **备份失败绝不动原文件**（[executePush] 时序保证）。
      */
     private fun runPush(orderId: Long) {
-        val manifest =
-            apiClient.fetchDeliveryManifest(identity, orderId)
-                ?: return failResult(orderId, PHASE_PUSH, "拉取差异清单失败（控制面不可达 / 命令态不符）")
+        val fetched = apiClient.fetchDeliveryManifest(identity, orderId)
+        val manifest = fetched.value ?: return failResult(orderId, PHASE_PUSH, "拉取差异清单失败：${fetched.error}")
+        if (manifest.orderId != orderId) {
+            return failResult(orderId, PHASE_PUSH, "差异清单 orderId=${manifest.orderId} 与命令 orderId=$orderId 不一致（拒绝按错单清单动盘）")
+        }
         if (hasUnsupportedSourceKind(manifest.files)) {
             failResult(orderId, PHASE_PUSH, "差异清单包含当前 Agent 不支持的 sourceKind")
         } else {
@@ -260,6 +314,10 @@ class DeliveryCommandExecutor(
         backupPresent: Boolean,
     ) {
         val manifest = fetchHotReloadManifest(orderId, phase) ?: return
+        if (manifest.orderId != orderId) {
+            failResult(orderId, phase, "重新拉取的差异清单 orderId=${manifest.orderId} 与命令 orderId=$orderId 不一致（拒绝按错单清单通知）")
+            return
+        }
         if (hasUnsupportedSourceKind(manifest.files)) {
             failResult(orderId, phase, "差异清单包含当前 Agent 不支持的 sourceKind")
             return
@@ -271,19 +329,22 @@ class DeliveryCommandExecutor(
         }
     }
 
-    /** 拉取 hot_reload 清单；连接、命令态或解析失败均在此统一回执 failed。 */
+    /** 拉取 hot_reload 清单；连接、命令态或解析失败均在此统一回执 failed（原因保留状态码与错误码）。 */
     private fun fetchHotReloadManifest(
         orderId: Long,
         phase: String,
-    ): DeliveryTargetManifest? =
-        try {
-            apiClient.fetchDeliveryManifest(identity, orderId).also {
-                if (it == null) failResult(orderId, phase, "重新拉取差异清单失败（控制面不可达 / 命令态不符）")
+    ): DeliveryTargetManifest? {
+        val fetched =
+            try {
+                apiClient.fetchDeliveryManifest(identity, orderId)
+            } catch (e: Exception) {
+                failResult(orderId, phase, "重新拉取差异清单异常：${reasonOf(e)}")
+                return null
             }
-        } catch (e: Exception) {
-            failResult(orderId, phase, "重新拉取差异清单异常：${reasonOf(e)}")
-            null
-        }
+        val manifest = fetched.value
+        if (manifest == null) failResult(orderId, phase, "重新拉取差异清单失败：${fetched.error}")
+        return manifest
+    }
 
     /** 是否包含当前 Agent 不认识的来源类型；未知类型必须 fail-closed，不能静默 no-op。 */
     private fun hasUnsupportedSourceKind(files: List<DeliveryManifestFile>): Boolean =

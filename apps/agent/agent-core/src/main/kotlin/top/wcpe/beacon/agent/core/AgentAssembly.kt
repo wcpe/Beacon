@@ -415,8 +415,9 @@ object AgentAssembly {
             val authHeaders: () -> Map<String, String> = { ctx.apiClient.agentAuthHeaders(ctx.identity) }
             val pipeline =
                 DeliveryPipeline(
-                    uploader = DeliveryUploader(transport.blobStreamTransport, resolver, blobUrl, authHeaders, ctx.adapter),
-                    downloader = DeliveryDownloader(transport.blobStreamTransport, blobUrl, authHeaders, ctx.adapter),
+                    uploader =
+                        DeliveryUploader(transport.blobStreamTransport, resolver, blobUrl, authHeaders, ctx.adapter, ctx.settings.backoff),
+                    downloader = DeliveryDownloader(transport.blobStreamTransport, blobUrl, authHeaders, ctx.adapter, ctx.settings.backoff),
                     backupManager =
                         DeliveryBackupManager(
                             File(ctx.adapter.dataFolder(), DELIVERY_BACKUPS_DIR),

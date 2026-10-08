@@ -1,6 +1,8 @@
 package top.wcpe.beacon.agent.core.delivery
 
+import top.wcpe.beacon.agent.core.backoff.ExponentialBackoff
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
+import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.transport.BlobStreamTransport
 import java.io.File
 import java.io.FileOutputStream
@@ -10,7 +12,8 @@ import java.io.IOException
  * 交付目标流式下载器（FR-165，spec §4.5.3）。
  *
  * 按工作集逐文件 `GET blobs/{sha256}` 下载到 agent 侧临时目录，支持 `Range` 断点续传；下载完成本地校验 sha256，
- * 不符删除重下；单文件重试上限 [MAX_ATTEMPTS]，耗尽即整体失败（原因含文件路径与失败环节）。
+ * 不符删除重下；单文件重试上限 [MAX_ATTEMPTS]，**每次重试前按指数退避等待**（FR-269，控制面短暂抖动时不打满），
+ * 耗尽即整体失败（原因含文件路径与失败环节）。
  *
  * **先全部下载到临时目录、校验齐全后才由 [DeliveryOverwriter] 备份 + 覆盖**——把「传输失败」与「覆盖失败」隔离，
  * 覆盖阶段不再依赖网络。全程流式写盘、绝不整读入内存；调用方保证在 async 线程使用。
@@ -19,12 +22,16 @@ import java.io.IOException
  * @param blobUrl     由 sha256 构造完整 blob URL
  * @param authHeaders 取当前鉴权头（X-Beacon-Token / Identity / Boot）
  * @param adapter     平台日志
+ * @param backoff     重试退避设置（指数退避 + 抖动，复用既有 ExponentialBackoff）
+ * @param sleep       退避等待实现（测试注入免真睡；生产用 Thread.sleep，调用方已在 async 线程）
  */
 class DeliveryDownloader(
     private val transport: BlobStreamTransport,
     private val blobUrl: (String) -> String,
     private val authHeaders: () -> Map<String, String>,
     private val adapter: PlatformAdapter,
+    private val backoff: BackoffSettings,
+    private val sleep: (Long) -> Unit = { Thread.sleep(it) },
 ) {
     /**
      * 逐文件下载工作集到 [tempDir]（保留原相对路径），任一文件重试耗尽即失败返回。
@@ -44,7 +51,7 @@ class DeliveryDownloader(
         return DeliveryDownloadResult(true, "")
     }
 
-    /** 下载单文件：续传命中即跳过，否则重试下载 + 校验（Range 续传 / 忽略 Range 兜底 / 校验不符重下）。 */
+    /** 下载单文件：续传命中即跳过，否则重试下载 + 校验（Range 续传 / 忽略 Range 兜底 / 校验不符重下）；重试间指数退避。 */
     private fun downloadOne(
         op: DeliveryFileOp,
         tempDir: File,
@@ -55,9 +62,12 @@ class DeliveryDownloader(
         if (verified(tempFile, op)) return true
         var attempt = 0
         var done = false
+        // 单文件独立退避实例：间隔随本文件失败次数指数增长（含抖动），换下一个文件即重新起算。
+        val retryBackoff = ExponentialBackoff(backoff)
         while (!done && attempt < MAX_ATTEMPTS) {
             attempt++
             done = attemptDownload(op, tempFile)
+            if (!done && attempt < MAX_ATTEMPTS) sleep(retryBackoff.nextDelayMs())
         }
         if (!done) adapter.warn("交付下载重试耗尽：路径=${op.path}，sha=${op.sha256}，尝试=$MAX_ATTEMPTS")
         return done

@@ -3,6 +3,7 @@ package top.wcpe.beacon.agent.adapters
 import top.wcpe.beacon.agent.adapters.testutil.FakeHttpTransport
 import top.wcpe.beacon.agent.adapters.testutil.TestFixtures
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.HTTP_NOT_SENT
 import top.wcpe.beacon.agent.core.client.fetchDeliveryManifest
 import top.wcpe.beacon.agent.core.client.fetchDeliveryUploadManifest
 import top.wcpe.beacon.agent.core.client.fetchPendingCommand
@@ -10,15 +11,18 @@ import top.wcpe.beacon.agent.core.client.postDeliveryResult
 import top.wcpe.beacon.agent.core.command.AgentCommand
 import top.wcpe.beacon.agent.core.delivery.DeliveryStageReport
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.transport.HttpRequest
 import top.wcpe.beacon.agent.core.transport.HttpResponse
+import top.wcpe.beacon.agent.core.transport.HttpTransport
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * BeaconApiClient 交付面方法真 JSON 契约单测（FR-165，spec §5.2）：校验对控制面 upload-manifest / manifest
- * 响应的解析与 result 回执报文的字段名 / 值（用真 [KotlinxJsonCodec]，锁定与控制面 camelCase 契约一致）。
+ * BeaconApiClient 交付面方法真 JSON 契约单测（FR-165，spec §5.2；FR-269 错误码保留）：校验对控制面
+ * upload-manifest / manifest 响应的解析、非 200 时的状态码与错误码保留（不再折叠为无信息 null），
+ * 与 result 回执报文的字段名 / 值（用真 [KotlinxJsonCodec]，锁定与控制面 camelCase 契约一致）。
  */
 class BeaconApiClientDeliveryTest {
     private val codec = KotlinxJsonCodec()
@@ -33,7 +37,7 @@ class BeaconApiClientDeliveryTest {
             )
         val client = BeaconApiClient(transport, codec, TestFixtures.settings())
 
-        val manifest = assertNotNull(client.fetchDeliveryUploadManifest(identity(), 7L))
+        val manifest = assertNotNull(client.fetchDeliveryUploadManifest(identity(), 7L).value)
 
         assertEquals(7L, manifest.orderId)
         assertEquals(1, manifest.items.size)
@@ -53,7 +57,7 @@ class BeaconApiClientDeliveryTest {
         val transport = FakeHttpTransport().enqueue(HttpResponse(200, body))
         val client = BeaconApiClient(transport, codec, TestFixtures.settings())
 
-        val manifest = assertNotNull(client.fetchDeliveryManifest(identity(), 7L))
+        val manifest = assertNotNull(client.fetchDeliveryManifest(identity(), 7L).value)
 
         assertEquals("restart", manifest.activationMethod)
         assertEquals(2, manifest.files.size)
@@ -114,10 +118,35 @@ class BeaconApiClientDeliveryTest {
     }
 
     @Test
-    fun `非 200 的清单响应返回 null`() {
-        val transport = FakeHttpTransport().enqueue(HttpResponse(403, """{"code":"DELIVERY_NOT_SOURCE"}"""))
+    fun `非 200 的清单响应保留状态码与错误码`() {
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(409, """{"code":"config_artifact_missing","message":"配置渲染工件未就绪（payload 未准备）"}"""),
+            )
         val client = BeaconApiClient(transport, codec, TestFixtures.settings())
 
-        assertEquals(null, client.fetchDeliveryUploadManifest(identity(), 7L))
+        val result = client.fetchDeliveryUploadManifest(identity(), 7L)
+
+        assertEquals(null, result.value, "非 200 不得给出清单")
+        assertEquals(409, result.statusCode)
+        assertTrue(result.error.contains("HTTP 409"), "失败摘要应保留状态码：${result.error}")
+        assertTrue(result.error.contains("config_artifact_missing"), "失败摘要应保留控制面错误码：${result.error}")
+        assertTrue(result.error.contains("配置渲染工件未就绪"), "失败摘要应保留可读说明：${result.error}")
+    }
+
+    @Test
+    fun `连接失败时清单结果为请求未发出`() {
+        // 连接级异常由客户端统一吞为 null，此处注入一个必抛的传输以覆盖该分支。
+        val transport =
+            object : HttpTransport {
+                override fun execute(request: HttpRequest): HttpResponse = throw RuntimeException("连接被拒")
+            }
+        val client = BeaconApiClient(transport, codec, TestFixtures.settings())
+
+        val result = client.fetchDeliveryManifest(identity(), 7L)
+
+        assertEquals(null, result.value)
+        assertEquals(HTTP_NOT_SENT, result.statusCode)
+        assertTrue(result.error.contains("连接被拒"), "连接级失败也应带具体原因，便于诊断：${result.error}")
     }
 }
