@@ -32,23 +32,18 @@ type MCPReadServices struct {
 	// alertEvents 供告警事件只读列表（只走 List 查询，处理动作在 mcp_alert_tools.go 的写工具组）。
 	alertEvents *service.AlertEventService
 	// deliveryDiff 供交付影响预览只读工具（FR-245）：影响预览归 DeliveryDiffService
-	// （与组单生命周期服务职责分离），故单独接入；交付组单读走注册表既有的 orders。
+	// （与组单生命周期服务职责分离）；交付组单读走注册表既有的 orders。
 	deliveryDiff *service.DeliveryDiffService
 	scope        *service.ObservationScopeResolver
 }
 
 // NewMCPReadServices 构造 MCP 只读服务集合；仅允许调用方传入应用查询服务。
-func NewMCPReadServices(v2 *service.V2ControlPlaneService, topology *service.TopologyService, health *service.HealthQueryService, messages *service.MessageQueryService, connections *service.ConnQueryService, commands *service.CommandObserveService, scheduling *service.SchedDecisionQueryService, audits *service.AuditService, alertEvents *service.AlertEventService, scope *service.ObservationScopeResolver) MCPReadServices {
-	return MCPReadServices{v2: v2, topology: topology, health: health, messages: messages, connections: connections, commands: commands, scheduling: scheduling, audits: audits, alertEvents: alertEvents, scope: scope}
-}
-
-// SetDeliveryDiffService 接入交付影响预览的只读依赖（FR-245）。
 //
-// 影响预览归 DeliveryDiffService（与组单生命周期服务职责分离），故单独接入。
-// 调用时机：必须在 SetReadServices 之后——SetReadServices 整体替换 reads，
-// 先设的 deliveryDiff 会被随后的整体赋值覆盖掉。
-func (r *MCPToolRegistry) SetDeliveryDiffService(diff *service.DeliveryDiffService) {
-	r.reads.deliveryDiff = diff
+// 全部只读依赖**一次传齐**（含交付影响预览的差异面服务）：注册表侧的接入点只有
+// SetReadServices 一处，故不另设逐服务 setter——否则「先 setter 后 SetReadServices」
+// 会让先设的依赖被整体赋值静默覆盖，表现为对应工具悄无声息地不注册。
+func NewMCPReadServices(v2 *service.V2ControlPlaneService, topology *service.TopologyService, health *service.HealthQueryService, messages *service.MessageQueryService, connections *service.ConnQueryService, commands *service.CommandObserveService, scheduling *service.SchedDecisionQueryService, audits *service.AuditService, alertEvents *service.AlertEventService, deliveryDiff *service.DeliveryDiffService, scope *service.ObservationScopeResolver) MCPReadServices {
+	return MCPReadServices{v2: v2, topology: topology, health: health, messages: messages, connections: connections, commands: commands, scheduling: scheduling, audits: audits, alertEvents: alertEvents, deliveryDiff: deliveryDiff, scope: scope}
 }
 
 type mcpPageInput struct {
@@ -360,7 +355,8 @@ func (r *MCPToolRegistry) registerReadHealthTools(server *mcp.Server) {
 // 观察窗与事件沿用 HTTP 端点的有界条数。输出键名一律沿用既有 HTTP 视图字段名
 // （apps/server/internal/service/delivery_views.go 为准），不自造键名。
 
-// mcpDeliveryOrderListInput 是变更单列表入参：namespaceId 必填（不留全局观测越界口子）。
+// mcpDeliveryOrderListInput 是变更单列表入参：namespaceId 为数值 ID 且必填——列表按 namespace 定位。
+// 范围参数本身是调用者声明的收窄条件，缺省即其可观测的全量范围（与告警处置同口径），不是越界闸。
 type mcpDeliveryOrderListInput struct {
 	mcpScopeInput
 	Status    string `json:"status,omitempty"`
@@ -412,7 +408,7 @@ func (r *MCPToolRegistry) registerReadDeliveryTools(server *mcp.Server) {
 
 // registerReadDeliveryOrderTools 登记由组单读服务承担的五个交付只读工具。
 func (r *MCPToolRegistry) registerReadDeliveryOrderTools(server *mcp.Server) {
-	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.list", Description: "变更单列表（分页筛选；仅回摘要字段）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderListInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.list", Description: "变更单列表（分页筛选；仅回摘要字段；namespaceId 为数值 ID 且必填）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderListInput) (*mcp.CallToolResult, map[string]any, error) {
 		scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 		if !ok || in.NamespaceID == "" {
 			return mcpRejectedResult()

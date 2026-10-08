@@ -666,9 +666,7 @@ func run() error {
 	// 告警事件能力（FR-157 / FR-229 的 MCP 面）：只读列表走 reads，单条 / 批量处置走 registry 直执服务。
 	mcpToolRegistry.SetAlertEventService(alertEventService)
 	observationScopeResolver := service.NewObservationScopeResolver(repository.NewEnvRepository(db), nsRepo)
-	mcpToolRegistry.SetReadServices(server.NewMCPReadServices(v2ControlPlaneService, topologyService, healthQueryService, messageQueryService, connQueryService, commandObserveService, schedDecisionQueryService, auditService, alertEventService, observationScopeResolver))
-	// 交付影响预览只读工具（FR-245）另依赖差异面服务，须在 SetReadServices 整体赋值之后接入。
-	mcpToolRegistry.SetDeliveryDiffService(deliveryDiffService)
+	mcpToolRegistry.SetReadServices(server.NewMCPReadServices(v2ControlPlaneService, topologyService, healthQueryService, messageQueryService, connQueryService, commandObserveService, schedDecisionQueryService, auditService, alertEventService, deliveryDiffService, observationScopeResolver))
 	// 工具调用流水写入方（FR-240）：装配在注册表构造之后、HTTP 对外之前；写入不阻塞调用主路径。
 	mcpToolRegistry.SetInvocationRecorder(mcpInvocationService)
 	v2HealthHandler.SetObservationScopeResolver(observationScopeResolver)

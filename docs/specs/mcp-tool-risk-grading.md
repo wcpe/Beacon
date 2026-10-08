@@ -151,7 +151,7 @@ func mcpAddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.Too
 - catalog 覆盖全部 78 个工具，无遗漏、无多余；新增工具未登记 catalog 时，覆盖测试失败（fail-closed）。
 - in-memory 枚举集合与 catalog 派生集合**双向一致**。
 - 每个有 operation kind 的工具，catalog 等级 **不低于** descriptor 等级。
-- `MCPToolNames` 对外行为不变：observer 14 项、automation 76 / 78 项（随 `allow-approval-decide` 两态：关闭 76、开启 78）。
+- `MCPToolNames` 对外行为不变（FR-236 重构前后逐项一致）。**当前计数**：observer 21 项、automation 85 / 87 项（随 `allow-approval-decide` 两态：关闭 85、开启 87）；计数随目录增长更新——FR-236 交付时为 observer 14、automation 76 / 78，真源见 §3.3。
 - 既有测试全绿。
 
 ## 6. 风险 / 待定
