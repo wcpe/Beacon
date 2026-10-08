@@ -518,6 +518,30 @@ class DeliveryCommandExecutorTest {
         assertTrue(body.contains("changedFileCount=2"), "生效成功回执应以配置工件数为下界计数：$body")
     }
 
+    @Test
+    fun `启动清扫与在途交付互斥`() {
+        seedServerRoot()
+        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
+        // 在推送执行途中调用启动清扫：单飞门已被交付占用 → 清扫跳过，绝不删掉在途临时目录。
+        var swept = false
+        blob.onDownload = { url, _, sink ->
+            if (!swept) {
+                swept = true
+                DeliveryTestSupport.writeFile(File(dataDir, "delivery-tmp"), "1/plugins/inflight.bin", "x".toByteArray())
+                exec.sweepStaleTemp()
+            }
+            writeBlob(url, sink)
+        }
+
+        exec.execute(pushCommand())
+
+        assertTrue(
+            adapter.warns.any { it.contains("启动清扫跳过") },
+            "在途交付时清扫应跳过并记 warn：${adapter.warns}",
+        )
+        assertTrue(resultBodies.single().contains("status=success"), "原交付命令不受清扫影响：$resultBodies")
+    }
+
     /** 造一份正推用例可用的备份管理器（不参与断言，仅满足管道装配）。 */
     private fun seededBackupForeverUnused(): DeliveryBackupManager {
         DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())

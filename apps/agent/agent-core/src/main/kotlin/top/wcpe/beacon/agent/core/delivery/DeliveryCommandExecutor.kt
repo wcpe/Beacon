@@ -56,11 +56,16 @@ class DeliveryCommandExecutor(
 ) {
     private val running = AtomicBoolean(false)
 
+    /** 启动期临时目录清扫是否正在进行（与在途交付互斥时，供被拒命令给出真实原因，不误报为「并发重复」）。 */
+    @Volatile
+    private var sweeping = false
+
     /** 执行一条已拉到的交付命令（须在 async 线程调用）。单飞门兜底：并发进入则回执 failed（不静默丢弃）。 */
     fun execute(command: AgentCommand) {
         if (!running.compareAndSet(false, true)) {
-            adapter.warn("交付命令已有一条在执行，本命令并发重复、不执行：id=${command.id}，type=${command.type}")
-            rejectConcurrent(command)
+            val reason = if (sweeping) SWEEP_IN_PROGRESS_REASON else CONCURRENT_REASON
+            adapter.warn("交付命令未执行并回执 failed：id=${command.id}，type=${command.type}，原因=$reason")
+            rejectBusy(command, reason)
             return
         }
         try {
@@ -79,8 +84,10 @@ class DeliveryCommandExecutor(
      * 最新的一条，故失败一般能挂到它自己身上；但若同一类型存在多条在途（重复下发），回执可能落到那条更晚的
      * fetched 命令上——这是控制面定位口径的固有语义，agent 侧无从更精确寻址，故只保证「不静默丢弃」。
      */
-    private fun rejectConcurrent(command: AgentCommand) {
-        val reason = "同一 agent 已有交付命令在执行，本命令并发重复、已跳过（未执行）"
+    private fun rejectBusy(
+        command: AgentCommand,
+        reason: String,
+    ) {
         adapter.error("交付命令未执行并回执 failed（$reason）：id=${command.id}，type=${command.type}", null)
         val orderId = command.deliveryPayload?.orderId ?: 0L
         if (orderId <= 0L) {
@@ -502,16 +509,30 @@ class DeliveryCommandExecutor(
      * 启动期清扫交付临时根下的遗留目录（FR-268）：进程刚起、无任何交付命令在跑，此刻残留的一律是上轮进程
      * 崩溃 / 被杀 / 失败中断留下的（目录名为 orderId，对该轮进程已无意义）。
      *
+     * **与在途交付互斥**：清扫与交付执行共用同一单飞门，避免把正在执行的交付命令的临时目录删掉；
+     * 反向上若已有交付命令在执行，本次清扫跳过（只记 warn；残留留待该命令收尾清理或下轮启动清扫）。
+     *
      * **须在 async 线程调用**（删盘是阻塞 IO，绝不上 MC 主线程）；删除失败不静默——按项计数记 warn。
      */
     fun sweepStaleTemp() {
-        val stale = pipeline.tempRoot.listFiles().orEmpty()
-        if (stale.isEmpty()) return
-        val failed = stale.count { !it.deleteRecursively() }
-        if (failed > 0) {
-            adapter.warn("交付临时目录启动清扫未完全删除：失败=$failed，总数=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
-        } else {
-            adapter.info("交付临时目录启动清扫完成：删除=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
+        // 与在途交付互斥：取不到单飞门说明已有命令在执行，此时清扫可能删掉在途临时目录，直接跳过。
+        if (!running.compareAndSet(false, true)) {
+            adapter.warn("启动清扫跳过：已有交付命令在执行（清扫与在途交付互斥，残留留待该命令收尾清理）")
+            return
+        }
+        sweeping = true
+        try {
+            val stale = pipeline.tempRoot.listFiles().orEmpty()
+            if (stale.isEmpty()) return
+            val failed = stale.count { !it.deleteRecursively() }
+            if (failed > 0) {
+                adapter.warn("交付临时目录启动清扫未完全删除：失败=$failed，总数=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
+            } else {
+                adapter.info("交付临时目录启动清扫完成：删除=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
+            }
+        } finally {
+            sweeping = false
+            running.set(false)
         }
     }
 
@@ -553,6 +574,12 @@ class DeliveryCommandExecutor(
         /** 生效方式取值（与控制面 activation_method 下发值对齐，spec §4.6.1）。 */
         const val ACTIVATION_RESTART = "restart"
         const val ACTIVATION_HOT_RELOAD = "hot_reload"
+
+        /** 单飞门拒收（同一 agent 同时刻只跑一条交付命令）时的回执原因。 */
+        private const val CONCURRENT_REASON = "同一 agent 已有交付命令在执行，本命令并发重复、已跳过（未执行）"
+
+        /** 启动期临时目录清扫占用单飞门时的回执原因（清扫与在途交付互斥，避免误删在途临时目录）。 */
+        private const val SWEEP_IN_PROGRESS_REASON = "启动期临时目录清理正在进行，本命令未执行（请重新下发）"
 
         /** 配置工件被回滚为不存在时参与通知摘要的稳定标记。 */
         private const val MISSING_FILE_MARKER = "<missing>"
