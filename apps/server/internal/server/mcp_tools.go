@@ -639,7 +639,7 @@ func (r *MCPToolRegistry) registerOwnApprovalRead(server *mcp.Server, principal 
 		}
 		views := make([]map[string]any, 0, len(items))
 		for i := range items {
-			views = append(views, mcpApprovalView(&items[i]))
+			views = append(views, mcpApprovalViewLightweight(&items[i]))
 		}
 		return &mcp.CallToolResult{}, map[string]any{"items": views, "total": total}, nil
 	})
@@ -648,7 +648,7 @@ func (r *MCPToolRegistry) registerOwnApprovalRead(server *mcp.Server, principal 
 		if err != nil {
 			return mcpRejectedResult()
 		}
-		return &mcp.CallToolResult{}, mcpApprovalView(&item), nil
+		return &mcp.CallToolResult{}, mcpApprovalViewFull(&item), nil
 	})
 }
 
@@ -658,7 +658,7 @@ func (r *MCPToolRegistry) registerOwnApprovalWithdraw(server *mcp.Server, princi
 		if err != nil {
 			return mcpRejectedResult()
 		}
-		return &mcp.CallToolResult{}, mcpApprovalView(&item), nil
+		return &mcp.CallToolResult{}, mcpApprovalViewLightweight(&item), nil
 	})
 }
 
@@ -682,7 +682,7 @@ func (r *MCPToolRegistry) registerApprovalDecision(server *mcp.Server, principal
 		if err != nil {
 			return mcpRejectedResultWithReason(err.Error())
 		}
-		return &mcp.CallToolResult{}, mcpApprovalView(&item), nil
+		return &mcp.CallToolResult{}, mcpApprovalViewLightweight(&item), nil
 	})
 	mcpAddTool(server, &mcp.Tool{Name: "beacon.approvals.reject", Description: "拒绝一条待处理审批申请（须给理由；受信 automation 客户端）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpApprovalDecisionInput) (*mcp.CallToolResult, map[string]any, error) {
 		if in.RequestID == "" || in.Reason == "" {
@@ -692,7 +692,7 @@ func (r *MCPToolRegistry) registerApprovalDecision(server *mcp.Server, principal
 		if err != nil {
 			return mcpRejectedResultWithReason(err.Error())
 		}
-		return &mcp.CallToolResult{}, mcpApprovalView(&item), nil
+		return &mcp.CallToolResult{}, mcpApprovalViewLightweight(&item), nil
 	})
 }
 
@@ -917,7 +917,9 @@ func normalizedMCPPageSize(size int) int {
 	return size
 }
 
-func mcpApprovalView(req *model.ApprovalRequest) map[string]any {
+// mcpApprovalViewLightweight 是审批申请的轻量投影（own.list / own.withdraw / approve / reject 共用）：
+// 只回定位与状态必需字段，失败摘要按单行上限截断——列表一次可能回多行，完整摘要留给 own.get。
+func mcpApprovalViewLightweight(req *model.ApprovalRequest) map[string]any {
 	return map[string]any{
 		"approvalRequestId": req.RequestID,
 		"status":            req.Status,
@@ -925,7 +927,36 @@ func mcpApprovalView(req *model.ApprovalRequest) map[string]any {
 		"resultRef":         req.ResultRef,
 		"createdAt":         req.CreatedAt.UTC().Format(time.RFC3339),
 		"expiresAt":         approvalTime(req.ExpiresAt),
+		"failureSummary":    mcpClampRunes(mcpApprovalFailureSummary(req), mcpApprovalFailureSummaryMaxRunes),
+		"finishedAt":        approvalTime(req.FinishedAt),
 	}
+}
+
+// mcpApprovalViewFull 是审批申请的全量投影（仅 own.get）：在轻量档之上补审批理由、审批主体与执行时间线。
+// 时间字段有值即返（无值回空串），不组装数组，由 AI 按字段名自行解读时序。
+// 刻意不投影审批申请的 text 列 ImpactSummary / SafeSummary——那会与票据的 impactSummary 对象同名两型。
+func mcpApprovalViewFull(req *model.ApprovalRequest) map[string]any {
+	view := mcpApprovalViewLightweight(req)
+	view["failureSummary"] = mcpApprovalFailureSummary(req)
+	view["rejectReason"] = req.RejectReason
+	view["decisionReason"] = req.DecisionReason
+	view["approvedBy"] = approvalText(req.ApprovedBy)
+	view["decidedAt"] = approvalTime(req.DecidedAt)
+	view["approvedAt"] = approvalTime(req.ApprovedAt)
+	view["executedAt"] = approvalTime(req.ExecutedAt)
+	return view
+}
+
+// mcpApprovalFailureSummaryMaxRunes 是 own.list 单行失败摘要的字符上限（完整摘要由 own.get 返回）。
+const mcpApprovalFailureSummaryMaxRunes = 200
+
+// mcpApprovalFailureSummary 取审批失败摘要：优先 FailureSummary，缺失时退回 FailureReason
+// （两者都由审批 worker 在失败时写入，且已按 ADR-0057 脱敏，原样透出）。
+func mcpApprovalFailureSummary(req *model.ApprovalRequest) string {
+	if strings.TrimSpace(req.FailureSummary) != "" {
+		return req.FailureSummary
+	}
+	return req.FailureReason
 }
 
 func mcpApprovalTicketView(ticket service.ApprovalTicketView) map[string]any {
@@ -940,8 +971,14 @@ func mcpFileApprovalTicketView(ticket service.FileApprovalTicket) map[string]any
 	return map[string]any{"approvalRequestId": ticket.ApprovalRequestID, "status": ticket.Status}
 }
 
+// mcpDeliveryTicketView 是交付申请票据的 MCP 投影。
+// 既有键名 operation 保持不变（HTTP 面直出结构体、键为 operationKey）；本项两侧同步补 orderId 与 impactSummary。
+// impactSummary 直接序列化交付服务的影响摘要结构体，与 HTTP 面共用同一份键名定义。
 func mcpDeliveryTicketView(ticket service.DeliveryApprovalTicketView) map[string]any {
-	return map[string]any{"approvalRequestId": ticket.ApprovalRequestID, "status": ticket.Status, "operation": ticket.OperationKey}
+	return map[string]any{
+		"approvalRequestId": ticket.ApprovalRequestID, "status": ticket.Status, "operation": ticket.OperationKey,
+		"orderId": ticket.OrderID, "impactSummary": ticket.ImpactSummary,
+	}
 }
 
 func approvalTime(value *time.Time) string {
@@ -949,6 +986,14 @@ func approvalTime(value *time.Time) string {
 		return ""
 	}
 	return value.UTC().Format(time.RFC3339)
+}
+
+// approvalText 取可选文本列的值；未落库（NULL）回空串。
+func approvalText(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func mcpToolError() *mcp.CallToolResult {

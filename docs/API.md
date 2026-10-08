@@ -333,6 +333,8 @@ agent 面：
 
 > 文件内容结果只能经 FR-209 批准后的命令与一次性 grant 返回；旧 file-diff 不再下发 `asset-read`、不再写内容查看审计。双文件 diff 的受控结果契约尚未接入前保持失败关闭。
 
+**交付申请票据（FR-249）**：上表中六类申请入口——`DELETE /change-orders/{id}`、`/submit`、`/resume`、`/batches/{batchNo}/confirm`、`/rollback`、`/rollback/finish`——的 `202` 票据统一为 `{approvalRequestId, status, operationKey, orderId, impactSummary}`（规格见 [delivery-mcp-tools](specs/delivery-mcp-tools.md) §3.6）。`operationKey` 为**本面键名**，MCP 侧同值为 `operation`（既有键名两侧都不变，只新增后两键）。`orderId` 是票据归属的变更单号（六类交付申请恒有）。`impactSummary` 为**对象** `{targetCount, batchCount, payloadFiles, payloadConfigs}`，取值是**创建申请那一刻**的即时读数：只统计当前落库的 targets / batches 行与 items（`file_diff` / `config_change` 分计），故 draft 阶段的提交与删除两类计数为 0（目标与批次要等启动才固化），计数为 0 时保留 0 而不省略键。该摘要**不写入冻结 payload**，不随后续推进漂移——需要最新影响面请读 `GET /change-orders/{id}/impact`。
+
 agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发）：
 
 | 方法 | 路径 | 用途 |
@@ -441,6 +443,8 @@ token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审�
 - **生产必须 HTTPS**：直连模式下 secret 本身即长期凭据（不再有 15 分钟自然过期），泄露即可长期使用，故**生产环境必须经 HTTPS 反向代理**；`mcp.allow-insecure-internal: true` 的明文直连仅限内网 / 回环部署（见 [OPERATIONS](OPERATIONS.md) §9）。
 
 当前 `automation` profile 还可发现显式审批工具：配置的删除与批量删除/启停、文件创建/导入/发布/回滚/删除/批量删除/启停、覆盖集发布/回滚/删除，以及资产预览和消息正文的审批申请。危险写入工具均只创建审批申请并返回 `{approvalRequestId,status}`；不会直接执行领域操作、构造 permit 或代理文件路径。资产预览与消息正文的消费工具仍核验原申请主体、冻结目标和一次性 grant，但响应固定只返回消费状态，绝不回吐敏感正文。`observer` 不可发现这些工具。
+
+**自有审批视图两档投影（FR-249）**：`beacon.approvals.own.list` / `own.get` 投影审批申请（`own.withdraw` 与 `approve` / `reject` 沿用列表档）。**列表档**为轻量：`{approvalRequestId, status, operation, resultRef, createdAt, expiresAt, failureSummary, finishedAt}`，其中失败摘要按 **200 字符**截断（列表一次可能回多行）。**详情档**（`own.get`）在列表档之上补完整失败摘要、`rejectReason`、`decisionReason`、`approvedBy`、`decidedAt`、`approvedAt`、`executedAt`、`finishedAt`——各时间字段**有值即返**（无值回空串），不组装数组，由客户端按字段名自行解读时序。失败摘要取自 `FailureSummary`（缺失时退回 `FailureReason`），已按 [ADR-0057](adr/0057-surface-desensitized-errors.md) 脱敏，原样透出。两档都**不投影**审批申请的 `impactSummary` / `safeSummary` 文本列——那会与交付票据的 `impactSummary` 对象同名两型（见交付编排 V2 的票据段）。机器主体仍只可见自己创建的申请（服务端强制注入 `RequesterType` / `RequesterID`）。
 
 **拓扑建树工具（FR-221）**：`automation` 另可发现九个低风险结构写工具——`beacon.topology.bc-clusters.create/update/delete`、`beacon.topology.regions.create/update/delete`、`beacon.topology.zones.create/update/delete`，语义与既有 `/admin/v2` HTTP 端点逐一对齐。与分配/换区等高风险动作**刻意不同**：建树按 FR-220 的「低风险按能力直执」原则**直接执行并写审计**，不产生审批票据。删除非空节点（大区下含小区、小区下含服务器、集群下含大区或已分配代理）按既有约束拒绝。`regions.create` 须 `parentId` = 所属 BC 集群 id，`zones.create` 须 `parentId` = 所属大区 id。`observer` 不可发现写工具。
 

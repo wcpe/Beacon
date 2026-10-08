@@ -410,6 +410,10 @@ func (s *DeliveryOrchestrator) RequestResume(id uint, mode, reason string, princ
 	if err := validateResumeArgs(order.PauseKind, mode, reason); err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
+	summary, err := deliveryImpactSummary(s.repo, order.ID)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
 	payload := map[string]any{"orderId": order.ID, "expectedStatus": order.Status, "pauseKind": order.PauseKind,
 		"mode": mode, "reason": reason, "operator": operator, "clientIP": clientIP}
 	created, err := s.approval.Request(authz.Operation{Kind: authz.OperationDeliveryResume,
@@ -419,7 +423,10 @@ func (s *DeliveryOrchestrator) RequestResume(id uint, mode, reason string, princ
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
-	return DeliveryApprovalTicketView{ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey}, nil
+	return DeliveryApprovalTicketView{
+		ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey,
+		OrderID: order.ID, ImpactSummary: summary,
+	}, nil
 }
 
 // RequestRollback 冻结可回滚单的当前状态和原因，创建统一审批申请。
@@ -439,6 +446,10 @@ func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal
 	if order.Status != model.ChangeOrderStatusCompleted && order.Status != model.ChangeOrderStatusPaused && order.Status != model.ChangeOrderStatusCancelled {
 		return DeliveryApprovalTicketView{}, changeIllegalState(order.Status, "申请整单回滚")
 	}
+	summary, err := deliveryImpactSummary(s.repo, order.ID)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
 	payload := map[string]any{"orderId": order.ID, "expectedStatus": order.Status, "reason": reason,
 		"operator": operator, "clientIP": clientIP}
 	created, err := s.approval.Request(authz.Operation{Kind: authz.OperationDeliveryRollback,
@@ -448,7 +459,10 @@ func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
-	return DeliveryApprovalTicketView{ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey}, nil
+	return DeliveryApprovalTicketView{
+		ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey,
+		OrderID: order.ID, ImpactSummary: summary,
+	}, nil
 }
 
 // RequestConfirmBatch 冻结当前待确认批和目标状态哈希，创建统一审批申请。
@@ -473,6 +487,10 @@ func (s *DeliveryOrchestrator) RequestConfirmBatch(id uint, batchNo int, princip
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
+	summary, err := deliveryImpactSummary(s.repo, order.ID)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
 	payload := map[string]any{"orderId": order.ID, "expectedStatus": order.Status, "batchNo": batchNo,
 		"batchId": batch.ID, "batchStatus": batch.Status, "targetHash": targetHash, "operator": operator, "clientIP": clientIP}
 	created, err := s.approval.Request(authz.Operation{Kind: authz.OperationDeliveryConfirmBatch,
@@ -482,7 +500,10 @@ func (s *DeliveryOrchestrator) RequestConfirmBatch(id uint, batchNo int, princip
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
-	return DeliveryApprovalTicketView{ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey}, nil
+	return DeliveryApprovalTicketView{
+		ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey,
+		OrderID: order.ID, ImpactSummary: summary,
+	}, nil
 }
 
 // RequestFinishRollback 冻结回滚中的目标状态，创建结束回滚审批申请。
@@ -503,6 +524,10 @@ func (s *DeliveryOrchestrator) RequestFinishRollback(id uint, principal auth.Pri
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
+	summary, err := deliveryImpactSummary(s.repo, order.ID)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
 	payload := map[string]any{"orderId": order.ID, "expectedStatus": order.Status, "targetHash": targetHash,
 		"operator": operator, "clientIP": clientIP}
 	created, err := s.approval.Request(authz.Operation{Kind: authz.OperationDeliveryRollbackFinish,
@@ -512,7 +537,10 @@ func (s *DeliveryOrchestrator) RequestFinishRollback(id uint, principal auth.Pri
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
-	return DeliveryApprovalTicketView{ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey}, nil
+	return DeliveryApprovalTicketView{
+		ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey,
+		OrderID: order.ID, ImpactSummary: summary,
+	}, nil
 }
 
 func deliveryBatchTargetHash(repo *repository.ChangeOrderRepository, orderID, batchID uint) (string, error) {
