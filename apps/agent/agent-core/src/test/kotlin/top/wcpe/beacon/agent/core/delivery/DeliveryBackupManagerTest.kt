@@ -14,8 +14,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * 交付备份管理器 [DeliveryBackupManager] 单测（FR-165，spec §4.7.1）：
+ * 交付备份管理器 [DeliveryBackupManager] 单测（FR-165，spec §4.7.1；FR-267 增量合并与还原校验）：
  * - 备份 manifest 正确（update/delete 复制旧内容 + 记旧哈希；add 仅记标记不复制）；
+ * - 同单重推增量合并既有条目（不重备、不清空，重推途中失败也不毁既有回滚点）；
+ * - 还原前按 manifest 的 sha256 / size 校验备份内容，不符即失败且不写回目标；
  * - 保留清理：超 5 个按最旧删、超 30 天删。
  */
 class DeliveryBackupManagerTest {
@@ -100,6 +102,97 @@ class DeliveryBackupManagerTest {
     }
 
     @Test
+    fun `同单重推增量合并保留首次备份且不重备既有条目`() {
+        val codec = RecordingRoundTripCodec()
+        val original = "OLD".toByteArray()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", original)
+        val manager = DeliveryBackupManager(backupRoot, resolver, codec, adapter)
+        manager.backup(1L, listOf(op("plugins/upd.txt", DeliveryFileOp.Kind.UPDATE)))
+
+        // 模拟本单已覆盖目标 + 第二次推送新增一个文件。
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray())
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/added.txt", "ADDED".toByteArray())
+        manager.backup(
+            1L,
+            listOf(
+                op("plugins/upd.txt", DeliveryFileOp.Kind.UPDATE),
+                op("plugins/added.txt", DeliveryFileOp.Kind.ADD),
+            ),
+        )
+
+        // 既有条目必须仍指向「本单改动前」的内容：重备会把已覆盖内容冒充回滚点，回滚反而写坏文件。
+        assertEquals("OLD", File(backupRoot, "1/files/plugins/upd.txt").readText(), "既有备份内容绝不被重推覆盖")
+        val entries = codec.lastEncoded as List<*>
+        assertEquals(2, entries.size, "新工作集条目应追加进同一 manifest")
+        assertEntry(entries, "plugins/upd.txt", "update", DeliveryTestSupport.sha256(original), original.size.toLong())
+        assertEntry(entries, "plugins/added.txt", "add", "", 0L)
+    }
+
+    @Test
+    fun `同单重推途中失败保留既有回滚点`() {
+        val codec = RecordingRoundTripCodec()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())
+        val manager = DeliveryBackupManager(backupRoot, resolver, codec, adapter)
+        manager.backup(1L, listOf(op("plugins/upd.txt", DeliveryFileOp.Kind.UPDATE)))
+        val manifestBefore = File(backupRoot, "1/manifest.json").readText()
+
+        // 第二次推送的工作集含非法路径（模拟重推途中失败）：不得清空 / 破坏既有回滚点。
+        assertFailsWith<IOException> {
+            manager.backup(1L, listOf(op("../evil.txt", DeliveryFileOp.Kind.UPDATE)))
+        }
+
+        assertEquals("OLD", File(backupRoot, "1/files/plugins/upd.txt").readText(), "既有备份内容必须仍在盘")
+        assertEquals(manifestBefore, File(backupRoot, "1/manifest.json").readText(), "既有 manifest 不得被破坏")
+        assertEquals(1, (codec.lastEncoded as List<*>).size, "既有条目不得丢失")
+    }
+
+    @Test
+    fun `还原校验备份大小不符即失败且不覆盖目标`() {
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray())
+        val backupContent = "TAMPERED".toByteArray()
+        val entry = entry("plugins/upd.txt", "update", DeliveryTestSupport.sha256(backupContent), 3L)
+        val manager = DeliveryBackupManager(backupRoot, resolver, FixedManifestCodec(listOf(entry)), adapter)
+        seedBackupFile("plugins/upd.txt", backupContent)
+
+        assertFailsWith<IOException> { manager.restore(1L) }
+
+        assertEquals("NEW", File(serverRoot, "plugins/upd.txt").readText(), "校验不符绝不覆盖目标")
+    }
+
+    @Test
+    fun `还原校验备份哈希不符即失败且不覆盖目标`() {
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray())
+        val declared = "OLD".toByteArray()
+        // 同长度、异内容：大小校验能过，必须由哈希校验挡下。
+        val tampered = "OLX".toByteArray()
+        val entry = entry("plugins/upd.txt", "update", DeliveryTestSupport.sha256(declared), declared.size.toLong())
+        val manager = DeliveryBackupManager(backupRoot, resolver, FixedManifestCodec(listOf(entry)), adapter)
+        seedBackupFile("plugins/upd.txt", tampered)
+
+        assertFailsWith<IOException> { manager.restore(1L) }
+
+        assertEquals("NEW", File(serverRoot, "plugins/upd.txt").readText(), "校验不符绝不覆盖目标")
+    }
+
+    /** 铺一条备份条目 + 备份内容（内容与 manifest 声明可故意不符，用于校验用例）。 */
+    private fun seedBackupFile(
+        relPath: String,
+        content: ByteArray,
+    ) {
+        File(backupRoot, "1").mkdirs()
+        File(backupRoot, "1/manifest.json").writeText("stub")
+        DeliveryTestSupport.writeFile(File(backupRoot, "1/files"), relPath, content)
+    }
+
+    /** 组装一条 manifest 条目（校验用例自定 sha / size）。 */
+    private fun entry(
+        path: String,
+        action: String,
+        sha256: String,
+        size: Long,
+    ): Map<String, Any?> = mapOf("path" to path, "action" to action, "sha256" to sha256, "size" to size)
+
+    @Test
     fun `保留清理超五个按最旧删除`() {
         val now = Instant.parse("2026-07-15T00:00:00Z")
         val manager = DeliveryBackupManager(backupRoot, resolver, codec, adapter, Clock.fixed(now, ZoneOffset.UTC))
@@ -177,6 +270,25 @@ class DeliveryBackupManagerTest {
         }
 
         override fun decode(json: String): Any? = last
+    }
+
+    /** 往返 codec + 记录最近一次 encode 入参：既支持多轮 backup→restore，也便于精确断言 manifest 条目。 */
+    private class RecordingRoundTripCodec : JsonCodec {
+        var lastEncoded: Any? = null
+
+        override fun encode(value: Any?): String {
+            lastEncoded = value
+            return "round-trip"
+        }
+
+        override fun decode(json: String): Any? = lastEncoded
+    }
+
+    /** 固定 manifest codec：decode 恒返给定条目表（还原校验用例自定 sha / size）。 */
+    private class FixedManifestCodec(private val entries: List<Map<String, Any?>>) : JsonCodec {
+        override fun encode(value: Any?): String = "[]"
+
+        override fun decode(json: String): Any? = entries
     }
 
     private companion object {

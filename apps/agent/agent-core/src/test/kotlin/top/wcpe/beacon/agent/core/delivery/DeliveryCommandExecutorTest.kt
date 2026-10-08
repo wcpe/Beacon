@@ -93,6 +93,29 @@ class DeliveryCommandExecutorTest {
     }
 
     @Test
+    fun `工作集全为 SKIP 时仍执行备份保留清理`() {
+        // 闲置服：本单工作集全为 SKIP、不会生成新备份，但盘上的超额备份仍须被清理。
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/skip.txt", same)
+        val backupRoot = File(dataDir, "delivery-backups")
+        val base = System.currentTimeMillis()
+        for (i in 1..6) {
+            File(backupRoot, "old-$i").apply {
+                mkdirs()
+                setLastModified(base + i * 1000L) // old-1 最旧
+            }
+        }
+        val tree = manifestTree(listOf(fileNode("plugins/skip.txt", "update", DeliveryTestSupport.sha256(same), same.size)))
+
+        executor(backupRoot, tree).execute(pushCommand())
+
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=success"), "全 SKIP 应成功：$body")
+        assertTrue(body.contains("backupPresent=false"), "全 SKIP 不生成新备份：$body")
+        assertFalse(File(backupRoot, "old-1").exists(), "闲置服推送同样应触发保留清理（超 5 个削最旧）")
+        for (i in 2..6) assertTrue(File(backupRoot, "old-$i").exists(), "超额以外的备份不得被误删")
+    }
+
+    @Test
     fun `清单非 200 时失败原因保留状态码`() {
         val exec =
             executor(
@@ -431,6 +454,18 @@ class DeliveryCommandExecutorTest {
         override fun decode(json: String): Any? = last
     }
 
+    /** 备份 manifest codec：decode 返回最近一次写入的条目表（支持同单多轮推送的增量合并）。 */
+    private class BackupManifestCodec : JsonCodec {
+        private var last: Any? = null
+
+        override fun encode(value: Any?): String {
+            last = value
+            return "[]"
+        }
+
+        override fun decode(json: String): Any? = last
+    }
+
     /** 铺设模板目标现状：upd 将被覆盖、skip 同 hash 跳过、del 将删除、new 尚不存在。 */
     private fun seedServerRoot() {
         DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())
@@ -471,7 +506,7 @@ class DeliveryCommandExecutorTest {
             DeliveryPipeline(
                 uploader = DeliveryUploader(blob, resolver, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
                 downloader = DeliveryDownloader(blob, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
-                backupManager = DeliveryBackupManager(backupRoot, resolver, ManifestCodec(manifestTree()), adapter),
+                backupManager = DeliveryBackupManager(backupRoot, resolver, BackupManifestCodec(), adapter),
                 overwriter = DeliveryOverwriter(resolver),
                 tempRoot = File(dataDir, "delivery-tmp"),
             )

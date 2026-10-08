@@ -216,14 +216,19 @@ class DeliveryCommandExecutor(
         }
     }
 
-    /** 覆盖前备份工作集并机会式修剪保留；备份 IO 失败转 [DeliveryPushException]（未触碰任何原文件）。 */
+    /**
+     * 覆盖前备份工作集并机会式修剪保留；备份 IO 失败转 [DeliveryPushException]（未触碰任何原文件）。
+     *
+     * 保留清理**不依赖本次是否生成备份**（FR-267）：工作集全为 SKIP 的「闲置服」不会生成新备份，
+     * 旧触发点（仅 backupPresent 时修剪）会让它盘上的过期 / 超额备份永不清理。
+     */
     private fun backup(
         orderId: Long,
         plan: List<DeliveryFileOp>,
     ): Boolean =
         try {
             val present = pipeline.backupManager.backup(orderId, plan.filter { it.kind != DeliveryFileOp.Kind.SKIP })
-            if (present) pipeline.backupManager.enforceRetention()
+            pipeline.backupManager.enforceRetention()
             present
         } catch (e: IOException) {
             throw DeliveryPushException("备份失败，未改动原文件：${reasonOf(e)}")
