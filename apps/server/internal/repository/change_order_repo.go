@@ -297,17 +297,34 @@ func (r *ChangeOrderRepository) CountTargetsToRollback(orderID uint) (int64, err
 	return n, err
 }
 
-// InitTargetRollbackByOrder 置单内曾推送目标的回滚初态（spec §4.7.2 step1 预检）：
-// 有备份 → rollback_status=pending 待还原；无备份 → 直接 failed（备份不存在无法文件回滚）。
-func (r *ChangeOrderRepository) InitTargetRollbackByOrder(orderID uint, backupMissingReason string) error {
-	if err := r.db.Model(&model.ChangeTarget{}).
-		Where("order_id = ? AND pushed_at IS NOT NULL AND backup_present = ?", orderID, true).
-		Update("rollback_status", model.RollbackStatusPending).Error; err != nil {
-		return err
+// inFlightRollbackStatuses 是「目标已在回滚推进中」的回滚态集合（这些目标不得被再次置初态）。
+var inFlightRollbackStatuses = []string{model.RollbackStatusPending, model.RollbackStatusRunning}
+
+// InitTargetRollbackCAS 以 CAS 置**单个**目标的回滚初态（spec §4.7.2 step1 预检）：
+// 有备份 → pending 待还原；无备份 → 直接 failed（备份不存在无法文件回滚）。命中返回 true。
+// 前态允许集 = 空（从未进入回滚）/ rolled_back（已回滚完）/ failed（失败待重试）；
+// pending / running（在途）一律不动并返回 false——由调用方整单拒绝。
+//
+// 为什么必须 CAS 而不是「先查后写」：申请期的守卫是 check-then-act，两次**并发批准**的相交目标集
+// 会在检查与置态之间互相穿透，同一台就会留下两条未终态的动作行（逐台结果归属随之失效）并叠加二次下发；
+// 这里把条件下沉到 UPDATE 的 WHERE，由数据库做原子判定。逐台而非批量：批量 UPDATE 只能拿到总行数，
+// 无法指出是哪一台在途，错误文案会退化成「有几台在回滚」而失去了可操作性。
+// 不选「执行路径持 s.mu」：审批 worker 走 DB 事务，在事务内取 mu 会形成「DB 锁 → mu」的顺序，
+// 与推进器的「mu → DB 锁」相反，属经典死锁形状；CAS 无锁序问题。
+func (r *ChangeOrderRepository) InitTargetRollbackCAS(id uint, backupPresent bool, backupMissingReason string) (bool, error) {
+	updates := map[string]any{"rollback_status": model.RollbackStatusPending, "rollback_error": ""}
+	if !backupPresent {
+		updates = map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": backupMissingReason}
 	}
-	return r.db.Model(&model.ChangeTarget{}).
-		Where("order_id = ? AND pushed_at IS NOT NULL AND backup_present = ?", orderID, false).
-		Updates(map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": backupMissingReason}).Error
+	// NULL 必须用 IS NULL 显式判：SQL 里 NULL 与任何值比较都是 NULL，NOT IN 匹配不到空态。
+	res := r.db.Model(&model.ChangeTarget{}).
+		Where("id = ? AND pushed_at IS NOT NULL", id).
+		Where("rollback_status IS NULL OR rollback_status = '' OR rollback_status NOT IN ?", inFlightRollbackStatuses).
+		Updates(updates)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
 }
 
 // UpdateTargetRollbackCAS 按前置回滚状态集合 CAS 迁移目标 rollback_status 与随迁字段：命中 true，前态不符 false。
@@ -349,22 +366,6 @@ func (r *ChangeOrderRepository) InitTargetRollbackIfEmpty(id uint, backupPresent
 	return res.RowsAffected > 0, nil
 }
 
-// InitTargetRollbackByServerIDs 把指定 serverId 集合的目标整体置为本次动作的回滚初态（FR-270 目标级子集回滚）：
-// 有备份 → pending、无备份 → failed（脱敏原因），其余目标一个字节都不动。目标集合由调用方先校验（必须都在本单）。
-func (r *ChangeOrderRepository) InitTargetRollbackByServerIDs(orderID uint, serverIDs []string, backupMissingReason string) error {
-	if len(serverIDs) == 0 {
-		return nil
-	}
-	if err := r.db.Model(&model.ChangeTarget{}).
-		Where("order_id = ? AND server_id IN ? AND backup_present = ?", orderID, serverIDs, true).
-		Updates(map[string]any{"rollback_status": model.RollbackStatusPending, "rollback_error": ""}).Error; err != nil {
-		return err
-	}
-	return r.db.Model(&model.ChangeTarget{}).
-		Where("order_id = ? AND server_id IN ? AND backup_present = ?", orderID, serverIDs, false).
-		Updates(map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": backupMissingReason}).Error
-}
-
 // CreateRollbackRecord 落一条回滚动作记录（FR-270 / FR-271）；record.ID 回填。
 func (r *ChangeOrderRepository) CreateRollbackRecord(record *model.ChangeRollbackRecord) error {
 	return r.db.Create(record).Error
@@ -401,15 +402,29 @@ func (r *ChangeOrderRepository) ListRollbackRecordTargets(recordIDs []uint) ([]m
 // 会抢走归属，使先前动作记录里的该台永远停在 pending，结果凭空丢失。
 // 配合「在途目标不得被再次置初态」（子集回滚拒绝 `pending`/`running` 目标），同一台在同一时刻只会有一条
 // 未终态记录，故该判定无歧义。
+//
+// **必须两步走（先 SELECT 再按字面值 UPDATE）**：MySQL 不允许 UPDATE 的目标表出现在子查询里
+// （错误 1093 ER_UPDATE_TABLE_USED），而这里的归属子查询恰恰要读 change_rollback_record_target 自身——
+// 写成 `UPDATE ... WHERE record_id = (SELECT MIN(record_id) FROM change_rollback_record_target ...)`
+// 在 MySQL（生产真源）直接报错。写回失败只告警不阻断推进，故该错误会表现为「逐台结果在真库永停在途」
+// 而控制面毫无异常——正是本 FR 要修的症状在生产复活。SQLite 单测不会报这个错，靠 integration 用例兜住。
 func (r *ChangeOrderRepository) UpdateRollbackRecordTargetResult(orderID uint, serverID, result, reason string) error {
-	owner := r.db.Model(&model.ChangeRollbackRecordTarget{}).
-		Select("MIN(record_id)").
+	var owners []uint
+	if err := r.db.Model(&model.ChangeRollbackRecordTarget{}).
 		Where("record_id IN (?)", r.db.Model(&model.ChangeRollbackRecord{}).Select("id").Where("order_id = ?", orderID)).
 		Where("server_id = ?", serverID).
 		Where("result IS NULL OR result = ? OR result IN ?", "",
-			[]string{model.RollbackStatusPending, model.RollbackStatusRunning})
+			[]string{model.RollbackStatusPending, model.RollbackStatusRunning}).
+		Order("record_id ASC").Limit(1).
+		Pluck("record_id", &owners).Error; err != nil {
+		return err
+	}
+	if len(owners) == 0 {
+		// 该台没有未终态的动作行（例如记录已被清理）：无需回写，不算失败。
+		return nil
+	}
 	return r.db.Model(&model.ChangeRollbackRecordTarget{}).
-		Where("record_id = (?) AND server_id = ?", owner, serverID).
+		Where("record_id = ? AND server_id = ?", owners[0], serverID).
 		Updates(map[string]any{"result": result, "error": reason}).Error
 }
 

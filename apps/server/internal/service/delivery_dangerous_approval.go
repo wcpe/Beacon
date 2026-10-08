@@ -474,6 +474,16 @@ func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal
 			return DeliveryApprovalTicketView{}, apperr.New(http.StatusBadRequest,
 				"no_failed_rollback_target", "单内无回滚失败目标可重试")
 		}
+	} else {
+		// 首次进入的整单回滚同样在申请期前置在途守卫（与执行期 CAS 同口径）：
+		// 单内已有目标在回滚中（例如并发的子集回滚），整单回滚注定在执行期被拒。
+		targets, err := s.repo.ListTargetsByOrder(order.ID)
+		if err != nil {
+			return DeliveryApprovalTicketView{}, err
+		}
+		if inFlight := firstInFlightRollbackTarget(targets); inFlight != nil {
+			return DeliveryApprovalTicketView{}, rollbackInFlightError(inFlight.ServerID)
+		}
 	}
 	summary, err := deliveryImpactSummary(s.repo, order.ID)
 	if err != nil {
@@ -529,9 +539,15 @@ func (s *DeliveryOrchestrator) RequestRollbackTargets(id uint, serverIDs []strin
 		return DeliveryApprovalTicketView{}, err
 	}
 	for _, serverID := range selected {
-		if _, ok := eligible[serverID]; !ok {
+		target, ok := eligible[serverID]
+		if !ok {
 			return DeliveryApprovalTicketView{}, apperr.New(http.StatusBadRequest, "invalid_rollback_target",
 				fmt.Sprintf("目标 %s 不在本单可回滚目标内（未启动或从未推送）", serverID))
+		}
+		// 申请期前置在途守卫（P2，与执行期 CAS 同口径）：在途目标注定在执行期被拒，
+		// 申请阶段就回 409，不让调用方白走一次审批往返。
+		if target.RollbackStatus == model.RollbackStatusPending || target.RollbackStatus == model.RollbackStatusRunning {
+			return DeliveryApprovalTicketView{}, rollbackInFlightError(serverID)
 		}
 	}
 	summary, err := deliveryImpactSummary(s.repo, order.ID)
@@ -563,16 +579,17 @@ func (s *DeliveryOrchestrator) RequestRollbackTargets(id uint, serverIDs []strin
 	}, nil
 }
 
-// rollbackEligibleServerIDs 取本单可回滚目标集合（曾覆盖磁盘，spec §4.7.2），键为 serverId。
-func (s *DeliveryOrchestrator) rollbackEligibleServerIDs(orderID uint) (map[string]struct{}, error) {
+// rollbackEligibleServerIDs 取本单可回滚目标集合（曾覆盖磁盘，spec §4.7.2），键为 serverId、值为目标行。
+// 返回目标行而不仅是集合：调用方还要按当前回滚态做申请期在途守卫，省一次查询。
+func (s *DeliveryOrchestrator) rollbackEligibleServerIDs(orderID uint) (map[string]*model.ChangeTarget, error) {
 	targets, err := s.repo.ListTargetsByOrder(orderID)
 	if err != nil {
 		return nil, err
 	}
-	eligible := make(map[string]struct{}, len(targets))
+	eligible := make(map[string]*model.ChangeTarget, len(targets))
 	for i := range targets {
 		if targets[i].PushedAt != nil {
-			eligible[targets[i].ServerID] = struct{}{}
+			eligible[targets[i].ServerID] = &targets[i]
 		}
 	}
 	if len(eligible) == 0 {

@@ -1845,6 +1845,66 @@ func TestTargetsViewReportsRollbackEligibleCount(t *testing.T) {
 	}
 }
 
+// TestTargetRollbackConcurrentIntersectingSubsets 并发批准相交目标集不得让同一台留下两条未终态记录（FR-270）。
+// 申请期守卫是 check-then-act，两次并发批准会在检查与置态之间互相穿透；拦截必须落在 UPDATE 的 WHERE 上（CAS）。
+// 这里直接驱动 CAS 层：A 已把 t-1 置为在途后，B 对同一台的置态必须**不命中且不改行**，B 的整体请求被拒且零留痕。
+func TestTargetRollbackConcurrentIntersectingSubsets(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	repo := repository.NewChangeOrderRepository(h.env.db)
+
+	// 动作 A：回滚 {t-1} → t-1 进入在途（pending）
+	if err := h.runRollbackTargets(t, order.ID, []string{"t-1"}, "动作A"); err != nil {
+		t.Fatalf("动作A失败: %v", err)
+	}
+	targets := h.rollbackTargetsByServer(order.ID)
+	if targets["t-1"].RollbackStatus != model.RollbackStatusPending {
+		t.Fatalf("A 置态后 t-1 应 pending: %s", targets["t-1"].RollbackStatus)
+	}
+	recordIDBefore := targets["t-1"].ID
+
+	// CAS 层直测（模拟 B 已越过申请期守卫、正要置态的那一刻）：在途目标不得被重新置态
+	ok, err := repo.InitTargetRollbackCAS(recordIDBefore, true, rollbackBackupMissingReason)
+	if err != nil {
+		t.Fatalf("CAS 调用失败: %v", err)
+	}
+	if ok {
+		t.Fatal("在途目标的 CAS 置态不得命中")
+	}
+	afterCAS := h.rollbackTargetsByServer(order.ID)["t-1"]
+	if afterCAS.RollbackStatus != model.RollbackStatusPending || afterCAS.RollbackError != "" {
+		t.Fatalf("被拒的 CAS 不得改写目标行: %+v", afterCAS)
+	}
+
+	// 动作 B：与 A 相交的 {t-1, t-2} → 前置守卫命中，整单拒绝
+	err = h.runRollbackTargets(t, order.ID, []string{"t-1", "t-2"}, "动作B")
+	if err == nil {
+		t.Fatal("相交子集的并发动作应被拒绝")
+	}
+	if ae, ok := err.(*apperr.Error); !ok || ae.Code != "rollback_in_progress" {
+		t.Fatalf("应为 rollback_in_progress: %v", err)
+	}
+	// 零留痕：被拒事务整体回滚，A 的记录与 t-1 的在途态都不受影响，t-2 也不得被置态
+	if records := h.rollbackRecords(t, order.ID); len(records) != 1 || records[0].Reason != "动作A" {
+		t.Fatalf("被拒动作不得留痕，实际 %+v", records)
+	}
+	afterB := h.rollbackTargetsByServer(order.ID)
+	if afterB["t-1"].RollbackStatus != model.RollbackStatusPending {
+		t.Fatalf("t-1 应仍是 A 的在途态: %s", afterB["t-1"].RollbackStatus)
+	}
+	if afterB["t-2"].RollbackStatus != "" {
+		t.Fatalf("被拒动作不得置态未涉及的台: %s", afterB["t-2"].RollbackStatus)
+	}
+	// 反证：同一时刻「不在途」的 t-2（从未进入回滚）CAS 必须命中——否则上面那次 false 可能只是恒假。
+	// 放在末尾，避免它自身置态干扰前面的「零留痕」断言。
+	if ok, err := repo.InitTargetRollbackCAS(afterB["t-2"].ID, true, rollbackBackupMissingReason); err != nil || !ok {
+		t.Fatalf("未进入回滚的目标 CAS 应命中: %v / %v", ok, err)
+	}
+	if got := h.rollbackTargetsByServer(order.ID)["t-2"].RollbackStatus; got != model.RollbackStatusPending {
+		t.Fatalf("命中后 t-2 应 pending: %s", got)
+	}
+}
+
 // TestFinishRollbackWritesNoActionRecord 人工「结束回滚」是收单动作而非回滚动作（FR-271，spec §3.6）：
 // 它不改变任何目标的回滚结果，故不落动作记录（只写审计）；否则「回滚过几次」的读数会被收单动作污染。
 func TestFinishRollbackWritesNoActionRecord(t *testing.T) {

@@ -351,12 +351,18 @@ func (s *DeliveryOrchestrator) applyRollback(id uint, reason, operator, clientIP
 		if e != nil || !ok {
 			return errOrSkip(e, ok)
 		}
-		if e := repoTx.InitTargetRollbackByOrder(order.ID, rollbackBackupMissingReason); e != nil {
-			return e
-		}
-		rollbackTargets, e := rollbackTargetsAfterInitTx(repoTx, order.ID)
+		// 置初态逐台走 CAS：并发批准抢占到在途目标则整单拒绝（本事务回滚），不打回 pending 造成二次下发。
+		existing, e := repoTx.ListTargetsByOrder(order.ID)
 		if e != nil {
 			return e
+		}
+		rollbackTargets := rollbackTargetsOf(existing)
+		blocked, e := initRollbackTargetsCAS(repoTx, rollbackTargets, rollbackBackupMissingReason)
+		if e != nil {
+			return e
+		}
+		if blocked != "" {
+			return rollbackInFlightError(blocked)
 		}
 		recordID, e := s.writeRollbackRecord(tx, order.ID, model.RollbackKindOrder, reason, operator, true, rollbackTargets)
 		if e != nil {
@@ -427,17 +433,14 @@ func (s *DeliveryOrchestrator) applyRollbackTargetsInTx(tx *gorm.DB, order *mode
 	if err != nil {
 		return err
 	}
-	if err := repoTx.InitTargetRollbackByServerIDs(order.ID, selected, rollbackBackupMissingReason); err != nil {
+	// 置初态逐台走 CAS：并发批准抢占到在途目标则整单拒绝（本事务回滚），不打回 pending 造成二次下发。
+	// 快照就地同步为置态后的真实值，动作记录的逐台初始结果直接取它。
+	blocked, err := initRollbackTargetsCAS(repoTx, picked, rollbackBackupMissingReason)
+	if err != nil {
 		return err
 	}
-	// 就地同步快照：动作记录要落「每台在本次动作里的初始结果」，必须用更新后的真实状态。
-	for _, t := range picked {
-		t.RollbackStatus = model.RollbackStatusPending
-		t.RollbackError = ""
-		if !t.BackupPresent {
-			t.RollbackStatus = model.RollbackStatusFailed
-			t.RollbackError = rollbackBackupMissingReason
-		}
+	if blocked != "" {
+		return rollbackInFlightError(blocked)
 	}
 	recordID, err := s.writeRollbackRecord(tx, order.ID, model.RollbackKindTargets, reason, operator, false, picked)
 	if err != nil {
@@ -446,6 +449,43 @@ func (s *DeliveryOrchestrator) applyRollbackTargetsInTx(tx *gorm.DB, order *mode
 	return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderRollback, order.ID,
 		map[string]any{"orderId": order.ID, "reason": reason, "kind": model.RollbackKindTargets,
 			"targetCount": len(picked), "serverIds": selected, "configRolledBack": false, "recordId": recordID})
+}
+
+// rollbackTargetsOf 从目标行快照挑出回滚目标（曾覆盖磁盘）并取指针，
+// 供置初态 CAS 与动作记录共用同一批（避免两处各自判定「哪些算回滚目标」）。
+func rollbackTargetsOf(targets []model.ChangeTarget) []*model.ChangeTarget {
+	rollbackTargets := make([]*model.ChangeTarget, 0, len(targets))
+	for i := range targets {
+		if targets[i].PushedAt != nil {
+			rollbackTargets = append(rollbackTargets, &targets[i])
+		}
+	}
+	return rollbackTargets
+}
+
+// initRollbackTargetsCAS 逐台 CAS 置回滚初态并就地同步快照；返回被并发批准抢占（在途）的目标 serverId，
+// 空串表示全部命中。调用方对非空结果整单拒绝（事务回滚），不得把在途目标打回 pending。
+// 走 CAS 而非「先查后写」：申请期守卫是 check-then-act，挡不住两次**并发批准**的相交目标集——
+// 同一台被两条动作同时置态会留下两条未终态记录（逐台结果归属随之失效）并叠加二次下发。
+func initRollbackTargetsCAS(repoTx *repository.ChangeOrderRepository,
+	targets []*model.ChangeTarget, backupMissingReason string) (string, error) {
+	for _, t := range targets {
+		ok, err := repoTx.InitTargetRollbackCAS(t.ID, t.BackupPresent, backupMissingReason)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return t.ServerID, nil
+		}
+		// 就地同步快照：动作记录的逐台初始结果必须取自置态后的真实值，不能沿用改动前的读值。
+		t.RollbackStatus = model.RollbackStatusPending
+		t.RollbackError = ""
+		if !t.BackupPresent {
+			t.RollbackStatus = model.RollbackStatusFailed
+			t.RollbackError = backupMissingReason
+		}
+	}
+	return "", nil
 }
 
 // writeRollbackRecord 在事务内落一条回滚动作记录 + 逐台结果行（FR-270 / FR-271），返回记录 ID。
@@ -564,12 +604,14 @@ func (s *DeliveryOrchestrator) applyRollbackInTx(tx *gorm.DB, order *model.Chang
 	if err != nil || !ok {
 		return errOrSkip(err, ok)
 	}
-	if err := repoTx.InitTargetRollbackByOrder(order.ID, rollbackBackupMissingReason); err != nil {
-		return err
-	}
-	rollbackTargets, err := rollbackTargetsAfterInitTx(repoTx, order.ID)
+	// 置初态逐台走 CAS：并发批准抢占到在途目标则整单拒绝（本事务回滚），不打回 pending 造成二次下发。
+	rollbackTargets := rollbackTargetsOf(existing)
+	blocked, err := initRollbackTargetsCAS(repoTx, rollbackTargets, rollbackBackupMissingReason)
 	if err != nil {
 		return err
+	}
+	if blocked != "" {
+		return rollbackInFlightError(blocked)
 	}
 	recordID, err := s.writeRollbackRecord(tx, order.ID, model.RollbackKindOrder, reason, operator, true, rollbackTargets)
 	if err != nil {
@@ -578,22 +620,6 @@ func (s *DeliveryOrchestrator) applyRollbackInTx(tx *gorm.DB, order *model.Chang
 	return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderRollback, order.ID,
 		map[string]any{"orderId": order.ID, "reason": reason, "kind": model.RollbackKindOrder,
 			"targetCount": n, "configRolledBack": true, "recordId": recordID})
-}
-
-// rollbackTargetsAfterInitTx 取本单回滚目标（曾覆盖磁盘）的最新快照，供动作记录落逐台行。
-// **必须在置回滚初态之后调用**——动作记录要落的是「每台在本次动作里的初始结果」，早于置态就全是空值。
-func rollbackTargetsAfterInitTx(repoTx *repository.ChangeOrderRepository, orderID uint) ([]*model.ChangeTarget, error) {
-	targets, err := repoTx.ListTargetsByOrder(orderID)
-	if err != nil {
-		return nil, err
-	}
-	rollbackTargets := make([]*model.ChangeTarget, 0, len(targets))
-	for i := range targets {
-		if targets[i].PushedAt != nil {
-			rollbackTargets = append(rollbackTargets, &targets[i])
-		}
-	}
-	return rollbackTargets, nil
 }
 
 // FinishRollback 禁止旧公开结束回滚入口，防止调用方绕过统一审批改变回滚终态。
