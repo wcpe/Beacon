@@ -4,6 +4,14 @@
 
 ## 未发布
 
+### 新增
+
+- **MCP 交付只读工具集（FR-245）**：交付域此前是全部领域中 MCP 覆盖度最低的一个——HTTP 面 21 项操作只暴露 6 项，且**全部是「创建审批申请」的写操作、只读侧为 0**：机器主体拿不到变更单号、看不见状态、发现问题也没有可读的止血依据，等于「盲写」。现补齐只读侧六个工具 `beacon.delivery.order.list` / `.order.get` / `.targets.list` / `.impact.get` / `.observe.get` / `.events.list`（`low` 风险、`observer` 与 `automation` 共用），语义与 `/admin/v2/change-orders` 系列读端点逐一对齐。规格见 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md)。
+  - **返回一律有界投影**：列表强制分页、`order.get` 只回摘要字段与 `targetCounts` / `rollbackCounts` 计数（**不回**逐文件清单与批次明细）、`targets.list` / `impact.get` 逐目标分页、观察窗与事件沿用 HTTP 端点的有界条数；输出键名沿用既有 HTTP 视图字段名，不自造键名。
+  - **跨 namespace 拒绝**：除 `order.list`（`namespaceId` 必填，不留全局观测越界口子）外，另外五个工具由 `orderId` 定位，服务端按单所属 namespace 与调用者观测范围判归属；范围外与不存在**共用同一条拒绝文案**（不泄露范围外单是否存在）。
+  - **门禁**：六个工具全部登记 `mcpToolCatalog`（`low`、`OperationKind` 留空、**不带 `AutomationOnly`**——该标记的真实语义是「仅 automation 可发现」，挂上即令 observer 不可见），走 `mcpAddTool` 唯一注册入口，既有覆盖测试自动守护新增项。
+  - **测试**：两 profile 可见性（清单与真实注册两侧）、投影有界断言（逐字段键集合精确比对）与全链路可读 + 跨 namespace `orderId` 拒绝的负向用例。
+
 ### 修复
 
 - **管理台提审必填原因与幂等键（FR-251）**：`/changes` 的两个「提交审批」入口（详情页生命周期动作、引导创建向导第 5 步）此前**既不携带请求体、也不携带 `Idempotency-Key` 头**调用 `POST /admin/v2/change-orders/{id}/submit`。真机上这必然失败，且失败方式很恶劣：后端 `RequestSubmit` 强制 reason 非空（缺则 `400 approval_reason_required`）；即便补上原因，建审批申请时还会校验幂等键（缺则 `400 INVALID_PARAM`），而 submit 是「先冻结状态、后建申请」两步非事务——**键校验失败发生在状态冻结之后**，单据会被永久卡在 `pending_approval` 且审批列表里查无对应申请（真机实测单 1 / 单 4 均已卡死，该死结由批 2 的 FR-259 收敛）。演示模式下 mock 两道都不校验，问题被完整掩盖。现在两处入口都先收集提审原因再提交：详情页复用既有高风险确认弹窗的原因输入（与驳回 / 终止同形，未填写时确认置灰），向导第 5 步新增必填「提审原因」字段（未填写时底部「提交审批」置灰）；提审时按 `randomId()`（非安全上下文可用的 UUID 生成器，与 API 密钥 / MCP 客户端先例一致）生成一次性幂等键随 `Idempotency-Key` 头发送，**同一提审意图重试复用同一键**（后端据此去重，换键会把重试变成新申请），弹窗关闭 / 向导重开即作废重来。原因与键一并进入审批申请与审计留痕。

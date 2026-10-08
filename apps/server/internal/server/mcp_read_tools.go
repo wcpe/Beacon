@@ -31,12 +31,24 @@ type MCPReadServices struct {
 	audits      *service.AuditService
 	// alertEvents 供告警事件只读列表（只走 List 查询，处理动作在 mcp_alert_tools.go 的写工具组）。
 	alertEvents *service.AlertEventService
-	scope       *service.ObservationScopeResolver
+	// deliveryDiff 供交付影响预览只读工具（FR-245）：影响预览归 DeliveryDiffService
+	// （与组单生命周期服务职责分离），故单独接入；交付组单读走注册表既有的 orders。
+	deliveryDiff *service.DeliveryDiffService
+	scope        *service.ObservationScopeResolver
 }
 
 // NewMCPReadServices 构造 MCP 只读服务集合；仅允许调用方传入应用查询服务。
 func NewMCPReadServices(v2 *service.V2ControlPlaneService, topology *service.TopologyService, health *service.HealthQueryService, messages *service.MessageQueryService, connections *service.ConnQueryService, commands *service.CommandObserveService, scheduling *service.SchedDecisionQueryService, audits *service.AuditService, alertEvents *service.AlertEventService, scope *service.ObservationScopeResolver) MCPReadServices {
 	return MCPReadServices{v2: v2, topology: topology, health: health, messages: messages, connections: connections, commands: commands, scheduling: scheduling, audits: audits, alertEvents: alertEvents, scope: scope}
+}
+
+// SetDeliveryDiffService 接入交付影响预览的只读依赖（FR-245）。
+//
+// 影响预览归 DeliveryDiffService（与组单生命周期服务职责分离），故单独接入。
+// 调用时机：必须在 SetReadServices 之后——SetReadServices 整体替换 reads，
+// 先设的 deliveryDiff 会被随后的整体赋值覆盖掉。
+func (r *MCPToolRegistry) SetDeliveryDiffService(diff *service.DeliveryDiffService) {
+	r.reads.deliveryDiff = diff
 }
 
 type mcpPageInput struct {
@@ -258,6 +270,7 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 			return &mcp.CallToolResult{}, mcpAlertEventHistoryView(items, total), nil
 		})
 	}
+	r.registerReadDeliveryTools(server)
 }
 
 // registerReadV2TopologyTools 登记依赖 V2 控制面读取层的拓扑只读工具（FR-221）。
@@ -337,6 +350,299 @@ func (r *MCPToolRegistry) registerReadHealthTools(server *mcp.Server) {
 		}
 		return &mcp.CallToolResult{}, map[string]any{"stepSec": series.StepSec, "series": series.Series}, nil
 	})
+}
+
+// ── FR-245 交付域只读工具 ──
+//
+// 六个工具（order.list / order.get / targets.list / impact.get / observe.get / events.list）对
+// observer 与 automation **同时可见**（catalog 不带 AutomationOnly），返回体一律为**有界投影**：
+// 列表强制分页、详情只回摘要与计数（不回 items 全量文件清单与批次明细）、影响与目标逐台分页、
+// 观察窗与事件沿用 HTTP 端点的有界条数。输出键名一律沿用既有 HTTP 视图字段名
+// （apps/server/internal/service/delivery_views.go 为准），不自造键名。
+
+// mcpDeliveryOrderListInput 是变更单列表入参：namespaceId 必填（不留全局观测越界口子）。
+type mcpDeliveryOrderListInput struct {
+	mcpScopeInput
+	Status    string `json:"status,omitempty"`
+	CreatedBy string `json:"createdBy,omitempty"`
+	Keyword   string `json:"keyword,omitempty"`
+	Page      int    `json:"page,omitempty"`
+	PageSize  int    `json:"pageSize,omitempty"`
+}
+
+// mcpDeliveryOrderInput 是按 orderId 定位的交付只读入参（详情 / 观察窗 / 事件共形）。
+// 范围参数可选：显式给出即收窄到该 namespace 判归属，缺省即调用者可观测的全量范围。
+type mcpDeliveryOrderInput struct {
+	mcpScopeInput
+	OrderID uint `json:"orderId"`
+}
+
+// mcpDeliveryTargetsListInput 是目标分页入参（过滤项与 HTTP 端点同名）。
+type mcpDeliveryTargetsListInput struct {
+	mcpScopeInput
+	OrderID  uint   `json:"orderId"`
+	Batch    int    `json:"batch,omitempty"`
+	Status   string `json:"status,omitempty"`
+	ServerID string `json:"serverId,omitempty"`
+	Page     int    `json:"page,omitempty"`
+	PageSize int    `json:"pageSize,omitempty"`
+}
+
+// mcpDeliveryImpactInput 是影响预览入参。
+type mcpDeliveryImpactInput struct {
+	mcpScopeInput
+	OrderID  uint `json:"orderId"`
+	Page     int  `json:"page,omitempty"`
+	PageSize int  `json:"pageSize,omitempty"`
+}
+
+// registerReadDeliveryTools 登记交付域只读工具（FR-245）。
+//
+// 未接入交付组单读服务（r.orders）时整组不注册；影响预览另需差异面服务，
+// 未装配即只注册其余五项——与本包既有 nil 守卫同口径，不注册注定不可用的工具。
+func (r *MCPToolRegistry) registerReadDeliveryTools(server *mcp.Server) {
+	if r.orders == nil {
+		return
+	}
+	r.registerReadDeliveryOrderTools(server)
+	if r.reads.deliveryDiff != nil {
+		r.registerReadDeliveryImpactTool(server)
+	}
+}
+
+// registerReadDeliveryOrderTools 登记由组单读服务承担的五个交付只读工具。
+func (r *MCPToolRegistry) registerReadDeliveryOrderTools(server *mcp.Server) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.list", Description: "变更单列表（分页筛选；仅回摘要字段）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderListInput) (*mcp.CallToolResult, map[string]any, error) {
+		scope, ok := r.mcpObservationScope(in.mcpScopeInput)
+		if !ok || in.NamespaceID == "" {
+			return mcpRejectedResult()
+		}
+		nsID, err := r.mcpResolveNamespaceID("", in.NamespaceID, scope)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		view, err := r.orders.List(repository.ChangeOrderListQuery{
+			NamespaceID: nsID, Status: in.Status, CreatedBy: in.CreatedBy, Keyword: in.Keyword,
+			Page: normalizedMCPPage(in.Page), Size: normalizedMCPPageSize(in.PageSize),
+		})
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryOrderListView(view), nil
+	})
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.get", Description: "变更单详情（摘要与目标计数，不含文件清单与批次明细）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderInput) (*mcp.CallToolResult, map[string]any, error) {
+		detail, ok := r.mcpDeliveryOrderDetail(in.mcpScopeInput, in.OrderID)
+		if !ok {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryOrderDetailView(detail), nil
+	})
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.targets.list", Description: "目标分页（逐台状态 / 失败原因 / 备份标记）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryTargetsListInput) (*mcp.CallToolResult, map[string]any, error) {
+		if _, ok := r.mcpDeliveryOrderDetail(in.mcpScopeInput, in.OrderID); !ok {
+			return mcpRejectedResult()
+		}
+		view, err := r.orders.Targets(in.OrderID, repository.ChangeTargetQuery{
+			BatchNo: in.Batch, Status: in.Status, ServerID: in.ServerID,
+			Page: normalizedMCPPage(in.Page), Size: normalizedMCPPageSize(in.PageSize),
+		})
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryTargetsView(view), nil
+	})
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.observe.get", Description: "当前批观察窗序列（逐目标时间桶 / 健康分与等级 / TPS / 告警数）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderInput) (*mcp.CallToolResult, map[string]any, error) {
+		if _, ok := r.mcpDeliveryOrderDetail(in.mcpScopeInput, in.OrderID); !ok {
+			return mcpRejectedResult()
+		}
+		view, err := r.orders.Observe(in.OrderID)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryObserveView(view), nil
+	})
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.events.list", Description: "进度事件（阶段 / 时间 / 摘要，不含 SSE 流式语义）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderInput) (*mcp.CallToolResult, map[string]any, error) {
+		if _, ok := r.mcpDeliveryOrderDetail(in.mcpScopeInput, in.OrderID); !ok {
+			return mcpRejectedResult()
+		}
+		view, err := r.orders.Events(in.OrderID)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryEventsView(view), nil
+	})
+}
+
+// registerReadDeliveryImpactTool 登记影响预览工具（另依赖差异面服务）。
+func (r *MCPToolRegistry) registerReadDeliveryImpactTool(server *mcp.Server) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.impact.get", Description: "影响预览（汇总 + 逐目标分页；逐目标含差异计数与命中配置作用域）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryImpactInput) (*mcp.CallToolResult, map[string]any, error) {
+		if _, ok := r.mcpDeliveryOrderDetail(in.mcpScopeInput, in.OrderID); !ok {
+			return mcpRejectedResult()
+		}
+		view, err := r.reads.deliveryDiff.Impact(in.OrderID, normalizedMCPPage(in.Page), normalizedMCPPageSize(in.PageSize))
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryImpactView(view), nil
+	})
+}
+
+// mcpDeliveryOrderDetail 解析观察范围并按 orderId 取单，校验单归属落在范围内。
+//
+// 交付域除 order.list 外都由 orderId 定位：单的 namespace 是服务端事实（落库后不变），
+// 故「先解析范围、再取单、再按其 namespace 判范围」。范围外与不存在**共用同一条拒绝**，
+// 不泄露范围外单是否存在（与 mcp_alert_tools.go 单条处置同口径）。
+func (r *MCPToolRegistry) mcpDeliveryOrderDetail(in mcpScopeInput, orderID uint) (*service.ChangeOrderDetailView, bool) {
+	scope, ok := r.mcpObservationScope(in)
+	if !ok {
+		return nil, false
+	}
+	detail, err := r.orders.Get(orderID)
+	if err != nil {
+		return nil, false
+	}
+	if !scope.Contains(detail.NamespaceID) {
+		return nil, false
+	}
+	return detail, true
+}
+
+// mcpDeliveryOrderListView 投影变更单列表：只回摘要 7 键 + total（对齐既有 ChangeOrderListView，不含额外键）。
+func mcpDeliveryOrderListView(view *service.ChangeOrderListView) map[string]any {
+	items := make([]map[string]any, 0, len(view.Items))
+	for _, item := range view.Items {
+		items = append(items, map[string]any{
+			"id": item.ID, "title": item.Title, "status": item.Status,
+			"pauseKind": mcpDerefString(item.PauseKind), "createdBy": item.CreatedBy,
+			"createdAt":    item.CreatedAt.UTC().Format(time.RFC3339),
+			"payloadState": item.PayloadState,
+		})
+	}
+	return map[string]any{"items": items, "total": view.Total}
+}
+
+// mcpDeliveryOrderDetailView 投影变更单详情：只回摘要字段与计数。
+//
+// **不回 items（逐文件清单）与 batches（批次明细）**：大单（1000+ 文件 / 目标）会撑爆返回体，
+// 逐目标态走 targets.list、影响走 impact.get 分页拉取（规格 §3.2）。
+func mcpDeliveryOrderDetailView(view *service.ChangeOrderDetailView) map[string]any {
+	return map[string]any{
+		"id": view.ID, "title": view.Title, "description": view.Description,
+		"namespaceId": view.NamespaceID, "status": view.Status,
+		"pauseKind": mcpDerefString(view.PauseKind), "pauseReason": mcpDerefString(view.PauseReason),
+		"selector":                      mcpDeliverySelectorView(view.Selector),
+		"batchMode":                     view.BatchMode,
+		"batchSizes":                    view.BatchSizes,
+		"activationMethod":              view.ActivationMethod,
+		"observeWindowSec":              view.ObserveWindowSec,
+		"activateTimeoutSec":            view.ActivateTimeoutSec,
+		"failureRateThresholdPercent":   view.FailureRateThresholdPercent,
+		"unhealthyRateThresholdPercent": view.UnhealthyRateThresholdPercent,
+		"payloadState":                  view.PayloadState,
+		"createdBy":                     view.CreatedBy,
+		"submittedAt":                   mcpNullableTime(view.SubmittedAt),
+		"approvedAt":                    mcpNullableTime(view.ApprovedAt),
+		"startedAt":                     mcpNullableTime(view.StartedAt),
+		"finishedAt":                    mcpNullableTime(view.FinishedAt),
+		"cancelReason":                  mcpDerefString(view.CancelReason),
+		"rollbackBy":                    mcpDerefString(view.RollbackBy),
+		"rollbackReason":                mcpDerefString(view.RollbackReason),
+		"rollbackAt":                    mcpNullableTime(view.RollbackAt),
+		"targetCounts":                  view.TargetCounts,
+		"rollbackCounts":                view.RollbackCounts,
+	}
+}
+
+// mcpDeliverySelectorView 投影 selector 摘要（存库为 TEXT JSON、视图为对象，键名即响应契约）。
+func mcpDeliverySelectorView(selector service.ChangeSelector) map[string]any {
+	return map[string]any{
+		"all": selector.All, "regions": selector.Regions, "zones": selector.Zones,
+		"servers": selector.Servers, "excludes": selector.Excludes,
+	}
+}
+
+// mcpDeliveryTargetsView 投影目标分页（对齐既有 ChangeTargetPageView）。
+func mcpDeliveryTargetsView(view *service.ChangeTargetPageView) map[string]any {
+	items := make([]map[string]any, 0, len(view.Items))
+	for _, target := range view.Items {
+		items = append(items, map[string]any{
+			"serverId": target.ServerID, "batchNo": target.BatchNo, "status": target.Status,
+			"rollbackStatus": mcpDerefString(target.RollbackStatus), "error": mcpDerefString(target.Error),
+			"rollbackError": mcpDerefString(target.RollbackError), "backupPresent": target.BackupPresent,
+			"changedFileCount": target.ChangedFileCount, "skippedFileCount": target.SkippedFileCount,
+			"pushedAt": mcpNullableTime(target.PushedAt), "activatedAt": mcpNullableTime(target.ActivatedAt),
+		})
+	}
+	return map[string]any{"items": items, "total": view.Total}
+}
+
+// mcpDeliveryImpactView 投影影响预览（对齐既有 ChangeImpactView：summary + targets 分页）。
+func mcpDeliveryImpactView(view *service.ChangeImpactView) map[string]any {
+	batches := make([]map[string]any, 0, len(view.Summary.Batches))
+	for _, batch := range view.Summary.Batches {
+		batches = append(batches, map[string]any{"batchNo": batch.BatchNo, "count": batch.Count})
+	}
+	rows := make([]map[string]any, 0, len(view.Targets.Items))
+	for _, row := range view.Targets.Items {
+		rows = append(rows, map[string]any{
+			"serverId": row.ServerID, "online": row.Online, "level": row.Level,
+			"addCount": row.AddCount, "updateCount": row.UpdateCount,
+			"deleteCount": row.DeleteCount, "skipCount": row.SkipCount,
+			"configScopes": mcpDeliveryImpactScopesView(row.ConfigScopes),
+		})
+	}
+	return map[string]any{
+		"summary": map[string]any{
+			"targetTotal": view.Summary.TargetTotal, "batches": batches,
+			"fileTotal": view.Summary.FileTotal, "totalBytes": view.Summary.TotalBytes,
+			"transferBytes": view.Summary.TransferBytes, "configScopeCount": view.Summary.ConfigScopeCount,
+			"snapshotAt": mcpNullableTime(view.Summary.SnapshotAt),
+		},
+		"targets": map[string]any{"items": rows, "total": view.Targets.Total},
+	}
+}
+
+// mcpDeliveryImpactScopesView 投影逐目标命中的配置作用域（from→to 版本，键名沿既有视图）。
+func mcpDeliveryImpactScopesView(scopes []service.ChangeImpactConfigScopeView) []map[string]any {
+	views := make([]map[string]any, 0, len(scopes))
+	for _, scope := range scopes {
+		views = append(views, map[string]any{
+			"scopeKind": scope.ScopeKind, "scopeId": scope.ScopeID,
+			"fromVersionId": mcpDerefUint(scope.FromVersionID), "toVersionId": mcpDerefUint(scope.ToVersionID),
+		})
+	}
+	return views
+}
+
+// mcpDeliveryObserveView 投影当前批观察窗序列（对齐既有 ChangeObserveView；数组恒非 null）。
+func mcpDeliveryObserveView(view *service.ChangeObserveView) map[string]any {
+	targets := make([]map[string]any, 0, len(view.Targets))
+	for _, series := range view.Targets {
+		points := make([]map[string]any, 0, len(series.Series))
+		for _, point := range series.Series {
+			points = append(points, map[string]any{
+				"tsMs": point.TsMs, "score": point.Score, "level": point.Level,
+				"tps": point.TPS, "alerts": point.Alerts,
+			})
+		}
+		targets = append(targets, map[string]any{"serverId": series.ServerID, "series": points})
+	}
+	return map[string]any{
+		"batchNo": mcpDerefInt(view.BatchNo), "observeStartedAt": mcpNullableTime(view.ObserveStartedAt),
+		"targets": targets,
+	}
+}
+
+// mcpDeliveryEventsView 投影进度事件（对齐既有 ChangeEventsView；不含 SSE 流式语义）。
+func mcpDeliveryEventsView(view *service.ChangeEventsView) map[string]any {
+	events := make([]map[string]any, 0, len(view.Events))
+	for _, event := range view.Events {
+		events = append(events, map[string]any{
+			"seq": event.Seq, "at": event.At.UTC().Format(time.RFC3339), "type": event.Type,
+			"orderId": event.OrderID, "batchNo": mcpDerefInt(event.BatchNo),
+			"serverId": mcpDerefString(event.ServerID), "status": event.Status,
+		})
+	}
+	return map[string]any{"events": events}
 }
 
 func mcpPageBounds(page, size, total int) (int, int) {
@@ -505,6 +811,13 @@ func mcpDerefUint(v *uint) any {
 }
 
 func mcpDerefString(v *string) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func mcpDerefInt(v *int) any {
 	if v == nil {
 		return nil
 	}
