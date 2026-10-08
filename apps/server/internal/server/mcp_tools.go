@@ -293,11 +293,14 @@ type mcpDeliveryDeleteInput struct {
 	IdempotencyKey string `json:"idempotencyKey"`
 }
 
-// mcpDeliveryRollbackInput 是整单回滚申请入参。
+// mcpDeliveryRollbackInput 是回滚申请入参（整单回滚或目标级子集回滚）。
 type mcpDeliveryRollbackInput struct {
-	OrderID        uint   `json:"orderId"`
-	Reason         string `json:"reason"`
-	IdempotencyKey string `json:"idempotencyKey"`
+	OrderID uint   `json:"orderId"`
+	Reason  string `json:"reason"`
+	// ServerIDs 非空即目标级（子集）回滚（FR-270）：只回滚这几台的文件，配置版本不回退；
+	// 省略即整单回滚（含配置版本回退），行为与加入该参数前逐字一致。
+	ServerIDs      []string `json:"serverIds,omitempty"`
+	IdempotencyKey string   `json:"idempotencyKey"`
 }
 
 // mcpDeliveryRollbackFinishInput 是结束回滚申请入参：**不收 reason**。
@@ -1037,8 +1040,18 @@ func (r *MCPToolRegistry) registerDeliveryApproval(server *mcp.Server, principal
 		}
 		return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 	})
-	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.rollback", Description: "提交交付变更单回滚审批申请（原因必填）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
-		ticket, err := r.delivery.RequestRollback(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), mcpClientIP)
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.rollback", Description: "提交交付变更单回滚审批申请（原因必填；传 serverIds 为只回滚这几台文件的目标级子集回滚，配置版本不回退）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
+		// 子集回滚与整单回滚同 operation、同票据契约，故共用本工具只按 serverIds 是否为空分流（FR-270）。
+		request := func() (service.DeliveryApprovalTicketView, error) {
+			return r.delivery.RequestRollback(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), mcpClientIP)
+		}
+		if len(in.ServerIDs) > 0 {
+			request = func() (service.DeliveryApprovalTicketView, error) {
+				return r.delivery.RequestRollbackTargets(in.OrderID, in.ServerIDs, in.Reason, principal,
+					in.IdempotencyKey, principal.AuditRef(), mcpClientIP)
+			}
+		}
+		ticket, err := request()
 		if err != nil {
 			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
 		}

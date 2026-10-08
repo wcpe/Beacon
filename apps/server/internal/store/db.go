@@ -111,6 +111,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.ChangeOrderItem{},
 		&model.ChangeBatch{},
 		&model.ChangeTarget{},
+		// 回滚动作记录（FR-270 / FR-271）：动作头 + 逐台结果快照，回答「发生过哪些回滚动作」。
+		&model.ChangeRollbackRecord{},
+		&model.ChangeRollbackRecordTarget{},
 		&model.DeliveryBlob{},
 		// 配置灰度冻结渲染工件（FR-171，见 ADR-0071）：config_change 项 per-(项, 目标) 渲染 sha 无法落
 		// change_order_item，单独冻结持久化，供 manifest / 下载授权 / 清理护栏读取，不再重渲染

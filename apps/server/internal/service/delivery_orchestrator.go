@@ -169,6 +169,8 @@ func (s *DeliveryOrchestrator) advanceActiveOrders(ctx context.Context) {
 		}
 		s.advanceOrder(rt)
 	}
+	// 目标级（子集）回滚不改单主状态，故这些单不在上面的活动单集合里，需单独扫描推进（FR-270）。
+	s.advanceTargetRollbacks()
 }
 
 // orderRuntime 是一次推进所需的单快照（单 + 批次 + 目标 + namespace code + batch_id→batch_no 索引），

@@ -563,12 +563,21 @@ func mcpDeliverySelectorView(selector service.ChangeSelector) map[string]any {
 func mcpDeliveryTargetsView(view *service.ChangeTargetPageView) map[string]any {
 	items := make([]map[string]any, 0, len(view.Items))
 	for _, target := range view.Items {
+		// 当前交付版本（FR-271）与 HTTP 面同源投影：无记录时回 null，不去猜一个并不存在的版本。
+		var deliveredVersion any
+		if target.DeliveredVersion != nil {
+			deliveredVersion = map[string]any{
+				"orderId": target.DeliveredVersion.OrderID, "orderTitle": target.DeliveredVersion.OrderTitle,
+				"activatedAt": target.DeliveredVersion.ActivatedAt,
+			}
+		}
 		items = append(items, map[string]any{
 			"serverId": target.ServerID, "batchNo": target.BatchNo, "status": target.Status,
 			"rollbackStatus": mcpDerefString(target.RollbackStatus), "error": mcpDerefString(target.Error),
 			"rollbackError": mcpDerefString(target.RollbackError), "backupPresent": target.BackupPresent,
 			"changedFileCount": target.ChangedFileCount, "skippedFileCount": target.SkippedFileCount,
 			"pushedAt": mcpNullableTime(target.PushedAt), "activatedAt": mcpNullableTime(target.ActivatedAt),
+			"deliveredVersion": deliveredVersion,
 		})
 	}
 	return map[string]any{"items": items, "total": view.Total}

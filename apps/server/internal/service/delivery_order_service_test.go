@@ -50,6 +50,7 @@ func newDeliveryTestEnv(t *testing.T) *deliveryTestEnv {
 	if err := db.AutoMigrate(&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{},
 		&model.Server{}, &model.ServerTag{}, &model.AgentIdentity{}, &model.ChangeOrder{}, &model.ChangeOrderItem{},
 		&model.ChangeBatch{}, &model.ChangeTarget{}, &model.DeliveryBlob{}, &model.DeliveryConfigArtifact{},
+		&model.ChangeRollbackRecord{}, &model.ChangeRollbackRecordTarget{},
 		&model.FileAsset{}, &model.FileAssetScan{},
 		&model.AgentCommand{}, &model.Setting{}, &model.AuditLog{},
 		&model.ConfigFile{}, &model.ConfigLayerVersion{}); err != nil {

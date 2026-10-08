@@ -1195,6 +1195,16 @@ func (h *orchestratorHarness) completedRestartOrder(t *testing.T) *model.ChangeO
 	return h.reload(order.ID)
 }
 
+// rollbackTargetsByServer 取某单逐台目标行并按键 serverId 建索引（回滚断言用）。
+func (h *orchestratorHarness) rollbackTargetsByServer(orderID uint) map[string]model.ChangeTarget {
+	targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(orderID)
+	byServer := make(map[string]model.ChangeTarget, len(targets))
+	for _, tg := range targets {
+		byServer[tg.ServerID] = tg
+	}
+	return byServer
+}
+
 // completeAllRollbacks 把某单全部目标的回滚命令置指定终态（模拟 agent 还原备份回执）。
 func (h *orchestratorHarness) completeAllRollbacks(t *testing.T, orderID uint, status string) {
 	t.Helper()
@@ -1300,6 +1310,407 @@ func TestOrchestratorRollbackBackupMissingFails(t *testing.T) {
 	}
 	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolledBack {
 		t.Fatalf("结束回滚后应 rolled_back: %s", got.Status)
+	}
+}
+
+// TestOrchestratorRollbackRetryOnlyResetsFailedTargets 回滚重试（FR-262r，spec §4.7.2「失败目标可重试」）：
+// 重试只把失败目标重置 pending 重推，已成功目标与首次回滚时刻都不动，且每次动作各记一条审计。
+func TestOrchestratorRollbackRetryOnlyResetsFailedTargets(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	// 人为让 t-1 备份缺失（保留策略清理场景）→ 首次回滚它直接 failed。
+	if err := h.env.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND server_id = ?", order.ID, "t-1").
+		Update("backup_present", false).Error; err != nil {
+		t.Fatalf("置备份缺失失败: %v", err)
+	}
+	first, err := h.orch.applyRollback(order.ID, "回退变更", "ops", "ip")
+	if err != nil {
+		t.Fatalf("首次回滚失败: %v", err)
+	}
+	if first.RollbackAt == nil {
+		t.Fatal("首次回滚应记 rollback_at")
+	}
+	firstAt := *first.RollbackAt
+	h.tick()
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick()
+	byServer := h.rollbackTargetsByServer(order.ID)
+	if byServer["t-1"].RollbackStatus != model.RollbackStatusFailed {
+		t.Fatalf("备份缺失目标应 failed: %s", byServer["t-1"].RollbackStatus)
+	}
+	if byServer["t-2"].RollbackStatus != model.RollbackStatusRolledBack {
+		t.Fatalf("有备份目标应 rolled_back: %s", byServer["t-2"].RollbackStatus)
+	}
+
+	retried, err := h.orch.applyRollback(order.ID, "补做备份后重试", "ops2", "ip")
+	if err != nil {
+		t.Fatalf("重试失败: %v", err)
+	}
+	if retried.Status != model.ChangeOrderStatusRollingBack {
+		t.Fatalf("重试后应仍 rolling_back: %s", retried.Status)
+	}
+	if retried.RollbackAt == nil || !retried.RollbackAt.Equal(firstAt) {
+		t.Fatal("重试不得改写首次回滚时刻（rollback_at）")
+	}
+	afterRetry := h.rollbackTargetsByServer(order.ID)
+	if afterRetry["t-1"].RollbackStatus != model.RollbackStatusPending {
+		t.Fatalf("重试应把失败目标重置 pending: %s", afterRetry["t-1"].RollbackStatus)
+	}
+	if afterRetry["t-1"].RollbackError != "" {
+		t.Fatalf("重试应清空失败原因: %q", afterRetry["t-1"].RollbackError)
+	}
+	if afterRetry["t-2"].RollbackStatus != model.RollbackStatusRolledBack {
+		t.Fatalf("重试不得重置已成功目标: %s", afterRetry["t-2"].RollbackStatus)
+	}
+
+	// 重推：失败目标重新下发回滚命令并走到终态，单自动收口。
+	h.tick()
+	if got := h.rollbackTargetsByServer(order.ID)["t-1"].RollbackStatus; got != model.RollbackStatusRunning {
+		t.Fatalf("重试后应重新下发回滚命令（running）: %s", got)
+	}
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick()
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolledBack {
+		t.Fatalf("重试补齐后应自动 rolled_back: %s", got.Status)
+	}
+	if n := countAudit(t, h.env.db, model.ActionDeliveryOrderRollback); n != 2 {
+		t.Fatalf("首次回滚 + 重试应各记一条审计（共 2），实际 %d", n)
+	}
+}
+
+// TestOrchestratorRollbackInitializesNullStatusCoveredTargets 推进器穷尽分类（FR-262r）：
+// 曾覆盖磁盘但 rollback_status 为空的目击行不得被静默丢弃——就地补回滚初态并纳入本次推进。
+func TestOrchestratorRollbackInitializesNullStatusCoveredTargets(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	if _, err := h.orch.applyRollback(order.ID, "回退变更", "ops", "ip"); err != nil {
+		t.Fatalf("回滚失败: %v", err)
+	}
+	// 模拟历史数据 / 人工改库：t-1 曾被覆盖却丢了回滚初态（rollback_status 置空）。
+	if err := h.env.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND server_id = ?", order.ID, "t-1").
+		Update("rollback_status", nil).Error; err != nil {
+		t.Fatalf("清空回滚状态失败: %v", err)
+	}
+	h.tick()
+	if got := h.rollbackTargetsByServer(order.ID)["t-1"].RollbackStatus; got != model.RollbackStatusRunning {
+		t.Fatalf("被覆盖但无回滚态的目标应被补初态并下发命令（running）: %s", got)
+	}
+	var cmdCount int64
+	if err := h.env.db.Model(&model.AgentCommand{}).
+		Where("server_id = ? AND type = ?", "t-1", model.CommandTypeDeliveryRollback).
+		Count(&cmdCount).Error; err != nil {
+		t.Fatalf("统计回滚命令失败: %v", err)
+	}
+	if cmdCount != 1 {
+		t.Fatalf("补初态目标应恰好下发 1 条回滚命令，实际 %d", cmdCount)
+	}
+}
+
+// TestOrchestratorRollbackFinishesWhenNothingToRollBack 推进器显式归类非回滚目标（FR-262r）：
+// 单内无任何回滚目标（全部目标从未覆盖磁盘）时自动收口，不再永久停留 rolling_back。
+func TestOrchestratorRollbackFinishesWhenNothingToRollBack(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	if _, err := h.orch.applyRollback(order.ID, "回退变更", "ops", "ip"); err != nil {
+		t.Fatalf("回滚失败: %v", err)
+	}
+	// 模拟全部目标都未进入回滚态且未覆盖磁盘：单仍被置为 rolling_back。
+	if err := h.env.db.Model(&model.ChangeTarget{}).Where("order_id = ?", order.ID).
+		Updates(map[string]any{"rollback_status": nil, "pushed_at": nil}).Error; err != nil {
+		t.Fatalf("清空目标回滚态失败: %v", err)
+	}
+	h.tick()
+	got := h.reload(order.ID)
+	if got.Status != model.ChangeOrderStatusRolledBack {
+		t.Fatalf("无回滚目标应自动收口为 rolled_back，实际 %s", got.Status)
+	}
+	if got.FinishedAt == nil {
+		t.Fatal("自动收口应记 finished_at")
+	}
+}
+
+// —— FR-270 目标级（子集）回滚 / FR-271 交付版本与回滚记录 ——
+
+// countConfigVersions 统计某配置文件的版本行数（判「配置版本是否被回退」用）。
+func countConfigVersions(t *testing.T, db *gorm.DB, fileID uint) int64 {
+	t.Helper()
+	var n int64
+	if err := db.Model(&model.ConfigLayerVersion{}).Where("config_file_id = ?", fileID).Count(&n).Error; err != nil {
+		t.Fatalf("统计配置版本失败: %v", err)
+	}
+	return n
+}
+
+// attachConfigItem 给已有单挂一条 config_change 项（回滚锚点 = from 版本），用于验证回滚有无触及配置版本。
+func attachConfigItem(t *testing.T, db *gorm.DB, orderID, fileID, fromVersionID, scopeID uint, scopeKind string) {
+	t.Helper()
+	item := model.ChangeOrderItem{
+		OrderID: orderID, Kind: model.ChangeItemKindConfigChange,
+		ConfigScopeKind: &scopeKind, ConfigScopeID: &scopeID, ConfigFromVersionID: &fromVersionID,
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("挂配置变更项失败: %v", err)
+	}
+	_ = fileID
+}
+
+// runRollbackTargets 以目标级回滚语义在事务内执行（生产路径由审批 worker 调用同一函数）。
+func (h *orchestratorHarness) runRollbackTargets(t *testing.T, orderID uint, serverIDs []string, reason string) error {
+	t.Helper()
+	order, err := h.env.orders.requireOrder(orderID)
+	if err != nil {
+		t.Fatalf("读取变更单失败: %v", err)
+	}
+	return h.env.db.Transaction(func(tx *gorm.DB) error {
+		return h.orch.applyRollbackTargetsInTx(tx, order, serverIDs, reason, "ops", "ip")
+	})
+}
+
+// rollbackRecords 读某单的回滚动作记录（倒序）。
+func (h *orchestratorHarness) rollbackRecords(t *testing.T, orderID uint) []model.ChangeRollbackRecord {
+	t.Helper()
+	records, err := repository.NewChangeOrderRepository(h.env.db).ListRollbackRecords(orderID)
+	if err != nil {
+		t.Fatalf("读回滚动作记录失败: %v", err)
+	}
+	return records
+}
+
+// seedConfigFileWithHead 建配置文件并从 from 版本再推一版（head ≠ from），使「回退到 from」必然生成新版本行——
+// 这样「版本行数是否增加」才能判别配置回退**是否真的发生**（链上只有一版时回退会撞幂等而看不出差别）。
+func seedConfigFileWithHead(t *testing.T, db *gorm.DB, nsID uint, scopeKind string, scopeRefID uint) (uint, uint) {
+	t.Helper()
+	fileID, fromVersionID := seedGrayConfigFile(t, db, nsID, scopeKind, scopeRefID, "a: 1")
+	// 回退原语按 content_hash 判幂等，故两版必须带**不同**哈希，否则会撞 ErrConfigNoChange 而不生成新版本。
+	if err := db.Model(&model.ConfigLayerVersion{}).Where("id = ?", fromVersionID).
+		Update("content_hash", "hash-from").Error; err != nil {
+		t.Fatalf("置 from 版本哈希失败: %v", err)
+	}
+	head := model.ConfigLayerVersion{
+		ConfigFileID: fileID, ScopeLevel: scopeKind, ScopeRefID: scopeRefID,
+		VersionNo: 2, Content: "a: 2", ContentHash: "hash-head",
+	}
+	mustCreate(t, db, &head)
+	return fileID, fromVersionID
+}
+
+// TestTargetRollbackOnlySelectedFilesAndKeepsOrderStatus 目标级子集回滚（FR-270）：
+// 只回滚选中目标的文件；未选中目标一个字节不动；配置版本不回退；单主状态保持 completed。
+func TestTargetRollbackOnlySelectedFilesAndKeepsOrderStatus(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	configFileID, fromVersion := seedConfigFileWithHead(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID)
+	attachConfigItem(t, h.env.db, order.ID, configFileID, fromVersion, h.f.zone1ID, model.ConfigScopeZone)
+	versionsBefore := countConfigVersions(t, h.env.db, configFileID)
+
+	if err := h.runRollbackTargets(t, order.ID, []string{"t-1"}, "只回滚出问题的一台"); err != nil {
+		t.Fatalf("目标级回滚失败: %v", err)
+	}
+	// 单主状态不变：子集回滚不是整单动作。
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusCompleted {
+		t.Fatalf("子集回滚后单主状态应保持 completed: %s", got.Status)
+	}
+	if got := h.reload(order.ID).RollbackAt; got != nil {
+		t.Fatal("子集回滚不得写整单 rollback_at（那不是整单动作）")
+	}
+	byServer := h.rollbackTargetsByServer(order.ID)
+	if byServer["t-1"].RollbackStatus != model.RollbackStatusPending {
+		t.Fatalf("选中目标应进入回滚初态 pending: %s", byServer["t-1"].RollbackStatus)
+	}
+	if byServer["t-2"].RollbackStatus != "" {
+		t.Fatalf("未选中目标不得进入回滚态: %s", byServer["t-2"].RollbackStatus)
+	}
+	// 配置版本不回退：既有回退原语会生成新版本行，未新增即证明本次没走配置回退。
+	if after := countConfigVersions(t, h.env.db, configFileID); after != versionsBefore {
+		t.Fatalf("子集回滚不得回退配置版本（版本行 %d → %d）", versionsBefore, after)
+	}
+
+	// 推进：只有选中目标收到回滚命令。
+	h.tick()
+	var cmds []model.AgentCommand
+	if err := h.env.db.Where("type = ?", model.CommandTypeDeliveryRollback).Find(&cmds).Error; err != nil {
+		t.Fatalf("读回滚命令失败: %v", err)
+	}
+	if len(cmds) != 1 {
+		t.Fatalf("应只对选中目标下发 1 条回滚命令，实际 %d", len(cmds))
+	}
+	if got := h.rollbackTargetsByServer(order.ID)["t-1"].RollbackStatus; got != model.RollbackStatusRunning {
+		t.Fatalf("选中目标回滚命令应下发（running）: %s", got)
+	}
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick()
+	byServer = h.rollbackTargetsByServer(order.ID)
+	if byServer["t-1"].RollbackStatus != model.RollbackStatusRolledBack {
+		t.Fatalf("选中目标应回滚成功: %s", byServer["t-1"].RollbackStatus)
+	}
+	if byServer["t-2"].RollbackStatus != "" {
+		t.Fatalf("未选中目标仍不应有回滚态: %s", byServer["t-2"].RollbackStatus)
+	}
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusCompleted {
+		t.Fatalf("回滚完成也不得改变单主状态: %s", got.Status)
+	}
+}
+
+// TestTargetRollbackRecordsActionAndConfigFlag 回滚动作记录（FR-270 / FR-271）：
+// 每次动作一行，含操作人 / 原因 / 台数 / 是否回退配置 / 逐台结果，且与审计同事务互指。
+func TestTargetRollbackRecordsActionAndConfigFlag(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	if err := h.runRollbackTargets(t, order.ID, []string{"t-1"}, "单台回滚"); err != nil {
+		t.Fatalf("目标级回滚失败: %v", err)
+	}
+	records := h.rollbackRecords(t, order.ID)
+	if len(records) != 1 {
+		t.Fatalf("应落 1 条回滚动作记录，实际 %d", len(records))
+	}
+	if records[0].Kind != model.RollbackKindTargets || records[0].ConfigRolledBack ||
+		records[0].TargetCount != 1 || records[0].Operator != "ops" || records[0].Reason != "单台回滚" {
+		t.Fatalf("子集动作记录字段不符: %+v", records[0])
+	}
+	rows, err := repository.NewChangeOrderRepository(h.env.db).ListRollbackRecordTargets([]uint{records[0].ID})
+	if err != nil || len(rows) != 1 || rows[0].ServerID != "t-1" {
+		t.Fatalf("动作应只含选中目标一行: %v / %+v", err, rows)
+	}
+	// 逐台结果随终态更新：推进到 rolled_back 后记录里该台也应是 rolled_back。
+	h.tick()
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick()
+	rows, _ = repository.NewChangeOrderRepository(h.env.db).ListRollbackRecordTargets([]uint{records[0].ID})
+	if len(rows) != 1 || rows[0].Result != model.RollbackStatusRolledBack {
+		t.Fatalf("动作记录的逐台结果应随终态更新: %+v", rows)
+	}
+	// 审计一路可追溯：同一次动作写一条落 kind / serverIds / recordId 的审计。
+	var audit model.AuditLog
+	if err := h.env.db.Where("action = ?", model.ActionDeliveryOrderRollback).
+		Order("id DESC").First(&audit).Error; err != nil {
+		t.Fatalf("读回滚审计失败: %v", err)
+	}
+	for _, want := range []string{`"kind":"targets"`, `"serverIds":["t-1"]`,
+		fmt.Sprintf(`"recordId":%d`, records[0].ID)} {
+		if !strings.Contains(audit.Detail, want) {
+			t.Fatalf("审计 detail 应含 %s，实际 %s", want, audit.Detail)
+		}
+	}
+}
+
+// TestTargetRollbackFullSelectionFallsBackToOrderRollback 全选等价整单回滚（FR-270）：
+// 选中集合覆盖全部可回滚目标时回落整单路径——配置版本回退、单状态迁移到 rolling_back。
+func TestTargetRollbackFullSelectionFallsBackToOrderRollback(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	configFileID, fromVersion := seedConfigFileWithHead(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID)
+	attachConfigItem(t, h.env.db, order.ID, configFileID, fromVersion, h.f.zone1ID, model.ConfigScopeZone)
+	versionsBefore := countConfigVersions(t, h.env.db, configFileID)
+
+	if err := h.runRollbackTargets(t, order.ID, []string{"t-1", "t-2"}, "全选回滚"); err != nil {
+		t.Fatalf("全选回滚失败: %v", err)
+	}
+	got := h.reload(order.ID)
+	if got.Status != model.ChangeOrderStatusRollingBack {
+		t.Fatalf("全选应回落整单回滚（rolling_back）: %s", got.Status)
+	}
+	if got.RollbackAt == nil {
+		t.Fatal("整单回滚应记 rollback_at")
+	}
+	if after := countConfigVersions(t, h.env.db, configFileID); after <= versionsBefore {
+		t.Fatalf("全选等价整单回滚应回退配置版本（版本行 %d → %d）", versionsBefore, after)
+	}
+	records := h.rollbackRecords(t, order.ID)
+	if len(records) != 1 || records[0].Kind != model.RollbackKindOrder || !records[0].ConfigRolledBack ||
+		records[0].TargetCount != 2 {
+		t.Fatalf("全选应落一条整单动作记录且标记已回退配置: %+v", records)
+	}
+}
+
+// TestTargetRollbackRejectsInvalidTargetScope 选中集合必须完整落在本单可回滚目标内，否则整单拒绝（不部分执行）。
+func TestTargetRollbackRejectsInvalidTargetScope(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	for _, serverIDs := range [][]string{{}, {"  "}, {"t-9"}, {"t-1", "t-9"}} {
+		if err := h.runRollbackTargets(t, order.ID, serverIDs, "越界回滚"); err == nil {
+			t.Fatalf("越界目标集应被拒绝: %+v", serverIDs)
+		}
+	}
+	byServer := h.rollbackTargetsByServer(order.ID)
+	if byServer["t-1"].RollbackStatus != "" || byServer["t-2"].RollbackStatus != "" {
+		t.Fatal("拒绝的请求不得部分落库")
+	}
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusCompleted {
+		t.Fatalf("拒绝的请求不得改变单状态: %s", got.Status)
+	}
+}
+
+// TestDeliveredVersionFallsBackAfterRollback 当前交付版本读模型（FR-271）：
+// 交付后指向该单；某台被回滚后该台回退显示（无更早交付即无记录），未回滚的台不受影响。
+func TestDeliveredVersionFallsBackAfterRollback(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	repo := repository.NewChangeOrderRepository(h.env.db)
+	order := h.completedPushOnlyOrder(t)
+
+	versions, err := repo.FindCurrentDeliveredVersions([]string{"t-1", "t-2"})
+	if err != nil || len(versions) != 2 {
+		t.Fatalf("交付后两台都应查到当前交付版本: %v / %+v", err, versions)
+	}
+	for _, version := range versions {
+		if version.OrderID != order.ID || version.OrderTitle != order.Title || version.ActivatedAt.IsZero() {
+			t.Fatalf("当前交付版本应指向本单: %+v", version)
+		}
+	}
+
+	if err := h.runRollbackTargets(t, order.ID, []string{"t-1"}, "单台回滚"); err != nil {
+		t.Fatalf("目标级回滚失败: %v", err)
+	}
+	h.tick()
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick()
+
+	versions, err = repo.FindCurrentDeliveredVersions([]string{"t-1", "t-2"})
+	if err != nil || len(versions) != 1 || versions[0].ServerID != "t-2" {
+		t.Fatalf("被回滚的台应回退显示（无更早交付即无记录），未回滚台不受影响: %v / %+v", err, versions)
+	}
+}
+
+// TestTargetRollbackRetryAfterFailure 子集回滚失败后可再发起一次子集回滚（FR-270 与 §4.7.2 重试口径一致）：
+// 第二次动作是独立的一条记录，逐台结果各自留痕。
+func TestTargetRollbackRetryAfterFailure(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	if err := h.env.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND server_id = ?", order.ID, "t-1").
+		Update("backup_present", false).Error; err != nil {
+		t.Fatalf("置备份缺失失败: %v", err)
+	}
+	if err := h.runRollbackTargets(t, order.ID, []string{"t-1"}, "首轮"); err != nil {
+		t.Fatalf("首轮子集回滚失败: %v", err)
+	}
+	byServer := h.rollbackTargetsByServer(order.ID)
+	if byServer["t-1"].RollbackStatus != model.RollbackStatusFailed {
+		t.Fatalf("备份缺失目标预检应直接 failed: %s", byServer["t-1"].RollbackStatus)
+	}
+	// 补做备份后再重试（备份仍缺失时重推只会再失败一次，那是正确行为而非缺陷）。
+	if err := h.env.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND server_id = ?", order.ID, "t-1").
+		Update("backup_present", true).Error; err != nil {
+		t.Fatalf("恢复备份标记失败: %v", err)
+	}
+	if err := h.runRollbackTargets(t, order.ID, []string{"t-1"}, "重试"); err != nil {
+		t.Fatalf("重试子集回滚失败: %v", err)
+	}
+	if got := h.rollbackTargetsByServer(order.ID)["t-1"].RollbackStatus; got != model.RollbackStatusPending {
+		t.Fatalf("重试应把该台重置 pending: %s", got)
+	}
+	records := h.rollbackRecords(t, order.ID)
+	if len(records) != 2 {
+		t.Fatalf("两次动作应各留一条记录，实际 %d", len(records))
+	}
+	if records[0].Reason != "重试" || records[1].Reason != "首轮" {
+		t.Fatalf("记录应倒序且各自留原因: %+v", records)
+	}
+	rows, _ := repository.NewChangeOrderRepository(h.env.db).ListRollbackRecordTargets([]uint{records[1].ID})
+	if len(rows) != 1 || rows[0].Result != model.RollbackStatusFailed {
+		t.Fatalf("首轮记录应保留该台当时的失败结果: %+v", rows)
 	}
 }
 

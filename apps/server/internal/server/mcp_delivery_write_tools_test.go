@@ -731,6 +731,76 @@ func TestMCPDeliveryResumeModeIsDescribedInSchema(t *testing.T) {
 	}
 }
 
+// approvalPayload 取某审批申请的冻结载荷原文（断言「冻结了什么」用）。
+func (f *deliveryWriteMCPFixture) approvalPayload(t *testing.T, requestID string) string {
+	t.Helper()
+	var row model.ApprovalRequest
+	if err := f.db.Where("request_id = ?", requestID).First(&row).Error; err != nil {
+		t.Fatalf("回读审批申请失败: %v", err)
+	}
+	return row.Payload
+}
+
+// TestMCPDeliveryRollbackSubsetFreezesServerIDs 目标级子集回滚的 MCP 面（FR-270）：
+// `beacon.delivery.order.rollback` 传 serverIds 时把目标子集冻进审批载荷（执行期据此走子集路径、配置版本不回退）；
+// 省略 serverIds 时载荷不含该键——既有调用方行为逐字不变。
+func TestMCPDeliveryRollbackSubsetFreezesServerIDs(t *testing.T) {
+	f := newDeliveryWriteMCPFixture(t)
+	server := f.server(t)
+	orderID := f.seedOrder(t, f.nsID, "已完成待子集回滚", model.ChangeOrderStatusCompleted, "")
+	now := time.Now().UTC()
+	for _, serverID := range []string{"t-1", "t-2"} {
+		target := &model.ChangeTarget{
+			OrderID: orderID, ServerID: serverID, Status: model.ChangeTargetStatusActivated,
+			PushedAt: &now, BackupPresent: true,
+		}
+		if err := f.db.Create(target).Error; err != nil {
+			t.Fatalf("写入目标失败: %v", err)
+		}
+	}
+
+	subsetRes := mustCallMCPTool(t, server, "beacon.delivery.order.rollback", map[string]any{
+		"orderId": orderID, "reason": "只回滚 t-1", "serverIds": []string{"t-1"}, "idempotencyKey": "mcp-subset-1",
+	})
+	if subsetRes.IsError {
+		t.Fatalf("子集回滚工具不应被拒: %s", mcpResultText(subsetRes))
+	}
+	subsetOut := mcpStructuredMap(t, subsetRes)
+	subsetPayload := f.approvalPayload(t, subsetOut["approvalRequestId"].(string))
+	if !strings.Contains(subsetPayload, `"serverIds":["t-1"]`) {
+		t.Fatalf("子集回滚应把目标子集冻进审批载荷: %s", subsetPayload)
+	}
+	// 申请阶段不得动单状态与目标回滚态（子集路径只在审批执行时落库）。
+	if got := f.orderRow(t, orderID).Status; got != model.ChangeOrderStatusCompleted {
+		t.Fatalf("申请阶段单应仍为 completed，实际 %s", got)
+	}
+	var target model.ChangeTarget
+	if err := f.db.Where("order_id = ? AND server_id = ?", orderID, "t-1").First(&target).Error; err != nil {
+		t.Fatalf("回读目标失败: %v", err)
+	}
+	if target.RollbackStatus != "" {
+		t.Fatalf("申请阶段不得写目标回滚态，实际 %s", target.RollbackStatus)
+	}
+	// 越界目标（不在本单）应被拒，且拒绝文案可读。
+	outOfScope := mustCallMCPTool(t, server, "beacon.delivery.order.rollback", map[string]any{
+		"orderId": orderID, "reason": "越界", "serverIds": []string{"t-9"}, "idempotencyKey": "mcp-subset-3",
+	})
+	if !outOfScope.IsError {
+		t.Fatal("越界目标应被拒")
+	}
+
+	wholeRes := mustCallMCPTool(t, server, "beacon.delivery.order.rollback", map[string]any{
+		"orderId": orderID, "reason": "整单回滚", "idempotencyKey": "mcp-subset-2",
+	})
+	if wholeRes.IsError {
+		t.Fatalf("整单回滚工具不应被拒: %s", mcpResultText(wholeRes))
+	}
+	wholePayload := f.approvalPayload(t, mcpStructuredMap(t, wholeRes)["approvalRequestId"].(string))
+	if strings.Contains(wholePayload, "serverIds") {
+		t.Fatalf("省略 serverIds 时载荷不得带该键（既有调用方行为不变）: %s", wholePayload)
+	}
+}
+
 // TestMCPDeliveryApprovalToolsOnlyCreateRequests 是申请类六工具的「只建申请」闸与幂等闸：
 // 申请阶段**不执行领域动作**——业务表（单 / 变更项 / 批次 / 目标）的行数与批次 / 目标状态都不被改写
 // （唯一例外是 submit 的冻结：draft → pending_approval，见末尾单列断言），也绝不产生执行回执；

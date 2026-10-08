@@ -224,6 +224,82 @@ func TestDeliveryRollbackApprovalWorkerWritesReceipt(t *testing.T) {
 	}
 }
 
+// TestDeliveryRollbackRetryApprovalWorkerResetsFailedTargets 回滚重试的生产入口（FR-262r，spec §4.7.2）：
+// rolling_back 单必须能在生产路径（统一审批）发起重试——此前 RequestRollback 直接 409 拒绝、
+// 重试语义只在同包测试可达；批准后只重置失败目标、已成功目标与单状态都不动。
+func TestDeliveryRollbackRetryApprovalWorkerResetsFailedTargets(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	if err := h.env.db.AutoMigrate(&model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}); err != nil {
+		t.Fatalf("迁移审批表失败: %v", err)
+	}
+	order := h.completedPushOnlyOrder(t)
+	if err := h.env.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND server_id = ?", order.ID, "t-1").
+		Update("backup_present", false).Error; err != nil {
+		t.Fatalf("置备份缺失失败: %v", err)
+	}
+	registry := authz.NewApprovalRegistry()
+	RegisterDeliveryApprovalAdapter(registry, h.env.orders, h.orch)
+	approval := NewApprovalService(h.env.db, repository.NewApprovalRequestRepository(h.env.db),
+		repository.NewAuditLogRepository(h.env.db), registry)
+	h.orch.SetApprovalService(approval)
+
+	// 首次回滚：批准执行后进入 rolling_back，t-1 备份缺失直接 failed、t-2 回滚成功。
+	firstTicket, err := h.orch.RequestRollback(order.ID, "恢复上一批", auth.HumanPrincipal("ops"), "rollback-1", "ops", "")
+	if err != nil {
+		t.Fatalf("创建首次回滚申请失败: %v", err)
+	}
+	if _, err := approval.Approve(firstTicket.ApprovalRequestID, auth.HumanPrincipal("admin"), ""); err != nil {
+		t.Fatalf("批准首次回滚失败: %v", err)
+	}
+	if n, err := NewApprovalWorker(approval).RunOnce(); err != nil || n != 1 {
+		t.Fatalf("首次回滚 worker 执行失败: %d / %v", n, err)
+	}
+	h.tick()
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick()
+	before := h.rollbackTargetsByServer(order.ID)
+	if before["t-1"].RollbackStatus != model.RollbackStatusFailed || before["t-2"].RollbackStatus != model.RollbackStatusRolledBack {
+		t.Fatalf("前置回滚结果不符: t-1=%s t-2=%s", before["t-1"].RollbackStatus, before["t-2"].RollbackStatus)
+	}
+	storedFirst, err := h.env.orders.requireOrder(order.ID)
+	if err != nil || storedFirst.RollbackAt == nil {
+		t.Fatalf("首次回滚应记 rollback_at: %v", err)
+	}
+	firstAt := *storedFirst.RollbackAt
+
+	// 生产重试入口：此前这里恒 409 illegal_state，重试语义无生产可达路径。
+	retryTicket, err := h.orch.RequestRollback(order.ID, "补做备份后重试", auth.HumanPrincipal("ops"), "rollback-retry-1", "ops", "")
+	if err != nil {
+		t.Fatalf("rolling_back 单重试申请应被接受: %v", err)
+	}
+	if _, err := approval.Approve(retryTicket.ApprovalRequestID, auth.HumanPrincipal("admin"), ""); err != nil {
+		t.Fatalf("批准重试申请失败: %v", err)
+	}
+	if n, err := NewApprovalWorker(approval).RunOnce(); err != nil || n != 1 {
+		t.Fatalf("重试 worker 执行失败: %d / %v", n, err)
+	}
+	after := h.rollbackTargetsByServer(order.ID)
+	if after["t-1"].RollbackStatus != model.RollbackStatusPending {
+		t.Fatalf("重试应把失败目标重置 pending: %s", after["t-1"].RollbackStatus)
+	}
+	if after["t-2"].RollbackStatus != model.RollbackStatusRolledBack {
+		t.Fatalf("重试不得回退已成功目标: %s", after["t-2"].RollbackStatus)
+	}
+	retried, err := h.env.orders.requireOrder(order.ID)
+	if err != nil || retried.Status != model.ChangeOrderStatusRollingBack {
+		t.Fatalf("重试不应改变单主状态（仍 rolling_back）: %v / %+v", err, retried)
+	}
+	if retried.RollbackAt == nil || !retried.RollbackAt.Equal(firstAt) {
+		t.Fatal("重试不得改写首次回滚时刻（rollback_at）")
+	}
+	var receipt model.ApprovalExecutionReceipt
+	if err := h.env.db.Where("request_id = ?", retryTicket.ApprovalRequestID).First(&receipt).Error; err != nil ||
+		receipt.OperationKey != authz.OperationDeliveryRollback {
+		t.Fatalf("重试审批应写同事务回执: %v / %+v", err, receipt)
+	}
+}
+
 // TestDeliveryConfirmBatchApprovalWorkerWritesReceipt 确保推进门确认冻结批次和目标状态后由审批 worker 执行。
 func TestDeliveryConfirmBatchApprovalWorkerWritesReceipt(t *testing.T) {
 	h := newOrchestratorHarness(t)

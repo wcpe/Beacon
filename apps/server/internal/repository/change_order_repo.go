@@ -3,6 +3,7 @@ package repository
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -329,6 +330,137 @@ func (r *ChangeOrderRepository) ResetFailedRollbackToPending(orderID uint) (int6
 		return 0, res.Error
 	}
 	return res.RowsAffected, nil
+}
+
+// InitTargetRollbackIfEmpty 为「曾覆盖磁盘但回滚态为空」的目标补回滚初态（FR-262r 推进器自愈）：
+// 有备份 → pending；无备份 → failed（脱敏原因）。原状态非空即不落任何改动，返回是否命中。
+// 用 IS NULL OR = ” 而非 IN 是必须的——SQL 里 NULL 与任何值比较都为 NULL，IN (”) 匹配不到空态。
+func (r *ChangeOrderRepository) InitTargetRollbackIfEmpty(id uint, backupPresent bool, backupMissingReason string) (bool, error) {
+	updates := map[string]any{"rollback_status": model.RollbackStatusPending, "rollback_error": ""}
+	if !backupPresent {
+		updates = map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": backupMissingReason}
+	}
+	res := r.db.Model(&model.ChangeTarget{}).
+		Where("id = ? AND (rollback_status IS NULL OR rollback_status = '')", id).
+		Updates(updates)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// InitTargetRollbackByServerIDs 把指定 serverId 集合的目标整体置为本次动作的回滚初态（FR-270 目标级子集回滚）：
+// 有备份 → pending、无备份 → failed（脱敏原因），其余目标一个字节都不动。目标集合由调用方先校验（必须都在本单）。
+func (r *ChangeOrderRepository) InitTargetRollbackByServerIDs(orderID uint, serverIDs []string, backupMissingReason string) error {
+	if len(serverIDs) == 0 {
+		return nil
+	}
+	if err := r.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND server_id IN ? AND backup_present = ?", orderID, serverIDs, true).
+		Updates(map[string]any{"rollback_status": model.RollbackStatusPending, "rollback_error": ""}).Error; err != nil {
+		return err
+	}
+	return r.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND server_id IN ? AND backup_present = ?", orderID, serverIDs, false).
+		Updates(map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": backupMissingReason}).Error
+}
+
+// CreateRollbackRecord 落一条回滚动作记录（FR-270 / FR-271）；record.ID 回填。
+func (r *ChangeOrderRepository) CreateRollbackRecord(record *model.ChangeRollbackRecord) error {
+	return r.db.Create(record).Error
+}
+
+// CreateRollbackRecordTargets 批量落动作内逐台结果行（FR-271）。
+func (r *ChangeOrderRepository) CreateRollbackRecordTargets(rows []model.ChangeRollbackRecordTarget) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return r.db.Create(&rows).Error
+}
+
+// ListRollbackRecords 取某单全部回滚动作记录（新的在前）。
+func (r *ChangeOrderRepository) ListRollbackRecords(orderID uint) ([]model.ChangeRollbackRecord, error) {
+	var records []model.ChangeRollbackRecord
+	err := r.db.Where("order_id = ?", orderID).Order("id DESC").Find(&records).Error
+	return records, err
+}
+
+// ListRollbackRecordTargets 取若干动作的全部逐台结果行（server_id 升序，便于稳定展示）。
+func (r *ChangeOrderRepository) ListRollbackRecordTargets(recordIDs []uint) ([]model.ChangeRollbackRecordTarget, error) {
+	if len(recordIDs) == 0 {
+		return nil, nil
+	}
+	var rows []model.ChangeRollbackRecordTarget
+	err := r.db.Where("record_id IN ?", recordIDs).Order("record_id DESC, server_id ASC").Find(&rows).Error
+	return rows, err
+}
+
+// UpdateLatestRollbackRecordTargetResult 把某单**最近一条**回滚动作中该服的逐台结果更新为最新终态（FR-271）。
+// 用「最新一条动作」定位而非遍历：目标进终态时正在执行的就是最新那次动作；用子查询一次 UPDATE，不循环查库，也不引入跨表外键。
+func (r *ChangeOrderRepository) UpdateLatestRollbackRecordTargetResult(orderID uint, serverID, result, reason string) error {
+	latest := r.db.Model(&model.ChangeRollbackRecord{}).Select("MAX(id)").Where("order_id = ?", orderID)
+	return r.db.Model(&model.ChangeRollbackRecordTarget{}).
+		Where("record_id = (?) AND server_id = ?", latest, serverID).
+		Updates(map[string]any{"result": result, "error": reason}).Error
+}
+
+// ListOrdersWithPendingTargetRollback 取「有目标处于目标级回滚推进态且单主状态不是 rolling_back」的单（FR-270）。
+// 目标级子集回滚**不改单主状态**，故这些单不会被 ListActiveOrders（按单状态筛）选中，需单独扫描驱动；
+// 排除 rolling_back 是与整单回滚的互斥口径——同一目标不得被两条路径同时下发。
+func (r *ChangeOrderRepository) ListOrdersWithPendingTargetRollback() ([]model.ChangeOrder, error) {
+	var orderIDs []uint
+	if err := r.db.Model(&model.ChangeTarget{}).Distinct().
+		Where("rollback_status IN ?", []string{model.RollbackStatusPending, model.RollbackStatusRunning}).
+		Where("order_id NOT IN (?)", r.db.Model(&model.ChangeOrder{}).Select("id").
+			Where("status = ?", model.ChangeOrderStatusRollingBack)).
+		Pluck("order_id", &orderIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+	var orders []model.ChangeOrder
+	if err := r.db.Where("id IN ?", orderIDs).Order("id ASC").Find(&orders).Error; err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
+// FindCurrentDeliveredVersions 批量取各服当前交付版本（FR-271）：每服最近一条 activated 且未被回滚的目标行所属变更单。
+// 无候选的服**不回行**（由调用方补「无交付记录」）。按 activated_at 倒序一次取齐后在内存里按服取首条，
+// 不用窗口函数 / 相关子查询——保持 MySQL 5.7 与 Postgres 双兼容（架构不变量 §4）。
+func (r *ChangeOrderRepository) FindCurrentDeliveredVersions(serverIDs []string) ([]model.CurrentDeliveredVersion, error) {
+	if len(serverIDs) == 0 {
+		return nil, nil
+	}
+	var rows []struct {
+		ServerID    string
+		OrderID     uint
+		Title       string
+		ActivatedAt time.Time
+	}
+	err := r.db.Model(&model.ChangeTarget{}).
+		Select("change_target.server_id AS server_id, change_target.order_id AS order_id, change_order.title AS title, change_target.activated_at AS activated_at").
+		Joins("JOIN change_order ON change_order.id = change_target.order_id").
+		Where("change_target.server_id IN ? AND change_target.status = ?", serverIDs, model.ChangeTargetStatusActivated).
+		Where("change_target.rollback_status IS NULL OR change_target.rollback_status <> ?", model.RollbackStatusRolledBack).
+		Order("change_target.activated_at DESC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(serverIDs))
+	versions := make([]model.CurrentDeliveredVersion, 0, len(rows))
+	for _, row := range rows {
+		if _, dup := seen[row.ServerID]; dup {
+			continue
+		}
+		seen[row.ServerID] = struct{}{}
+		versions = append(versions, model.CurrentDeliveredVersion{
+			ServerID: row.ServerID, OrderID: row.OrderID, OrderTitle: row.Title, ActivatedAt: row.ActivatedAt,
+		})
+	}
+	return versions, nil
 }
 
 // BulkUpdateBatchStatusByOrder 把某单内状态在 from 集合内的批次批量改为 updates（紧急终止把未开始批置 skipped 用）；返回受影响数。

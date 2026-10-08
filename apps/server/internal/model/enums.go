@@ -440,6 +440,14 @@ const (
 	RollbackStatusFailed = "failed"
 )
 
+// 回滚动作种类 change_rollback_record.kind（FR-270 / FR-271，规格 delivery-rollback-resilience.md §3.1）。
+const (
+	// 整单回滚（含回滚重试：重试复用同一整单动作码，靠 detail 的 retry 位区分）
+	RollbackKindOrder = "order"
+	// 目标级（子集）回滚：只回滚选中目标的文件，配置版本不回退
+	RollbackKindTargets = "targets"
+)
+
 // 中转 blob 就绪度 state（规格 §3.5，仅两态；与变更单 payload_state 分立）。
 const (
 	// 上传中
