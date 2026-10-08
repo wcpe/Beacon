@@ -19,10 +19,29 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
 )
 
-// fakeDeliverySettings 是审批职责分离开关的假实现（可随测试切换）。
-type fakeDeliverySettings struct{ separation bool }
+// fakeDeliverySettings 是审批职责分离开关与交付能力最低版本的假实现（可随测试切换）。
+type fakeDeliverySettings struct {
+	separation bool
+	// minAgentVersion 交付能力守卫的最低 agent 版本（FR-264）；nil 表示未设置（走默认不校验语义）。
+	minAgentVersion *string
+}
 
 func (f *fakeDeliverySettings) GetBool(string) bool { return f.separation }
+
+// GetString 取字符串型设置（当前仅交付能力最低版本一项参与测试）。
+func (f *fakeDeliverySettings) GetString(key string) string {
+	if key == SettingDeliveryMinAgentVersion && f.minAgentVersion != nil {
+		return *f.minAgentVersion
+	}
+	return ""
+}
+
+// Set 设置字符串型运维设置（测试期热改语义，与 SettingsService 的热读口径一致）。
+func (f *fakeDeliverySettings) Set(key, value string) {
+	if key == SettingDeliveryMinAgentVersion {
+		f.minAgentVersion = &value
+	}
+}
 
 // deliveryTestEnv 打包交付域单测所需的库、双服务与内存真源。
 type deliveryTestEnv struct {
@@ -104,6 +123,11 @@ func seedDeliveryFixture(t *testing.T, env *deliveryTestEnv) *deliveryFixture {
 	f.srcRow = seedDeliveryServer(t, env.db, f.nsID, "src-1", model.ServerKindBackend, &zone1.ID, model.AgentIdentityStatusActive)
 	f.t1Row = seedDeliveryServer(t, env.db, f.nsID, "t-1", model.ServerKindBackend, &zone1.ID, model.AgentIdentityStatusActive)
 	f.t2Row = seedDeliveryServer(t, env.db, f.nsID, "t-2", model.ServerKindBackend, &zone2.ID, model.AgentIdentityStatusActive)
+	// FR-264：夹具代表**已升级的现代 agent**——自报版本（真实 agent 经 TabooLib pluginVersion 上报，
+	// 未上报版本的旧 agent 由能力守卫按 fail-closed 拒绝）。需要旧 agent 场景的用例显式覆盖本值。
+	env.db.Model(&model.AgentIdentity{}).
+		Where("namespace_id = ? AND server_id IN ?", f.nsID, []string{"src-1", "t-1", "t-2"}).
+		Update("agent_version", deliveryDefaultMinAgentVersion)
 	markDeliveryOnline(env.health, f.nsID, "src-1", "t-1", "t-2")
 	return f
 }

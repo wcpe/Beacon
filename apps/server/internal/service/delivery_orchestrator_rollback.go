@@ -99,8 +99,50 @@ func (s *DeliveryOrchestrator) initTargetRollback(rt *orderRuntime, t *model.Cha
 	return rollbackInitPending
 }
 
+// rollbackGuardReason 对单台目标执行 agent 能力版本守卫（FR-264）：返回非空即该目标不合格、原因即返回值。
+// 守卫未装配 / 最低版本设置为空 → 返回空串（不校验）。
+func (s *DeliveryOrchestrator) rollbackGuardReason(rt *orderRuntime, t *model.ChangeTarget) string {
+	if s.capability == nil {
+		return ""
+	}
+	unsupported, err := s.capability.filterUnsupported(rt.order.NamespaceID, []string{t.ServerID})
+	if err != nil {
+		slog.Error("交付编排校验 agent 交付能力失败", "orderId", rt.order.ID, "serverId", t.ServerID, "错误", err)
+		return "" // 查询失败不猜、不误伤目标
+	}
+	actual, hit := unsupported[t.ServerID]
+	if !hit {
+		return ""
+	}
+	return deliveryCapabilityRejectReason(actual, s.capability.minVersion())
+}
+
+// failRollbackTarget 把「能力不足」的回滚目标置回滚失败（前态 pending / running 都收），并落可读原因。
+func (s *DeliveryOrchestrator) failRollbackTarget(rt *orderRuntime, t *model.ChangeTarget, reason string) {
+	updates := map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": reason}
+	ok, err := s.repo.UpdateTargetRollbackCAS(t.ID,
+		[]string{model.RollbackStatusPending, model.RollbackStatusRunning}, updates)
+	if err != nil {
+		slog.Error("交付编排回滚能力拒绝落库失败", "orderId", rt.order.ID, "serverId", t.ServerID, "错误", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	t.RollbackStatus = model.RollbackStatusFailed
+	t.RollbackError = reason
+	s.recordRollbackTargetResult(rt.order.ID, t.ServerID, model.RollbackStatusFailed, reason)
+	s.emitTargetEvent(rt, t)
+}
+
 // dispatchRollback 下发回滚命令（rollback_status pending→running + delivery_rollback 命令，一事务原子），提交后唤醒 agent。
 func (s *DeliveryOrchestrator) dispatchRollback(rt *orderRuntime, t *model.ChangeTarget) {
+	// FR-264：回滚命令同受能力守卫——旧 agent 不认 delivery_rollback，下发只会挂到超时；
+	// 不合格目标就地落回滚失败原因（不动主状态，回滚失败语义按既有口径记 rollback_error）。
+	if unsupported := s.rollbackGuardReason(rt, t); unsupported != "" {
+		s.failRollbackTarget(rt, t, unsupported)
+		return
+	}
 	payload := deliveryActivatePayload{OrderID: rt.order.ID, ActivationMethod: rt.order.ActivationMethod}
 	cmd := newDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryRollback, payload)
 	err := s.db.Transaction(func(tx *gorm.DB) error {

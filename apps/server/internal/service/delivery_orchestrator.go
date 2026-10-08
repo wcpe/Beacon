@@ -93,9 +93,11 @@ type DeliveryOrchestrator struct {
 	config configRollbacker
 	// cfgVers 配置版本仓库（回滚 from==nil 项撤销贡献时反查 configFileID）
 	cfgVers *repository.ConfigLayerVersionRepository
+	// capability 交付能力版本守卫（FR-264，落实 ADR-0069 L58）：启动 / 下发前校验目标与模板源的
+	// agent 版本是否够新到认识流式交付命令，不具备则拒绝下发并给出可读原因。
+	// 未装配（nil）即不校验——守卫自身的装配缺失不得阻断交付。
+	capability *capabilityGuard
 }
-
-// SetApprovalService 注入统一审批申请服务；未装配时危险继续操作失败关闭。
 func (s *DeliveryOrchestrator) SetApprovalService(approval *ApprovalService) { s.approval = approval }
 
 // configRollbacker 交付域对配置版本回退的窄依赖（整单回滚记账用，由 ConfigCenterService 实现）：
@@ -109,6 +111,15 @@ type configRollbacker interface {
 func (s *DeliveryOrchestrator) SetConfigRollbacker(config configRollbacker, cfgVers *repository.ConfigLayerVersionRepository) {
 	s.config = config
 	s.cfgVers = cfgVers
+}
+
+// SetCapabilityGuard 注入交付能力版本守卫（FR-264，启动时装配）：versions 提供 agent 版本批量查询、
+// minFn 热读运维设置的最低版本（留空即关闭守卫）。未注入则不校验。
+func (s *DeliveryOrchestrator) SetCapabilityGuard(versions *repository.AgentIdentityRepository, minFn func() string) {
+	if versions == nil {
+		return
+	}
+	s.capability = newCapabilityGuard(&agentVersionLookup{repo: versions}, minFn)
 }
 
 // NewDeliveryOrchestrator 构造编排推进器。

@@ -179,8 +179,9 @@ func TestListCoversAllHotKeys(t *testing.T) {
 	// + FR-240 新增 archive.retention-days.mcp-invocation（MCP 工具调用流水保留期）。
 	// + FR-232 新增 alert.orphan-timeout-hours（失联孤儿告警自动关闭阈值，真机降噪）。
 	// + 新增 archive.retention-days.alert-event（告警事件表纳入归档域，仅归档 resolved 行）。
-	if len(views) != 40 {
-		t.Fatalf("热改白名单应为 40 项，实际 %d", len(views))
+	// + FR-264 新增 delivery.min-agent-version（交付能力最低 agent 版本守卫下限）。
+	if len(views) != 41 {
+		t.Fatalf("热改白名单应为 41 项，实际 %d", len(views))
 	}
 	for _, v := range views {
 		if v.IsStartup {

@@ -565,6 +565,11 @@ func run() error {
 	// 回执经 blob 服务 SetProgressWaker 即时唤醒推进器（单一驱动源）、观察窗序列经 SetObserveProvider 供 /observe 接真。
 	deliveryOrchestrator := service.NewDeliveryOrchestrator(db, changeOrderRepo, deliveryBlobService,
 		commandRepo, auditRepo, healthViewStore, metricWindow, notifier)
+	// 交付能力版本守卫（FR-264，落实 ADR-0069 L58）：启动 / 下发前校验目标与模板源 agent 版本，
+	// 不具备流式交付能力的旧 agent 被显式拒绝且原因可读；最低版本走运维设置热改（留空即关闭守卫）。
+	deliveryOrchestrator.SetCapabilityGuard(repository.NewAgentIdentityRepository(db), func() string {
+		return settingsService.GetString(service.SettingDeliveryMinAgentVersion)
+	})
 	service.RegisterDeliveryApprovalAdapter(approvalRegistry, deliveryOrderService, deliveryOrchestrator)
 	deliveryOrchestrator.SetApprovalService(approvalService)
 	mcpToolRegistry.SetDeliveryOrchestrator(deliveryOrchestrator)

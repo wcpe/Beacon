@@ -80,6 +80,10 @@ func (s *DeliveryOrchestrator) activateTarget(rt *orderRuntime, t *model.ChangeT
 			map[string]any{"activated_at": s.now()})
 		return
 	}
+	// FR-264：生效命令同样先过能力守卫（目标可能在推送期间被换成旧 agent / 身份重绑）。
+	if len(s.rejectUnsupportedTargets(rt, []*model.ChangeTarget{t})) > 0 {
+		return
+	}
 	payload := deliveryActivatePayload{OrderID: rt.order.ID, ActivationMethod: rt.order.ActivationMethod}
 	if rt.order.ActivationMethod == model.ActivationMethodRestart {
 		payload.ActivateTimeoutSec = rt.order.ActivateTimeoutSec
@@ -254,6 +258,25 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 	if len(pending) == 0 {
 		return
 	}
+	// FR-264：下发前先过能力守卫——启动期全员合格不代表此刻仍合格（agent 期间被换回旧版 / 身份重绑），
+	// 不合格目标就地置 failed 并写可读原因，不下发命令（旧 agent 收到也执行不了，只会挂到超时）。
+	blocked := s.rejectUnsupportedTargets(rt, pending)
+	if len(blocked) > 0 {
+		blockedSet := make(map[uint]struct{}, len(blocked))
+		for _, id := range blocked {
+			blockedSet[id] = struct{}{}
+		}
+		kept := make([]*model.ChangeTarget, 0, len(pending))
+		for _, t := range pending {
+			if _, hit := blockedSet[t.ID]; !hit {
+				kept = append(kept, t)
+			}
+		}
+		pending = kept
+	}
+	if len(pending) == 0 {
+		return
+	}
 	fileCount, totalBytes := s.manifestSummary(rt.order.ID)
 	dispatched := make([]*model.ChangeTarget, 0, len(pending))
 	err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -286,6 +309,45 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 		s.notifyAgent(rt.nsCode, t.ServerID)
 		s.emitTargetEvent(rt, t)
 	}
+}
+
+// rejectUnsupportedTargets 对一批目标执行 agent 能力版本守卫（FR-264）：把不具备流式交付能力的目标
+// 就地置 failed 并写可读原因，返回被拒目标的 id 列表（调用方据此把它们排除出本轮下发）。
+//
+// 为什么不是「跳过去、什么都不落」：不下发命令的目标若仍留在 pending，推进器每轮都会重扫重试，
+// 运维只看到「卡住」；置 failed 并带原因才把「为什么没动」表达出来（与 ADR-0088 同族的可观测纪律）。
+// 守卫未装配 / 最低版本设置为空 → 返回空列表（不校验）。
+func (s *DeliveryOrchestrator) rejectUnsupportedTargets(rt *orderRuntime, targets []*model.ChangeTarget) []uint {
+	if s.capability == nil || len(targets) == 0 {
+		return nil
+	}
+	serverIDs := make([]string, 0, len(targets))
+	for _, t := range targets {
+		serverIDs = append(serverIDs, t.ServerID)
+	}
+	unsupported, err := s.capability.filterUnsupported(rt.order.NamespaceID, serverIDs)
+	if err != nil {
+		slog.Error("交付编排校验 agent 交付能力失败", "orderId", rt.order.ID, "错误", err)
+		return nil // 查询失败不猜、不误伤目标（守卫是护栏不是闸门）
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	minVersion := s.capability.minVersion()
+	blocked := make([]uint, 0, len(unsupported))
+	for _, t := range targets {
+		actual, hit := unsupported[t.ServerID]
+		if !hit {
+			continue
+		}
+		reason := deliveryCapabilityRejectReason(actual, minVersion)
+		if s.casTarget(rt, t, []string{model.ChangeTargetStatusPending, model.ChangeTargetStatusPushed},
+			model.ChangeTargetStatusFailed, map[string]any{"error": reason}) {
+			s.emitTargetEvent(rt, t)
+			blocked = append(blocked, t.ID)
+		}
+	}
+	return blocked
 }
 
 // manifestSummary 求某单清单摘要（文件数 / 总字节）：写入 delivery_push 命令载荷，仅摘要绝不含内容。

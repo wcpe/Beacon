@@ -454,6 +454,9 @@ var (
 	// ErrDeliveryBlobSlotLost 上传占位行在落账前已被清理器回收（FR-261）：明确报错让 agent 重传，
 	// 不得静默「假就绪」——那会让元数据与磁盘互不相认，目标下载时才 404。
 	ErrDeliveryBlobSlotLost = New(http.StatusConflict, "blob_upload_slot_lost", "上传占位已被回收（可能上传过久或清理器已介入），请重新上传")
+	// ErrDeliveryAgentCapabilityUnsupported 目标 / 模板源 agent 版本低于交付能力最低要求（FR-264，ADR-0069 L58）：
+	// 已拒绝下发交付命令；具体版本与最低要求带在 message 里，随目标 error 透出给运维。
+	ErrDeliveryAgentCapabilityUnsupported = New(http.StatusConflict, "agent_capability_unsupported", "目标 agent 不具备交付流式能力（版本过低），已拒绝下发交付命令")
 
 	// ErrAssetNotFound 文件资产在该服最新清单中不存在（预览 / diff 目标缺失，FR-164，spec §5.2；code 对齐 devmock）。
 	ErrAssetNotFound = New(http.StatusNotFound, "asset_not_found", "该服清单中不存在此文件")
