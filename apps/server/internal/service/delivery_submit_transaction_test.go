@@ -3,12 +3,14 @@ package service
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -24,10 +26,11 @@ func countApprovalRequests(t *testing.T, db *gorm.DB) int64 {
 }
 
 // draftSubmitOrder 建一张满足全部提交前置的 draft 单（文件项 + 模板源在线 + 点名目标）。
-func draftSubmitOrder(t *testing.T, h *orchestratorHarness) *model.ChangeOrder {
+// shaSeed 让同一用例里建多张单时用不同的 blob 摘要——delivery_blob.sha256 有唯一约束。
+func draftSubmitOrder(t *testing.T, h *orchestratorHarness, shaSeed string) *model.ChangeOrder {
 	t.Helper()
 	detail := createDraftOrder(t, h.f)
-	seedFileItemWithBlob(t, h.env.db, detail.ID, "plugins/demo.jar", repeatHex("ab", 64), 64)
+	seedFileItemWithBlob(t, h.env.db, detail.ID, "plugins/demo.jar", repeatHex(shaSeed, 64), 64)
 	order, err := repository.NewChangeOrderRepository(h.env.db).FindByID(detail.ID)
 	if err != nil || order == nil {
 		t.Fatalf("回读 draft 单失败: %v", err)
@@ -41,7 +44,7 @@ func draftSubmitOrder(t *testing.T, h *orchestratorHarness) *model.ChangeOrder {
 // 修后：建申请失败（缺幂等键）→ 事务整体回滚，单仍是可编辑的 draft，可修正后重试。
 func TestRequestSubmitDoesNotFreezeOrderWhenApprovalRequestFails(t *testing.T) {
 	h, _ := newTicketApprovalHarness(t)
-	order := draftSubmitOrder(t, h)
+	order := draftSubmitOrder(t, h, "ab")
 
 	// 缺 Idempotency-Key：审批申请创建期即被拒（400 INVALID_PARAM）。
 	_, err := h.env.orders.RequestSubmit(order.ID, "提交审批", auth.HumanPrincipal("ops"), "", "ops", "10.0.0.1")
@@ -81,13 +84,26 @@ func TestRequestSubmitDoesNotFreezeOrderWhenApprovalRequestFails(t *testing.T) {
 // 修后：pending_approval 且无未终结审批申请即认定为「有状态无申请」的死结，允许重新提审自愈。
 func TestRequestSubmitSelfHealsPendingApprovalWithoutLiveRequest(t *testing.T) {
 	h, _ := newTicketApprovalHarness(t)
-	order := draftSubmitOrder(t, h)
+	order := draftSubmitOrder(t, h, "ab")
 	// 铺死结现场：单已冻结，但关联申请已 failed（执行失败终态，不可撤回）。
+	// 再给**另一张单**铺一条未终结申请——反向断言用：证明自愈判定是按单号过滤的，
+	// 而不是「库里存在任何未终结交付申请就一律拒绝」的全局统计。
 	setOrderStatus(t, h.env.db, order.ID, model.ChangeOrderStatusPendingApproval)
 	mustCreate(t, h.env.db, &model.ApprovalRequest{
-		RequestID: "apr_failed_exec", OperationKey: "delivery.approve", OperationKind: "delivery.approve",
-		ResourceType: model.TargetTypeChangeOrder, ResourceID: "1", IdempotencyKey: "submit-old",
+		RequestID: "apr_failed_exec", OperationKey: authz.OperationDeliveryApprove,
+		OperationKind: authz.OperationDeliveryApprove,
+		ResourceType:  model.TargetTypeChangeOrder,
+		ResourceID:    strconv.FormatUint(uint64(order.ID), 10), IdempotencyKey: "submit-old",
 		Payload: "{}", Status: model.ApprovalStatusFailed, Version: 1,
+	})
+	otherOrder := draftSubmitOrder(t, h, "cd")
+	setOrderStatus(t, h.env.db, otherOrder.ID, model.ChangeOrderStatusPendingApproval)
+	mustCreate(t, h.env.db, &model.ApprovalRequest{
+		RequestID: "apr_other_pending", OperationKey: authz.OperationDeliveryApprove,
+		OperationKind: authz.OperationDeliveryApprove,
+		ResourceType:  model.TargetTypeChangeOrder,
+		ResourceID:    strconv.FormatUint(uint64(otherOrder.ID), 10), IdempotencyKey: "submit-other",
+		Payload: "{}", Status: model.ApprovalStatusPending, Version: 1,
 	})
 
 	ticket, err := h.env.orders.RequestSubmit(order.ID, "执行失败后重新提审", auth.HumanPrincipal("ops"), "submit-heal", "ops", "10.0.0.1")
@@ -106,8 +122,10 @@ func TestRequestSubmitSelfHealsPendingApprovalWithoutLiveRequest(t *testing.T) {
 		Count(&live).Error; err != nil {
 		t.Fatalf("统计未终结申请失败: %v", err)
 	}
-	if live != 1 {
-		t.Fatalf("自愈后应恰有 1 条未终结申请，实际 %d", live)
+	// 本单 1 条（自愈补建的）+ 另一张单那条未终结的 = 2 条。
+	// 若实现误写成「库里有任何未终结交付申请就拒绝」，第一条断言就会失败——反向锁定按单号过滤。
+	if live != 2 {
+		t.Fatalf("自愈后本单应有 1 条未终结申请、另一单 1 条保留，合计 2，实际 %d", live)
 	}
 }
 
@@ -115,7 +133,7 @@ func TestRequestSubmitSelfHealsPendingApprovalWithoutLiveRequest(t *testing.T) {
 // 单已有未终结审批申请（pending / executing）时重提会叠出两条并行的同单审批，必须拒绝且不建申请。
 func TestRequestSubmitRejectsDuplicateWhileApprovalPending(t *testing.T) {
 	h, _ := newTicketApprovalHarness(t)
-	order := draftSubmitOrder(t, h)
+	order := draftSubmitOrder(t, h, "ab")
 	if _, err := h.env.orders.RequestSubmit(order.ID, "提交审批", auth.HumanPrincipal("ops"), "submit-1", "ops", ""); err != nil {
 		t.Fatalf("首次提审失败: %v", err)
 	}

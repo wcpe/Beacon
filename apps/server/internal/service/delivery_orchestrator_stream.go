@@ -248,12 +248,25 @@ func (s *DeliveryOrchestrator) markObserveStarted(orderID uint, batchNo int, sta
 }
 
 // clearObserve 清空某单观察窗缓冲（推进门确认切批 / 紧急终止后）。
+//
 // 同时清停滞观测（FR-265）：单已收口就不再会停滞，留着只是内存垃圾。
+// 本函数必须在 stallMu 下清停滞表——调用方之一（审批 afterCommit）不持 s.mu，
+// 与推进器在 mu 下的 detectStall 构成并发读写（P0）。
 func (s *DeliveryOrchestrator) clearObserve(orderID uint) {
 	s.observeMu.Lock()
 	delete(s.observeByOrder, orderID)
 	s.observeMu.Unlock()
 	s.clearStall(orderID)
+}
+
+// releaseTerminalMemory 在单进入终态时统一释放本进程内按单索引的内存（FR-265）：
+// 观察窗缓冲 + 停滞观测。
+//
+// 为什么要有这个统一出口：终态化有多条路径（人工终止、确认末批、自动收单、人工结束回滚、
+// 熔断后的终态迁移……），此前只在「确认批 / 人工终止」两条上释放，逐个补点既容易漏
+// 也断言不出「全部出口都释放」。凡是单不再被推进器装载的地方都调它，漏掉即内存无界增长。
+func (s *DeliveryOrchestrator) releaseTerminalMemory(orderID uint) {
+	s.clearObserve(orderID)
 }
 
 // ObserveSeries 读某单当前批观察窗序列（/observe 接真，spec §4.6.3）；无缓冲返回空形态（数组非 null）。

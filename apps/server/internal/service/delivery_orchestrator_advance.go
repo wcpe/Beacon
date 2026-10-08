@@ -493,8 +493,9 @@ func (s *DeliveryOrchestrator) tripBreaker(rt *orderRuntime, batch *model.Change
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		repoTx := s.repo.WithTx(tx)
 		// CAS 口径统一（FR-262）：批 CAS 必须与本域其它写入同口径显式判命中。
-		// 此前这里丢弃 UpdateBatchCAS 的 bool，批被并发迁移（如双路流转同时評估到同一批）时本事务照样提交，
-		// 落在「批未 failed 而单已 paused」的半截状态；也与时 reading 到的 cancelled / completed 单互相打架。
+		// 此前这里丢弃 UpdateBatchCAS 的 bool，批被并发迁移（如两条流转路径同时评估到同一批）
+		// 时本事务照样提交，落在「批未 failed 而单已 paused」的半截状态，
+		// 与库里已是 cancelled / completed 的单互相打架。
 		if ok, e := repoTx.UpdateBatchCAS(batch.ID,
 			[]string{model.ChangeBatchStatusRunning, model.ChangeBatchStatusObserving},
 			map[string]any{"status": model.ChangeBatchStatusFailed, "break_reason": reason, "finished_at": now}); e != nil {

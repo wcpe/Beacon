@@ -100,7 +100,7 @@ func TestOrchestratorStallNoActiveBatchWarns(t *testing.T) {
 	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
-	// 把唯一活动批並发迁成 completed，模拟「批不在 any 活动态」的数据不一致现场。
+	// 把唯一活动批并发迁成 completed，模拟「批不在任何活动态」的数据不一致现场。
 	if err := h.env.db.Model(&model.ChangeBatch{}).Where("order_id = ?", order.ID).
 		Update("status", model.ChangeBatchStatusCompleted).Error; err != nil {
 		t.Fatalf("改批状态失败: %v", err)

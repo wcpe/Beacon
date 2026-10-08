@@ -724,6 +724,8 @@ func (s *DeliveryOrchestrator) applyFinishRollback(id uint, operator, clientIP s
 	if err != nil {
 		return nil, mapCASConflict(err, order.Status, "结束回滚")
 	}
+	// 人工收单同样是终态出口：释放观察窗缓冲与停滞观测（FR-265，见 releaseTerminalMemory 说明）。
+	s.releaseTerminalMemory(order.ID)
 	return s.detailView(order.ID)
 }
 
