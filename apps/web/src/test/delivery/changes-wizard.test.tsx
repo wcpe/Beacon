@@ -92,7 +92,7 @@ describe('/changes 引导创建向导', () => {
     await submitAndAssert(user, dialog)
   })
 
-  it('模板源步：差异行可点开预览文件内容（懒加载）', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+  it('模板源步：差异行预览按真机契约展示「需审批」引导', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
@@ -101,23 +101,21 @@ describe('/changes 引导创建向导', () => {
     await user.click(within(dialog).getByRole('button', { name: '下一步' }))
     await pickSourceAndScan(user, dialog)
 
-    // 文本差异行「预览」→ 懒加载文件内容出现（内联展开，不叠模态）
+    // 文本差异行「预览」→ 懒加载取内容恒 409：内联展开审批引导（不叠模态、不静默失败）
     const textRow = within(dialog).getByText('plugins/Essentials/config.yml').closest('li')
     if (!textRow) {
       throw new Error('未找到文本差异项所在行')
     }
     await user.click(within(textRow).getByRole('button', { name: '预览' }))
-    expect((await within(textRow).findAllByText(/max-players/)).length).toBeGreaterThan(0)
+    expect(await within(textRow).findByText('该文件内容需审批后查看')).toBeInTheDocument()
 
-    // 二进制差异行（.jar）→ 仅元数据提示
+    // 二进制差异行同形（契约先于内容形态：一律需审批）
     const jarRow = within(dialog).getByText('plugins/Essentials.jar').closest('li')
     if (!jarRow) {
       throw new Error('未找到二进制差异项所在行')
     }
     await user.click(within(jarRow).getByRole('button', { name: '预览' }))
-    expect(
-      await within(jarRow).findByText('二进制文件不支持内容对比，仅展示元数据'),
-    ).toBeInTheDocument()
+    expect(await within(jarRow).findByText('该文件内容需审批后查看')).toBeInTheDocument()
   })
 
   it('扫描目录范围：默认 plugins/，改动作废已扫差异，成单后随单落库', { timeout: WIZARD_TEST_TIMEOUT }, async () => {

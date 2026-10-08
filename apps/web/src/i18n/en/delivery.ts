@@ -735,6 +735,32 @@ export const delivery = {
         gateBy: '{{who}} at {{at}}',
         targetsTitle: 'Batch targets',
       },
+      // Per-server status wall (FR-254): rollout / rollback status, failure reason, backup marker
+      targets: {
+        title: 'Per-server status',
+        summary: '{{total}} target servers',
+        failedCount: '{{count}} failed on this page',
+        rollbackFailedCount: '{{count}} rollback failed on this page',
+        rollbackNone: 'Not rolled back',
+        noFailure: '—',
+        backupPresent: 'Backup present',
+        backupMissing: 'No backup',
+        columns: {
+          serverId: 'Server ID',
+          batch: 'Batch',
+          status: 'Rollout status',
+          rollback: 'Rollback status',
+          error: 'Failure reason',
+          rollbackError: 'Rollback failure reason',
+          backup: 'Backup',
+        },
+        rollbackStatus: {
+          pending: 'Pending rollback',
+          running: 'Rolling back',
+          rolled_back: 'Rolled back',
+          failed: 'Rollback failed',
+        },
+      },
       // Observation
       observe: {
         title: 'Activation observation',
@@ -763,15 +789,54 @@ export const delivery = {
         order: 'Order',
         batch: 'Batch',
         target: 'Target',
+        // SSE live push / polling fallback visibility
+        live: 'Live push',
+        polling: 'Polling every 5s',
       },
+    },
+    // Approval progress (FR-255): unified approval requests bound to this order
+    approval: {
+      title: 'Approval progress',
+      openCenter: 'Approval center',
+      open: 'View request',
+      approver: 'Approver',
+      approverPending: 'Pending',
+      updatedAt: 'Updated',
+      reason: 'Request reason',
+      rejectReason: 'Rejection reason',
+      // Order exceeds the display cap (accurate: locally filtered rows)
+      truncatedOrder: '{{total}} requests for this order; showing the latest {{shown}}',
+      // Server-side paging truncation: keyword matches may include unrelated rows
+      truncatedServer: 'The approval center matched {{count}} records for this order id; more may exist',
+      // No matching row on this page while the server has more pages: never silent
+      unmatched: 'No request for this order on this page (paging may have more); open the approval center',
+      operation: {
+        submit: 'Submit for approval',
+        draftDelete: 'Delete draft',
+        resume: 'Resume rollout',
+        confirmBatch: 'Confirm batch',
+        rollback: 'Full rollback',
+        rollbackFinish: 'Finish rollback',
+      },
+      status: {
+        pending: 'Pending approval',
+        executing: 'Executing',
+        succeeded: 'Approved',
+        failed: 'Execution failed',
+        rejected: 'Rejected',
+        withdrawn: 'Withdrawn',
+        expired: 'Expired',
+      },
+    },
+    // Approval ticket feedback (202 receipt of the six request actions)
+    ticket: {
+      submitted: 'Approval requested (request {{id}})',
+      open: 'Approval center',
     },
     // Lifecycle actions
     actions: {
       submit: 'Submit for approval',
       withdraw: 'Withdraw',
-      approve: 'Approve',
-      reject: 'Reject',
-      start: 'Start rollout',
       pause: 'Pause',
       resume: 'Resume',
       cancel: 'Cancel',
@@ -779,15 +844,7 @@ export const delivery = {
     },
     confirm: {
       submitTitle: 'Submit for approval',
-      submitDesc: 'Once submitted the order is pending approval and can only start after approval; a reason is required.',
-      approveTitle: 'Approve',
-      approveDesc: 'After approval, the Change order can be started for rollout.',
-      rejectTitle: 'Reject Change order',
-      rejectDesc: 'After rejection the order returns to draft; a reason is required.',
-      withdrawTitle: 'Withdraw Change order',
-      withdrawDesc: 'After withdrawal the order returns to draft.',
-      startTitle: 'Start rollout',
-      startDesc: 'Targets are finalized and rollout begins by batch strategy; overlap with active orders is rejected.',
+      submitDesc: 'Once submitted the order is pending approval and starts automatically after approval; a reason is required.',
       pauseTitle: 'Pause rollout',
       pauseDesc: 'After pause, the current batch stops advancing and can be resumed later.',
       resumeTitle: 'Resume rollout',
@@ -795,9 +852,9 @@ export const delivery = {
       cancelTitle: 'Cancel Change order',
       cancelDesc: 'Unexecuted targets are skipped after cancel; a reason is required.',
       confirmBatchTitle: 'Confirm next',
-      confirmBatchDesc: 'After confirmation the next batch starts; confirming the last batch completes the order.',
+      confirmBatchDesc: 'Submitted for approval; once approved the next batch starts. Confirming the last batch completes the order.',
       deleteTitle: 'Delete draft',
-      deleteDesc: 'Only drafts can be deleted; not recoverable.',
+      deleteDesc: 'Only drafts can be requested for deletion; not recoverable once approved.',
       resumeMode: 'Resume mode',
       retryFailed: 'Retry failed targets',
       skipFailed: 'Skip failed targets',
@@ -850,13 +907,10 @@ export const delivery = {
       // Binary form: only metadata
       binaryOnly: 'Binary files do not support content diff; only metadata is shown',
       binaryMeta: 'Size {{size}} · Hash {{hash}}',
-      // Sensitive path (403): provide a reason for one-time access
-      sensitiveHint: 'This path matches a sensitive rule. Viewing content requires a reason (logged for audit).',
-      reasonLabel: 'Reason to view',
-      reasonPlaceholder: 'e.g. reconciling new plugin config diff',
-      sensitiveConfirm: 'View with reason',
-      // Agent offline (504): retryable
-      retry: 'Retry',
+      // Needs approval (the real control plane always returns 409 operation_requires_approval)
+      needsApproval: 'This file content requires approval',
+      needsApprovalHint: 'Reading file content from a source server is a sensitive operation: request a content read in the approval center, then the diff becomes visible.',
+      needsApprovalAction: 'Approval center',
     },
     // Batch state machine visualization (batch-flow)
     batchFlow: {

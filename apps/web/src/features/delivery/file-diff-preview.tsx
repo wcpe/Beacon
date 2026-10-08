@@ -1,13 +1,17 @@
 // 变更项文件内容预览（懒加载）：按变更项 id 拉取文件前后内容，按变更类型渲染——
 // modified 走行级双栏 diff（复用 TextDiff），added 展示新文件内容，removed 展示被删除内容，
-// binary 项不回内容只展示元数据。错误形态按 HTTP status 分流（经 ApiClientError，不耦合错误码）：
-// 403 = 敏感路径，内联填写原因后带 reason 重试；504 = before 侧 agent 离线，可手动重试。
+// binary 项不回内容只展示元数据。
+//
+// 真实形态：后端对读源服文件内容恒回 409 operation_requires_approval（内容读取必须先走统一审批），
+// 故此处按 409 展示「需审批」引导并给审批中心入口——不再按 403（敏感路径）/ 504（agent 离线）分流，
+// 那两条是审批放行后才可能出现的下游错误，也不静默失败。
 // 仅在调用方展开该行时才挂载，故 useQuery 天然懒执行（展开即取、收起即卸载）。
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 
-import { AsyncSection, Button, Input, cn } from '@beacon/ui'
+import { useQuery } from '@tanstack/react-query'
+
+import { AsyncSection, Button, cn } from '@beacon/ui'
 
 import { ApiClientError } from '../../api/delivery'
 import type { ChangeOrderItem, FileDiffResponse } from '../../api/delivery-changes'
@@ -20,32 +24,23 @@ interface FileDiffPreviewProps {
   item: ChangeOrderItem
 }
 
+// 需审批（真机恒 409 operation_requires_approval）：内容读取必须先经统一审批放行。
+// 状态码与错误码都要对：将来其他 409（如资源冲突）不该被误报成「需审批」。
+const NEEDS_APPROVAL_STATUS = 409
+const NEEDS_APPROVAL_CODE = 'operation_requires_approval'
+
 export default function FileDiffPreview({ orderId, item }: FileDiffPreviewProps) {
   const { t } = useTranslation()
-  // 敏感放行原因：403 后由内联表单提交，进 queryKey 触发带原因重取
-  const [reason, setReason] = useState<string | null>(null)
-
   const query = useQuery({
-    queryKey: ['change-orders', 'file-diff', orderId, item.id, reason],
-    queryFn: () => fetchChangeItemFileDiff(orderId, item.id, reason === null ? undefined : { reason }),
-    // 403（需原因）/ 504（agent 离线）是预期错误形态，自动重试无意义，交给内联表单 / 重试按钮处理
+    queryKey: ['change-orders', 'file-diff', orderId, item.id],
+    queryFn: () => fetchChangeItemFileDiff(orderId, item.id),
+    // 409 是预期形态，自动重试无意义
     retry: false,
   })
 
-  const status = query.error instanceof ApiClientError ? query.error.status : null
-  if (status === 403) {
-    return <SensitiveReasonForm pending={query.isFetching} onSubmit={setReason} />
-  }
-  if (status === 504) {
-    return (
-      <OfflineRetry
-        message={query.error instanceof Error ? query.error.message : String(query.error)}
-        pending={query.isFetching}
-        onRetry={() => {
-          void query.refetch()
-        }}
-      />
-    )
+  const apiError = query.error instanceof ApiClientError ? query.error : null
+  if (apiError?.status === NEEDS_APPROVAL_STATUS && apiError.code === NEEDS_APPROVAL_CODE) {
+    return <NeedsApprovalHint />
   }
 
   return (
@@ -120,47 +115,16 @@ function BinaryMeta({ item, path }: { item: ChangeOrderItem; path: string }) {
   )
 }
 
-// 敏感路径（403）：内联填写原因后带 reason 重试（原因将记入审计）
-function SensitiveReasonForm({ pending, onSubmit }: { pending: boolean; onSubmit: (reason: string) => void }) {
-  const { t } = useTranslation()
-  const [draft, setDraft] = useState('')
-  return (
-    <div className="grid gap-2">
-      <p className="rounded-lg border border-warn-bd bg-warn-bg px-3 py-2 text-sm text-warn">
-        {t('delivery.preview.fileDiff.sensitiveHint')}
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          aria-label={t('delivery.preview.fileDiff.reasonLabel')}
-          placeholder={t('delivery.preview.fileDiff.reasonPlaceholder')}
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value)
-          }}
-          className="h-8 w-64"
-        />
-        <Button
-          size="sm"
-          disabled={draft.trim() === '' || pending}
-          onClick={() => {
-            onSubmit(draft.trim())
-          }}
-        >
-          {t('delivery.preview.fileDiff.sensitiveConfirm')}
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-// agent 离线（504）：展示后端脱敏真因 + 手动重试
-function OfflineRetry({ message, pending, onRetry }: { message: string; pending: boolean; onRetry: () => void }) {
+// 需审批（409 operation_requires_approval，真机恒此形态）：
+// 文件内容读取必须先经统一审批放行，这里给明确引导与入口，不静默失败也不误报为「无权限」
+function NeedsApprovalHint() {
   const { t } = useTranslation()
   return (
-    <div className="grid gap-2">
-      <p className="text-sm text-destructive">{message}</p>
-      <Button size="sm" variant="outline" className="w-fit" disabled={pending} onClick={onRetry}>
-        {t('delivery.preview.fileDiff.retry')}
+    <div className="grid gap-2 rounded-lg border border-warn-bd bg-warn-bg px-3 py-2">
+      <p className="text-sm text-warn">{t('delivery.preview.fileDiff.needsApproval')}</p>
+      <p className="text-xs text-ink-3">{t('delivery.preview.fileDiff.needsApprovalHint')}</p>
+      <Button size="sm" variant="outline" className="w-fit" asChild>
+        <Link to="/approvals">{t('delivery.preview.fileDiff.needsApprovalAction')}</Link>
       </Button>
     </div>
   )

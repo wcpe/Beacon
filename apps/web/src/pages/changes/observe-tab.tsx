@@ -1,6 +1,7 @@
 // 观察窗 Tab：GET observe → 观察说明 + 汇总（均值 / 最差健康分、均值 / 最低 TPS、
-// 告警总数）+ 当前批逐目标表（取序列末点为当前值）；批次推进期间可手动刷新。
-import { useMemo } from 'react'
+// 告警总数）+ 当前批逐目标表（取序列末点为当前值）。
+// 刷新两条路：SSE 推来目标 / 批次事件即立刻重取（跟着进度走）；断流时由 5s 轮询兜底。
+import { useEffect, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
@@ -16,6 +17,7 @@ import {
 } from '@beacon/ui'
 
 import { fetchChangeObserve, type ChangeObserveResponse } from '../../api/delivery-changes'
+import { EVENTS_FALLBACK_POLL_MS, useChangeEvents } from '../../features/delivery/use-change-events'
 
 interface ObserveTabProps {
   orderId: number
@@ -42,12 +44,28 @@ function currentOf(row: ObserveRow): ObserveCurrent {
 export default function ObserveTab({ orderId }: ObserveTabProps) {
   const { t } = useTranslation()
 
-  // 观察窗数据用一次性 fetch（契约为轮询替代 SSE），保持 5s 刷新但测试不依赖轮询。
+  // 观察窗数据本身是 JSON 轮询端点（无 SSE 契约）：5s 轮询即断线回退形态，测试不依赖轮询。
   const query = useQuery({
     queryKey: ['change-orders', 'observe', orderId],
     queryFn: () => fetchChangeObserve(orderId),
-    refetchInterval: 5000,
+    refetchInterval: EVENTS_FALLBACK_POLL_MS,
   })
+
+  // 进度事件（SSE）驱动即时刷新：seq 前进才重取，避免首屏与手动刷新被重复触发
+  const { events } = useChangeEvents(orderId)
+  const refetchRef = useRef(query.refetch)
+  refetchRef.current = query.refetch
+  const seenSeqRef = useRef<number | null>(null)
+  useEffect(() => {
+    const latest = events.at(-1)?.seq ?? null
+    if (latest === null) {
+      return
+    }
+    if (seenSeqRef.current !== null && latest > seenSeqRef.current) {
+      void refetchRef.current()
+    }
+    seenSeqRef.current = latest
+  }, [events])
 
   const data = query.data
   const batchNo = data?.batchNo ?? null

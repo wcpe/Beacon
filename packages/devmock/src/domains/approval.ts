@@ -27,6 +27,7 @@ import {
 import { defineScenarioStore } from '../store'
 import type { MockScenario } from '../scenario'
 import { isoOffset, pseudoSha256 } from '../support'
+import { deliveryApprovalSpecs } from './delivery-approval-bridge'
 import { enqueueApprovedChangeOrder } from './delivery'
 
 interface ApprovalState {
@@ -160,15 +161,16 @@ function buildApproval(scenario: MockScenario): ApprovalState {
     makeApproval({
       ordinal: 9101,
       requestId: 'apr_change_9101',
-      operationKey: 'delivery.change_order.start',
-      resourceType: 'change_order',
-      resourceId: '5003',
+      // 对齐真机的交付审批：操作键 delivery.approve（提审），资源类型 change-order，资源号即变更单号
+      operationKey: 'delivery.approve',
+      resourceType: 'change-order',
+      resourceId: '5002',
       riskLevel: 'high',
       status: 'pending',
       requesterType: 'human',
       requesterId: 'ops-chen',
       namespaceId: 1,
-      safeSummary: '启动反作弊组件热更，目标 12 台 backend',
+      safeSummary: '提审变更单 #5002：经济系统配置调优',
       ageMs: 2 * HOUR,
     }),
     makeApproval({
@@ -282,8 +284,8 @@ function buildApproval(scenario: MockScenario): ApprovalState {
         makeApproval({
           ordinal: 9200 + i,
           requestId: `apr_bulk_${String(i + 1).padStart(3, '0')}`,
-          operationKey: i % 2 === 0 ? 'delivery.change_order.start' : 'server.restore',
-          resourceType: i % 2 === 0 ? 'change_order' : 'server',
+          operationKey: i % 2 === 0 ? 'delivery.approve' : 'server.restore',
+          resourceType: i % 2 === 0 ? 'change-order' : 'server',
           resourceId: i % 2 === 0 ? String(6000 + i) : `backend-${String(i + 1)}`,
           riskLevel: i % 3 === 0 ? 'critical' : 'high',
           status: statuses[i % statuses.length],
@@ -300,6 +302,35 @@ function buildApproval(scenario: MockScenario): ApprovalState {
 }
 
 const getApprovalState: () => ApprovalState = defineScenarioStore(buildApproval)
+
+// 交付域六类申请动作（提审 / 删除 / 继续 / 批次确认 / 回滚 / 结束回滚）在建申请时把票据登记进
+// bridge；本域按登记项补行，保证「票据申请号 = 审批详情可读的申请号」（真机由交付服务直接建行）。
+function materializeDeliveryApprovals(state: ApprovalState): void {
+  for (const spec of deliveryApprovalSpecs()) {
+    if (state.rows.some((row) => row.requestId === spec.requestId)) {
+      continue
+    }
+    state.rows.unshift(
+      makeApproval({
+        ordinal: 20_000 + spec.orderId,
+        requestId: spec.requestId,
+        operationKey: spec.operationKey,
+        // 真机真值见 model.TargetTypeChangeOrder（带连字符）；写错会让审批进度卡过滤不到本单
+        resourceType: 'change-order',
+        resourceId: String(spec.orderId),
+        riskLevel: 'high',
+        status: 'pending',
+        requesterType: 'human',
+        requesterId: 'admin',
+        namespaceId: spec.namespaceId,
+        requestReason: spec.reason,
+        safeSummary: spec.safeSummary,
+        ageMs: 0,
+      }),
+    )
+  }
+}
+
 
 function advanceExecution(row: ApprovalRequest, state: ApprovalState): void {
   if (row.status !== 'executing') {
@@ -327,6 +358,7 @@ function isSensitiveDemoOperation(operationKey: string): boolean {
 function getApproval(info: MockRequestInfo): ApprovalRequest | undefined {
   const requestId = pathParam(info, 'requestId') || pathParam(info, 'id')
   const state = getApprovalState()
+  materializeDeliveryApprovals(state)
   const row = state.rows.find((item) => item.requestId === requestId || String(item.id) === requestId)
   if (row) {
     advanceExecution(row, state)
@@ -363,6 +395,8 @@ function touch(
 
 function listApprovals(request: Request): Response {
   const url = new URL(request.url)
+  const state = getApprovalState()
+  materializeDeliveryApprovals(state)
   const status = queryStr(url, 'status')
   const queue = queryStr(url, 'queue')
   const operationKey = queryStr(url, 'operationKey')
@@ -375,7 +409,7 @@ function listApprovals(request: Request): Response {
   const createdTo = queryTimeMs(url, 'createdTo')
   const expiresFrom = queryTimeMs(url, 'expiresFrom')
   const expiresTo = queryTimeMs(url, 'expiresTo')
-  const rows = getApprovalState().rows.filter((row) => {
+  const rows = state.rows.filter((row) => {
     if (status !== null && row.status !== status) return false
     if (operationKey !== null && row.operationKey !== operationKey) return false
     if (riskLevel !== null && row.riskLevel !== riskLevel) return false

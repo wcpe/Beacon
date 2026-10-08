@@ -1,5 +1,7 @@
-// 变更单详情视图：标题 + 状态徽标 + 生命周期操作区（按 status 显示可用动作）+ 五个 Tab。
-// 每个写操作走确认弹窗；submit/reject/cancel/delete 必填原因，熔断恢复必填 mode+reason。
+// 变更单详情视图：标题 + 状态徽标 + 生命周期操作区（按 status 显示可用动作）+ 审批进度 + 五个 Tab。
+// 每个直执写操作走确认弹窗；六类申请动作（提审 / 删除 / 继续 / 批次确认 / 回滚 / 结束回滚）返回 202 票据，
+// 成功只提示「已提交审批 + 申请号」，单据状态要到审批通过后才变化。
+// 审批决定（批准 / 拒绝 / 撤回）不在本页：只在统一审批中心 /approvals。
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -16,19 +18,20 @@ import {
 
 import { ApiClientError } from '../../api/delivery'
 import {
-  approveChangeOrder,
   cancelChangeOrder,
   deleteChangeOrder,
   fetchChangeOrder,
+  isApprovalTicket,
   pauseChangeOrder,
-  rejectChangeOrder,
   resumeChangeOrder,
   submitChangeOrder,
-  withdrawChangeOrder,
   type ChangeOrderDetail,
+  type DeliveryApprovalTicket,
 } from '../../api/delivery-changes'
 import ConfirmDialog, { type ConfirmResult } from './confirm-dialog'
 import { randomId } from '../../lib/random-id'
+import ApprovalProgress from '../../features/delivery/approval-progress'
+import { useApprovalTicketFeedback } from '../../features/delivery/approval-ticket'
 import { OrderRollbackActions, RollbackBanner } from '../../features/delivery/order-rollback'
 import { OrderStatusBadge } from '../../features/delivery/status-badges'
 import ItemsTab from './items-tab'
@@ -37,72 +40,78 @@ import BatchesTab from './batches-tab'
 import ObserveTab from './observe-tab'
 import EventsTab from './events-tab'
 
-// 生命周期动作类型
-type ActionKind =
-  | 'submit'
-  | 'delete'
-  | 'withdraw'
-  | 'approve'
-  | 'reject'
-  | 'pause'
-  | 'resume'
-  | 'cancel'
+// 本页可执行的动作类型（申请类动作走 202 票据，直执动作为暂停 / 终止）
+type ActionKind = 'submit' | 'delete' | 'pause' | 'resume' | 'cancel'
+
+// 生命周期动作（含两个跳转入口：待审批可撤回、已批准只能查看申请——审批撤回只允许 pending）
+type LifecycleAction = ActionKind | 'withdraw' | 'viewApproval'
+
+// 动作响应：申请类动作 → 202 票据；直执动作（暂停 / 终止）→ 200 最新详情
+type ActionOutcome = ChangeOrderDetail | DeliveryApprovalTicket
 
 interface DetailViewProps {
   orderId: number
-  onBack: () => void
 }
 
-export default function DetailView({ orderId, onBack }: DetailViewProps) {
+export default function DetailView({ orderId }: DetailViewProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const notifyTicket = useApprovalTicketFeedback()
 
   const [action, setAction] = useState<ActionKind | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
-  // 提审幂等键：同一「提审意图」重试复用同一键（后端据此去重），弹窗关闭即作废重来
-  const submitKeyRef = useRef<string | null>(null)
+  // 幂等键按动作意图缓存：同一意图重试复用同一键（后端据此去重），弹窗关闭即作废重来
+  const keysRef = useRef<Partial<Record<ActionKind, string>>>({})
 
   const query = useQuery({
     queryKey: ['change-orders', 'detail', orderId],
     queryFn: () => fetchChangeOrder(orderId),
   })
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['change-orders'] })
+  const invalidate = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['change-orders'] }),
+      // 申请类动作会新增 / 更新审批申请，审批进度卡与 /approvals 一并失效
+      queryClient.invalidateQueries({ queryKey: ['approvals'] }),
+    ])
+  }
+
+  const keyFor = (kind: ActionKind): string => {
+    const existing = keysRef.current[kind] ?? randomId()
+    keysRef.current[kind] = existing
+    return existing
+  }
 
   const runMutation = useMutation({
-    mutationFn: ({ kind, result }: { kind: ActionKind; result: ConfirmResult }) => {
+    mutationFn: ({ kind, result }: { kind: ActionKind; result: ConfirmResult }): Promise<ActionOutcome> => {
       switch (kind) {
-        case 'submit': {
-          // 幂等键必须携带（缺则后端 400 INVALID_PARAM，且单据会卡在 pending_approval）
-          const key = submitKeyRef.current ?? randomId()
-          submitKeyRef.current = key
-          return submitChangeOrder(orderId, result.reason, key)
-        }
+        case 'submit':
+          return submitChangeOrder(orderId, result.reason, keyFor('submit'))
         case 'delete':
-          return deleteChangeOrder(orderId, result.reason)
-        case 'withdraw':
-          return withdrawChangeOrder(orderId)
-        case 'approve':
-          return approveChangeOrder(orderId)
-        case 'reject':
-          return rejectChangeOrder(orderId, result.reason)
+          return deleteChangeOrder(orderId, result.reason, keyFor('delete'))
         case 'pause':
           return pauseChangeOrder(orderId)
         case 'resume':
-          return resumeChangeOrder(orderId, {
-            mode: result.mode ?? undefined,
-            reason: result.reason === '' ? undefined : result.reason,
-          })
+          return resumeChangeOrder(
+            orderId,
+            {
+              mode: result.mode ?? undefined,
+              reason: result.reason === '' ? undefined : result.reason,
+            },
+            keyFor('resume'),
+          )
         case 'cancel':
           return cancelChangeOrder(orderId, result.reason)
       }
     },
-    onSuccess: async (_data, variables) => {
+    onSuccess: async (data) => {
       await invalidate()
+      // 申请意图已提交：清键，避免下一次动作复用旧键（真机按 idempotency_key_reused 拒掉）
+      keysRef.current = {}
       setAction(null)
-      // 删除草稿后返回列表
-      if (variables.kind === 'delete') {
-        onBack()
+      // 申请动作返回 202 票据：反馈申请号并给去审批中心的入口（直执动作无需票据反馈）
+      if (isApprovalTicket(data)) {
+        notifyTicket(data)
       }
     },
     onError: (error) => {
@@ -120,7 +129,6 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
             {/* 状态徽标 + 生命周期操作区（面板标题已由 MasterDetail 头部承担，此处只留状态与可做动作） */}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
               <OrderStatusBadge status={order.status} />
-              {order.approvalRequestId ? <Link className="text-sm text-brand hover:underline" to={`/approvals/${encodeURIComponent(order.approvalRequestId)}`}>查看统一审批</Link> : null}
               <div className="flex flex-wrap items-center gap-2">
                 <LifecycleActions
                   order={order}
@@ -129,10 +137,13 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
                     setAction(kind)
                   }}
                 />
-                {/* 合法终态（已完成 / 已暂停 / 已终止）整单回滚；回滚中人工结束 */}
+                {/* 合法终态（已完成 / 已暂停 / 已终止）整单回滚申请；回滚中申请结束回滚 */}
                 <OrderRollbackActions order={order} />
               </div>
             </div>
+
+            {/* 审批进度：本单关联的统一审批申请（状态 / 审批人 / 驳回理由） */}
+            <ApprovalProgress orderId={orderId} />
 
             {/* 回滚信息横幅 + 回滚中逐目标进度 */}
             <RollbackBanner order={order} />
@@ -178,14 +189,14 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
           onOpenChange={(open) => {
             if (!open) {
               setAction(null)
-              // 关闭弹窗 = 放弃本次提审意图，下次提审重新生成幂等键
-              submitKeyRef.current = null
+              // 关闭弹窗 = 放弃本次申请意图，下次重新生成幂等键
+              keysRef.current = {}
             }
           }}
           title={confirmConfig(action, t).title}
           description={confirmConfig(action, t).description}
           confirmLabel={confirmConfig(action, t).confirmLabel}
-          requireReason={needsReason(action)}
+          requireReason={needsReason(action) || needsResumeReason(action, order)}
           requireMode={action === 'resume' && order.pauseKind !== 'manual'}
           pending={runMutation.isPending}
           errorText={errorText}
@@ -198,7 +209,8 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
   )
 }
 
-// 按当前 status 渲染可用生命周期动作按钮
+// 按当前 status 渲染可用生命周期动作按钮。
+// 「撤回」是审批动作：只在统一审批中心执行，这里给的是跳转入口（不在本页弹确认框、不调废弃的 /withdraw）。
 function LifecycleActions({
   order,
   onPick,
@@ -213,45 +225,62 @@ function LifecycleActions({
   }
   return (
     <div className="flex flex-wrap gap-2">
-      {actions.map((kind) => (
-        <Button
-          key={kind}
-          size="sm"
-          variant={kind === 'delete' || kind === 'cancel' ? 'outline' : 'default'}
-          onClick={() => {
-            onPick(kind)
-          }}
-        >
-          {t(`delivery.changes.actions.${kind}`)}
-        </Button>
-      ))}
+      {actions.map((kind) =>
+        kind === 'withdraw' || kind === 'viewApproval' ? (
+          <Button key={kind} size="sm" variant="outline" asChild>
+            <Link to="/approvals">
+              {kind === 'withdraw'
+                ? t('delivery.changes.actions.withdraw')
+                : t('delivery.changes.approval.openCenter')}
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            key={kind}
+            size="sm"
+            variant={kind === 'delete' || kind === 'cancel' ? 'outline' : 'default'}
+            onClick={() => {
+              onPick(kind)
+            }}
+          >
+            {t(`delivery.changes.actions.${kind}`)}
+          </Button>
+        ),
+      )}
     </div>
   )
 }
 
 // 状态 → 可用动作集合（批次内的「确认推进」在批次 Tab 内呈现，不在此处）
-function availableActions(status: ChangeOrderDetail['status']): ActionKind[] {
+function availableActions(status: ChangeOrderDetail['status']): LifecycleAction[] {
   switch (status) {
     case 'draft':
       return ['submit', 'delete']
     case 'pending_approval':
-      return ['approve', 'reject', 'withdraw']
-    case 'approved':
+      // 待审批可撤回：走审批中心（本页不再直调废弃的 /withdraw）
       return ['withdraw']
-    case 'rolling':
-      return ['pause']
+    case 'approved':
+      // 已批准不可撤回（服务端只允许 pending 撤回）：给「去审批中心」看执行进度
+      return ['viewApproval']
     case 'paused':
       return ['resume', 'cancel']
+    case 'rolling':
+      return ['pause']
     default:
       return []
   }
 }
 
-// 需要填写原因的动作：提审 / 驳回 / 终止 / 删除
+// 熔断 / 准备失败的「继续」也要填原因：真机 validateResumeArgs 对非人工暂停强制 reason 非空
+// （缺则 400 missing_reason，弹窗不给输入框时该动作永远发不出去）
+function needsResumeReason(kind: ActionKind, order: ChangeOrderDetail): boolean {
+  return kind === 'resume' && order.pauseKind !== 'manual'
+}
+
+// 需要填写原因的动作：提审 / 终止 / 删除（后端三个 Request* 均校验原因非空）
 function needsReason(kind: ActionKind): boolean {
-  // 提审、高风险操作填原因入审计（spec §4.8.1）：提交审批（后端 RequestSubmit 强制非空）、
-  // 驳回 / 紧急终止 / 删除 draft 单。
-  return kind === 'submit' || kind === 'reject' || kind === 'cancel' || kind === 'delete'
+  // 高风险操作填原因入审计与审批申请（spec §4.8.1）：提交审批、删除草稿、紧急终止。
+  return kind === 'submit' || kind === 'cancel' || kind === 'delete'
 }
 
 function confirmConfig(
@@ -268,21 +297,6 @@ function confirmConfig(
       titleKey: 'delivery.changes.confirm.deleteTitle',
       descKey: 'delivery.changes.confirm.deleteDesc',
       labelKey: 'delivery.changes.actions.delete',
-    },
-    withdraw: {
-      titleKey: 'delivery.changes.confirm.withdrawTitle',
-      descKey: 'delivery.changes.confirm.withdrawDesc',
-      labelKey: 'delivery.changes.actions.withdraw',
-    },
-    approve: {
-      titleKey: 'delivery.changes.confirm.approveTitle',
-      descKey: 'delivery.changes.confirm.approveDesc',
-      labelKey: 'delivery.changes.actions.approve',
-    },
-    reject: {
-      titleKey: 'delivery.changes.confirm.rejectTitle',
-      descKey: 'delivery.changes.confirm.rejectDesc',
-      labelKey: 'delivery.changes.actions.reject',
     },
     pause: {
       titleKey: 'delivery.changes.confirm.pauseTitle',

@@ -10,3 +10,8 @@ export function notifySuccess(text: string): void {
 export function notifyError(text: string): void {
   toast.error(text)
 }
+
+/** 写操作成功 + 一个动作按钮（如「去审批中心」）：票据类操作的成功反馈都带下一步入口。 */
+export function notifySuccessAction(text: string, action: { label: string; onClick: () => void }): void {
+  toast.success(text, { action })
+}

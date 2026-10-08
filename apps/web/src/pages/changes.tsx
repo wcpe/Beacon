@@ -101,12 +101,7 @@ export default function ChangesPage() {
         }
         detail={
           selected ? (
-            <DetailView
-              orderId={selected.id}
-              onBack={() => {
-                setSelected(null)
-              }}
-            />
+            <DetailView orderId={selected.id} />
           ) : null
         }
         detailTitle={selected?.title ?? ''}

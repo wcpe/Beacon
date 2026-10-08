@@ -1,7 +1,9 @@
 // 灰度批次 Tab：批次状态机可视化（共享 batch-flow：纵向推进流 / 当前批高亮 /
-// 熔断提示 / 待确认批醒目放行按钮）+ 执行期快捷操作（暂停 / 继续 / 紧急终止，
-// 回调父级统一确认弹窗）。放行走本 Tab 内确认弹窗，推进后随详情失效即时刷新。
-import { useState } from 'react'
+// 熔断提示 / 待确认批醒目放行按钮）+ 单服级状态墙（逐台进度与失败原因）
+// + 执行期快捷操作（暂停 / 继续 / 紧急终止，回调父级统一确认弹窗）。
+// 放行走本 Tab 内确认弹窗：批次确认是申请动作（202 票据，携幂等键），批准后才推进，
+// 故成功后提示申请号并让状态墙继续反映真实进度。
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
@@ -9,7 +11,10 @@ import { Button } from '@beacon/ui'
 
 import { ApiClientError } from '../../api/delivery'
 import { confirmChangeBatch, type ChangeOrderDetail } from '../../api/delivery-changes'
+import { randomId } from '../../lib/random-id'
+import { useApprovalTicketFeedback } from '../../features/delivery/approval-ticket'
 import BatchFlow from '../../features/delivery/batch-flow'
+import TargetStatusWall from '../../features/delivery/target-status-wall'
 import ConfirmDialog from './confirm-dialog'
 
 /** 执行期快捷操作（与详情头部生命周期动作同源，由父级打开统一确认弹窗） */
@@ -34,15 +39,32 @@ function quickActionsOf(status: ChangeOrderDetail['status']): BatchQuickAction[]
 export default function BatchesTab({ order, onQuickAction }: BatchesTabProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const notifyTicket = useApprovalTicketFeedback()
 
   const [confirmBatchNo, setConfirmBatchNo] = useState<number | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
+  // 同一放行意图重试复用同一幂等键（后端据此去重）；意图结束（成功 / 弹窗关闭）即作废，
+  // 否则下一批放行会拿旧键发新 payload，被服务端按 idempotency_key_reused 拒掉。
+  const keyRef = useRef<string | null>(null)
+
+  const resetKey = () => {
+    keyRef.current = null
+  }
 
   const confirmMutation = useMutation({
-    mutationFn: (batchNo: number) => confirmChangeBatch(order.id, batchNo),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['change-orders'] })
+    mutationFn: (batchNo: number) => {
+      const key = keyRef.current ?? randomId()
+      keyRef.current = key
+      return confirmChangeBatch(order.id, batchNo, key)
+    },
+    onSuccess: async (ticket) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['change-orders'] }),
+        queryClient.invalidateQueries({ queryKey: ['approvals'] }),
+      ])
+      resetKey()
       setConfirmBatchNo(null)
+      notifyTicket(ticket)
     },
     onError: (error) => {
       setErrorText(error instanceof ApiClientError ? error.message : String(error))
@@ -82,10 +104,14 @@ export default function BatchesTab({ order, onQuickAction }: BatchesTabProps) {
         }}
       />
 
+      {/* 单服级状态墙：逐台正推 / 回滚状态、失败原因与备份标记（执行中 5s 自动刷新） */}
+      <TargetStatusWall orderId={order.id} orderStatus={order.status} />
+
       <ConfirmDialog
         open={confirmBatchNo !== null}
         onOpenChange={(open) => {
           if (!open) {
+            resetKey()
             setConfirmBatchNo(null)
           }
         }}

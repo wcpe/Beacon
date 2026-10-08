@@ -1,6 +1,6 @@
 // 配置中心域数据获取（/configs）：配置文件列表 / 回收站 / 详情 / 作用域 / 有效配置 /
 // 版本链 / 版本详情 / diff / 校验 / 保存新版本 / 回退 / 撤销层贡献 / 软删除 / 恢复 / 彻底删除。
-// 全部走 /admin/v2/config-files* 与 /admin/v2/config-versions* mock 端点。
+// 全部走 /admin/v2/config-files* 与 /admin/v2/config-versions* 端点（演示模式由 devmock 承接同形响应）。
 
 import type {
   ConfigDiffResponse,

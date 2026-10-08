@@ -1,8 +1,8 @@
 // 引导创建五步向导（模态 Dialog）：选交付内容 → 选模板源扫差异 → 选配置变更 →
 // 范围与批次 → 影响预览与提交。步骤间状态保留；纯配置跳过模板源步、纯文件跳过配置步。
-// 组合既有 mock 端点闭环：POST /change-orders（懒建 draft）→ diff-scan → PATCH（范围 /
-// 批次 / 挂配置）→ impact → submit（提审原因必填）；取消时删除已建 draft，
-// 成单后交给父级打开详情面板。
+// 组合既有端点闭环：POST /change-orders（懒建 draft）→ diff-scan → PATCH（范围 /
+// 批次 / 挂配置）→ impact → submit（提审原因必填 + 幂等键；202 返回审批票据）；
+// 取消时把已建 draft 提交删除审批，成单后回读详情交给父级打开。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -14,10 +14,12 @@ import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, cn } from '@b
 import { fetchZoneTree } from '../../api/cluster'
 import { ApiClientError } from '../../api/delivery'
 import { randomId } from '../../lib/random-id'
+import { useApprovalTicketFeedback } from '../../features/delivery/approval-ticket'
 import {
   createChangeOrder,
   deleteChangeOrder,
   diffScanChangeOrder,
+  fetchChangeOrder,
   submitChangeOrder,
   updateChangeOrder,
   type ChangeOrderDetail,
@@ -71,6 +73,7 @@ export default function GuidedWizard({
 }: GuidedWizardProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const notifyTicket = useApprovalTicketFeedback()
 
   const [content, setContent] = useState<WizardContent>(initialContent)
   const [stepIndex, setStepIndex] = useState(0)
@@ -92,6 +95,8 @@ export default function GuidedWizard({
   const keepOrderRef = useRef(false)
   // 提审幂等键：同一次提审重试复用同一键（后端据此去重），重开向导即作废重来
   const submitKeyRef = useRef<string | null>(null)
+  // 放弃草稿的幂等键按草稿号缓存：同一次放弃重试复用同键，换单则重新生成
+  const discardKeysRef = useRef<Map<number, string>>(new Map())
 
   // 每次打开重置全部状态并应用预选类型
   useEffect(() => {
@@ -143,9 +148,12 @@ export default function GuidedWizard({
 
   const invalidateList = () => queryClient.invalidateQueries({ queryKey: ['change-orders'] })
 
-  // 丢弃已建 draft（取消 / 改交付内容时）：失败仅残留可见草稿，列表中可手动删除
+  // 放弃已建 draft（取消 / 改交付内容时）：删除也走审批（202 票据 + 幂等键），
+  // 提交失败仅残留可见草稿，列表中可再申请删除
   const discardDraft = (id: number): void => {
-    void deleteChangeOrder(id, t('delivery.changes.wizard.discardDraftReason'))
+    const key = discardKeysRef.current.get(id) ?? randomId()
+    discardKeysRef.current.set(id, key)
+    void deleteChangeOrder(id, t('delivery.changes.wizard.discardDraftReason'), key)
       .catch(() => undefined)
       .then(() => invalidateList())
   }
@@ -222,9 +230,12 @@ export default function GuidedWizard({
       submitKeyRef.current = key
       return submitChangeOrder(orderId, reason.trim(), key)
     },
-    onSuccess: async (detail) => {
+    onSuccess: async (ticket) => {
       keepOrderRef.current = true
       await invalidateList()
+      // 申请动作返回 202 票据（只有单号）：回读一次详情，父级打开该单时列表与详情头部都要标题
+      const detail = await fetchChangeOrder(ticket.orderId)
+      notifyTicket(ticket)
       onCreated(detail)
       onOpenChange(false)
     },
