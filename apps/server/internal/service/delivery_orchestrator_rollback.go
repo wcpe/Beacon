@@ -266,10 +266,11 @@ func rollbackRecordTargetRows(targets []*model.ChangeTarget) []model.ChangeRollb
 	return rows
 }
 
-// recordRollbackTargetResult 把某台目标的终态结果写回「本单最近一条回滚动作」的逐台行（FR-271）。
-// 失败不阻断推进（记录是留痕，不是推进前置条件），仅告警——否则一次记录写失败会卡住真实回滚。
+// recordRollbackTargetResult 把某台目标的终态结果写回**它所属那次回滚动作**的逐台行（FR-271）。
+// 归属定位见仓库方法注释；本写回在推进事务**之外**执行（推进本身走 CAS 逐台提交，不为留痕改写事务边界），
+// 故写失败不阻断推进（记录是留痕，不是推进前置条件），仅告警——否则一次记录写失败会卡住真实回滚。
 func (s *DeliveryOrchestrator) recordRollbackTargetResult(orderID uint, serverID, result, reason string) {
-	if err := s.repo.UpdateLatestRollbackRecordTargetResult(orderID, serverID, result, reason); err != nil {
+	if err := s.repo.UpdateRollbackRecordTargetResult(orderID, serverID, result, reason); err != nil {
 		slog.Warn("交付编排写回滚动作逐台结果失败", "orderId", orderID, "serverId", serverID, "错误", err)
 	}
 }

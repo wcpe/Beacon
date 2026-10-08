@@ -464,6 +464,17 @@ func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal
 		order.Status != model.ChangeOrderStatusCancelled {
 		return DeliveryApprovalTicketView{}, changeIllegalState(order.Status, "申请整单回滚")
 	}
+	if retry {
+		// 无事可做的重试在**申请阶段**就拒绝：让运维立刻知道，而不是等审批通过后才在执行期失败。
+		counts, err := s.repo.CountTargetsByRollbackStatus(order.ID)
+		if err != nil {
+			return DeliveryApprovalTicketView{}, err
+		}
+		if counts[model.RollbackStatusFailed] == 0 {
+			return DeliveryApprovalTicketView{}, apperr.New(http.StatusBadRequest,
+				"no_failed_rollback_target", "单内无回滚失败目标可重试")
+		}
+	}
 	summary, err := deliveryImpactSummary(s.repo, order.ID)
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
@@ -501,7 +512,7 @@ func (s *DeliveryOrchestrator) RequestRollbackTargets(id uint, serverIDs []strin
 	if strings.TrimSpace(reason) == "" {
 		return DeliveryApprovalTicketView{}, apperr.ErrApprovalReasonRequired
 	}
-	selected, err := normalizeServerIDs(serverIDs, rollbackTargetLimit)
+	selected, err := normalizeServerIDs(serverIDs, rollbackTargetLimit, rollbackTargetScope)
 	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}

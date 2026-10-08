@@ -395,12 +395,21 @@ func (r *ChangeOrderRepository) ListRollbackRecordTargets(recordIDs []uint) ([]m
 	return rows, err
 }
 
-// UpdateLatestRollbackRecordTargetResult 把某单**最近一条**回滚动作中该服的逐台结果更新为最新终态（FR-271）。
-// 用「最新一条动作」定位而非遍历：目标进终态时正在执行的就是最新那次动作；用子查询一次 UPDATE，不循环查库，也不引入跨表外键。
-func (r *ChangeOrderRepository) UpdateLatestRollbackRecordTargetResult(orderID uint, serverID, result, reason string) error {
-	latest := r.db.Model(&model.ChangeRollbackRecord{}).Select("MAX(id)").Where("order_id = ?", orderID)
+// UpdateRollbackRecordTargetResult 把某服在**它所属那次回滚动作**里的逐台结果更新为最新终态（FR-271）。
+// 归属判定 = 该台在其中仍未终态（`pending`/`running`）的**最早**一条动作记录：先发起的动作先被服务，
+// 结果写回它自己那条。不能用「本单最新一条动作」——交错动作下后发起的动作（往往不含先前动作仍在途的台）
+// 会抢走归属，使先前动作记录里的该台永远停在 pending，结果凭空丢失。
+// 配合「在途目标不得被再次置初态」（子集回滚拒绝 `pending`/`running` 目标），同一台在同一时刻只会有一条
+// 未终态记录，故该判定无歧义。
+func (r *ChangeOrderRepository) UpdateRollbackRecordTargetResult(orderID uint, serverID, result, reason string) error {
+	owner := r.db.Model(&model.ChangeRollbackRecordTarget{}).
+		Select("MIN(record_id)").
+		Where("record_id IN (?)", r.db.Model(&model.ChangeRollbackRecord{}).Select("id").Where("order_id = ?", orderID)).
+		Where("server_id = ?", serverID).
+		Where("result IS NULL OR result = ? OR result IN ?", "",
+			[]string{model.RollbackStatusPending, model.RollbackStatusRunning})
 	return r.db.Model(&model.ChangeRollbackRecordTarget{}).
-		Where("record_id = (?) AND server_id = ?", latest, serverID).
+		Where("record_id = (?) AND server_id = ?", owner, serverID).
 		Updates(map[string]any{"result": result, "error": reason}).Error
 }
 

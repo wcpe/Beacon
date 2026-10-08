@@ -600,15 +600,21 @@ func (s *DeliveryOrderService) Targets(id uint, q repository.ChangeTargetQuery) 
 	if err != nil {
 		return nil, err
 	}
+	// 可回滚目标总数（曾推送）：前端「全选等价整单回滚」的判定基数，与服务端 eligible 口径同源。
+	eligibleCount, err := s.repo.CountTargetsToRollback(order.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &ChangeTargetPageView{
 		Items: changeTargetViews(targets, batchNoByID, deliveredVersionIndex(versions)), Total: total,
+		RollbackEligibleCount: eligibleCount,
 	}, nil
 }
 
 // DeliveredVersions 批量查各服当前交付版本（GET .../delivered-versions，FR-271）：
 // 服务器详情与目标列表同源取值。serverIds 去重后上限 100，避免一次查询无界放大。
 func (s *DeliveryOrderService) DeliveredVersions(serverIDs []string) (*DeliveredVersionListResponse, error) {
-	unique, err := normalizeServerIDs(serverIDs, deliveredVersionQueryLimit)
+	unique, err := normalizeServerIDs(serverIDs, deliveredVersionQueryLimit, deliveredVersionScope)
 	if err != nil {
 		return nil, err
 	}

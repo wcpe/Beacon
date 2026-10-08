@@ -14,16 +14,16 @@ type ChangeTarget struct {
 	// 归属批次
 	BatchID uint `gorm:"column:batch_id;not null;index:idx_change_target_batch"`
 	// 目标 serverId；唯一约束 (order_id, server_id)
-	ServerID string `gorm:"column:server_id;size:64;not null;uniqueIndex:uk_change_target_server,priority:2"`
+	ServerID string `gorm:"column:server_id;size:64;not null;uniqueIndex:uk_change_target_server,priority:2;index:idx_change_target_delivered,priority:1"`
 	// 目标状态机（§4.1）：pending / pushing / pushed / activating / activated / skipped / failed
-	Status string `gorm:"column:status;size:32;not null"`
+	Status string `gorm:"column:status;size:32;not null;index:idx_change_target_delivered,priority:2"`
 	// 推送完成时间（可空）
 	PushedAt *time.Time `gorm:"column:pushed_at"`
 	// 进入 activating 的起始时刻（可空）：restart 心跳回归判定的锚点——只认此刻之后接收的指标批为回归，
 	// 排除关服前的残留心跳误判；控制面自持（s.now() UTC），与指标窗口 ReceivedAtMs 同为 UTC 毫秒可直接比较。
 	ActivatingStartedAt *time.Time `gorm:"column:activating_started_at"`
 	// 生效完成时间（可空）
-	ActivatedAt *time.Time `gorm:"column:activated_at"`
+	ActivatedAt *time.Time `gorm:"column:activated_at;index:idx_change_target_delivered,priority:3"`
 	// agent 回执的实际变更文件数
 	ChangedFileCount int `gorm:"column:changed_file_count;not null;default:0"`
 	// agent 回执的跳过（本地同 hash）文件数

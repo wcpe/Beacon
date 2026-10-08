@@ -55,6 +55,8 @@ func (ChangeRollbackRecordTarget) TableName() string { return "change_rollback_r
 // 口径：该服最近一条 status=activated **且未被回滚**（rollback_status 非 rolled_back）的目标记录所属变更单。
 // 不落库、不新增状态列——直接建在既有 change_target / change_order 上，避免第二真源；
 // 该服被回滚后对应目标行转 rolled_back，被排除出候选，展示自然回退到上一单。
+// 该查询按 (server_id, status, activated_at) 走 change_target 的复合索引
+// （`idx_change_target_delivered`，见 change_target.go）——目标列表 5s 轮询会反复命中它，不能退化成全表扫。
 type CurrentDeliveredVersion struct {
 	// 目标服 serverId
 	ServerID string

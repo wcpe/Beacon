@@ -22,14 +22,51 @@ const (
 // rollbackBackupMissingReason 备份缺失目标的回滚失败原因（脱敏，spec §4.7.2 step1）。
 const rollbackBackupMissingReason = "覆盖前备份不存在，无法文件回滚"
 
+// rollbackInFlightError 已在回滚中（pending / running）的目标被再次发起回滚时的拒绝错误。
+// 必须显式拒绝而不是把目标打回 pending：置初态会与在途命令叠加，同一台被两次下发（二次覆盖磁盘）。
+func rollbackInFlightError(serverID string) error {
+	return apperr.New(http.StatusConflict, "rollback_in_progress",
+		fmt.Sprintf("目标 %s 已在回滚中，等它到终态后再发起", serverID))
+}
+
+// firstInFlightRollbackTarget 返回 targets 中第一个仍在途（pending / running）的回滚目标；无则 nil。
+func firstInFlightRollbackTarget(targets []model.ChangeTarget) *model.ChangeTarget {
+	for i := range targets {
+		switch targets[i].RollbackStatus {
+		case model.RollbackStatusPending, model.RollbackStatusRunning:
+			return &targets[i]
+		}
+	}
+	return nil
+}
+
 // rollbackTargetLimit 单次目标级回滚可选的 serverId 上限（对齐本域目标量级，防一次请求无界放大）。
 const rollbackTargetLimit = 1000
 
 // deliveredVersionQueryLimit 交付版本批量查询的 serverId 上限（列表接口一律有界，FR-271）。
 const deliveredVersionQueryLimit = 100
 
+// serverIDScopeSpec 是 serverId 集合归一化的**场景文案**：同一个归一逻辑服务两类用途，拒绝文案必须各自贴合——
+// 把只读查询的报错写成「回滚」会让调用方以为自己触发了写操作，是误导性错误（ADR-0057 要求错误可读且不误导）。
+type serverIDScopeSpec struct {
+	emptyCode, emptyMessage string
+	limitCode, limitMessage string
+}
+
+// rollbackTargetScope 写路径（目标级回滚）的文案。
+var rollbackTargetScope = serverIDScopeSpec{
+	emptyCode: "missing_targets", emptyMessage: "必须至少选择一个目标",
+	limitCode: "too_many_targets", limitMessage: "一次最多回滚 %d 台目标",
+}
+
+// deliveredVersionScope 只读查询（交付版本批量查询）的文案。
+var deliveredVersionScope = serverIDScopeSpec{
+	emptyCode: "missing_server_ids", emptyMessage: "必须至少提供一个 serverId",
+	limitCode: "too_many_server_ids", limitMessage: "一次最多查询 %d 台服务器",
+}
+
 // normalizeServerIDs 归一 serverId 集合：去空白、去重、保序；空集与超限一律拒绝（不部分执行）。
-func normalizeServerIDs(serverIDs []string, limit int) ([]string, error) {
+func normalizeServerIDs(serverIDs []string, limit int, spec serverIDScopeSpec) ([]string, error) {
 	unique := make([]string, 0, len(serverIDs))
 	seen := make(map[string]struct{}, len(serverIDs))
 	for _, raw := range serverIDs {
@@ -44,11 +81,10 @@ func normalizeServerIDs(serverIDs []string, limit int) ([]string, error) {
 		unique = append(unique, id)
 	}
 	if len(unique) == 0 {
-		return nil, apperr.New(http.StatusBadRequest, "missing_targets", "必须至少选择一个目标")
+		return nil, apperr.New(http.StatusBadRequest, spec.emptyCode, spec.emptyMessage)
 	}
 	if limit > 0 && len(unique) > limit {
-		return nil, apperr.New(http.StatusBadRequest, "too_many_targets",
-			fmt.Sprintf("一次最多回滚 %d 台目标", limit))
+		return nil, apperr.New(http.StatusBadRequest, spec.limitCode, fmt.Sprintf(spec.limitMessage, limit))
 	}
 	return unique, nil
 }
@@ -352,7 +388,7 @@ func (s *DeliveryOrchestrator) applyRollbackTargetsInTx(tx *gorm.DB, order *mode
 		order.Status != model.ChangeOrderStatusCancelled {
 		return changeIllegalState(order.Status, "目标级回滚")
 	}
-	selected, err := normalizeServerIDs(serverIDs, rollbackTargetLimit)
+	selected, err := normalizeServerIDs(serverIDs, rollbackTargetLimit, rollbackTargetScope)
 	if err != nil {
 		return err
 	}
@@ -376,6 +412,12 @@ func (s *DeliveryOrchestrator) applyRollbackTargetsInTx(tx *gorm.DB, order *mode
 				fmt.Sprintf("目标 %s 不在本单可回滚目标内（未启动或从未推送）", serverID))
 		}
 		picked = append(picked, target)
+	}
+	// 在途目标（pending / running）拒绝再次置初态：否则会与在途命令叠加、同一台被两次下发。
+	for _, t := range picked {
+		if t.RollbackStatus == model.RollbackStatusPending || t.RollbackStatus == model.RollbackStatusRunning {
+			return rollbackInFlightError(t.ServerID)
+		}
 	}
 	// 全选等价整单回滚：覆盖全部可回滚目标时回落整单路径（含配置版本回退与单主状态迁移）。
 	if len(picked) == len(eligible) {
@@ -453,15 +495,17 @@ func (s *DeliveryOrchestrator) retryRollbackInTx(tx *gorm.DB, order *model.Chang
 		}
 	}
 	reset := int64(0)
-	if len(failedTargets) > 0 {
-		reset, err = repoTx.ResetFailedRollbackToPending(order.ID)
-		if err != nil {
-			return err
-		}
-		for _, t := range failedTargets {
-			t.RollbackStatus = model.RollbackStatusPending
-			t.RollbackError = ""
-		}
+	if len(failedTargets) == 0 {
+		// 无失败目标即无事可做：显式拒绝，而不是静默落一条 targetCount=0 的空动作记录。
+		return apperr.New(http.StatusBadRequest, "no_failed_rollback_target", "单内无回滚失败目标可重试")
+	}
+	reset, err = repoTx.ResetFailedRollbackToPending(order.ID)
+	if err != nil {
+		return err
+	}
+	for _, t := range failedTargets {
+		t.RollbackStatus = model.RollbackStatusPending
+		t.RollbackError = ""
 	}
 	// 重试恒不回退配置版本（回退在不可变链上只发生一次），故 configRolledBack 固定为假——界面据此明示「配置未回退」。
 	recordID, err := s.writeRollbackRecord(tx, order.ID, model.RollbackKindOrder, reason, operator, false, failedTargets)
@@ -496,6 +540,14 @@ func (s *DeliveryOrchestrator) applyRollbackInTx(tx *gorm.DB, order *model.Chang
 	}
 	if n == 0 {
 		return apperr.ErrChangeNoRollbackTarget
+	}
+	// 与子集路径同口径：在途目标不得被整单回滚再次置初态（会与在途命令叠加、同一台被两次下发）。
+	existing, err := repoTx.ListTargetsByOrder(order.ID)
+	if err != nil {
+		return err
+	}
+	if inFlight := firstInFlightRollbackTarget(existing); inFlight != nil {
+		return rollbackInFlightError(inFlight.ServerID)
 	}
 	nsCode, err := changeNamespaceCode(tx, order.NamespaceID)
 	if err != nil {

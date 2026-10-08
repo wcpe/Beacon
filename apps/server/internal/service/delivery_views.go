@@ -206,6 +206,11 @@ type ChangeRollbackRecordListResponse struct {
 type ChangeTargetPageView struct {
 	Items []ChangeTargetView `json:"items"`
 	Total int64              `json:"total"`
+	// 本单可回滚目标总数（曾覆盖磁盘 = pushed_at 非空，spec §4.7.2）。
+	// 与 total 不是一回事：total 含从未推送的目标。前端「全选等价整单回滚」的判定必须以本字段为基数——
+	// 用 total 判会在「存在未推送台」时把全覆盖误判成子集（界面说「配置不回退」而后端按整单执行，语义相反），
+	// 按批筛选时又会把子集误判成整单。
+	RollbackEligibleCount int64 `json:"rollbackEligibleCount"`
 }
 
 // ChangeOrderDetailView 对齐 contracts ChangeOrderDetail（Summary + selector + items + 批次 + 计数）。
