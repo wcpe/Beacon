@@ -1845,6 +1845,42 @@ func TestTargetsViewReportsRollbackEligibleCount(t *testing.T) {
 	}
 }
 
+// TestFinishRollbackWritesNoActionRecord 人工「结束回滚」是收单动作而非回滚动作（FR-271，spec §3.6）：
+// 它不改变任何目标的回滚结果，故不落动作记录（只写审计）；否则「回滚过几次」的读数会被收单动作污染。
+func TestFinishRollbackWritesNoActionRecord(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	// 让 t-1 备份缺失：回滚后停在 rolling_back 等人工收单
+	if err := h.env.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND server_id = ?", order.ID, "t-1").
+		Update("backup_present", false).Error; err != nil {
+		t.Fatalf("置备份缺失失败: %v", err)
+	}
+	if _, err := h.orch.applyRollback(order.ID, "回退变更", "ops", "ip"); err != nil {
+		t.Fatalf("回滚失败: %v", err)
+	}
+	h.tick()
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick()
+	before := len(h.rollbackRecords(t, order.ID))
+	if before != 1 {
+		t.Fatalf("前置应有 1 条回滚动作记录，实际 %d", before)
+	}
+	finishBefore := countAudit(t, h.env.db, model.ActionDeliveryOrderRollbackFinish)
+	if _, err := h.orch.applyFinishRollback(order.ID, "ops", "ip"); err != nil {
+		t.Fatalf("结束回滚失败: %v", err)
+	}
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolledBack {
+		t.Fatalf("结束回滚后应收口为 rolled_back: %s", got.Status)
+	}
+	if after := len(h.rollbackRecords(t, order.ID)); after != before {
+		t.Fatalf("结束回滚不得新增动作记录：前 %d 条、后 %d 条", before, after)
+	}
+	if got := countAudit(t, h.env.db, model.ActionDeliveryOrderRollbackFinish); got != finishBefore+1 {
+		t.Fatalf("结束回滚应写审计（收单动作的唯一留痕），前 %d 条、后 %d 条", finishBefore, got)
+	}
+}
+
 // TestConfigRollbackIdempotent 配置回退幂等判定（ADR-0071 决策6）：ErrConfigNoChange 与撤销层「无可撤销」INVALID_PARAM 当成功吞。
 func TestConfigRollbackIdempotent(t *testing.T) {
 	if !isConfigRollbackIdempotent(apperr.ErrConfigNoChange) {
