@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -363,6 +364,58 @@ func containsBlobStatus(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestCleanerOrphanScanRotatesCursor 孤儿扫描的截断起点必须轮转（复审 P2-1）。
+//
+// os.ReadDir 按字典序返回，若每轮都从头截断，超上限的部署里**分片前缀靠后的孤儿永远扫不到**
+// （磁盘泄漏持续累积），「剩余留待下轮」的注释是假的。故起点做成轮转游标：本轮从上次结束处继续。
+//
+// 断言直接打在游标上而非「文件最终被删」——后者在「每轮都从头扫、恰好先扫到靠后分片」时也会通过，
+// 判别力不足（本用例第一版就是这样被不轮转的实现骗过去的）。
+// 判别力要点：在头部放一个**不会被删**的文件（有元数据行、磁盘在场）堵住扫面，
+// 使「不轮转」的实现每轮都停在它身上、永远碰不到靠后的孤儿（删除自身推进扫面的话缺陷会自愈）。
+func TestCleanerOrphanScanRotatesCursor(t *testing.T) {
+	svc, db, cleaner := newIntegritySvc(t, "rotcursor")
+	// 头部钉子：合法 blob（元数据 ready + 磁盘在场）→ 扫到它什么都不删，扫面不前进。
+	pin := []byte("pinned head blob that never gets deleted")
+	pinSHA := shaOf(pin)
+	mustStore(t, svc, pinSHA, pin)
+	// 靠后分片放一个真孤儿（磁盘有文件、无元数据行）→ 应被回收。
+	// 分片目录必须由孤儿名派生（blobPath 取 sha[:2]），放错分片的话 blobPath 指向别处、压根扫不到。
+	orphanName := strings.Repeat("f", 64)
+	orphanDir := filepath.Join(svc.root, "blobs", orphanName[:2])
+	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
+		t.Fatalf("建孤儿目录失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(orphanDir, orphanName), []byte("orphan"), 0o644); err != nil {
+		t.Fatalf("写孤儿文件失败: %v", err)
+	}
+	// 排序前提：孤儿所在分片须排在钉子分片之后（保证「从头扫」先撞上钉子）。
+	if orphanName[:2] <= pinSHA[:2] {
+		t.Fatalf("用例前提：孤儿分片须排在钉子分片之后，实际 orphan=%s pin=%s", orphanName[:2], pinSHA[:2])
+	}
+	// 单轮上限压到 1：每轮只处理一个文件。
+	cleaner.orphanScanLimit = 1
+
+	// 不轮转的实现每轮都从头扫、撞上钉子、停在钉子 → 孤儿永远扫不到。
+	// 轮转的实现会跨过钉子推进到孤儿。
+	cleaned := false
+	for i := 0; i < 4; i++ {
+		cleaner.purgeOrphans()
+		if _, err := os.Stat(filepath.Join(orphanDir, orphanName)); errors.Is(err, os.ErrNotExist) {
+			cleaned = true
+			break
+		}
+	}
+	// 钉子必须还在（证明它不是被误删、扫面确实被它堵住）。
+	if _, err := svc.Head(pinSHA); err != nil {
+		t.Fatalf("头部钉子不应被删，实际 %v", err)
+	}
+	if !cleaned {
+		t.Fatal("靠后的孤儿在若干轮内都没被扫到——起点未轮转，超大部署下会持续磁盘泄漏")
+	}
+	_ = db
 }
 
 // TestCleanerGraceProtectsFreshUpload 宽限内的新鲜 blob 即便暂无人引用也不被回收——

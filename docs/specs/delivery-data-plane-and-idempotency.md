@@ -23,7 +23,7 @@
    - draft 不纳：未提审，谈不上消费。
 2. **孤儿文件扫描与回收**：清理器每轮扫 `blobs/` 目录，回收两类孤儿——① 磁盘有文件但元数据无行（或元数据非 ready）；② 元数据标 ready 但磁盘文件缺失（不删磁盘——没有可删的，改把元数据降级/删除，使 `Head` 与真实盘面一致）。删除入审计。
 3. **上传残留删文件**：`uploading` 残留清理除删元数据行外，一并删除该 sha 对应的磁盘文件（此前只删元数据，文件永久滞留）。
-4. **MarkReady 检查行数**：`MarkReady` 必须校验其 `UPDATE` 实际影响行数 > 0；为 0（占位行被并发清理器回收）视为失败并明确报错，不得静默「假就绪」——否则元数据没有行、`Head` 却能查到文件（或反之）的不一致态被悄悄造出来。
+4. **MarkReady 落账校验**：`MarkReady` 必须校验落账是否真的作用在一条存在的行上。判据取**行是否存在**（`RowsAffected` 为 0 时回查 `Exists`）而**不是** `RowsAffected > 0`——MySQL 计「真正被修改」的行数（值未变即 0），sqlite 计「匹配」的行数（值未变也计 1），只看它会在 MySQL 上把「重复落账、值未变」误报成丢槽。行不在（占位行被并发清理器回收）才报 409 `blob_upload_slot_lost`，不得静默「假就绪」。
 5. **审批回滚补偿删除**：变更单审批被撤销（approved → draft）/ 草稿被删时，其**专属** blob 不再被任何单引用，保留期未到也应可被下轮清理回收——即清理判定须以「当前所有单的引用」为准，撤销后的单不再计入保护集。实现为「无人引用过短宽限即回收」的独立路径（见 §3.1），不与保留期路径共用候选集。
 
 ### FR-264 agent 能力版本守卫（feat，落实 ADR-0069 L58）
@@ -63,7 +63,7 @@
   - 元数据 ready 但文件缺失 → **降级元数据**（删行），使 `Head` 回到「未就绪」而非「以为就绪、打开才 404」。
   两项均计入本轮 `deleted / freed` 并进同一条系统审计。
 - **上传残留**：`purgeStaleUploading` 删元数据行时，同时删该 sha 的磁盘文件（文件可能不存在，`os.Remove` 幂等）。
-- **MarkReady 行数校验**：仓库 `MarkReady` 取 `RowsAffected`，为 0 返回新的 apperr（409 `blob_upload_slot_lost`），服务层原样上抛——agent 收到可重试的明确错误，而不是「上传成功但 HEAD 不到」的幽灵态。
+- **MarkReady 落账校验**：判据取**行是否存在**（`RowsAffected` 为 0 时回查 `Exists`）而非 `RowsAffected > 0`——MySQL 与 sqlite 对该值的语义不同（前者计「真正被修改」、后者计「匹配」），只看它会把「重复落账、值未变」在 MySQL 上误报成丢槽。行不在才报 409 `blob_upload_slot_lost`，服务层原样上抛——agent 收到可重试的明确错误，而不是「上传成功但 HEAD 不到」的幽灵态。
 - **审批回滚 / 删草稿后的补偿回收**：清理判定拆成**两条独立路径**，结果合并：
   - ① **保留期路径**（原有）：ready 且超保留期、且不被非终态单引用 → 删；
   - ② **无人引用路径**（本条新增）：只要该 blob 不被**任何**变更单（文件项 ∪ 配置冻结工件，不施加状态过滤）引用，过**短宽限**（`deliveryUnreferencedGraceHours`，默认 1 小时）即回收，不等满 7 天保留期。
@@ -75,7 +75,7 @@
 
 ### 3.2 能力版本守卫（FR-264）
 
-- 新增运维设置 `delivery.min-agent-version`（默认 `0.29.0`，即 FR-165 数据面落地版本；空串 = 不校验）。
+- 新增运维设置 `delivery.min-agent-version`（**默认为空串 = 不校验，显式配置才启用**；`0.29.0` 是 FR-165 数据面落地版本，待真机核对上报串形态后作为候选值）。
 - 新增纯函数 `deliveryAgentSupportsStreaming(version string, minVersion string) bool`：按 `.` 切分逐段数值比较，长度不等补 0；**空版本 → false**（旧 agent 未上报）；含非数字段（如 `1.4.0-rc.1`）取前缀数字段比较，非数字后缀不影响主版本判定。
 - 新增窄查询 `AgentIdentityRepository.FindVersionsByServerIDs(namespaceID uint, serverIDs []string) (map[string]string, error)`：一次批量取回，避免逐目标查库。同键多行取 `status_changed_at` 最新一行；无身份行的服**不回键**（由调用方按「无版本 = 旧 agent」fail-closed 处理）。
 - 守卫挂点（**只读 `delivery_order_service.go` 与 orchestrator，最小改动**）：
@@ -92,6 +92,7 @@
 > 与波次 A 的边界：ADR-0088 / spec §4.6.4 已规定「agent 侧同一条命令只发一条回执」，本条在控制面侧给出**被重复时的确定行为**，两端合起来才是完整契约。
 
 1. **命令重发（控制面重启）**：新增 `FindActiveByTypeAndOrder(ns, serverID, cmdType, orderID)`（按 payload `orderId` 应用层过滤的既有范式），`dispatchPending` / `activateTarget` / `dispatchRollback` 下发前先查：已存在 pending/fetched 同键命令则**复用**不新建。
+   - **批量取法**：`dispatchPending` 走 `FindActiveByTypeAndOrderBulk`（一次查询取回「某单 × 某类型」的在途命令 serverId 索引，内存命中），避免逐台查在大批量次下发时退化成 N 次查询；`activateTarget` / `dispatchRollback` 是单目标路径，仍用单目标版本。两者同真源、同语义，由测试锁定口径一致。
    - 只看**在途态**是刻意的：已 done/failed/expired 的历史命令不得阻拦下一轮下发，否则重试 / 回滚再下发会被历史命令永久挡住。
    - 幂等键取「payload 内 orderId」而非加列：payload 是 TEXT JSON，用 SQL JSON 函数会破坏 DB 可移植（架构不变量 §4）；单服在途交付命令量级为个位数，全取后内存匹配代价可忽略。
 2. **重复 push / activate**：命令终态由推进器单点推进（`fetched → done/failed` CAS），重复回执必然 CAS 未命中；控制面**不改变**目标状态与计数，返回既有 `ErrCommandNotFound`，使 agent 侧能区分「回执被接受」与「重复被拒」。
@@ -129,6 +130,8 @@
 - **版本下限取值（已核对，结论：默认关闭）**：agent 上报的版本串来源是 **TabooLib `pluginVersion`**（`BeaconAgentBukkit.kt` 经 `pluginVersion` 注入 `AgentBootstrap`），**不是** Gradle 坐标——`apps/agent/gradle.properties` 的 `version=0.1.0` 被根构建脚本的 `beaconVersion`（读仓库根 `VERSION`）覆盖，故 Gradle 侧 0.1.0 对上报串**不生效**，实际串形态度未经真机实测。
   由于守卫是 fail-closed（未上报版本一律拒），**拍一个猜测值作默认等于上线即全量拒服**：一旦真机上报串不符，全部目标被拒、首日无任何已批准单能启动。故 `deliveryDefaultMinAgentVersion = ""`（默认不校验，显式配置才启用）。
   **真机待办**：确认上报串形态后，由运维把 `delivery.min-agent-version` 设为确定值（FR-165 数据面落地版本 `0.29.0` 是候选，须以真机实测串为准再定）。
-- **孤儿扫描成本**：`blobs/` 目录遍历是 O(文件数)。已做两重约束——元数据状态**批量**取回（消除 N+1）、单轮扫描文件数上限 5000（超出留待下轮）。超大部署若仍成热瓶颈，可降频（复用现有清理间隔设置）。
+- **孤儿扫描成本**：`blobs/` 目录遍历是 O(文件数)。已做三重约束——元数据状态**批量**取回（消除 N+1）、单轮扫描文件数上限 5000、**起点每轮轮转**（游标记录上轮结束位置，下轮从其后继续）。
+  - 轮转是必需的：只截断不轮转的话，字典序靠后的分片永远扫不到，孤儿持续累积成磁盘泄漏（「剩余留待下轮」并不成立）。
+  - 游标只记「最后一个**已处理**的键」；若在截断处把未处理的键写进游标，下一轮的「跳过 ≤ 游标」会把它永久跳过去——那是同款泄漏的另一副面孔。
 - **`MarkReady` 的方言差异**：已显式规避——MySQL 的 `RowsAffected` 计「真正被修改」的行数、sqlite 计「匹配」的行数，故丢槽判据取「行是否存在」而非 `RowsAffected > 0`。跨方言行为由单测锁定。
 - **不做**分布式锁：多控制面实例并发下发仍可能建出同键命令（既有行为），需多实例部署时另立 FR。

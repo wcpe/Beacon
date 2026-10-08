@@ -195,6 +195,33 @@ func (r *AgentCommandRepository) FindActiveByTypeAndOrder(ns, serverID, cmdType 
 	return nil, nil
 }
 
+// FindActiveByTypeAndOrderBulk 批量取「某单 × 某类型」在途命令的**目标 serverId 索引**：
+// 一次查询覆盖全部目标，避免下发路径逐台查退化成 N 次查询（大批量次下发时 N 可达数百）。
+// 语义与 FindActiveByTypeAndOrder 一致（在途 = pending/fetched，按 payload 内 orderId 应用层匹配）。
+func (r *AgentCommandRepository) FindActiveByTypeAndOrderBulk(ns, cmdType string, serverIDs []string,
+	orderID uint) (map[string]struct{}, error) {
+	out := make(map[string]struct{}, len(serverIDs))
+	if len(serverIDs) == 0 {
+		return out, nil
+	}
+	var cmds []model.AgentCommand
+	err := r.db.Where("namespace = ? AND server_id IN ? AND type = ? AND status IN ?",
+		ns, serverIDs, cmdType, []string{model.CommandStatusPending, model.CommandStatusFetched}).
+		Find(&cmds).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range cmds {
+		var payload struct {
+			OrderID uint `json:"orderId"`
+		}
+		if json.Unmarshal([]byte(cmds[i].Payload), &payload) == nil && payload.OrderID == orderID {
+			out[cmds[i].ServerID] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
 // ListFetchedByType 取某目标实例某类型全部 fetched 态命令（id 倒序）。
 // 交付回执（FR-165，spec §5.2）按 payload 内 orderId 在应用层匹配具体命令——payload 为 TEXT JSON，
 // 不用 SQL JSON 函数（DB 可移植）；单服在途交付命令量级为个位数，全取无压力。

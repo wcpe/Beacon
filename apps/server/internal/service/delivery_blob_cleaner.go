@@ -22,8 +22,9 @@ const (
 	// 瞬时存在「已落盘、引用行未提交」的窗口，零宽限会误删刚上传、马上要被消费的 blob。
 	deliveryUnreferencedGraceHours = 1
 	// deliveryOrphanScanFileLimit 是单轮孤儿扫描的文件数上限（FR-261 P1-3）：
-	// 超大部署下 blobs 目录可能达万级文件，全量扫会把每轮清理的 IO 放大成热瓶颈，
-	// 故单轮有界截断、剩余自然留待下轮（清理周期默认 60 分钟，收敛仍然够快）。
+	// 超大部署下 blobs 目录可能达万级文件，全量扫会把每轮清理的 IO 放大成热瓶颈。
+	// 单轮有界截断，**但起点每轮轮转**（见 DeliveryBlobCleaner.orphanCursor）——
+	// 只截断不轮转的话，字典序靠后的分片永远扫不到，孤儿会持续累积。
 	deliveryOrphanScanFileLimit = 5000
 )
 
@@ -35,6 +36,12 @@ type DeliveryBlobCleaner struct {
 	svc   *DeliveryBlobService
 	audit *repository.AuditLogRepository
 	now   func() time.Time
+	// orphanScanLimit 单轮孤儿扫描的文件数上限（默认 deliveryOrphanScanFileLimit，测试可压小）。
+	orphanScanLimit int
+	// orphanCursor 是孤儿扫描的轮转游标：记录本轮结束时扫到的 (分片, 文件名)，下轮从**其后**继续。
+	// 为什么必须轮转：os.ReadDir 按字典序返回，只截断不轮转的话每轮都切在同一位置，
+	// 字典序靠后的分片永远扫不到——孤儿持续累积成磁盘泄漏，而不是「留待下轮」。
+	orphanCursor string
 }
 
 // NewDeliveryBlobCleaner 构造清理器（时间源默认 UTC，测试可覆盖 now 字段）。
@@ -43,7 +50,18 @@ type DeliveryBlobCleaner struct {
 // 用本地时间与它相减会整体偏移一个时区差（UTC+8 机器上等于把保留期 / 宽限提前 8 小时判定），
 // 因而误删仍在宽限内的新鲜 blob。
 func NewDeliveryBlobCleaner(svc *DeliveryBlobService, audit *repository.AuditLogRepository) *DeliveryBlobCleaner {
-	return &DeliveryBlobCleaner{svc: svc, audit: audit, now: func() time.Time { return time.Now().UTC() }}
+	return &DeliveryBlobCleaner{
+		svc: svc, audit: audit, now: func() time.Time { return time.Now().UTC() },
+		orphanScanLimit: deliveryOrphanScanFileLimit,
+	}
+}
+
+// orphanScanFileLimit 取本轮扫描上限（未配置 / 非正值时回退到默认值）。
+func (c *DeliveryBlobCleaner) orphanScanFileLimit() int {
+	if c.orphanScanLimit > 0 {
+		return c.orphanScanLimit
+	}
+	return deliveryOrphanScanFileLimit
 }
 
 // Run 启动周期清理循环（间隔热读 delivery.cleanup-interval-minutes），随 ctx 取消优雅退出。
@@ -232,8 +250,6 @@ func (c *DeliveryBlobCleaner) listReferencedSHAs(shas []string, excluded []strin
 }
 
 // listUnreferencedSHAs 求给定 sha 集合中**不被任何变更单引用**的子集（文件项 + 配置冻结工件两侧都不命中）。
-
-// listUnreferencedSHAs 求给定 sha 集合中**不被任何变更单引用**的子集（文件项 + 配置冻结工件两侧都不命中）。
 // 这是「补偿删除」的判据：无人引用即无人消费，无需等保留期。查询失败返回错误（由调用方放弃本轮回收）。
 func (c *DeliveryBlobCleaner) listUnreferencedSHAs(shas []string) (map[string]struct{}, error) {
 	// excluded 传 nil 表示「不排除任何状态」——即查「被任意状态单引用过的」全部 sha。
@@ -267,16 +283,21 @@ func (c *DeliveryBlobCleaner) listUnreferencedSHAs(shas []string) (map[string]st
 //
 // 文件名不是 64 位小写 hex 的一律跳过：blobs 目录可能被人手工放过别的东西，清理器不得越界删本域之外的产物。
 //
-// 批量化 + 有界（FR-261 P1-3）：先收集本轮候选 sha，**一次**批量取回它们的就绪态（逐文件查一次是 N+1，
-// 小文件场景单轮可达万级查询），再走内存差集判定；单轮扫描文件数超过 deliveryOrphanScanFileLimit
-// 即截断（剩余留待下轮），防超大部署下每轮 IO 放大成热瓶颈。
+// 批量化 + 有界 + **起点轮转**（FR-261 P1-3 + 复审 P2-1）：
+// 先收集本轮候选 sha，**一次**批量取回它们的就绪态（逐文件查一次是 N+1，小文件场景单轮可达万级查询），
+// 再走内存差集判定。单轮扫描文件数超上限即截断，**下轮从本轮结束处继续**（游标轮转）——
+// 只截断不轮转的话，字典序靠后的分片永远扫不到，孤儿持续累积成磁盘泄漏。
 func (c *DeliveryBlobCleaner) purgeOrphans() (int, int64) {
 	root := filepath.Join(c.svc.root, "blobs")
 	shards, err := os.ReadDir(root)
 	if err != nil {
 		return 0, 0 // 根目录尚未创建（从未上传过），无孤儿可回收
 	}
-	names := make([]string, 0)
+	limit := c.orphanScanFileLimit()
+	names := make([]string, 0, limit)
+	cursor := c.orphanCursor
+	nextCursor := ""
+	wrapped := false // 本轮是否已从游标回到头部（用于跨轮接续）
 	for _, shard := range shards {
 		if !shard.IsDir() {
 			continue
@@ -286,21 +307,33 @@ func (c *DeliveryBlobCleaner) purgeOrphans() (int, int64) {
 			continue
 		}
 		for _, entry := range entries {
-			if entry.IsDir() {
+			if entry.IsDir() || !isSHA256Hex(entry.Name()) {
+				continue // 子目录 / 非本域产物，不碰
+			}
+			key := shard.Name() + "/" + entry.Name()
+			// 游标之前的部分上一轮已扫过（含跨轮回到头部的情形），跳过。
+			if !wrapped && cursor != "" && key <= cursor {
 				continue
 			}
-			if !isSHA256Hex(entry.Name()) {
-				continue // 非本域产物，不碰
+			wrapped = true
+			// 达上限即截断。**不更新 nextCursor**（它记录的是「最后一个已处理的键」），
+			// 故本项留给下一轮作为起点——若在此把未处理的键写进游标，下一轮的
+			// 「跳过 <= cursor」会把它永久跳过去，正是「永不轮转」的同款泄漏。
+			if len(names) >= limit {
+				break
 			}
 			names = append(names, entry.Name())
-			if len(names) >= deliveryOrphanScanFileLimit {
-				break // 单轮有界：剩余留待下轮
-			}
+			nextCursor = key
 		}
-		if len(names) >= deliveryOrphanScanFileLimit {
+		if nextCursor != "" && len(names) >= limit {
 			break
 		}
 	}
+	// 未截断即本轮走完全量：游标归零，下轮从头开始（常规规模下等价于全量扫）。
+	if len(names) < limit {
+		nextCursor = ""
+	}
+	c.orphanCursor = nextCursor
 	if len(names) == 0 {
 		return 0, 0
 	}

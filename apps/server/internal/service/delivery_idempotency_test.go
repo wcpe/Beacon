@@ -54,6 +54,43 @@ func TestDeliveryRedispatchReusesInFlightCommand(t *testing.T) {
 	}
 }
 
+// TestDeliveryRedispatchBulkIndexMatchesSingle 批量在途索引与逐台查询语义一致（FR-263 大批量次下发用）。
+func TestDeliveryRedispatchBulkIndexMatchesSingle(t *testing.T) {
+	db := newIntegrityDB(t, "bulkindex")
+	cmdRepo := repository.NewAgentCommandRepository(db)
+	// t-1 有本单在途命令、t-2 有异单在途命令、t-3 无命令。
+	for serverID, orderID := range map[string]uint{"t-1": 7, "t-2": 8} {
+		cmd := &model.AgentCommand{NamespaceCode: "prod", ServerID: serverID,
+			Type: model.CommandTypeDeliveryPush, Payload: `{"orderId":` + itoa(orderID) + `}`,
+			Status: model.CommandStatusPending, Operator: "system"}
+		if err := cmdRepo.Create(cmd); err != nil {
+			t.Fatalf("建命令失败: %v", err)
+		}
+	}
+	bulk, err := cmdRepo.FindActiveByTypeAndOrderBulk("prod", model.CommandTypeDeliveryPush,
+		[]string{"t-1", "t-2", "t-3"}, 7)
+	if err != nil {
+		t.Fatalf("批量查在途失败: %v", err)
+	}
+	if _, ok := bulk["t-1"]; !ok {
+		t.Fatal("本单在途的 t-1 应被批量索引命中")
+	}
+	if _, ok := bulk["t-2"]; ok {
+		t.Fatal("异单在途的 t-2 不应被本单索引命中")
+	}
+	if _, ok := bulk["t-3"]; ok {
+		t.Fatal("无命令的 t-3 不应被命中")
+	}
+	// 与逐台查询口径一致（同一真源两种取法不得分叉）。
+	single, err := cmdRepo.FindActiveByTypeAndOrder("prod", "t-1", model.CommandTypeDeliveryPush, 7)
+	if err != nil {
+		t.Fatalf("逐台查失败: %v", err)
+	}
+	if (single != nil) != (func() bool { _, ok := bulk["t-1"]; return ok }()) {
+		t.Fatal("批量索引与逐台查询口径分叉")
+	}
+}
+
 // TestDeliveryRedispatchSkipsTerminalCommand 在途判定只看 pending/fetched：已终态命令不阻拦下一轮下发
 // （否则目标重试 / 回滚再下发会被历史命令永久挡住）。
 func TestDeliveryRedispatchSkipsTerminalCommand(t *testing.T) {

@@ -294,6 +294,14 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		repoTx := s.repo.WithTx(tx)
 		cmdTx := s.cmdRepo.WithTx(tx)
+		// FR-263：命令重发幂等——控制面重启后重跑下发时，若该目标本单已有在途同类型命令则复用，
+		// 不建第二条（重复命令会让 agent 收到两条 push，产生二次备份 / 二次覆盖）。
+		// 批量一次取回后走内存索引，避免逐台查在大批量次下退化成 N 次查询。
+		inFlight, e := cmdTx.FindActiveByTypeAndOrderBulk(rt.nsCode, model.CommandTypeDeliveryPush,
+			serverIDsOf(pending), rt.order.ID)
+		if e != nil {
+			return e
+		}
 		for _, t := range pending {
 			ok, e := repoTx.UpdateTargetCAS(t.ID, []string{model.ChangeTargetStatusPending},
 				map[string]any{"status": model.ChangeTargetStatusPushing})
@@ -303,12 +311,7 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 			if !ok {
 				continue // 已被并发推进（幂等护栏），跳过
 			}
-			// FR-263：命令重发幂等——控制面重启后重跑下发时，若该目标本单已有在途同类型命令则复用，
-			// 不建第二条（重复命令会让 agent 收到两条 push，产生二次备份 / 二次覆盖）。
-			if existing, e := cmdTx.FindActiveByTypeAndOrder(rt.nsCode, t.ServerID,
-				model.CommandTypeDeliveryPush, rt.order.ID); e != nil {
-				return e
-			} else if existing != nil {
+			if _, exists := inFlight[t.ServerID]; exists {
 				dispatched = append(dispatched, t)
 				continue
 			}
@@ -374,6 +377,15 @@ func (s *DeliveryOrchestrator) rejectUnsupportedTargets(rt *orderRuntime, target
 		}
 	}
 	return blocked
+}
+
+// serverIDsOf 取一批目标的 serverId（供批量查询入参）。
+func serverIDsOf(targets []*model.ChangeTarget) []string {
+	out := make([]string, 0, len(targets))
+	for _, t := range targets {
+		out = append(out, t.ServerID)
+	}
+	return out
 }
 
 // manifestSummary 求某单清单摘要（文件数 / 总字节）：写入 delivery_push 命令载荷，仅摘要绝不含内容。
