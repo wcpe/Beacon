@@ -127,6 +127,15 @@ func TestInitTargetRollbackCASMySQL(t *testing.T) {
 		{OrderID: order.ID, ServerID: "t-1", Status: model.ChangeTargetStatusActivated, PushedAt: &pushedAt, BackupPresent: true},
 		{OrderID: order.ID, ServerID: "t-2", Status: model.ChangeTargetStatusActivated, PushedAt: &pushedAt, BackupPresent: false},
 		{OrderID: order.ID, ServerID: "t-3", Status: model.ChangeTargetStatusPending},
+		// 已终态的两种前态：failed（重试）/ rolled_back（再次回滚）——都在允许集内，必须命中
+		{OrderID: order.ID, ServerID: "t-4", Status: model.ChangeTargetStatusActivated, PushedAt: &pushedAt,
+			BackupPresent: false, RollbackStatus: model.RollbackStatusFailed, RollbackError: "备份不存在"},
+		{OrderID: order.ID, ServerID: "t-5", Status: model.ChangeTargetStatusActivated, PushedAt: &pushedAt,
+			BackupPresent: true, RollbackStatus: model.RollbackStatusRolledBack},
+		// 未推送但已带终态回滚态（历史数据 / 人工改库）：它不在回滚目标集内，
+		// 但「值已等于目标值」会让「0 行回读只看是否在途」的写法误判成命中——回读必须同时判 pushed_at。
+		{OrderID: order.ID, ServerID: "t-6", Status: model.ChangeTargetStatusSkipped,
+			BackupPresent: false, RollbackStatus: model.RollbackStatusFailed, RollbackError: "备份不存在"},
 	}); err != nil {
 		t.Fatalf("写目标失败: %v", err)
 	}
@@ -155,6 +164,31 @@ func TestInitTargetRollbackCASMySQL(t *testing.T) {
 	if ok, err := repo.InitTargetRollbackCAS(byID["t-3"].ID, true, "备份不存在"); err != nil || ok {
 		t.Fatalf("未推送目标不得命中 CAS: %v / %v", ok, err)
 	}
+	// 已 failed（终态、非空态）→ 命中（重试语义），置回 pending
+	if ok, err := repo.InitTargetRollbackCAS(byID["t-4"].ID, true, "备份不存在"); err != nil || !ok {
+		t.Fatalf("已失败目标应命中 CAS（重试）: %v / %v", ok, err)
+	}
+	// 已 failed 且**以相同原因再次置态**：MySQL affected rows 是 changed rows，此时可能返回 0 行，
+	// 但行其实命中了 CAS 条件——0 行必须回读区分，不得把合法重试误拒成 409。
+	if err := db.Model(&model.ChangeTarget{}).Where("id = ?", byID["t-4"].ID).
+		Updates(map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": "备份不存在"}).Error; err != nil {
+		t.Fatalf("回置失败态失败: %v", err)
+	}
+	if ok, err := repo.InitTargetRollbackCAS(byID["t-4"].ID, false, "备份不存在"); err != nil || !ok {
+		t.Fatalf("值与现值相同的置态必须仍判命中（changed-rows 语义不得误拒）: %v / %v", ok, err)
+	}
+	// 已 rolled_back（终态、非空态）→ 命中（再次回滚）
+	if ok, err := repo.InitTargetRollbackCAS(byID["t-5"].ID, true, "备份不存在"); err != nil || !ok {
+		t.Fatalf("已回滚目标应命中 CAS: %v / %v", ok, err)
+	}
+	// 未推送但回滚态已等于目标值（0 行 + 值相同）：回读必须判 pushed_at，不得当成「无变化写入」而误命中
+	if ok, err := repo.InitTargetRollbackCAS(byID["t-6"].ID, false, "备份不存在"); err != nil || ok {
+		t.Fatalf("未推送且值相同的目标不得命中 CAS: %v / %v", ok, err)
+	}
+	// 不存在的行 → 不命中且不报错
+	if ok, err := repo.InitTargetRollbackCAS(byID["t-5"].ID+9999, true, "备份不存在"); err != nil || ok {
+		t.Fatalf("不存在的目标不得命中: %v / %v", ok, err)
+	}
 
 	rows, _ = repo.ListTargetsByOrder(order.ID)
 	got := map[string]model.ChangeTarget{}
@@ -169,6 +203,15 @@ func TestInitTargetRollbackCASMySQL(t *testing.T) {
 	}
 	if got["t-3"].RollbackStatus != "" {
 		t.Fatalf("t-3 不应被置态: %q", got["t-3"].RollbackStatus)
+	}
+	if got["t-4"].RollbackStatus != model.RollbackStatusFailed || got["t-4"].RollbackError != "备份不存在" {
+		t.Fatalf("t-4 应停在 failed 且原因不变: %+v", got["t-4"])
+	}
+	if got["t-5"].RollbackStatus != model.RollbackStatusPending {
+		t.Fatalf("t-5 应被重新置为 pending: %+v", got["t-5"])
+	}
+	if got["t-6"].RollbackStatus != model.RollbackStatusFailed {
+		t.Fatalf("t-6 应保持原样（未被置态）: %+v", got["t-6"])
 	}
 }
 

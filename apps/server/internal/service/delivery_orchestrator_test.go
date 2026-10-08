@@ -1905,6 +1905,60 @@ func TestTargetRollbackConcurrentIntersectingSubsets(t *testing.T) {
 	}
 }
 
+// TestInitRollbackTargetsCASBlockedRejectsWholeAction 置初态 CAS 的整单拒绝路径（FR-270）：
+// 同一事务内「一台空态 + 一台在途」时，空态台先被置态、在途台未命中即返回 blocked，
+// 调用方据此整单拒绝 → 事务回滚 → **先被置态的台必须原样复原**。
+// 否则会出现「被拒的动作留下半截置态」：目标被改成 pending 却没进任何动作记录，成为孤儿在途。
+func TestInitRollbackTargetsCASBlockedRejectsWholeAction(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	targets, err := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+	if err != nil {
+		t.Fatalf("读目标失败: %v", err)
+	}
+	byServer := map[string]*model.ChangeTarget{}
+	for i := range targets {
+		byServer[targets[i].ServerID] = &targets[i]
+	}
+
+	// 模拟「整单拒绝」：执行器在本事务内逐台置态，一旦返回 blocked 即返回错误让事务回滚。
+	blockedSeen := ""
+	err = h.env.db.Transaction(func(tx *gorm.DB) error {
+		repoTx := repository.NewChangeOrderRepository(tx)
+		// 事务内置 t-1 为在途（模拟并发批准的抢占）
+		if e := tx.Model(&model.ChangeTarget{}).Where("id = ?", byServer["t-1"].ID).
+			Update("rollback_status", model.RollbackStatusPending).Error; e != nil {
+			return e
+		}
+		// 顺序刻意让 t-2（空态）先命中、t-1（在途）后未命中
+		blocked, e := initRollbackTargetsCAS(repoTx,
+			[]*model.ChangeTarget{byServer["t-2"], byServer["t-1"]}, rollbackBackupMissingReason)
+		if e != nil {
+			return e
+		}
+		blockedSeen = blocked
+		return errors.New("模拟整单拒绝")
+	})
+	if err == nil || err.Error() != "模拟整单拒绝" {
+		t.Fatalf("事务应因整单拒绝而回滚: %v", err)
+	}
+	if blockedSeen != "t-1" {
+		t.Fatalf("应指出未命中的是在途的 t-1，实际 %q", blockedSeen)
+	}
+	// 关键断言：先命中的 t-2 随事务回滚复原为「未进入回滚」，不得留半截置态
+	after := h.rollbackTargetsByServer(order.ID)
+	if after["t-2"].RollbackStatus != "" || after["t-2"].RollbackError != "" {
+		t.Fatalf("被拒动作已命中的台必须随事务回滚复原: %+v", after["t-2"])
+	}
+	if after["t-1"].RollbackStatus != "" {
+		t.Fatalf("在途台也应随事务回滚复原: %+v", after["t-1"])
+	}
+	// 零留痕：没有动作记录，目标也没有回滚态
+	if records := h.rollbackRecords(t, order.ID); len(records) != 0 {
+		t.Fatalf("被拒动作不得落动作记录，实际 %+v", records)
+	}
+}
+
 // TestFinishRollbackWritesNoActionRecord 人工「结束回滚」是收单动作而非回滚动作（FR-271，spec §3.6）：
 // 它不改变任何目标的回滚结果，故不落动作记录（只写审计）；否则「回滚过几次」的读数会被收单动作污染。
 func TestFinishRollbackWritesNoActionRecord(t *testing.T) {

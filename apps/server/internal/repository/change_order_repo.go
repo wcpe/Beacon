@@ -312,9 +312,11 @@ var inFlightRollbackStatuses = []string{model.RollbackStatusPending, model.Rollb
 // 不选「执行路径持 s.mu」：审批 worker 走 DB 事务，在事务内取 mu 会形成「DB 锁 → mu」的顺序，
 // 与推进器的「mu → DB 锁」相反，属经典死锁形状；CAS 无锁序问题。
 func (r *ChangeOrderRepository) InitTargetRollbackCAS(id uint, backupPresent bool, backupMissingReason string) (bool, error) {
-	updates := map[string]any{"rollback_status": model.RollbackStatusPending, "rollback_error": ""}
+	desired := model.RollbackStatusPending
+	updates := map[string]any{"rollback_status": desired, "rollback_error": ""}
 	if !backupPresent {
-		updates = map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": backupMissingReason}
+		desired = model.RollbackStatusFailed
+		updates = map[string]any{"rollback_status": desired, "rollback_error": backupMissingReason}
 	}
 	// NULL 必须用 IS NULL 显式判：SQL 里 NULL 与任何值比较都是 NULL，NOT IN 匹配不到空态。
 	res := r.db.Model(&model.ChangeTarget{}).
@@ -324,7 +326,28 @@ func (r *ChangeOrderRepository) InitTargetRollbackCAS(id uint, backupPresent boo
 	if res.Error != nil {
 		return false, res.Error
 	}
-	return res.RowsAffected > 0, nil
+	if res.RowsAffected > 0 {
+		return true, nil
+	}
+	// 0 行不能直接判「被并发抢占」：MySQL 的 affected rows 是 **changed** rows（驱动默认不开
+	// CLIENT_FOUND_ROWS），当 SET 的每一列都与现值逐字节相同（同一 failed 目标以相同原因再次置态、
+	// updated_at 又落在同一毫秒）时同样返回 0，但行其实命中了 CAS 条件——直接判未命中会把合法重试
+	// 误拒成 409。故回读一次区分两种 0 行。
+	var row model.ChangeTarget
+	err := r.db.Select("rollback_status", "pushed_at").Where("id = ?", id).Take(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	// 未推送（不满足 UPDATE 的另一半条件）或在途：真正的未命中。
+	if row.PushedAt == nil ||
+		row.RollbackStatus == model.RollbackStatusPending || row.RollbackStatus == model.RollbackStatusRunning {
+		return false, nil
+	}
+	// 其余情形只可能是「值与现值相同、UPDATE 无变化」→ 视为命中（幂等）。
+	return row.RollbackStatus == desired, nil
 }
 
 // UpdateTargetRollbackCAS 按前置回滚状态集合 CAS 迁移目标 rollback_status 与随迁字段：命中 true，前态不符 false。
@@ -423,8 +446,13 @@ func (r *ChangeOrderRepository) UpdateRollbackRecordTargetResult(orderID uint, s
 		// 该台没有未终态的动作行（例如记录已被清理）：无需回写，不算失败。
 		return nil
 	}
+	// UPDATE 仍带「仍未终态」谓词：SELECT 与 UPDATE 之间该行可能已被并发写终态（例如同一台的另一次
+	// 推进先落库），此时必须**不覆盖**——否则会用旧结果把并发写入的终态盖掉（丢更新）。
+	// 0 行即静默 no-op：结果已由并发方落定，留痕不丢，只是不由本条写。
 	return r.db.Model(&model.ChangeRollbackRecordTarget{}).
 		Where("record_id = ? AND server_id = ?", owners[0], serverID).
+		Where("result IS NULL OR result = ? OR result IN ?", "",
+			[]string{model.RollbackStatusPending, model.RollbackStatusRunning}).
 		Updates(map[string]any{"result": result, "error": reason}).Error
 }
 
