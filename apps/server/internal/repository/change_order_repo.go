@@ -362,6 +362,8 @@ func (r *ChangeOrderRepository) UpdateTargetRollbackCAS(id uint, from []string, 
 }
 
 // ResetFailedRollbackToPending 把单内回滚失败的目标重置 pending（回滚重试，spec §5.1）；返回重置数。
+// ResetFailedRollbackToPending 供「回滚重试」把失败目标重置 pending：只清 rollback_error，**刻意不清
+// `changed_file_count` / `backup_present`**（它们是该目标盘上的最近已知事实，见 ChangeTargetView 注释）。
 func (r *ChangeOrderRepository) ResetFailedRollbackToPending(orderID uint) (int64, error) {
 	res := r.db.Model(&model.ChangeTarget{}).
 		Where("order_id = ? AND rollback_status = ?", orderID, model.RollbackStatusFailed).

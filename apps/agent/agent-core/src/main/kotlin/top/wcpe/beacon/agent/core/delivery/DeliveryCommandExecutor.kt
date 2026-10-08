@@ -63,9 +63,14 @@ class DeliveryCommandExecutor(
     /** 执行一条已拉到的交付命令（须在 async 线程调用）。单飞门兜底：并发进入则回执 failed（不静默丢弃）。 */
     fun execute(command: AgentCommand) {
         if (!running.compareAndSet(false, true)) {
-            val reason = if (sweeping) SWEEP_IN_PROGRESS_REASON else CONCURRENT_REASON
-            adapter.warn("交付命令未执行并回执 failed：id=${command.id}，type=${command.type}，原因=$reason")
-            rejectBusy(command, reason)
+            // 占用方**不写进回执**：抢门失败与读取 sweeping 之间存在瞬时窗口（占用方可能刚释放或刚换手），
+            // 指认「清扫中」或「并发重复」都可能反向误标；回执只陈述可确证的事实与处置（未执行、需重新下发），
+            // 更细的推测只进日志（标「推测」）。
+            adapter.warn(
+                "交付命令未执行并回执 failed：id=${command.id}，type=${command.type}，" +
+                    "推测占用方=${if (sweeping) "启动清扫" else "另一条交付命令"}",
+            )
+            rejectBusy(command, BUSY_REASON)
             return
         }
         try {
@@ -610,11 +615,13 @@ class DeliveryCommandExecutor(
         const val ACTIVATION_RESTART = "restart"
         const val ACTIVATION_HOT_RELOAD = "hot_reload"
 
-        /** 单飞门拒收（同一 agent 同时刻只跑一条交付命令）时的回执原因。 */
-        private const val CONCURRENT_REASON = "同一 agent 已有交付命令在执行，本命令并发重复、已跳过（未执行）"
-
-        /** 启动期临时目录清扫占用单飞门时的回执原因（清扫与在途交付互斥，避免误删在途临时目录）。 */
-        private const val SWEEP_IN_PROGRESS_REASON = "启动期临时目录清理正在进行，本命令未执行（请重新下发）"
+        /**
+         * 单飞门被占用时的回执原因（FR-266 终审 P2）。
+         *
+         * 不指认具体占用方（交付命令 / 启动清扫）：抢门失败到读取占用标记之间存在瞬时窗口，指认任一方都可能反向
+         * 误标；文案只给可确证事实与处置——本命令**未执行**、需重新下发（与 spec §4.5.3 的双向互斥口径一致）。
+         */
+        private const val BUSY_REASON = "同一 agent 有其它交付活动正在进行（交付命令执行中或启动期临时目录清理中），本命令未执行（请重新下发）"
 
         /** 配置工件被回滚为不存在时参与通知摘要的稳定标记。 */
         private const val MISSING_FILE_MARKER = "<missing>"

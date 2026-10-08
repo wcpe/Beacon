@@ -158,8 +158,8 @@ class DeliveryCommandExecutorTest : DeliveryExecutorFixture() {
 
         assertEquals(2, resultBodies.size, "被拒命令与正常命令各回执一次：$resultBodies")
         assertTrue(
-            resultBodies.any { it.contains("status=failed") && it.contains("并发重复") },
-            "被拒命令应回执 failed 并给可读原因：$resultBodies",
+            resultBodies.any { it.contains("status=failed") && it.contains("其它交付活动正在进行") },
+            "被拒命令应回执 failed、给可确证原因与处置（不指认占用方）：$resultBodies",
         )
         assertTrue(resultBodies.any { it.contains("status=success") }, "原命令应照常完成：$resultBodies")
     }

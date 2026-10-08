@@ -1081,6 +1081,87 @@ func TestOrchestratorActivateFailureSmallerCountKeepsPushedFacts(t *testing.T) {
 	}
 }
 
+// TestOrchestratorPushingFailureMarksPushed 锁定「推送中途失败但盘上已改」的回滚资格（FR-266 终审 P2）：
+// 变更计数 > 0 或备份已在 → 补 pushed_at（回滚候选 / 预检都以它为准），目标可被整单回滚覆盖；
+// 下载 / 备份阶段失败（计数 0 且无备份）不补，保持「没动盘就不入回滚集」。
+func TestOrchestratorPushingFailureMarksPushed(t *testing.T) {
+	cases := []struct {
+		name         string
+		result       string
+		wantPushedAt bool
+		wantChanged  int
+		wantBackup   bool
+	}{
+		{
+			name:         "覆盖中途失败且备份在盘",
+			result:       `{"changedFileCount":1,"backupPresent":true,"error":"覆盖中途失败（已变更 1 项，备份已在盘）"}`,
+			wantPushedAt: true, wantChanged: 1, wantBackup: true,
+		},
+		{
+			name:         "覆盖 0 项但备份已在",
+			result:       `{"changedFileCount":0,"backupPresent":true,"error":"覆盖中途失败（已变更 0 项，备份已在盘）"}`,
+			wantPushedAt: true, wantChanged: 0, wantBackup: true,
+		},
+		{
+			name:         "下载阶段失败未动盘",
+			result:       `{"changedFileCount":0,"backupPresent":false,"error":"流式下载 / 校验失败"}`,
+			wantPushedAt: false, wantChanged: 0, wantBackup: false,
+		},
+		{
+			name:         "备份阶段失败未动盘",
+			result:       `{"changedFileCount":0,"backupPresent":false,"error":"备份失败，未改动原文件"}`,
+			wantPushedAt: false, wantChanged: 0, wantBackup: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newOrchestratorHarness(t)
+			order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
+			if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
+				t.Fatalf("启动失败: %v", err)
+			}
+			h.tick()
+			// 推送回执 failed（携部分成功事实）。
+			targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+			for _, tg := range targets {
+				completeDeliveryCommand(t, h.env.db, order.ID, tg.ServerID, model.CommandTypeDeliveryPush, model.CommandStatusFailed, tc.result)
+			}
+			h.tick()
+
+			rows, err := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+			if err != nil {
+				t.Fatalf("查目标失败: %v", err)
+			}
+			for i := range rows {
+				if rows[i].Status != model.ChangeTargetStatusFailed {
+					t.Fatalf("目标应 failed，实际 %s", rows[i].Status)
+				}
+				if (rows[i].PushedAt != nil) != tc.wantPushedAt {
+					t.Fatalf("pushed_at 命中期望 %v，实际 %v", tc.wantPushedAt, rows[i].PushedAt)
+				}
+				if rows[i].ChangedFileCount != tc.wantChanged {
+					t.Fatalf("计数期望 %d，实际 %d", tc.wantChanged, rows[i].ChangedFileCount)
+				}
+				if rows[i].BackupPresent != tc.wantBackup {
+					t.Fatalf("备份标记期望 %v，实际 %v", tc.wantBackup, rows[i].BackupPresent)
+				}
+			}
+			// 回滚候选口径：仅「曾覆盖磁盘」的目标计入整单回滚目标集。
+			n, err := repository.NewChangeOrderRepository(h.env.db).CountTargetsToRollback(order.ID)
+			if err != nil {
+				t.Fatalf("统计回滚候选失败: %v", err)
+			}
+			want := int64(0)
+			if tc.wantPushedAt {
+				want = int64(len(rows))
+			}
+			if n != want {
+				t.Fatalf("回滚候选数期望 %d，实际 %d", want, n)
+			}
+		})
+	}
+}
+
 // —— restart 生效判定 = 心跳回归观测（M4，spec §4.6.1 / ADR-0070）——
 
 // TestOrchestratorRestartHeartbeatReturnActivates restart 生效脊柱：
