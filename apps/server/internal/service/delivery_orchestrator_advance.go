@@ -558,13 +558,17 @@ func (s *DeliveryOrchestrator) failTarget(rt *orderRuntime, t *model.ChangeTarge
 //
 // 语义：agent 在推送 / 生效阶段回执 failed 但文件其实已落盘（「已落盘、仅通知失败」的部分成功）时，目标行必须
 // 留下「盘上确实变了多少、有无备份可回滚」，否则与「什么都没做」同形，运维与机器主体都无从判断该回滚还是重推。
-// 口径为**只增不减**：仅在回执计数为正 / 备份存在时才覆写，避免 restart 一类 0 计数回执把推送阶段已落定的
-// changed_file_count / backup_present 清零。
+//
+// 口径为**只增不减**（SQL 条件更新，不依赖内存快照的新鲜度）：
+//   - `changed_file_count` 仅在回执计数**大于**当前列值时才写入——生效阶段按配置工件数取下界，可能小于推送阶段
+//     落定的真实变更数，直接覆盖会把「改了 3 个」改写成「改了 2 个」（FR-266 评审 P1）。
+//   - `backup_present` 仅在回执为 true 时写入（false 一律不写），一旦落定不会被后续 0 值回执清零。
 func (s *DeliveryOrchestrator) failTargetWithResult(rt *orderRuntime, t *model.ChangeTarget, from, reason string,
 	res deliveryCmdResult) bool {
 	updates := map[string]any{"error": reason}
 	if res.ChangedFileCount > 0 {
-		updates["changed_file_count"] = res.ChangedFileCount
+		updates["changed_file_count"] = gorm.Expr(
+			"CASE WHEN ? > changed_file_count THEN ? ELSE changed_file_count END", res.ChangedFileCount, res.ChangedFileCount)
 	}
 	if res.BackupPresent {
 		updates["backup_present"] = res.BackupPresent

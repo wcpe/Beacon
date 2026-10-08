@@ -14,7 +14,7 @@ ADR-0070 决策 2 按「先回执、后关服」编排 restart 生效，理由�
 
 ## 决策
 
-1. **关服能力探测 fail-closed**：`PlatformAdapter` 增能力位 `gracefulShutdownSupported`（core 默认 `false`；Bukkit / Bungee 壳显式覆写 `true`）。探测不通过时**绝不回执 success**——回执 `failed` 并给出可读处置建议（宿主机手工重启 / 改选 `hot_reload` / `push_only`），控制面据此按「关服指令回执失败」判 failed 并熔断止血。
+1. **关服能力探测 fail-closed**：`PlatformAdapter` 增能力位 `gracefulShutdownSupported`（core 默认 `false`；Bukkit / Bungee 壳显式覆写 `true`）。**边界声明**：本决策是在 [ADR-0070](0070-agent-graceful-shutdown-primitive.md) 决策 1（平台原语 + 默认空实现）**之上叠加的使用约束**——不改原语契约、不改 ADR-0011 禁进程 API 的边界，只决定「交付生效是否允许进入 restart 路径」；新增平台按决策 1 实现原语时，同时把能力位覆写为 `true` 即视为满足本决策。探测不通过时**绝不回执 success**——回执 `failed` 并给出可读处置建议（宿主机手工重启 / 改选 `hot_reload` / `push_only`），控制面据此按「关服指令回执失败」判 failed 并熔断止血。
 2. **单次回执收敛**：restart（正推与回滚）在**关服原语成功下发之后**才回执 success（回执语义仍是「已开始生效」，非「生效完成」）；原语抛异常时只回执 `failed`。**禁止**同一命令出现「先 success、后 failed」的双回执。
 3. **回执仍须在进程真正退出前发出**：延迟触发关服（让命令执行调用栈先解开）+「原语返回即已下发、平台随后的停机序列才终止进程」共同提供送达窗口；极端情况下回执丢失也不产生假成功——生效判定真源仍是控制面心跳回归 / 超时（ADR-0070 决策 3），回执只承担加速收敛与留痕。
 4. **回执不承诺 agent 无法核实的事**：阶段失败原因里的处置建议按 phase 分野——正推（`activate`）**不得承诺「可整单回滚」**（是否下发回滚由控制面按推送留痕 + 备份存在性预检决定），只给 agent 可保证的处置（手工重载 / 按同版本重推）；回滚（`rollback`）阶段备份确实已在盘，保留回滚建议。

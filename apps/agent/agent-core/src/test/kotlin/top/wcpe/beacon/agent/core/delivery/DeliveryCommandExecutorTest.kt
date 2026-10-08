@@ -5,18 +5,7 @@ import top.wcpe.beacon.agent.core.client.fetchDeliveryManifest
 import top.wcpe.beacon.agent.core.command.AgentCommand
 import top.wcpe.beacon.agent.core.command.DeliveryCommandPayload
 import top.wcpe.beacon.agent.core.command.IngestCommandPayload
-import top.wcpe.beacon.agent.core.identity.AgentIdentity
-import top.wcpe.beacon.agent.core.settings.AgentSettings
-import top.wcpe.beacon.agent.core.settings.BackoffSettings
-import top.wcpe.beacon.agent.core.settings.FileTreeSettings
-import top.wcpe.beacon.agent.core.settings.OverrideSettings
-import top.wcpe.beacon.agent.core.testsupport.ManualAsyncAdapter
-import top.wcpe.beacon.agent.core.testutil.FakeBlobStreamTransport
 import top.wcpe.beacon.agent.core.transport.BlobDownloadOutcome
-import top.wcpe.beacon.agent.core.transport.HttpRequest
-import top.wcpe.beacon.agent.core.transport.HttpResponse
-import top.wcpe.beacon.agent.core.transport.HttpTransport
-import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -32,19 +21,7 @@ import kotlin.test.assertTrue
  * - 网络与错误透传（FR-269）：清单 raw 状态码 / 错误码进失败原因、清单与命令单号一致性校验、
  *   被并发拒收与 orderId 非法的命令不静默丢。
  */
-class DeliveryCommandExecutorTest {
-    private val serverRoot: File = DeliveryTestSupport.tempDir("delivery-exec-root")
-    private val dataDir: File = DeliveryTestSupport.tempDir("delivery-exec-data")
-    private val adapter = ManualAsyncAdapter(dataDir)
-    private val blob = FakeBlobStreamTransport()
-
-    private val updNew = "NEW-CONTENT".toByteArray()
-    private val addContent = "ADD-CONTENT".toByteArray()
-    private val same = "SAME".toByteArray()
-
-    /** 全部回执体（按到达顺序）：用于断言「同一条命令只回执一次」与并发拒收回执。 */
-    private val resultBodies = mutableListOf<String>()
-
+class DeliveryCommandExecutorTest : DeliveryExecutorFixture() {
     @Test
     fun `push 成功编排下载备份覆盖并回执 success`() {
         seedServerRoot()
@@ -542,242 +519,49 @@ class DeliveryCommandExecutorTest {
         assertTrue(resultBodies.single().contains("status=success"), "原交付命令不受清扫影响：$resultBodies")
     }
 
-    /** 造一份正推用例可用的备份管理器（不参与断言，仅满足管道装配）。 */
-    private fun seededBackupForeverUnused(): DeliveryBackupManager {
-        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())
-        return DeliveryBackupManager(
-            File(dataDir, "delivery-backups"),
-            DeliveryTargetResolver(serverRoot, dataDir),
-            BackupManifestCodec(),
-            adapter,
-        )
-    }
-
-    /** 造一份 update 项备份（旧内容 OLD），返回其 backupManager 供回滚测试复用（往返 codec）。 */
-    private fun seededBackup(): DeliveryBackupManager {
-        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())
-        val backupManager =
-            DeliveryBackupManager(
-                File(dataDir, "delivery-backups"),
-                DeliveryTargetResolver(serverRoot, dataDir),
-                RollbackRoundTripCodec(),
-                adapter,
+    @Test
+    fun `推送覆盖中途失败回执带已变更计数与备份标记`() {
+        seedServerRoot()
+        blob.onDownload = { url, _, sink -> writeBlob(url, sink) }
+        // 第二个操作是不可删的非空目录 → 删除失败；第一个操作（upd 覆盖）已成功 → 已变更计数应为 1。
+        val blocked = File(serverRoot, "plugins/blocked").apply { mkdirs() }
+        DeliveryTestSupport.writeFile(blocked, "keep.txt", "x".toByteArray())
+        val tree =
+            manifestTree(
+                listOf(
+                    fileNode("plugins/upd.txt", "update", DeliveryTestSupport.sha256(updNew), updNew.size),
+                    fileNode("plugins/blocked", "delete", "", 0),
+                ),
             )
-        backupManager.backup(1L, listOf(DeliveryFileOp("plugins/upd.txt", DeliveryFileOp.Kind.UPDATE, "", 0L)))
-        return backupManager
+
+        executor(File(dataDir, "delivery-backups"), tree).execute(pushCommand())
+
+        assertEquals("NEW-CONTENT", File(serverRoot, "plugins/upd.txt").readText(), "第一项应已覆盖")
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=failed"), "删除失败应回执 failed：$body")
+        assertTrue(body.contains("changedFileCount=1"), "失败回执应带已变更计数（盘上确实改了 1 项）：$body")
+        assertTrue(body.contains("backupPresent=true"), "失败回执应带备份在盘的事实（可否回滚的依据）：$body")
+        assertTrue(!body.contains("可整单回滚"), "agent 不代控制面承诺回滚（预检归控制面）：$body")
     }
 
-    /** 用给定 backupManager 构造执行器（回滚测试复用同一备份实例的往返 codec）。 */
-    private fun executorWith(
-        backupManager: DeliveryBackupManager,
-        manifest: Map<String, Any?> = manifestTree(),
-    ): DeliveryCommandExecutor {
-        val resolver = DeliveryTargetResolver(serverRoot, dataDir)
-        val apiClient = BeaconApiClient(RoutingTransport(resultBodies), ManifestCodec(manifest), settings())
-        val pipeline =
-            DeliveryPipeline(
-                uploader = DeliveryUploader(blob, resolver, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
-                downloader = DeliveryDownloader(blob, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
-                backupManager = backupManager,
-                overwriter = DeliveryOverwriter(resolver),
-                tempRoot = File(dataDir, "delivery-tmp"),
+    @Test
+    fun `回滚 hot_reload 通知失败计数用真实还原数不取下界`() {
+        val backupManager = seededBackup()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray())
+        adapter.configChangeError = RuntimeException("事件总线不可用")
+        // 清单含 2 个配置工件，但回滚只还原 1 个文件 → 计数应为真实还原数 1，而不是工件数下界 2。
+        val tree =
+            manifestTree(
+                listOf(
+                    configFileNode("plugins/A/config.yml", "a".repeat(64)),
+                    configFileNode("plugins/B/config.yml", "b".repeat(64)),
+                ),
             )
-        return DeliveryCommandExecutor(identity(), apiClient, adapter, pipeline)
-    }
 
-    /** 构造一条 delivery_rollback 命令（携指定生效方式，orderId=1）。 */
-    private fun rollbackCommand(activationMethod: String): AgentCommand =
-        AgentCommand(
-            id = 7L,
-            type = AgentCommand.TYPE_DELIVERY_ROLLBACK,
-            payload = IngestCommandPayload("", "", ""),
-            deliveryPayload = DeliveryCommandPayload(orderId = 1L, activationMethod = activationMethod),
-        )
+        executorWith(backupManager, tree).execute(rollbackCommand("hot_reload"))
 
-    /** 往返 codec：encode 记住入参、decode 返回它，供 backup→restore 往返（回滚测试用）。 */
-    private class RollbackRoundTripCodec : JsonCodec {
-        private var last: Any? = null
-
-        override fun encode(value: Any?): String {
-            last = value
-            return "rt"
-        }
-
-        override fun decode(json: String): Any? = last
-    }
-
-    /** 备份 manifest codec：decode 返回最近一次写入的条目表（支持同单多轮推送的增量合并）。 */
-    private class BackupManifestCodec : JsonCodec {
-        private var last: Any? = null
-
-        override fun encode(value: Any?): String {
-            last = value
-            return "[]"
-        }
-
-        override fun decode(json: String): Any? = last
-    }
-
-    /** 铺设模板目标现状：upd 将被覆盖、skip 同 hash 跳过、del 将删除、new 尚不存在。 */
-    private fun seedServerRoot() {
-        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())
-        DeliveryTestSupport.writeFile(serverRoot, "plugins/skip.txt", same)
-        DeliveryTestSupport.writeFile(serverRoot, "plugins/del.txt", "X".toByteArray())
-    }
-
-    /** 按 url（=sha）向 sink 写模拟 blob 内容（首次下载 rangeStart 恒 0，续传由下载器单测覆盖）。 */
-    private fun writeBlob(
-        url: String,
-        sink: java.io.OutputStream,
-    ): BlobDownloadOutcome {
-        val bytes =
-            when (url) {
-                DeliveryTestSupport.sha256(updNew) -> updNew
-                DeliveryTestSupport.sha256(addContent) -> addContent
-                else -> ByteArray(0)
-            }
-        sink.write(bytes)
-        return BlobDownloadOutcome(200, bytes.size.toLong())
-    }
-
-    private fun executor(
-        backupRoot: File,
-        manifest: Map<String, Any?> = manifestTree(),
-        manifestError: RuntimeException? = null,
-        manifestStatus: Int = 200,
-        manifestBody: String = "manifest",
-    ): DeliveryCommandExecutor {
-        val resolver = DeliveryTargetResolver(serverRoot, dataDir)
-        val apiClient =
-            BeaconApiClient(
-                RoutingTransport(resultBodies, manifestError, manifestStatus, manifestBody),
-                ManifestCodec(manifest),
-                settings(),
-            )
-        val pipeline =
-            DeliveryPipeline(
-                uploader = DeliveryUploader(blob, resolver, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
-                downloader = DeliveryDownloader(blob, { it }, { emptyMap() }, adapter, TEST_BACKOFF, sleep = {}),
-                backupManager = DeliveryBackupManager(backupRoot, resolver, BackupManifestCodec(), adapter),
-                overwriter = DeliveryOverwriter(resolver),
-                tempRoot = File(dataDir, "delivery-tmp"),
-            )
-        return DeliveryCommandExecutor(identity(), apiClient, adapter, pipeline)
-    }
-
-    /** 目标差异清单树（parseDeliveryManifest 直接从此树读键）。 */
-    private fun manifestTree(
-        files: List<Map<String, Any?>> =
-            listOf(
-                fileNode("plugins/upd.txt", "update", DeliveryTestSupport.sha256(updNew), updNew.size),
-                fileNode("plugins/skip.txt", "update", DeliveryTestSupport.sha256(same), same.size),
-                fileNode("plugins/new.txt", "add", DeliveryTestSupport.sha256(addContent), addContent.size),
-                fileNode("plugins/del.txt", "delete", "", 0),
-            ),
-    ): Map<String, Any?> =
-        mapOf(
-            "orderId" to 1L,
-            "activationMethod" to "restart",
-            "files" to files,
-        )
-
-    private fun configFileNode(
-        path: String,
-        sha: String,
-    ): Map<String, Any?> = fileNode(path, "update", sha, 1, DeliveryManifestFile.SOURCE_KIND_CONFIG_ARTIFACT)
-
-    private fun fileNode(
-        path: String,
-        action: String,
-        sha: String,
-        size: Int,
-        sourceKind: String? = null,
-    ): Map<String, Any?> =
-        buildMap {
-            put("path", path)
-            put("action", action)
-            put("sha256", sha)
-            put("size", size.toLong())
-            sourceKind?.let { put("sourceKind", it) }
-        }
-
-    private fun pushCommand(): AgentCommand =
-        AgentCommand(
-            id = 5L,
-            type = AgentCommand.TYPE_DELIVERY_PUSH,
-            payload = IngestCommandPayload("", "", ""),
-            deliveryPayload = DeliveryCommandPayload(orderId = 1L),
-        )
-
-    /** 构造一条 delivery_activate 命令（携指定生效方式，orderId=1）。 */
-    private fun activateCommand(activationMethod: String): AgentCommand =
-        AgentCommand(
-            id = 6L,
-            type = AgentCommand.TYPE_DELIVERY_ACTIVATE,
-            payload = IngestCommandPayload("", "", ""),
-            deliveryPayload = DeliveryCommandPayload(orderId = 1L, activationMethod = activationMethod),
-        )
-
-    private fun identity(): AgentIdentity =
-        AgentIdentity(
-            namespace = "prod",
-            serverId = "lobby-1",
-            role = "bukkit",
-            groupHint = "area1",
-            address = "10.0.0.7:25565",
-            version = "1.0",
-            capacity = 100,
-            weight = 100,
-            metadata = emptyMap(),
-            identityId = "id-1",
-            bootId = "boot-1",
-        )
-
-    private fun settings(): AgentSettings =
-        AgentSettings(
-            endpoints = listOf("http://127.0.0.1:8080"),
-            bootstrapToken = "t",
-            pollTimeoutMs = 30000,
-            requestTimeoutMs = 5000,
-            heartbeatFallbackMs = 10000,
-            backoff = BackoffSettings(1000, 30000, 2.0, 0.2),
-            snapshotEnabled = false,
-            snapshotFileName = "snap.json",
-            fileTree = FileTreeSettings(false, "", "ft.json"),
-            override = OverrideSettings(emptySet(), "ob"),
-        )
-
-    /** 按 URL 路由：manifest → 可注入状态码 / 响应体；result → 204 并记回执体。 */
-    private class RoutingTransport(
-        private val resultBodies: MutableList<String>,
-        private val manifestError: RuntimeException? = null,
-        private val manifestStatus: Int = 200,
-        private val manifestBody: String = "manifest",
-    ) : HttpTransport {
-        override fun execute(request: HttpRequest): HttpResponse =
-            when {
-                request.url.endsWith("/manifest") -> {
-                    manifestError?.let { throw it }
-                    HttpResponse(manifestStatus, manifestBody)
-                }
-                request.url.endsWith("/result") -> {
-                    resultBodies.add(request.body ?: "")
-                    HttpResponse(204, "")
-                }
-
-                else -> HttpResponse(404, "")
-            }
-    }
-
-    /** decode 恒返清单树；encode 回传 toString 供断言回执体（result）与写备份 manifest（内容无关）。 */
-    private class ManifestCodec(private val tree: Map<String, Any?>) : JsonCodec {
-        override fun encode(value: Any?): String = value.toString()
-
-        override fun decode(json: String): Any? = tree
-    }
-
-    private companion object {
-        /** 测试用退避设置：抖动归零、间隔极小，配合注入的空 sleep 使重试用例确定性且不真等。 */
-        private val TEST_BACKOFF = BackoffSettings(initialMs = 1, maxMs = 4, multiplier = 2.0, jitterRatio = 0.0)
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=failed"), "通知失败仍是失败：$body")
+        assertTrue(body.contains("changedFileCount=1"), "回滚失败回执应用真实还原数（不取工件数下界）：$body")
     }
 }

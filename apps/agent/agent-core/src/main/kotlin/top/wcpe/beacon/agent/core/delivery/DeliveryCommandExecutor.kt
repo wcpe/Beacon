@@ -195,17 +195,20 @@ class DeliveryCommandExecutor(
             postResult(orderId, executePush(orderId, plan))
             adapter.info("交付推送完成：orderId=$orderId")
         } catch (e: DeliveryPushException) {
-            failResult(orderId, PHASE_PUSH, e.message ?: "推送失败")
+            // 推送失败同样带事实（已变更计数 + 备份是否在盘）：控制面据此如实展示、并判该目标有无可回滚备份，
+            // 避免「回执说可回滚、backup_present=false」自相矛盾（FR-266 评审 P2）。
+            failResultWithState(orderId, PHASE_PUSH, e.changedFileCount, e.backupPresent, e.message ?: "推送失败")
         } catch (e: IOException) {
-            // 覆盖阶段 IO 失败：备份已在盘、可整单回滚。
-            failResult(orderId, PHASE_PUSH, "覆盖失败（备份已生成、可回滚）：${reasonOf(e)}")
+            // 兜底：未归入推送异常的 IO 边界（现场状态未核，诚实按 0 / 无备份上报）。
+            failResult(orderId, PHASE_PUSH, "推送阶段 IO 异常（未核实现场状态）：${reasonOf(e)}")
         }
     }
 
     /**
      * 执行推送计划：下载 → 备份 → 覆盖 / 删除 → 清临时目录，返回成功回执。
      *
-     * 下载失败 / 备份失败抛 [DeliveryPushException]（各携脱敏原因）；覆盖阶段 IO 失败以 [IOException] 上抛。
+     * 各失败点一律抛 [DeliveryPushException] 并携**已发生的事实**（已变更计数 + 备份是否在盘）：
+     * 下载失败 0/false、备份失败 0/false（未动原文件）、覆盖中途失败「已变更 N 项 + 备份在盘」。
      * 临时目录**成功与失败都清**（FR-268）：失败时若留在盘上会随每次失败累积（下载半截的大文件尤其占地），
      * 而同一次调用内的断点续传不受影响（部分文件在本次重试循环中即被复用）。
      */
@@ -220,12 +223,38 @@ class DeliveryCommandExecutor(
             val download = pipeline.downloader.downloadAll(downloadWork, tempDir)
             if (!download.ok) throw DeliveryPushException(download.error)
             val backupPresent = backup(orderId, plan)
-            val changed = pipeline.overwriter.apply(plan, tempDir)
+            val changed = applyPlan(plan, tempDir, backupPresent)
             return DeliveryStageReport(PHASE_PUSH, STATUS_SUCCESS, changed, skipped, backupPresent, "")
         } finally {
             cleanTemp(tempDir)
         }
     }
+
+    /**
+     * 覆盖 / 删除阶段：失败时把「盘上已改了多少项 + 备份在盘」带进 [DeliveryPushException]。
+     *
+     * 不承诺「可整单回滚」——是否下发回滚由控制面按推送留痕（`pushed_at`）+ 备份存在性预检决定，
+     * agent 只如实上报事实（同 §4.6.4 的处置建议分野）。
+     */
+    private fun applyPlan(
+        plan: List<DeliveryFileOp>,
+        tempDir: File,
+        backupPresent: Boolean,
+    ): Int =
+        try {
+            pipeline.overwriter.apply(plan, tempDir)
+        } catch (e: DeliveryApplyException) {
+            throw DeliveryPushException(
+                "覆盖中途失败（已变更 ${e.appliedCount} 项，备份${if (backupPresent) "已在盘" else "未生成"}）：${e.message ?: "未知原因"}",
+                changedFileCount = e.appliedCount,
+                backupPresent = backupPresent,
+            )
+        } catch (e: IOException) {
+            throw DeliveryPushException(
+                "覆盖阶段失败（已变更计数不可核，备份${if (backupPresent) "已在盘" else "未生成"}）：${reasonOf(e)}",
+                backupPresent = backupPresent,
+            )
+        }
 
     /**
      * 覆盖前备份工作集并机会式修剪保留；备份 IO 失败转 [DeliveryPushException]（未触碰任何原文件）。
@@ -359,9 +388,10 @@ class DeliveryCommandExecutor(
     /**
      * hot_reload：重拉 V2 清单并直接通知配置工件路径，不经过 Legacy ConfigApplier / EffectiveConfigStore。
      *
-     * **生效阶段回执的计数口径（FR-266 评审 P1）**：本阶段能核计的事实只有「本单涉及的配置工件数」，
-     * 正推阶段的真实变更数已由推送回执上报、此处不重复声明，故取 `max(入参计数, 配置工件数)` 作**下界**——
-     * 让「已落盘仅通知失败」的失败回执与控制面目标行不再是 0，运维据此知道盘上确实变了多少。
+     * **生效阶段回执的计数口径（FR-266 评审 P1 / P2）**：
+     * - 正推（`activate`）无真实变更计数可依（真实数已由推送回执上报、此处不重复声明），取
+     *   `max(入参计数, 配置工件数)` 作**下界**——让「已落盘仅通知失败」的失败回执不再是 0；
+     * - 回滚（`rollback`）的入参本身就是**真实还原文件数**，不得再取下界（拿工件数顶替会虚报还原面）。
      */
     private fun runHotReload(
         orderId: Long,
@@ -379,7 +409,7 @@ class DeliveryCommandExecutor(
             return
         }
         val configFiles = normalizedConfigFiles(manifest.files)
-        val effectiveCount = maxOf(changedFileCount, configFiles.size)
+        val effectiveCount = if (phase == PHASE_ACTIVATE) maxOf(changedFileCount, configFiles.size) else changedFileCount
         if (publishConfigChanged(orderId, phase, configFiles, effectiveCount, backupPresent)) {
             postResult(orderId, DeliveryStageReport(phase, STATUS_SUCCESS, effectiveCount, 0, backupPresent, ""))
             adapter.info("交付 hot_reload 完成：orderId=$orderId，phase=$phase，配置工件=${configFiles.size}")
@@ -515,24 +545,29 @@ class DeliveryCommandExecutor(
      * **须在 async 线程调用**（删盘是阻塞 IO，绝不上 MC 主线程）；删除失败不静默——按项计数记 warn。
      */
     fun sweepStaleTemp() {
-        // 与在途交付互斥：取不到单飞门说明已有命令在执行，此时清扫可能删掉在途临时目录，直接跳过。
-        if (!running.compareAndSet(false, true)) {
-            adapter.warn("启动清扫跳过：已有交付命令在执行（清扫与在途交付互斥，残留留待该命令收尾清理）")
-            return
-        }
+        // sweeping 先置再抢门：否则「抢到门」与「置标记」之间到达的命令会读到 sweeping=false，
+        // 被误报成「并发重复」而给出错误原因（占门方是清扫，不是另一条交付命令）。
         sweeping = true
         try {
-            val stale = pipeline.tempRoot.listFiles().orEmpty()
-            if (stale.isEmpty()) return
-            val failed = stale.count { !it.deleteRecursively() }
-            if (failed > 0) {
-                adapter.warn("交付临时目录启动清扫未完全删除：失败=$failed，总数=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
-            } else {
-                adapter.info("交付临时目录启动清扫完成：删除=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
+            // 与在途交付互斥：取不到单飞门说明已有命令在执行，此时清扫可能删掉在途临时目录，直接跳过。
+            if (!running.compareAndSet(false, true)) {
+                adapter.warn("启动清扫跳过：已有交付命令在执行（清扫与在途交付互斥，残留留待该命令收尾清理）")
+                return
+            }
+            try {
+                val stale = pipeline.tempRoot.listFiles().orEmpty()
+                if (stale.isEmpty()) return
+                val failed = stale.count { !it.deleteRecursively() }
+                if (failed > 0) {
+                    adapter.warn("交付临时目录启动清扫未完全删除：失败=$failed，总数=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
+                } else {
+                    adapter.info("交付临时目录启动清扫完成：删除=${stale.size}，位置=${pipeline.tempRoot.absolutePath}")
+                }
+            } finally {
+                running.set(false)
             }
         } finally {
             sweeping = false
-            running.set(false)
         }
     }
 
@@ -593,9 +628,16 @@ class DeliveryCommandExecutor(
     }
 }
 
-/** 推送阶段失败（携脱敏原因）：由 executePush 内各失败点抛出、runPush 统一回执 failed。 */
+/**
+ * 推送阶段失败（携脱敏原因 + 已发生的事实）：由 executePush 内各失败点抛出、runPush 统一回执 failed。
+ *
+ * @param changedFileCount 盘上已实际变更的文件数（未动原文件时为 0）
+ * @param backupPresent    本单备份是否已在盘（可回滚性的依据，agent 不代控制面判「可回滚」）
+ */
 private class DeliveryPushException(
     message: String,
+    val changedFileCount: Int = 0,
+    val backupPresent: Boolean = false,
 ) : Exception(message)
 
 /** 异常摘要（类名 + 消息，无凭据；上层再经控制面脱敏兜底）。 */

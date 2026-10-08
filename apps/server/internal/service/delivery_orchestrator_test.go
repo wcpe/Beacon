@@ -179,6 +179,15 @@ func (h *orchestratorHarness) completeAllPushes(t *testing.T, orderID uint) {
 	}
 }
 
+// completeAllPushesWithResult 把某单全部目标的推送命令置成功并附指定回执摘要（计数用例自定 changedFileCount / backupPresent）。
+func (h *orchestratorHarness) completeAllPushesWithResult(t *testing.T, orderID uint, result string) {
+	t.Helper()
+	targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(orderID)
+	for _, tg := range targets {
+		completeDeliveryCommand(t, h.env.db, orderID, tg.ServerID, model.CommandTypeDeliveryPush, model.CommandStatusDone, result)
+	}
+}
+
 // completeAllActivates 把某单全部目标的生效命令置指定终态（模拟 agent 回执，如 restart 的「已开始关服」done）。
 func (h *orchestratorHarness) completeAllActivates(t *testing.T, orderID uint, status string) {
 	t.Helper()
@@ -1030,6 +1039,44 @@ func TestOrchestratorActivateFailureZeroCountsKeepsPushedFacts(t *testing.T) {
 		}
 		if !targets[i].BackupPresent {
 			t.Fatalf("0 计数回执不得清零推送阶段备份标记")
+		}
+	}
+}
+
+// TestOrchestratorActivateFailureSmallerCountKeepsPushedFacts 锁定「只增不减」对**更小正数**同样成立：
+// 推送阶段落定 3 项（1 个普通文件 + 2 个配置工件），生效阶段按工件数取下界 2 → 目标行必须保持 3，
+// 否则「改了 3 个」会被下界回执改写成「改了 2 个」（FR-266 评审 P1）。
+func TestOrchestratorActivateFailureSmallerCountKeepsPushedFacts(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodHotReload, 0)
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushesWithResult(t, order.ID, `{"changedFileCount":3,"skippedFileCount":0,"backupPresent":true}`)
+	h.tick()
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivating] != 2 {
+		t.Fatalf("hot_reload 推送落定后应 activating: %v", c)
+	}
+
+	// 生效失败回执按配置工件数取下界（2 < 3）：不得把已落定的 3 覆写成 2。
+	h.completeAllActivatesWithResult(t, order.ID, model.CommandStatusFailed,
+		`{"changedFileCount":2,"skippedFileCount":0,"backupPresent":true,"error":"文件已落盘，仅配置变更通知失败"}`)
+	h.tick()
+
+	targets, err := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+	if err != nil {
+		t.Fatalf("查目标失败: %v", err)
+	}
+	for i := range targets {
+		if targets[i].Status != model.ChangeTargetStatusFailed {
+			t.Fatalf("目标应 failed，实际 %s", targets[i].Status)
+		}
+		if targets[i].ChangedFileCount != 3 {
+			t.Fatalf("更小的正数回执不得覆写已落定计数（期望 3，实际 %d）", targets[i].ChangedFileCount)
+		}
+		if !targets[i].BackupPresent {
+			t.Fatalf("备份标记应保持 true")
 		}
 	}
 }
