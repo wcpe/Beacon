@@ -73,7 +73,7 @@ func MCPToolNames(profile string) []string
 
 `mcpToolDiscoverable` 在 FR-236 阶段只包含 `RequireApprovalDecide` 判定；FR-237 将在此叠加生产模式过滤（单点扩展，测试与运行时同时生效）。
 
-### 3.3 风险等级分配（全部 81 项）
+### 3.3 风险等级分配（全部 87 项）
 
 **`critical`（10 项，均为「不可逆」或「影响控制面自身」）**
 
@@ -94,17 +94,17 @@ func MCPToolNames(profile string) []string
 
 **`high`（46 项）**：其余全部申请类与敏感读消费类工具，等级继承既有 descriptor（`config.*` 8、`file.*` 8、`override-set.*` 3、`identity.*` 5、`namespace_trust.grant` 1、`topology` 审批 5、`lifecycle` archive/restore 4、`agent.server.resync` 1、`delivery` 其余 5、`assets.preview.*` 2、`messages.payload.*` 2），外加 **2 项告警处置工具**（`beacon.alerts.events.handle` / `.batch-handle`：直接执行 + 同事务写审计、无审批票据——批量一条 UPDATE 且只影响 `status='open'` 行故幂等、单条可再改故可逆；但因关闭告警会隐藏故障信号、改变生产可见状态，取 `high` 而非 `low`）。
 
-**`low`（25 项）**：
+**`low`（31 项）**：
 
-- 12 个只读工具（`mcpReadToolNames`）：直查服务，无副作用。
+- 18 个只读工具：直查服务，无副作用。其中 12 个为既有观测域只读（元数据 / 拓扑 / 指标 / 历史 / 审计）；另 6 个为 **FR-245 的交付域只读**（`beacon.delivery.order.list` / `.order.get` / `.targets.list` / `.impact.get` / `.observe.get` / `.events.list`）——无副作用、返回一律有界投影，且**不带 `AutomationOnly`**（只读工具须对 observer 同样可见；该标记的真实语义是「仅 automation 可发现」）。
 - 1 个告警事件只读列表：`beacon.alerts.events.list`（分页 + 状态/级别/环境/实例/时间过滤，且**不透传 detail**——该列含状态前后与实例地址上下文）。
 - 2 个审批自查：`beacon.approvals.own.list` / `.get`（仅读自己的申请）。
 - 1 个自查变更：`beacon.approvals.own.withdraw`（仅撤回自己的 pending 申请）。
 - 9 个建树工具（FR-221）：低风险结构操作，FR-221 已明确直执且 service 层有非空拒绝保护。
 
-> **合计校验**：critical 10 + high 46 + low 25 = 81。
+> **合计校验**：critical 10 + high 46 + low 31 = 87。
 
-> 本节计数随 catalog 增长更新（FR-236 交付时为 78 项；本表当前为 81 项，增量即上文 3 个告警工具）。§1 / §2 / §4 / §5 中的「78 项」是 FR-236 交付时的历史快照，不再随目录增长维护；**当前档位与计数的真源始终是 `mcpToolCatalog` 与本节**。
+> 本节计数随 catalog 增长更新（FR-236 交付时为 78 项；本表当前为 87 项 = 78 + 3 个告警工具 + 6 个交付只读工具；交付组单与止损的 5 个写工具落地后为 92 项）。§1 / §2 / §4 / §5 中的「78 项」是 FR-236 交付时的历史快照，不再随目录增长维护；**当前档位与计数的真源始终是 `mcpToolCatalog` 与本节**。
 
 **关于 `assets.preview.consume` / `messages.payload.consume`**：不创建审批、只消费既有 grant，故无 descriptor。定为 `high`——它们读取敏感内容，虽受上游 grant 约束，但不应与只读工具同档。
 
@@ -151,7 +151,7 @@ func mcpAddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.Too
 - catalog 覆盖全部 78 个工具，无遗漏、无多余；新增工具未登记 catalog 时，覆盖测试失败（fail-closed）。
 - in-memory 枚举集合与 catalog 派生集合**双向一致**。
 - 每个有 operation kind 的工具，catalog 等级 **不低于** descriptor 等级。
-- `MCPToolNames` 对外行为不变：observer 14 项、automation 76 / 78 项（随 `allow-approval-decide` 两态：关闭 76、开启 78）。
+- `MCPToolNames` 对外行为不变（FR-236 重构前后逐项一致）。**当前计数**：observer 21 项、automation 85 / 87 项（随 `allow-approval-decide` 两态：关闭 85、开启 87）；计数随目录增长更新——FR-236 交付时为 observer 14、automation 76 / 78，真源见 §3.3。
 - 既有测试全绿。
 
 ## 6. 风险 / 待定

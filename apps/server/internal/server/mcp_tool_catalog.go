@@ -68,6 +68,18 @@ var mcpToolCatalog = []mcpToolSpec{
 	// 且**不透传 detail**（该列含状态前后与地址上下文），故定 low。
 	{Name: "beacon.alerts.events.list", RiskLevel: MCPRiskLow},
 
+	// 交付编排只读（FR-245）：列表 / 详情 / 目标 / 影响 / 观察窗 / 事件六个工具无副作用、
+	// 返回均为有界投影（列表强制分页、详情只回摘要与计数、事件回有界条数）。
+	// **不带 AutomationOnly**：observer 与 automation 共用（对齐其余只读段）；
+	// AutomationOnly 的真实语义是「仅 automation 可发现」，挂上即令 observer 不可见。
+	// OperationKind 留空：只读无审批语义（不触发「catalog 等级 ≥ descriptor」约束）。
+	{Name: "beacon.delivery.order.list", RiskLevel: MCPRiskLow},
+	{Name: "beacon.delivery.order.get", RiskLevel: MCPRiskLow},
+	{Name: "beacon.delivery.targets.list", RiskLevel: MCPRiskLow},
+	{Name: "beacon.delivery.impact.get", RiskLevel: MCPRiskLow},
+	{Name: "beacon.delivery.observe.get", RiskLevel: MCPRiskLow},
+	{Name: "beacon.delivery.events.list", RiskLevel: MCPRiskLow},
+
 	// ── 审批自助：撤回自己提交的申请，仅影响自身 ──
 	{Name: "beacon.approvals.own.withdraw", RiskLevel: MCPRiskLow, AutomationOnly: true},
 

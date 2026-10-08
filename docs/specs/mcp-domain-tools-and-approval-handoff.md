@@ -62,9 +62,10 @@ FR-219 只建立经过认证的 MCP transport 和机器主体。要让外部 Age
 | `beacon.history.*.query` | 连接、消息元数据、命令/变更历史 | payload、实时内容与敏感明文除外 |
 | `beacon.alerts.events.list` | 告警事件摘要（处理状态、收敛计数、处理留痕、人工改级标记） | 只读、分页、按状态/级别/环境/实例/时间过滤；**不回传 detail**（含状态前后与实例地址上下文） |
 | `beacon.audit.events.list/get` | 脱敏审计 | 只读、分页、按主体/目标/时间过滤 |
+| `beacon.delivery.*.list/get` | 变更单列表 / 详情 / 目标 / 影响 / 观察窗 / 事件（FR-245） | 列表与逐目标分页（`pageSize` 上限 100）；详情只回摘要与计数，**不回**逐文件清单与批次明细；观察窗与事件回有界条数；`orderId` 定位的工具按单所属 namespace 判归属，跨 namespace 拒绝 |
 | `beacon.approvals.own.list/get` | 本 MCP client 自己提交的申请与结果 | 不能读取无权申请；结果继续脱敏 |
 
-当前已登记的第一批只读工具为 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list`、`beacon.alerts.events.list` 与 `beacon.audit.events.list`。它们同时对 `observer` 与 `automation` 可发现；连接不提供单连接明细，消息不提供 payload、玩家标识或 hop 原文，命令不提供结果正文，告警不提供 detail，审计不提供 detail 与客户端地址。
+当前已登记的第一批只读工具为 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list`、`beacon.alerts.events.list`、`beacon.audit.events.list`，以及交付域的 `beacon.delivery.order.list`、`beacon.delivery.order.get`、`beacon.delivery.targets.list`、`beacon.delivery.impact.get`、`beacon.delivery.observe.get`、`beacon.delivery.events.list`（FR-245）。它们同时对 `observer` 与 `automation` 可发现；连接不提供单连接明细，消息不提供 payload、玩家标识或 hop 原文，命令不提供结果正文，告警不提供 detail，审计不提供 detail 与客户端地址，交付域不透传逐文件清单与批次明细。
 
 “数据库元数据”指经 query service 暴露的领域元数据，不是 SQL 或表结构浏览器。所有列表必须有服务端上限和游标/分页，禁止一次加载 1000+ 资源或大时间窗历史。
 
