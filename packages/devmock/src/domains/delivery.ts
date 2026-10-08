@@ -507,6 +507,20 @@ function illegalState(current: ChangeOrderStatus, action: string): Response {
   return jsonError(409, 'illegal_state', `当前状态 ${current} 不允许 ${action}`)
 }
 
+/** 幂等键校验：对齐后端 validIdempotencyKey（非空、长度 ≤64、全为可打印 ASCII 33..126） */
+function validIdempotencyKey(key: string): boolean {
+  if (key.length === 0 || key.length > 64) {
+    return false
+  }
+  for (const ch of key) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code < 33 || code > 126) {
+      return false
+    }
+  }
+  return true
+}
+
 function toSummary(order: OrderState): ChangeOrderSummary {
   const summary: ChangeOrderSummary & { selector?: unknown; items?: unknown; batches?: unknown; targets?: unknown; events?: unknown; targetCounts?: unknown; rollbackCounts?: unknown } = { ...order }
   delete summary.selector
@@ -717,14 +731,27 @@ export const deliveryHandlers: HttpHandler[] = [
     return HttpResponse.json(response)
   }),
 
-  // 提交审批
-  mockPost('/admin/v2/change-orders/:id/submit', (info) => {
+  // 提交审批（提审原因必填 + 必须携带幂等键）→ pending_approval
+  // mock 对齐后端 RequestSubmit 的守卫与**判定顺序**：先校验 reason 去空白后非空（空即 400），
+  // 再查单（404）与状态（409），最后校验 Idempotency-Key（缺 / 非法即 400 INVALID_PARAM）。
+  // 顺序必须一致，否则「非 draft 单 + 缺原因」在真机是 400、在演示模式是 409，前端错误分支会被带偏。
+  // 注意：真机在建申请前已先把状态冻结为 pending_approval（两步非事务），缺键会把单据卡死；
+  // mock 刻意**不**复现这个卡死（键校验置于任何状态变更之前），演示模式不该产生不可恢复的单据。
+  mockPost('/admin/v2/change-orders/:id/submit', async (info) => {
+    const body = await readBody<{ reason?: string }>(info.request)
+    if ((body.reason ?? '').trim() === '') {
+      return jsonError(400, 'approval_reason_required', '审批原因不能为空')
+    }
     const order = findOrder(info)
     if (!order) {
       return orderNotFound()
     }
     if (order.status !== 'draft') {
       return illegalState(order.status, '提交审批')
+    }
+    const key = info.request.headers.get('Idempotency-Key') ?? ''
+    if (!validIdempotencyKey(key)) {
+      return jsonError(400, 'INVALID_PARAM', '缺少或非法的幂等键（Idempotency-Key）')
     }
     order.status = 'pending_approval'
     order.submittedAt = isoOffset(0)

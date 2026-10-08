@@ -1,6 +1,7 @@
-// /changes 变更单页测试：常规列表渲染、空态引导、审批写闭环、批次推进写闭环。
+// /changes 变更单页测试：常规列表渲染、空态引导、审批写闭环、批次推进写闭环、提审必填原因。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ChangesPage from '../../pages/changes'
@@ -233,6 +234,112 @@ describe('/changes 变更单页', () => {
       await within(jarRow).findByText('二进制文件不支持内容对比，仅展示元数据'),
     ).toBeInTheDocument()
     expect(within(jarRow).queryByText(/max-players/)).not.toBeInTheDocument()
+  }, 20_000)
+
+  it('详情页提审必填原因：未填写不可确认，填写后提审进入待审批', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    // 进入「大厅插件升级 v2.4」（draft）详情
+    const row = (await screen.findByText('大厅插件升级 v2.4')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    // 草稿单「提交审批」→ 确认弹窗带必填原因输入（与驳回 / 终止同形）
+    await user.click(await screen.findByRole('button', { name: '提交审批' }))
+    const dialog = await screen.findByRole('alertdialog')
+    const confirmButton = within(dialog).getByRole('button', { name: '提交审批' })
+    expect(confirmButton).toBeDisabled()
+
+    await user.type(within(dialog).getByRole('textbox'), '插件已在模板源验证通过，申请审批')
+    expect(confirmButton).toBeEnabled()
+    await user.click(confirmButton)
+
+    // 提审成功：弹窗关闭、状态迁移为待审批。devmock 已对齐后端的两道守卫（原因非空 +
+    // 幂等键合法），故这一条同时锁住「原因与 Idempotency-Key 都真的发出且合法」
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    expect((await screen.findAllByText('待审批')).length).toBeGreaterThan(0)
+  }, 20_000)
+
+  it('详情页提审携带幂等键，且重试复用同一键', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    // 首次失败、二次成功，用于观察两次提审是否复用同一幂等键
+    const keys: (string | null)[] = []
+    let attempt = 0
+    server.use(
+      http.post('*/admin/v2/change-orders/:id/submit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'))
+        attempt += 1
+        if (attempt === 1) {
+          return HttpResponse.json({ code: 'internal_error', message: '模拟瞬时失败' }, { status: 500 })
+        }
+        return HttpResponse.json({ id: 5001 }, { status: 200 })
+      }),
+    )
+    renderPage(<ChangesPage />)
+
+    const row = (await screen.findByText('大厅插件升级 v2.4')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    await user.click(await screen.findByRole('button', { name: '提交审批' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByRole('textbox'), '插件已验证，申请审批')
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+
+    // 首次失败：脱敏错误内联可见、弹窗保持打开
+    expect(await within(dialog).findByText('模拟瞬时失败')).toBeInTheDocument()
+
+    // 同一提审意图原样重试：幂等键必须复用，后端据此去重（换键会让重试变成新申请）
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+    await waitFor(() => {
+      expect(keys).toHaveLength(2)
+    })
+    expect(keys[0]).not.toBeNull()
+    expect(keys[0] ?? '').not.toBe('')
+    expect(keys[1]).toBe(keys[0])
+  }, 20_000)
+
+  it('提审被后端拒绝时内联展示脱敏错误，弹窗不关闭且单据仍为草稿', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    // 模拟真实控制面以缺原因拒绝提审（前端不得静默吞掉写操作错误）
+    server.use(
+      http.post('*/admin/v2/change-orders/:id/submit', () =>
+        HttpResponse.json(
+          { code: 'approval_reason_required', message: '审批原因不能为空', traceId: 'trace-test' },
+          { status: 400 },
+        ),
+      ),
+    )
+    renderPage(<ChangesPage />)
+
+    const row = (await screen.findByText('大厅插件升级 v2.4')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    await user.click(await screen.findByRole('button', { name: '提交审批' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByRole('textbox'), '插件已验证，申请审批')
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+
+    // 失败原因（后端脱敏文案）内联可见，弹窗保持打开供重试，单据未迁移
+    expect(await within(dialog).findByText('审批原因不能为空')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.getAllByText('草稿').length).toBeGreaterThan(0)
   }, 20_000)
 
   it('?order= 深链自动选中该单并打开详情面板', async () => {

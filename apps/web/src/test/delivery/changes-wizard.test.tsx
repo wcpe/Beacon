@@ -1,7 +1,8 @@
 // /changes 引导创建五步向导测试：三条路径（纯文件 / 纯配置 / 混合）走通成单、
-// 空态任务卡带预选类型进向导、步骤校验（未选模板源不能下一步）。
+// 空态任务卡带预选类型进向导、步骤校验（未选模板源不能下一步）、末步提审原因与幂等键必填。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ChangesPage from '../../pages/changes'
@@ -55,8 +56,9 @@ async function throughScopeToReview(user: ReturnType<typeof userEvent.setup>, di
   await within(dialog).findByText('目标总数')
 }
 
-/** 提交审批并断言成单：向导关闭、详情面板打开、状态为待审批 */
+/** 提交审批并断言成单：末步原因必填先填原因，再提交 → 向导关闭、详情面板打开、状态为待审批 */
 async function submitAndAssert(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement): Promise<void> {
+  await user.type(within(dialog).getByLabelText('提审原因'), '向导提审：变更内容已核对')
   await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
   await waitFor(() => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -434,6 +436,56 @@ describe('/changes 引导创建向导', () => {
     await user.click(within(dialog).getByRole('button', { name: '简单' }))
     expect(within(dialog).getByText(/将向全命名空间/)).toBeInTheDocument()
     expect(within(dialog).queryByText('配置变更清单（1 项）')).not.toBeInTheDocument()
+  })
+
+  it('第五步提审原因必填：未填写时提交置灰，填写后方可成单', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await pickSourceAndScan(user, dialog)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await throughScopeToReview(user, dialog)
+
+    // 原因未填写 → 底部「提交审批」置灰（与详情页提审确认弹窗同一必填口径）
+    const submitButton = within(dialog).getByRole('button', { name: '提交审批' })
+    expect(submitButton).toBeDisabled()
+
+    // 填写原因后放行成单（缺原因时 devmock 对齐后端回 400，向导会停在第 5 步）
+    await submitAndAssert(user, dialog)
+  })
+
+  it('第五步提审请求携带 Idempotency-Key 头', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    // 直接断言请求头（对齐 mcp-clients 先例的写法）：缺键时真机 400 INVALID_PARAM，
+    // 且 submit 先冻结状态后建申请，缺键会把单据永久卡在 pending_approval
+    const keys: (string | null)[] = []
+    server.use(
+      http.post('*/admin/v2/change-orders/:id/submit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'))
+        return HttpResponse.json({ id: 5001 }, { status: 200 })
+      }),
+    )
+    renderPage(<ChangesPage />)
+
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await pickSourceAndScan(user, dialog)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await throughScopeToReview(user, dialog)
+
+    await user.type(within(dialog).getByLabelText('提审原因'), '向导提审：插件已在模板源验证')
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+
+    await waitFor(() => {
+      expect(keys).toHaveLength(1)
+    })
+    expect(keys[0]).not.toBeNull()
+    expect(keys[0] ?? '').not.toBe('')
+    expect((keys[0] ?? '').length).toBeLessThanOrEqual(64)
   })
 
   it('模板源列表搜索即输即滤，选中态跨筛选保留', { timeout: WIZARD_TEST_TIMEOUT }, async () => {

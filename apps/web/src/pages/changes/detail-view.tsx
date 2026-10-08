@@ -1,6 +1,6 @@
 // 变更单详情视图：标题 + 状态徽标 + 生命周期操作区（按 status 显示可用动作）+ 五个 Tab。
-// 每个写操作走确认弹窗；reject/cancel 必填原因，熔断恢复必填 mode+reason。
-import { useState } from 'react'
+// 每个写操作走确认弹窗；submit/reject/cancel/delete 必填原因，熔断恢复必填 mode+reason。
+import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
@@ -28,6 +28,7 @@ import {
   type ChangeOrderDetail,
 } from '../../api/delivery-changes'
 import ConfirmDialog, { type ConfirmResult } from './confirm-dialog'
+import { randomId } from '../../lib/random-id'
 import { OrderRollbackActions, RollbackBanner } from '../../features/delivery/order-rollback'
 import { OrderStatusBadge } from '../../features/delivery/status-badges'
 import ItemsTab from './items-tab'
@@ -58,6 +59,8 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
 
   const [action, setAction] = useState<ActionKind | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
+  // 提审幂等键：同一「提审意图」重试复用同一键（后端据此去重），弹窗关闭即作废重来
+  const submitKeyRef = useRef<string | null>(null)
 
   const query = useQuery({
     queryKey: ['change-orders', 'detail', orderId],
@@ -69,8 +72,12 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
   const runMutation = useMutation({
     mutationFn: ({ kind, result }: { kind: ActionKind; result: ConfirmResult }) => {
       switch (kind) {
-        case 'submit':
-          return submitChangeOrder(orderId)
+        case 'submit': {
+          // 幂等键必须携带（缺则后端 400 INVALID_PARAM，且单据会卡在 pending_approval）
+          const key = submitKeyRef.current ?? randomId()
+          submitKeyRef.current = key
+          return submitChangeOrder(orderId, result.reason, key)
+        }
         case 'delete':
           return deleteChangeOrder(orderId, result.reason)
         case 'withdraw':
@@ -171,6 +178,8 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
           onOpenChange={(open) => {
             if (!open) {
               setAction(null)
+              // 关闭弹窗 = 放弃本次提审意图，下次提审重新生成幂等键
+              submitKeyRef.current = null
             }
           }}
           title={confirmConfig(action, t).title}
@@ -238,10 +247,11 @@ function availableActions(status: ChangeOrderDetail['status']): ActionKind[] {
   }
 }
 
-// 需要填写原因的动作：驳回 / 终止
+// 需要填写原因的动作：提审 / 驳回 / 终止 / 删除
 function needsReason(kind: ActionKind): boolean {
-  // 高风险操作填原因入审计（spec §4.8.1）：驳回 / 紧急终止 / 删除 draft 单。
-  return kind === 'reject' || kind === 'cancel' || kind === 'delete'
+  // 提审、高风险操作填原因入审计（spec §4.8.1）：提交审批（后端 RequestSubmit 强制非空）、
+  // 驳回 / 紧急终止 / 删除 draft 单。
+  return kind === 'submit' || kind === 'reject' || kind === 'cancel' || kind === 'delete'
 }
 
 function confirmConfig(

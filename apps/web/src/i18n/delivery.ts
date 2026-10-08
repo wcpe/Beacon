@@ -581,6 +581,8 @@ export const delivery = {
         lead: '最后确认一遍交付内容与影响面。提交后进入待审批，审批通过并启动后按批推进。',
         titleLabel: '变更单标题',
         titlePlaceholder: '给这次交付起个一眼能懂的名字',
+        reasonLabel: '提审原因',
+        reasonPlaceholder: '填写本次提审原因（必填，将记入审批申请与审计）',
         defaultTitle: {
           files: '文件更新（模板源 {{source}}）',
           configs: '配置更新（{{count}} 个文件）',
@@ -776,7 +778,7 @@ export const delivery = {
     },
     confirm: {
       submitTitle: '提交审批',
-      submitDesc: '提交后进入待审批，审批通过才可启动',
+      submitDesc: '提交后进入待审批，审批通过才可启动，需填写原因',
       approveTitle: '审批通过',
       approveDesc: '通过后该变更单可被启动灰度',
       rejectTitle: '驳回变更单',

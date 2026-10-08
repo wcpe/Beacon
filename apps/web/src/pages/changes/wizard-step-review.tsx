@@ -1,4 +1,4 @@
-// 向导第 5 步：预览与提交。标题输入 + 「简单 / 详细」两种概要模式：
+// 向导第 5 步：预览与提交。标题输入 + 提审原因（必填）+「简单 / 详细」两种概要模式：
 // 简单 = 人话概要句 + 关键数字 KPI；详细 = 变更内容预览 + 完整编排预览（共享控件，
 // 数据来自草稿详情与 impact）。底部保留「审批 → 启动 → 逐批放行」流程说明。
 // 进入本步前父级已把草稿单同步到位（prepared 递增触发重取）。
@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Info } from 'lucide-react'
 
-import { AsyncSection, Input, Label, SummaryStrip, cn, type SummaryItem } from '@beacon/ui'
+import { AsyncSection, Input, Label, SummaryStrip, Textarea, cn, type SummaryItem } from '@beacon/ui'
 
 import { fetchZoneTree } from '../../api/cluster'
 import { fetchChangeImpact, fetchChangeOrder, type ChangeOrderItem } from '../../api/delivery-changes'
@@ -34,6 +34,9 @@ interface StepReviewProps {
   batch: WizardBatch
   title: string
   onTitleChange: (title: string) => void
+  // 提审原因（必填，后端 RequestSubmit 校验非空；写入审批申请与审计）
+  reason: string
+  onReasonChange: (reason: string) => void
 }
 
 export default function WizardStepReview({
@@ -45,6 +48,8 @@ export default function WizardStepReview({
   batch,
   title,
   onTitleChange,
+  reason,
+  onReasonChange,
 }: StepReviewProps) {
   const { t } = useTranslation()
   // 概要模式：简单（默认，人话 + KPI）/ 详细（两个完整预览控件）
@@ -132,6 +137,20 @@ export default function WizardStepReview({
             onTitleChange(e.target.value)
           }}
           placeholder={t('delivery.changes.wizard.review.titlePlaceholder')}
+        />
+      </div>
+
+      {/* 提审原因：后端 RequestSubmit 强制非空，故与标题同置于「提交审批」前，缺则底部按钮置灰 */}
+      <div className="grid gap-1.5">
+        <Label htmlFor="wizard-order-reason">{t('delivery.changes.wizard.review.reasonLabel')}</Label>
+        <Textarea
+          id="wizard-order-reason"
+          value={reason}
+          onChange={(e) => {
+            onReasonChange(e.target.value)
+          }}
+          placeholder={t('delivery.changes.wizard.review.reasonPlaceholder')}
+          rows={2}
         />
       </div>
 

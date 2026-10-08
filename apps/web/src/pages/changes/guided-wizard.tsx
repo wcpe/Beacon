@@ -1,7 +1,8 @@
 // 引导创建五步向导（模态 Dialog）：选交付内容 → 选模板源扫差异 → 选配置变更 →
 // 范围与批次 → 影响预览与提交。步骤间状态保留；纯配置跳过模板源步、纯文件跳过配置步。
 // 组合既有 mock 端点闭环：POST /change-orders（懒建 draft）→ diff-scan → PATCH（范围 /
-// 批次 / 挂配置）→ impact → submit；取消时删除已建 draft，成单后交给父级打开详情面板。
+// 批次 / 挂配置）→ impact → submit（提审原因必填）；取消时删除已建 draft，
+// 成单后交给父级打开详情面板。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -12,6 +13,7 @@ import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, cn } from '@b
 
 import { fetchZoneTree } from '../../api/cluster'
 import { ApiClientError } from '../../api/delivery'
+import { randomId } from '../../lib/random-id'
 import {
   createChangeOrder,
   deleteChangeOrder,
@@ -82,10 +84,14 @@ export default function GuidedWizard({
   const [batch, setBatch] = useState<WizardBatch>(() => recommendedBatch(null))
   const [activation, setActivation] = useState<WizardActivation>('push_only')
   const [title, setTitle] = useState('')
+  // 提审原因：后端 RequestSubmit 强制非空，末步必填（与详情页提审确认弹窗同一口径）
+  const [reason, setReason] = useState('')
   const [prepared, setPrepared] = useState(0)
   const [errorText, setErrorText] = useState<string | null>(null)
   // 提交成功后关闭时不再删除草稿
   const keepOrderRef = useRef(false)
+  // 提审幂等键：同一次提审重试复用同一键（后端据此去重），重开向导即作废重来
+  const submitKeyRef = useRef<string | null>(null)
 
   // 每次打开重置全部状态并应用预选类型
   useEffect(() => {
@@ -101,9 +107,11 @@ export default function GuidedWizard({
       setBatch(recommendedBatch(null))
       setActivation('push_only')
       setTitle('')
+      setReason('')
       setPrepared(0)
       setErrorText(null)
       keepOrderRef.current = false
+      submitKeyRef.current = null
     }
   }, [open, initialContent])
 
@@ -202,14 +210,17 @@ export default function GuidedWizard({
     },
   })
 
-  // 第 5 步「提交审批」：落最终标题后提审，成单交回父级打开详情
+  // 第 5 步「提交审批」：落最终标题后携必填原因 + 幂等键提审，成单交回父级打开详情
   const submitMutation = useMutation({
     mutationFn: async () => {
       if (orderId === null) {
         throw new Error(t('delivery.changes.wizard.review.notReady'))
       }
       await updateChangeOrder(orderId, { title: resolvedTitle() })
-      return submitChangeOrder(orderId)
+      // 幂等键必须携带（缺则后端 400 INVALID_PARAM，且单据会卡在 pending_approval）
+      const key = submitKeyRef.current ?? randomId()
+      submitKeyRef.current = key
+      return submitChangeOrder(orderId, reason.trim(), key)
     },
     onSuccess: async (detail) => {
       keepOrderRef.current = true
@@ -258,7 +269,8 @@ export default function GuidedWizard({
         // 范围已选出目标 + 批次编排通过校验（百分比合计 100 / 台数合计等于目标数）
         return scopeReady(scope) && batchIssue(batch, targetEstimate) === null
       case 'review':
-        return title.trim() !== ''
+        // 标题与提审原因都必填（原因缺则后端 400 approval_reason_required）
+        return title.trim() !== '' && reason.trim() !== ''
     }
   }
 
@@ -353,6 +365,8 @@ export default function GuidedWizard({
               batch={batch}
               title={title}
               onTitleChange={setTitle}
+              reason={reason}
+              onReasonChange={setReason}
             />
           )}
         </div>
