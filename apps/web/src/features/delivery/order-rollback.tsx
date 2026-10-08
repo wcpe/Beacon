@@ -1,9 +1,10 @@
 // 整单回滚共享控件（/changes 详情与历史详情共用，承契约 rollback / rollback/finish）：
 // OrderRollbackActions = 动作簇——合法状态（已完成 / 已暂停 / 已终止）给「整单回滚」
 // 高摩擦确认（手输「回滚」+ 原因），回滚中给「人工结束回滚」（残留失败收单）；
-// 自带 mutation 与内联脱敏错误。RollbackBanner = 回滚信息横幅（谁 / 何时 / 为何）+
-// 回滚中的逐目标进度计数（来自详情 rollbackCounts）。
-import { useState } from 'react'
+// 两动作都是**申请动作**（202 票据 + 幂等键），成功后只提示申请号与去审批中心，
+// 单据状态要到审批通过后才变化（不再假设「点完即回滚」）。
+// RollbackBanner = 回滚信息横幅（谁 / 何时 / 为何）+ 回滚中的逐目标进度计数（来自详情 rollbackCounts）。
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
@@ -17,6 +18,8 @@ import {
   rollbackChangeOrder,
   type ChangeOrderDetail,
 } from '../../api/delivery-changes'
+import { randomId } from '../../lib/random-id'
+import { useApprovalTicketFeedback } from './approval-ticket'
 import RollbackDialog from './rollback-dialog'
 import { formatTime } from './format'
 
@@ -27,21 +30,37 @@ interface OrderRollbackProps {
   order: ChangeOrderDetail
 }
 
-/** 回滚动作簇：整单回滚 / 人工结束回滚按钮 + 高摩擦确认弹窗 + 自带写请求 */
+/** 回滚动作簇：整单回滚 / 人工结束回滚按钮 + 高摩擦确认弹窗 + 自带申请请求 */
 export function OrderRollbackActions({ order }: OrderRollbackProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const notifyTicket = useApprovalTicketFeedback()
   const [rollbackOpen, setRollbackOpen] = useState(false)
   const [finishOpen, setFinishOpen] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
+  // 幂等键按意图各存一个：同一意图重试复用同键（后端据此去重），弹窗关闭即作废重来
+  const keysRef = useRef<{ rollback: string | null; finish: string | null }>({
+    rollback: null,
+    finish: null,
+  })
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['change-orders'] })
+  const invalidate = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['change-orders'] }),
+      queryClient.invalidateQueries({ queryKey: ['approvals'] }),
+    ])
+  }
 
   const rollbackMutation = useMutation({
-    mutationFn: (reason: string) => rollbackChangeOrder(order.id, reason),
-    onSuccess: async () => {
+    mutationFn: (reason: string) => {
+      const key = keysRef.current.rollback ?? randomId()
+      keysRef.current.rollback = key
+      return rollbackChangeOrder(order.id, reason, key)
+    },
+    onSuccess: async (ticket) => {
       await invalidate()
       setRollbackOpen(false)
+      notifyTicket(ticket)
     },
     onError: (error) => {
       setErrorText(error instanceof ApiClientError ? error.message : String(error))
@@ -49,10 +68,15 @@ export function OrderRollbackActions({ order }: OrderRollbackProps) {
   })
 
   const finishMutation = useMutation({
-    mutationFn: () => finishRollbackChangeOrder(order.id),
-    onSuccess: async () => {
+    mutationFn: () => {
+      const key = keysRef.current.finish ?? randomId()
+      keysRef.current.finish = key
+      return finishRollbackChangeOrder(order.id, key)
+    },
+    onSuccess: async (ticket) => {
       await invalidate()
       setFinishOpen(false)
+      notifyTicket(ticket)
     },
     onError: (error) => {
       setErrorText(error instanceof ApiClientError ? error.message : String(error))

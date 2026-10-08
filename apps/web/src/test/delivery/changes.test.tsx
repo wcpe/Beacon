@@ -71,68 +71,66 @@ describe('/changes 变更单页', () => {
     expect(within(dialog).getByText('完成 / 回滚')).toBeInTheDocument()
   })
 
-  it('审批写闭环：通过后仅展示单一审批状态，不再要求第二次启动', async () => {
+  it('待审批详情只留「撤回」入口（跳审批中心），不再有通过 / 驳回按钮，且审批进度可见', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
 
-    // 找到「经济系统配置调优」（pending_approval）所在行，点行打开右侧非模态详情面板
+    // 「经济系统配置调优」为种子待审批单（关联审批申请 apr_change_9101）
     const titleCell = await screen.findByText('经济系统配置调优')
     const row = titleCell.closest('tr')
     if (!row) {
       throw new Error('未找到变更单所在行')
     }
     await user.click(row)
-
-    // 详情为固定层抽屉（返回列表 + 待审批）；列表主列仍在、无 dialog
     await screen.findByRole('button', { name: '返回列表' })
-    expect((await screen.findAllByText('待审批')).length).toBeGreaterThan(0)
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
-    // 点「通过」→ 确认弹窗 → 确认
-    await user.click(screen.getByRole('button', { name: '通过' }))
-    const dialog = await screen.findByRole('alertdialog')
-    await user.click(within(dialog).getByRole('button', { name: '通过' }))
+    // 审批决定只在统一审批中心：详情页不得再出现通过 / 驳回（旧入口真机 403）
+    expect(screen.queryByRole('button', { name: '通过' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '驳回' })).not.toBeInTheDocument()
+    // 撤回改走审批中心（跳转，不在本页直调废弃的 /withdraw）
+    expect(screen.getByRole('link', { name: '撤回' })).toHaveAttribute('href', '/approvals')
 
-    // 状态迁移为已批准（弹窗关闭后，详情头部徽标更新）
-    await waitFor(() => {
-      expect(screen.getAllByText('已批准').length).toBeGreaterThan(0)
-    })
-    expect(screen.queryByRole('button', { name: '启动' })).not.toBeInTheDocument()
-  })
+    // 审批进度视图：状态 / 审批人 / 申请号 / 去审批中心入口
+    expect(await screen.findByText('审批进度')).toBeInTheDocument()
+    expect(screen.getByText('apr_change_9101')).toBeInTheDocument()
+    expect(screen.getAllByText('待审批').length).toBeGreaterThan(0)
+    expect(screen.getByText(/审批人：待处理/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /查看申请/ })).toHaveAttribute(
+      'href',
+      '/approvals/apr_change_9101',
+    )
+    expect(screen.getAllByRole('link', { name: '去审批中心' }).length).toBeGreaterThan(0)
+  }, 20_000)
 
-  it('批次推进写闭环：状态机放行待确认批后即时推进到下一批', async () => {
+  it('批次放行走审批申请：确认后只有票据反馈，批次不立即推进', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
 
-    // 进入「Quests 插件灰度 v1.9」（rolling）详情
+    // 进「Quests 插件灰度 v1.9」（rolling）详情 → 灰度批次 Tab
     const titleCell = await screen.findByText('Quests 插件灰度 v1.9')
     const row = titleCell.closest('tr')
     if (!row) {
       throw new Error('未找到变更单所在行')
     }
     await user.click(row)
-
-    // 切到「灰度批次」Tab：状态机流呈现当前批 + 快捷操作（暂停 / 终止；页眉同款动作并存故用 All）
     await screen.findByRole('button', { name: '返回列表' })
     await user.click(screen.getByRole('tab', { name: '灰度批次' }))
     const batchesPanel = within(await screen.findByRole('tabpanel'))
     expect(await batchesPanel.findByText('当前批')).toBeInTheDocument()
-    expect(batchesPanel.getByRole('button', { name: '暂停' })).toBeInTheDocument()
-    expect(batchesPanel.getByRole('button', { name: '终止' })).toBeInTheDocument()
 
-    // 待确认批（第 2 批，非末批）上是醒目主按钮「确认放行下一批」→ 确认弹窗 → 确认
-    const confirmBtn = await screen.findByRole('button', { name: '确认放行下一批' })
-    await user.click(confirmBtn)
+    // 待确认批上「确认放行下一批」→ 确认弹窗 → 确认（携幂等键的申请动作）
+    await user.click(await screen.findByRole('button', { name: '确认放行下一批' }))
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '确认推进' }))
 
-    // 推进后即时刷新：弹窗关闭，推进指针到末批（第 3 批），按钮文案变「确认完成整单」
+    // 反馈是「已提交审批（申请号 X）」票据，而非「已完成」：批次仍停在待确认门
+    expect(await screen.findByText(/已提交审批（申请号/)).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
-    expect(await screen.findByRole('button', { name: '确认完成整单' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '确认放行下一批' })).toBeInTheDocument()
   }, 20_000)
 
   // 单次渲染巡检四个只读 Tab（合并跑，避免多次整页渲染在并行 worker 下拖爆时限）
@@ -195,7 +193,7 @@ describe('/changes 变更单页', () => {
     expect(await eventsPanel.findByText('变更单 · 灰度中')).toBeInTheDocument()
   }, 20_000)
 
-  it('变更项 Tab 文件行可点开预览文件内容（懒加载）：文本出内容、二进制仅元数据', async () => {
+  it('变更项 Tab 文件行预览按真机契约展示「需审批」引导（不静默失败）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
@@ -211,8 +209,7 @@ describe('/changes 变更单页', () => {
     const previews = await screen.findAllByRole('button', { name: '预览' })
     expect(previews.length).toBeGreaterThan(0)
 
-    // 文本行（config.yml）→ 文件内容出现（含 max-players 行）+ 对比目标标签。
-    // 注意同名文本可能同时出现在配置变更清单（反查出的配置文件名），取带「预览」按钮的文件差异行
+    // 真机对读源服文件内容恒 409 operation_requires_approval：点开即给审批引导 + 审批中心入口
     const textRow = screen
       .getAllByText('plugins/Essentials/config.yml')
       .map((el) => el.closest('li'))
@@ -221,19 +218,8 @@ describe('/changes 变更单页', () => {
       throw new Error('未找到文本差异项所在行')
     }
     await user.click(within(textRow).getByRole('button', { name: '预览' }))
-    expect((await within(textRow).findAllByText(/max-players/)).length).toBeGreaterThan(0)
-    expect(within(textRow).getByText(/对比目标：/)).toBeInTheDocument()
-
-    // 二进制行（.jar）→ 不出内容，仅元数据提示
-    const jarRow = screen.getByText('plugins/Essentials.jar').closest('li')
-    if (!jarRow) {
-      throw new Error('未找到二进制差异项所在行')
-    }
-    await user.click(within(jarRow).getByRole('button', { name: '预览' }))
-    expect(
-      await within(jarRow).findByText('二进制文件不支持内容对比，仅展示元数据'),
-    ).toBeInTheDocument()
-    expect(within(jarRow).queryByText(/max-players/)).not.toBeInTheDocument()
+    expect(await within(textRow).findByText('该文件内容需审批后查看')).toBeInTheDocument()
+    expect(within(textRow).getByRole('link', { name: '去审批中心' })).toHaveAttribute('href', '/approvals')
   }, 20_000)
 
   it('详情页提审必填原因：未填写不可确认，填写后提审进入待审批', async () => {
@@ -373,7 +359,7 @@ describe('/changes 变更单页', () => {
     expect(await screen.findByRole('option', { name: 'test' })).toBeInTheDocument()
   })
 
-  it('整单回滚与结束回滚写闭环：残留失败回滚人工收单', async () => {
+  it('整单回滚走审批申请：提交后仅票据反馈，单据状态不变', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
@@ -394,16 +380,12 @@ describe('/changes 变更单页', () => {
     await user.type(boxes[1], '新版本排行异常，整单回滚')
     await user.click(within(dialog).getByRole('button', { name: '确认回滚' }))
 
-    // 缺失备份目标回滚失败 → 单据停在回滚中：横幅显示回滚进度，动作区出现「人工结束回滚」
-    expect(await screen.findByText(/回滚进度/)).toBeInTheDocument()
-    expect((await screen.findAllByText('回滚中')).length).toBeGreaterThan(0)
-
-    // 人工结束回滚 → 确认 → 单据收到已回滚
-    await user.click(await screen.findByRole('button', { name: '人工结束回滚' }))
-    const finishDialog = await screen.findByRole('alertdialog')
-    await user.click(within(finishDialog).getByRole('button', { name: '确认结束' }))
+    // 真机回滚是申请动作（202 票据）：提交后只有票据反馈，单据仍是已完成（不进入回滚中）
+    expect(await screen.findByText(/已提交审批（申请号/)).toBeInTheDocument()
     await waitFor(() => {
-      expect(screen.getAllByText('已回滚').length).toBeGreaterThan(0)
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
+    expect(screen.getAllByText('已完成').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: '人工结束回滚' })).not.toBeInTheDocument()
   }, 20_000)
 })

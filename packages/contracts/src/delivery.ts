@@ -177,9 +177,33 @@ export interface ChangeOrderEvent {
 }
 
 /**
- * 变更项文件内容预览响应（GET /change-orders/{id}/items/{itemId}/file-diff，定稿契约）。
+ * 交付审批票据：六类申请动作（submit / delete / resume / batch confirm / rollback / rollback-finish）
+ * 一律 202 返回本形（后端 DeliveryApprovalTicketView，HTTP 面直出结构体）。
+ * 票据只说明「申请已受理」——变更单状态不在此刻迁移，审批决定只在 /approvals 完成。
+ */
+export interface DeliveryApprovalTicket {
+  approvalRequestId: string
+  status: string
+  operationKey: string
+  /** 票据归属的变更单号（六类交付申请恒有） */
+  orderId: number
+  /** 建申请时刻的影响摘要（即时读数，不随后续推进漂移） */
+  impactSummary: DeliveryImpactSummary
+}
+
+/** 交付申请影响摘要（计数为 0 时保留 0，便于稳定解析） */
+export interface DeliveryImpactSummary {
+  targetCount: number
+  batchCount: number
+  payloadFiles: number
+  payloadConfigs: number
+}
+
+/**
+ * 变更项文件内容预览响应（GET /change-orders/{id}/items/{itemId}/file-diff）。
  * 可选 query：serverId（before 侧目标服）、reason（敏感路径放行原因）。
- * 错误形态：403 = 命中敏感路径需填写原因；504 = before 侧 agent 离线。
+ * 错误形态：真机恒 409 operation_requires_approval（内容读取必须先走统一审批），
+ * 前端据此展示「需审批」引导；本结构为审批放行后的成功形态。
  */
 export interface FileDiffResponse {
   path: string

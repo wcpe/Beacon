@@ -47,7 +47,7 @@ describe('/approvals 审批中心', () => {
   it('渲染待审批列表并保留机器主体行', async () => {
     renderPage()
 
-    expect(await screen.findByText('启动反作弊组件热更，目标 12 台 backend')).toBeInTheDocument()
+    expect(await screen.findByText('提审变更单 #5002：经济系统配置调优')).toBeInTheDocument()
     expect(screen.getByText('归档离线 backend-37，退出默认观测范围')).toBeInTheDocument()
     expect(screen.getByText('全局审批不继承页眉环境或 namespace scope；以下 namespace 仅为页面筛选。')).toBeInTheDocument()
   })

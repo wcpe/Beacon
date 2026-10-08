@@ -91,7 +91,7 @@ describe('/changes/history 交付历史页', () => {
     expect(screen.getByLabelText('按状态过滤')).toBeInTheDocument()
   })
 
-  it('整单回滚写闭环：完成单回滚后状态推进', async () => {
+  it('整单回滚走审批申请：历史详情提交后只出票据反馈，单据状态不变', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesHistoryPage />)
@@ -101,7 +101,7 @@ describe('/changes/history 交付历史页', () => {
     await user.click(row as HTMLElement)
     await screen.findByText('单服状态')
 
-    // 触发整单回滚
+    // 触发整单回滚申请（共享控件 order-rollback，/changes 与历史页同源）
     await user.click(await screen.findByRole('button', { name: '整单回滚' }))
     const dialog = await screen.findByRole('alertdialog')
     // 高摩擦：手输复述「回滚」 + 原因（两个 textbox：phrase / reason）
@@ -110,9 +110,13 @@ describe('/changes/history 交付历史页', () => {
     await user.type(textboxes[1], '新版本异常，回滚')
     await user.click(within(dialog).getByRole('button', { name: '确认回滚' }))
 
-    // 回滚后状态标签变为「已回滚」（该完成单无缺失备份，一次回滚到 rolled_back）
+    // 真机回滚是申请动作（202 票据）：只有票据反馈，批准前单据不变、也不出现「人工结束回滚」
+    expect(await screen.findByText(/已提交审批（申请号/)).toBeInTheDocument()
     await waitFor(() => {
-      expect(screen.getAllByText('已回滚').length).toBeGreaterThan(0)
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
-  })
+    expect(screen.queryByRole('button', { name: '人工结束回滚' })).not.toBeInTheDocument()
+    // 详情头部仍为已完成（不是回滚中 / 已回滚）
+    expect(screen.getAllByText('已完成').length).toBeGreaterThan(0)
+  }, 20_000)
 })

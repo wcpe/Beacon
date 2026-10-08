@@ -1,5 +1,6 @@
-// 交付大域页面测试装配：msw/node 服务端（全量 handlers）+ QueryClientProvider + MemoryRouter + i18n。
+// 交付大域页面测试装配：msw/node 服务端（全量 handlers）+ QueryClientProvider + MemoryRouter + i18n + Toaster。
 // 与集群域 harness 同构，交付页各测试文件独享实例，避免并行 worker 竞态。
+// Toaster 与 main.tsx 同挂：写操作（票据提交等）的成功反馈走 toast，测试据此断言。
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, type RenderResult } from '@testing-library/react'
@@ -7,6 +8,7 @@ import type { ReactElement } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { setupServer } from 'msw/node'
 
+import { Toaster } from '@beacon/ui'
 import { allHandlers, resetMockData, setMockScenario, type MockScenario } from '@beacon/devmock'
 
 import '../../i18n'
@@ -30,6 +32,7 @@ export function renderPage(ui: ReactElement, initialEntries?: string[]): RenderR
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+      <Toaster position="top-center" richColors closeButton />
     </QueryClientProvider>,
   )
 }

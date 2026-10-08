@@ -228,8 +228,28 @@ describe('Legacy 运维设置契约', () => {
   })
 })
 
-describe('变更单生命周期闭环', () => {
-  it('创建 → 提审 → 审批 → 启动 → 批次放行 → 完成 → 整单回滚', async () => {
+describe('变更单生命周期闭环（202 票据 + 统一审批驱动）', () => {
+  // 六类申请动作返回票据：{approvalRequestId, status, operationKey, orderId}
+  interface Ticket {
+    approvalRequestId: string
+    status: string
+    operationKey: string
+    orderId: number
+    impactSummary: { targetCount: number; batchCount: number; payloadFiles: number; payloadConfigs: number }
+  }
+
+  /** 在审批中心批准某张申请（真机由审批 worker 回投领域副作用，mock 同路径） */
+  async function approveTicket(requestId: string): Promise<void> {
+    const approved = await callJson('POST', `/admin/v2/approval-requests/${requestId}/approve`, {})
+    expect(approved.status).toBe(202)
+  }
+
+  async function orderStatus(orderId: number): Promise<string> {
+    const detail = await callJson('GET', `/admin/v2/change-orders/${String(orderId)}`)
+    return (detail.json as { status: string }).status
+  }
+
+  it('创建 → 提审（202 票据）→ 审批 → 启动 → 批次放行（202）→ 审批 → 完成 → 回滚（202）→ 审批', async () => {
     const created = await callJson('POST', '/admin/v2/change-orders', {
       namespaceId: 1,
       title: '测试专用小流量变更',
@@ -239,37 +259,116 @@ describe('变更单生命周期闭环', () => {
     expect(created.status).toBe(201)
     const orderId = (created.json as { id: number }).id
 
-    expect(
-      (
-        await callJson(
-          'POST',
-          `/admin/v2/change-orders/${String(orderId)}/submit`,
-          { reason: '演示提审' },
-          { 'Idempotency-Key': SUBMIT_KEY },
-        )
-      ).status,
-    ).toBe(200)
-    expect((await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/approve`)).status).toBe(200)
+    // 提审：202 + 票据（本单唯一的统一审批申请）
+    const submitted = await callJson(
+      'POST',
+      `/admin/v2/change-orders/${String(orderId)}/submit`,
+      { reason: '演示提审' },
+      { 'Idempotency-Key': SUBMIT_KEY },
+    )
+    expect(submitted.status).toBe(202)
+    const submitTicket = submitted.json as Ticket
+    expect(submitTicket.operationKey).toBe('delivery.approve')
+    expect(submitTicket.status).toBe('pending')
+    expect(submitTicket.orderId).toBe(orderId)
+    expect(submitTicket.impactSummary.targetCount).toBe(1)
+    expect(await orderStatus(orderId)).toBe('pending_approval')
 
-    const started = await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/start`)
-    expect(started.status).toBe(200)
-    const startedOrder = started.json as { status: string; batches: { batchNo: number; status: string }[] }
-    expect(startedOrder.status).toBe('rolling')
+    // 票据号必须能读到审批详情（两域同号）
+    const approvalDetail = await callJson('GET', `/admin/v2/approval-requests/${submitTicket.approvalRequestId}`)
+    expect(approvalDetail.status).toBe(200)
+    expect((approvalDetail.json as { resourceId: string }).resourceId).toBe(String(orderId))
+
+    // 批准即启动灰度（真机批准 worker 直接启动，无第二次启动入口）
+    await approveTicket(submitTicket.approvalRequestId)
+    expect(await orderStatus(orderId)).toBe('rolling')
+    const started = await callJson('GET', `/admin/v2/change-orders/${String(orderId)}`)
+    const startedOrder = started.json as { batches: { batchNo: number; status: string }[] }
     const awaiting = startedOrder.batches.find((b) => b.status === 'awaiting_confirm')
     expect(awaiting).toBeDefined()
 
+    // 批次放行：202 票据，单据状态不在此刻变化
     const confirmed = await callJson(
       'POST',
       `/admin/v2/change-orders/${String(orderId)}/batches/${String(awaiting?.batchNo ?? 0)}/confirm`,
+      undefined,
+      { 'Idempotency-Key': SUBMIT_KEY },
     )
-    expect(confirmed.status).toBe(200)
-    expect((confirmed.json as { status: string }).status).toBe('completed')
+    expect(confirmed.status).toBe(202)
+    const confirmTicket = confirmed.json as Ticket
+    expect(confirmTicket.operationKey).toBe('delivery.confirm_batch')
+    expect(await orderStatus(orderId)).toBe('rolling')
 
-    const rolledBack = await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/rollback`, {
-      reason: '演示回滚',
+    // 审批通过后放行：末批确认即完成
+    await approveTicket(confirmTicket.approvalRequestId)
+    expect(await orderStatus(orderId)).toBe('completed')
+
+    // 整单回滚：202 票据，批准后才进入回滚
+    const rolledBack = await callJson(
+      'POST',
+      `/admin/v2/change-orders/${String(orderId)}/rollback`,
+      { reason: '演示回滚' },
+      { 'Idempotency-Key': SUBMIT_KEY },
+    )
+    expect(rolledBack.status).toBe(202)
+    const rollbackTicket = rolledBack.json as Ticket
+    expect(rollbackTicket.operationKey).toBe('delivery.rollback')
+    expect(await orderStatus(orderId)).toBe('completed')
+
+    await approveTicket(rollbackTicket.approvalRequestId)
+    expect(await orderStatus(orderId)).toBe('rolled_back')
+  })
+
+  it('六类申请动作都要求幂等键（缺键 400 INVALID_PARAM，且状态不变）', async () => {
+    const created = await callJson('POST', '/admin/v2/change-orders', {
+      namespaceId: 1,
+      title: '缺幂等键拒绝演示',
+      selector: { servers: ['pvp-1'] },
     })
-    expect(rolledBack.status).toBe(200)
-    expect((rolledBack.json as { status: string }).status).toBe('rolled_back')
+    const orderId = (created.json as { id: number }).id
+
+    // 提审缺键 → 400 且仍是 draft（mock 刻意不制造真机的两步卡死）
+    const submitNoKey = await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/submit`, { reason: '缺键提审' })
+    expect(submitNoKey.status).toBe(400)
+    expect((submitNoKey.json as { code: string }).code).toBe('INVALID_PARAM')
+    expect(await orderStatus(orderId)).toBe('draft')
+
+    // 补齐键 → 202 票据
+    const submitOk = await callJson(
+      'POST',
+      `/admin/v2/change-orders/${String(orderId)}/submit`,
+      { reason: '补键提审' },
+      { 'Idempotency-Key': SUBMIT_KEY },
+    )
+    expect(submitOk.status).toBe(202)
+
+    // 状态非法先于键判定（与真机 RequestDelete 同序）：非 draft 单删申请 → 409
+    const deleteNonDraft = await callJson('DELETE', `/admin/v2/change-orders/${String(orderId)}`, {
+      reason: '状态非法删除',
+    })
+    expect(deleteNonDraft.status).toBe(409)
+
+    // 新建 draft 单：删除申请缺键 → 400 INVALID_PARAM，且单据仍在
+    const draft = await callJson('POST', '/admin/v2/change-orders', {
+      namespaceId: 1,
+      title: '缺键删除演示',
+      selector: { servers: ['pvp-1'] },
+    })
+    const draftId = (draft.json as { id: number }).id
+    const deleteNoKey = await callJson('DELETE', `/admin/v2/change-orders/${String(draftId)}`, { reason: '缺键删除' })
+    expect(deleteNoKey.status).toBe(400)
+    expect((deleteNoKey.json as { code: string }).code).toBe('INVALID_PARAM')
+    expect(await orderStatus(draftId)).toBe('draft')
+
+    // 补键 → 202 票据（删除也是申请动作）
+    const deleteOk = await callJson(
+      'DELETE',
+      `/admin/v2/change-orders/${String(draftId)}`,
+      { reason: '补键删除' },
+      { 'Idempotency-Key': SUBMIT_KEY },
+    )
+    expect(deleteOk.status).toBe(202)
+    expect((deleteOk.json as Ticket).operationKey).toBe('delivery.draft_delete')
   })
 
   it('提审缺原因（含纯空白）被 400 拒绝，补原因与幂等键后可正常提审', async () => {
@@ -301,10 +400,11 @@ describe('变更单生命周期闭环', () => {
     expect(longKey.status).toBe(400)
     expect((longKey.json as { code: string }).code).toBe('INVALID_PARAM')
 
-    // 被拒后仍是 draft，补原因 + 幂等键即提审成功
+    // 被拒后仍是 draft，补原因 + 幂等键即提审成功（202 票据）
     const ok = await callJson('POST', path, { reason: '补原因提审' }, key)
-    expect(ok.status).toBe(200)
-    expect((ok.json as { status: string }).status).toBe('pending_approval')
+    expect(ok.status).toBe(202)
+    expect((ok.json as Ticket).status).toBe('pending')
+    expect(await orderStatus(orderId)).toBe('pending_approval')
 
     // 判定顺序与真机同序（先 reason 再状态）：非 draft 单缺原因仍是 400，而不是 409
     const nonDraftNoReason = await callJson('POST', path)
@@ -317,32 +417,70 @@ describe('变更单生命周期闭环', () => {
     expect((nonDraftWithReason.json as { code: string }).code).toBe('illegal_state')
   })
 
-  it('目标集与活动单交叠时启动被 409 拒绝（冲突守卫）', async () => {
-    // game-1 属于常规态 rolling 单的目标集
+  it('目标集与活动单交叠时启动被跳过（冲突守卫在审批通过后生效）', async () => {
+    // game-1 属于常规态 rolling 单的目标集：提审 + 批准后不启动，继续停在待审批
     const created = await callJson('POST', '/admin/v2/change-orders', {
       namespaceId: 1,
       title: '冲突守卫演示',
       selector: { servers: ['game-1'] },
     })
     const orderId = (created.json as { id: number }).id
-    await callJson(
+    const submitted = await callJson(
       'POST',
       `/admin/v2/change-orders/${String(orderId)}/submit`,
       { reason: '冲突守卫演示提审' },
       { 'Idempotency-Key': SUBMIT_KEY },
     )
-    await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/approve`)
-    const started = await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/start`)
-    expect(started.status).toBe(409)
-    expect((started.json as { code: string }).code).toBe('target_conflict')
+    expect(submitted.status).toBe(202)
+    const ticket = submitted.json as Ticket
+
+    await approveTicket(ticket.approvalRequestId)
+    // 目标集交叠 → 领域侧不启动（保持待审批），不留半启动状态
+    expect(await orderStatus(orderId)).toBe('pending_approval')
   })
 
-  it('draft 以外状态编辑 / 删除按状态机拒绝', async () => {
+  it('旧审批 / 撤回 / 启动入口一律 403（审批决定只在审批中心）', async () => {
+    const draft = await callJson('POST', '/admin/v2/change-orders', {
+      namespaceId: 1,
+      title: '废弃入口演示',
+      selector: { servers: ['pvp-1'] },
+    })
+    const orderId = (draft.json as { id: number }).id
+    for (const action of ['approve', 'reject', 'withdraw', 'start']) {
+      const res = await callJson('POST', `/admin/v2/change-orders/${String(orderId)}/${action}`, { reason: '演示' })
+      expect(res.status, `${action} 应 403`).toBe(403)
+      expect((res.json as { code: string }).code).toBe('FORBIDDEN')
+    }
+  })
+
+  it('文件内容预览恒 409 operation_requires_approval（内容读取必须先走审批）', async () => {
+    const list = (await callJson('GET', '/admin/v2/change-orders?status=rolling')).json as {
+      items: { id: number }[]
+    }
+    const orderId = list.items[0].id
+    const detail = await callJson('GET', `/admin/v2/change-orders/${String(orderId)}`)
+    const fileItem = (detail.json as { items: { id: number; kind: string }[] }).items.find((i) => i.kind === 'file_diff')
+    expect(fileItem).toBeDefined()
+
+    const res = await callJson(
+      'GET',
+      `/admin/v2/change-orders/${String(orderId)}/items/${String(fileItem?.id ?? 0)}/file-diff`,
+    )
+    expect(res.status).toBe(409)
+    expect((res.json as { code: string }).code).toBe('operation_requires_approval')
+  })
+
+  it('draft 以外状态删除申请按状态机拒绝', async () => {
     const rollingList = (await callJson('GET', '/admin/v2/change-orders?status=rolling')).json as {
       items: { id: number }[]
     }
     const rollingId = rollingList.items[0].id
-    const del = await callJson('DELETE', `/admin/v2/change-orders/${String(rollingId)}`)
+    const del = await callJson(
+      'DELETE',
+      `/admin/v2/change-orders/${String(rollingId)}`,
+      { reason: '状态非法删除演示' },
+      { 'Idempotency-Key': SUBMIT_KEY },
+    )
     expect(del.status).toBe(409)
   })
 })

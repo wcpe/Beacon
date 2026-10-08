@@ -734,6 +734,32 @@ export const delivery = {
         gateBy: '{{who}} 于 {{at}}',
         targetsTitle: '本批目标',
       },
+      // 单服级状态墙（FR-254）：逐台正推 / 回滚状态、失败原因与备份标记
+      targets: {
+        title: '单服状态',
+        summary: '共 {{total}} 台目标',
+        failedCount: '{{count}} 台失败',
+        rollbackFailedCount: '{{count}} 台回滚失败',
+        rollbackNone: '未回滚',
+        noFailure: '—',
+        backupPresent: '已备份',
+        backupMissing: '无备份',
+        columns: {
+          serverId: '子服',
+          batch: '批次',
+          status: '正推状态',
+          rollback: '回滚状态',
+          error: '失败原因',
+          rollbackError: '回滚失败原因',
+          backup: '备份',
+        },
+        rollbackStatus: {
+          pending: '待回滚',
+          running: '回滚中',
+          rolled_back: '已回滚',
+          failed: '回滚失败',
+        },
+      },
       // 观察窗
       observe: {
         title: '生效观察',
@@ -762,15 +788,49 @@ export const delivery = {
         order: '变更单',
         batch: '批次',
         target: '目标',
+        // SSE 实时推送 / 断线回退轮询的可见状态
+        live: '实时推送中',
+        polling: '轮询刷新中（5 秒）',
       },
+    },
+    // 审批进度（FR-255）：本单关联的统一审批申请
+    approval: {
+      title: '审批进度',
+      openCenter: '去审批中心',
+      open: '查看申请',
+      approver: '审批人',
+      approverPending: '待处理',
+      updatedAt: '更新时间',
+      reason: '申请原因',
+      rejectReason: '驳回理由',
+      more: '另有 {{count}} 条历史申请',
+      operation: {
+        submit: '提交审批',
+        draftDelete: '删除草稿',
+        resume: '继续灰度',
+        confirmBatch: '批次推进放行',
+        rollback: '整单回滚',
+        rollbackFinish: '结束回滚',
+      },
+      status: {
+        pending: '待审批',
+        executing: '执行中',
+        succeeded: '已通过',
+        failed: '执行失败',
+        rejected: '已驳回',
+        withdrawn: '已撤回',
+        expired: '已过期',
+      },
+    },
+    // 申请票据反馈（六类申请动作的 202 回执）
+    ticket: {
+      submitted: '已提交审批（申请号 {{id}}）',
+      open: '去审批中心',
     },
     // 生命周期操作
     actions: {
       submit: '提交审批',
       withdraw: '撤回',
-      approve: '通过',
-      reject: '驳回',
-      start: '启动灰度',
       pause: '暂停',
       resume: '继续',
       cancel: '终止',
@@ -778,15 +838,7 @@ export const delivery = {
     },
     confirm: {
       submitTitle: '提交审批',
-      submitDesc: '提交后进入待审批，审批通过才可启动，需填写原因',
-      approveTitle: '审批通过',
-      approveDesc: '通过后该变更单可被启动灰度',
-      rejectTitle: '驳回变更单',
-      rejectDesc: '驳回后退回草稿，需填写原因',
-      withdrawTitle: '撤回变更单',
-      withdrawDesc: '撤回后退回草稿',
-      startTitle: '启动灰度',
-      startDesc: '将固化目标集并按批次策略开始灰度；目标集与活动单交叠将被拒绝',
+      submitDesc: '提交后进入待审批，审批通过即自动启动灰度，需填写原因',
       pauseTitle: '暂停灰度',
       pauseDesc: '暂停后当前批停止推进，可稍后继续',
       resumeTitle: '继续灰度',
@@ -794,9 +846,9 @@ export const delivery = {
       cancelTitle: '终止变更单',
       cancelDesc: '终止后未执行目标跳过，需填写原因',
       confirmBatchTitle: '确认推进',
-      confirmBatchDesc: '确认后进入下一批；末批确认即整单完成',
+      confirmBatchDesc: '提交后进入待审批，批准后放行下一批；末批确认即整单完成',
       deleteTitle: '删除草稿',
-      deleteDesc: '仅草稿可删除，不可恢复',
+      deleteDesc: '仅草稿可申请删除，批准后不可恢复',
       resumeMode: '恢复方式',
       retryFailed: '重试失败目标',
       skipFailed: '跳过失败目标',
@@ -849,13 +901,10 @@ export const delivery = {
       // 二进制形态：仅元数据
       binaryOnly: '二进制文件不支持内容对比，仅展示元数据',
       binaryMeta: '大小 {{size}} · 哈希 {{hash}}',
-      // 敏感路径（403）：填原因单次放行
-      sensitiveHint: '该路径命中敏感规则，查看内容需填写原因（将记入审计）',
-      reasonLabel: '查看原因',
-      reasonPlaceholder: '例如：核对新版插件配置差异',
-      sensitiveConfirm: '填写原因后查看',
-      // agent 离线（504）：可重试
-      retry: '重试',
+      // 需审批（真机恒 409 operation_requires_approval）：内容读取必须先走统一审批
+      needsApproval: '该文件内容需审批后查看',
+      needsApprovalHint: '读取源服文件内容属于敏感操作：先在审批中心提交内容读取申请，批准后即可查看差异。',
+      needsApprovalAction: '去审批中心',
     },
     // 批次状态机可视化（batch-flow）
     batchFlow: {
