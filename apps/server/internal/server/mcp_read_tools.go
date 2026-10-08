@@ -355,8 +355,11 @@ func (r *MCPToolRegistry) registerReadHealthTools(server *mcp.Server) {
 // 观察窗与事件沿用 HTTP 端点的有界条数。输出键名一律沿用既有 HTTP 视图字段名
 // （apps/server/internal/service/delivery_views.go 为准），不自造键名。
 
-// mcpDeliveryOrderListInput 是变更单列表入参：namespaceId 为数值 ID 且必填——列表按 namespace 定位。
-// 范围参数本身是调用者声明的收窄条件，缺省即其可观测的全量范围（与告警处置同口径），不是越界闸。
+// mcpDeliveryOrderListInput 是变更单列表入参：namespaceId 必填——列表按 namespace 定位。
+// 注意类型：本包全部范围参数（namespaceId / envId）在入参里都是**字符串形式的数值 ID**
+// （json schema 为 string），描述文案不得写成「数值」——否则客户端会按 integer 传值，
+// 被协议层按 schema 拒掉。范围参数本身是调用者声明的收窄条件，缺省即其可观测的全量范围
+// （与告警处置同口径），不是越界闸。
 type mcpDeliveryOrderListInput struct {
 	mcpScopeInput
 	Status    string `json:"status,omitempty"`
@@ -408,7 +411,7 @@ func (r *MCPToolRegistry) registerReadDeliveryTools(server *mcp.Server) {
 
 // registerReadDeliveryOrderTools 登记由组单读服务承担的五个交付只读工具。
 func (r *MCPToolRegistry) registerReadDeliveryOrderTools(server *mcp.Server) {
-	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.list", Description: "变更单列表（分页筛选；仅回摘要字段；namespaceId 为数值 ID 且必填）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderListInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.list", Description: "变更单列表（分页筛选；仅回摘要字段；namespaceId 为字符串形式的数值 ID，必填）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderListInput) (*mcp.CallToolResult, map[string]any, error) {
 		scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 		if !ok || in.NamespaceID == "" {
 			return mcpRejectedResult()

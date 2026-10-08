@@ -8,7 +8,7 @@
 
 - **MCP 交付只读工具集（FR-245）**：交付域此前是全部领域中 MCP 覆盖度最低的一个——HTTP 面 21 项操作只暴露 6 项，且**全部是「创建审批申请」的写操作、只读侧为 0**：机器主体拿不到变更单号、看不见状态、发现问题也没有可读的止血依据，等于「盲写」。现补齐只读侧六个工具 `beacon.delivery.order.list` / `.order.get` / `.targets.list` / `.impact.get` / `.observe.get` / `.events.list`（`low` 风险、`observer` 与 `automation` 共用），语义与 `/admin/v2/change-orders` 系列读端点逐一对齐。规格见 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md)。
   - **返回一律有界投影**：列表强制分页、`order.get` 只回摘要字段与 `targetCounts` / `rollbackCounts` 计数（**不回**逐文件清单与批次明细）、`targets.list` / `impact.get` 逐目标分页、观察窗与事件沿用 HTTP 端点的有界条数；输出键名沿用既有 HTTP 视图字段名，不自造键名。
-  - **跨 namespace 拒绝**：除 `order.list`（`namespaceId` 为数值 ID 且必填——列表按 namespace 定位）外，另外五个工具由 `orderId` 定位。观测范围参数是**调用者声明的收窄条件**、缺省即其可观测的全量范围（与告警处置同口径），服务端按单所属 namespace 判归属；范围外与不存在**共用同一条拒绝文案**（不泄露范围外单是否存在）。
+  - **跨 namespace 拒绝**：除 `order.list`（`namespaceId` 为字符串形式的数值 ID 且必填——列表按 namespace 定位）外，另外五个工具由 `orderId` 定位。观测范围参数（`envId` / `namespaceId`，均为字符串形式的数值 ID，传整数会被协议层按 schema 拒绝）是**调用者声明的收窄条件**、缺省即其可观测的全量范围（与告警处置同口径），服务端按单所属 namespace 判归属；范围外与不存在**共用同一条拒绝文案**（不泄露范围外单是否存在）。
   - **门禁**：六个工具全部登记 `mcpToolCatalog`（`low`、`OperationKind` 留空、**不带 `AutomationOnly`**——该标记的真实语义是「仅 automation 可发现」，挂上即令 observer 不可见），走 `mcpAddTool` 唯一注册入口，既有覆盖测试自动守护新增项。
   - **测试**：两 profile 可见性（清单与真实注册两侧）、投影有界断言（逐字段键集合精确比对）与全链路可读 + 跨 namespace `orderId` 拒绝的负向用例。
 
