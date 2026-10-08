@@ -464,26 +464,8 @@ func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal
 		order.Status != model.ChangeOrderStatusCancelled {
 		return DeliveryApprovalTicketView{}, changeIllegalState(order.Status, "申请整单回滚")
 	}
-	if retry {
-		// 无事可做的重试在**申请阶段**就拒绝：让运维立刻知道，而不是等审批通过后才在执行期失败。
-		counts, err := s.repo.CountTargetsByRollbackStatus(order.ID)
-		if err != nil {
-			return DeliveryApprovalTicketView{}, err
-		}
-		if counts[model.RollbackStatusFailed] == 0 {
-			return DeliveryApprovalTicketView{}, apperr.New(http.StatusBadRequest,
-				"no_failed_rollback_target", "单内无回滚失败目标可重试")
-		}
-	} else {
-		// 首次进入的整单回滚同样在申请期前置在途守卫（与执行期 CAS 同口径）：
-		// 单内已有目标在回滚中（例如并发的子集回滚），整单回滚注定在执行期被拒。
-		targets, err := s.repo.ListTargetsByOrder(order.ID)
-		if err != nil {
-			return DeliveryApprovalTicketView{}, err
-		}
-		if inFlight := firstInFlightRollbackTarget(targets); inFlight != nil {
-			return DeliveryApprovalTicketView{}, rollbackInFlightError(inFlight.ServerID)
-		}
+	if err := checkRollbackPreconditions(s.repo, order, retry); err != nil {
+		return DeliveryApprovalTicketView{}, err
 	}
 	summary, err := deliveryImpactSummary(s.repo, order.ID)
 	if err != nil {
@@ -710,4 +692,34 @@ func deliveryOrderSnapshotHash(repo *repository.ChangeOrderRepository, order *mo
 	}
 	sum := sha256.Sum256(raw)
 	return fmt.Sprintf("%x", sum[:]), nil
+}
+
+// checkRollbackPreconditions 整单回滚的申请期前置校验（与执行期 CAS 同口径，
+// 让运维在**申请阶段**就知道结果，而不是等审批通过后才在执行期失败）。
+//
+// retry = true 表示这是对已失败目标的**重试**申请；false 表示首次进入的整单回滚。
+func checkRollbackPreconditions(
+	repo *repository.ChangeOrderRepository,
+	order *model.ChangeOrder,
+	retry bool,
+) error {
+	if !retry {
+		// 单内已有目标在回滚中（例如并发的子集回滚）→ 整单回滚注定在执行期被拒。
+		targets, err := repo.ListTargetsByOrder(order.ID)
+		if err != nil {
+			return err
+		}
+		if inFlight := firstInFlightRollbackTarget(targets); inFlight != nil {
+			return rollbackInFlightError(inFlight.ServerID)
+		}
+		return nil
+	}
+	counts, err := repo.CountTargetsByRollbackStatus(order.ID)
+	if err != nil {
+		return err
+	}
+	if counts[model.RollbackStatusFailed] == 0 {
+		return apperr.New(http.StatusBadRequest, "no_failed_rollback_target", "单内无回滚失败目标可重试")
+	}
+	return nil
 }
