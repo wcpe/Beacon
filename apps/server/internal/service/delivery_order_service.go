@@ -354,7 +354,8 @@ func (s *DeliveryOrderService) Submit(uint, string, string) (*ChangeOrderDetailV
 	return nil, apperr.ErrForbidden
 }
 
-// applySubmit 仅由创建审批申请前的内部流程调用；它不执行领域副作用，只冻结为待审批状态。
+// applySubmit 供同包测试与旧导出路径复用：事务外执行 draft → pending_approval 的冻结。
+// 生产提审一律走 RequestSubmit / requestSubmitInTx——只有它们保证「冻结 + 建申请」同事务（FR-259）。
 func (s *DeliveryOrderService) applySubmit(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	order, err := s.requireOrder(id)
 	if err != nil {
@@ -374,15 +375,130 @@ func (s *DeliveryOrderService) applySubmit(id uint, operator, clientIP string) (
 }
 
 // RequestSubmit 冻结草稿并创建唯一的统一审批申请；批准 worker 会直接启动灰度，不存在第二次 approve。
+//
+// 两步必须同生共死（FR-259）：「冻结单据」与「创建审批申请」在同一事务里完成，
+// 第二步失败即整体回滚，单停在可编辑的 draft，运维修正后可直接重试。
+// 非事务的两步走会留下「已 pending_approval 但无对应审批申请」的死结——
+// 这种单既推不动（没申请的副作用可执行）也退不回（submit / cancel 均 illegal_state），只能人工改库。
 func (s *DeliveryOrderService) RequestSubmit(id uint, reason string, principal auth.Principal,
 	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
 	if s.approval == nil || strings.TrimSpace(reason) == "" {
 		return DeliveryApprovalTicketView{}, apperr.ErrApprovalReasonRequired
 	}
-	if _, err := s.applySubmit(id, operator, clientIP); err != nil {
+	return s.requestSubmitInTx(id, reason, principal, idempotencyKey, operator, clientIP)
+}
+
+// requestSubmitInTx 在同一事务里执行「冻结单据 + 创建审批申请」两步，任一步失败即整体回滚。
+//
+// 审批服务**必须**绑到同一个 tx 上（withTx 同包副本写法，与 executeDeliveryApprovalInTx 一致）：
+// ApprovalService.request 自己会开一个事务，若在外层事务里嵌套调用，单连接库（sqlite）会自锁、
+// MySQL 也会退化成两个独立事务——「冻结」与「建申请」又变回两步，第二步失败时第一步照旧落库。
+func (s *DeliveryOrderService) requestSubmitInTx(id uint, reason string, principal auth.Principal,
+	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
+	var ticket DeliveryApprovalTicketView
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		txOrders := s.withTx(tx)
+		// 第一步：draft → pending_approval（含前置校验）；死结自愈见 reconcilePendingApproval。
+		if err := txOrders.prepareSubmit(id, operator, clientIP); err != nil {
+			return err
+		}
+		// 第二步：同一事务内创建审批申请；失败即返回错误让事务整体回滚（单随之退回 draft）。
+		created, err := txOrders.requestApprovePending(id, reason, principal, idempotencyKey, operator, clientIP)
+		if err != nil {
+			return err
+		}
+		ticket = created
+		return nil
+	})
+	if err != nil {
 		return DeliveryApprovalTicketView{}, err
 	}
-	return s.requestApprovePending(id, reason, principal, idempotencyKey, operator, clientIP)
+	return ticket, nil
+}
+
+// withTx 返回绑定同一事务的服务副本（含审批服务，防嵌套事务把两步又拆开），不污染外部装配。
+func (s *DeliveryOrderService) withTx(tx *gorm.DB) *DeliveryOrderService {
+	txOrders := *s
+	txOrders.db = tx
+	txOrders.repo = s.repo.WithTx(tx)
+	if s.approval != nil {
+		txApproval := *s.approval
+		txApproval.db = tx
+		txApproval.repo = s.approval.repo.WithTx(tx)
+		txApproval.audit = s.approval.audit.WithTx(tx)
+		txOrders.approval = &txApproval
+	}
+	return &txOrders
+}
+
+// prepareSubmit 事务内推进 draft → pending_approval（前置校验 + CAS + 提审计）。
+// 语义与旧 applySubmit 完全一致，差别只在于不再在事务外提交——随调用方事务一起回滚或落库。
+func (s *DeliveryOrderService) prepareSubmit(id uint, operator, clientIP string) error {
+	order, err := s.requireOrder(id)
+	if err != nil {
+		return err
+	}
+	// 已在 pending_approval 且无未终结申请 = 「有状态无申请」死结（FR-259 形态二）：
+	// 审批票据执行失败后单会停在 pending_approval，而失败的申请已终结、不可撤回，
+	// submit / cancel 双双 illegal_state。此处放行重新建申请，让运维能自己走出来。
+	if order.Status == model.ChangeOrderStatusPendingApproval {
+		return s.reconcilePendingApproval(order)
+	}
+	if order.Status != model.ChangeOrderStatusDraft {
+		return changeIllegalState(order.Status, "提交审批")
+	}
+	if err := s.validateSubmitPreconditions(order); err != nil {
+		return err
+	}
+	return s.freezePendingApproval(order, operator, clientIP)
+}
+
+// freezePendingApproval 执行 draft → pending_approval 的 CAS 迁移并落一条提审计（事务内进行，失败随事务回滚）。
+func (s *DeliveryOrderService) freezePendingApproval(order *model.ChangeOrder, operator, clientIP string) error {
+	nsCode, err := s.namespaceCode(order.NamespaceID)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	ok, err := s.repo.UpdateStatusCAS(order.ID, []string{model.ChangeOrderStatusDraft},
+		map[string]any{"status": model.ChangeOrderStatusPendingApproval, "submitted_at": now})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return changeIllegalState(order.Status, "提交审批")
+	}
+	order.Status = model.ChangeOrderStatusPendingApproval
+	order.SubmittedAt = &now
+	return s.writeAudit(s.db, nsCode, operator, clientIP, model.ActionDeliveryOrderSubmit, order.ID,
+		map[string]any{"orderId": order.ID})
+}
+
+// reconcilePendingApproval 处理已处 pending_approval 单的重提请求：
+//   - 仍有未终结申请（pending / executing）→ 拒绝，避免叠出两条并行的同单审批；
+//   - 已无未终结申请 → 放行：单状态本来就对，本轮只补建申请。
+func (s *DeliveryOrderService) reconcilePendingApproval(order *model.ChangeOrder) error {
+	live, err := countLiveDeliveryApprovals(s.db, authz.OperationDeliveryApprove, order.ID)
+	if err != nil {
+		return err
+	}
+	if live > 0 {
+		return changeIllegalState(order.Status, "提交审批")
+	}
+	return nil
+}
+
+// countLiveDeliveryApprovals 统计某变更单尚未终结的交付审批申请条数。
+// 未终结 = pending / executing：这两态还可能产生副作用；终态（succeeded / failed / rejected /
+// withdrawn / expired）已不再推进，不构成重提冲突。
+func countLiveDeliveryApprovals(db *gorm.DB, operationKey string, orderID uint) (int64, error) {
+	var n int64
+	err := db.Model(&model.ApprovalRequest{}).
+		Where("operation_key = ? AND resource_id = ? AND status IN ?",
+			operationKey, strconv.FormatUint(uint64(orderID), 10),
+			[]string{model.ApprovalStatusPending, model.ApprovalStatusExecuting}).
+		Count(&n).Error
+	return n, err
 }
 
 // validateSubmitPreconditions 校验提交前置：变更项非空、目标非空、含文件项必有模板源、模板源已确认绑定 + 在线 + backend。
@@ -737,7 +853,7 @@ func (s *DeliveryOrderService) applyOrderInput(order *model.ChangeOrder, input C
 			return err
 		}
 	}
-	return nil
+	return validateObserveWindowCombination(order)
 }
 
 // applyOrderTextFields 应用标题 / 说明 / 模板源 / 扫描目录并做字段级校验。
@@ -852,6 +968,24 @@ func (s *DeliveryOrderService) validateSelectorNamespace(namespaceID uint, selec
 	}
 	_, err = validateSelectorRefs(topo, selector)
 	return err
+}
+
+// validateObserveWindowCombination 观察窗与 restart 预热宽限的组合防呆（FR-265）。
+//
+// 观察窗 < restartHealthWarmup（90s）时，restart 生效方式的目标在整段观察窗里都处于「重启预热期」，
+// 被 evalHealthDegradation 整体排除出健康恶化评估——健康恶化熔断在这一组合下恒不触发（分母恒为 0）。
+// 运维若同时开了 unhealthyRateThresholdPercent，就会得到一个「配了但永不生效」的熔断，
+// 且界面上完全看不出为什么没熔断。此处显式拒绝这种组合，把坑摆在组单那一刻。
+func validateObserveWindowCombination(order *model.ChangeOrder) error {
+	if order.ActivationMethod != model.ActivationMethodRestart || order.UnhealthyRateThresholdPercent <= 0 {
+		return nil
+	}
+	if time.Duration(order.ObserveWindowSec)*time.Second < restartHealthWarmup {
+		return changeInvalidParam(fmt.Sprintf(
+			"restart 生效方式下观察窗须 ≥ %d 秒（当前 %d 秒）：短于重启预热宽限期的目标会被排除出健康恶化评估，健康恶化熔断永不触发",
+			int(restartHealthWarmup/time.Second), order.ObserveWindowSec))
+	}
+	return nil
 }
 
 // validateSourceStructural 组单期模板源结构校验：存在于本 namespace 且为 backend（在线与绑定在提交时校验）。
