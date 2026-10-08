@@ -149,6 +149,12 @@ type ChangeBatchView struct {
 }
 
 // ChangeTargetView 对齐 contracts ChangeTarget。
+//
+// 读法提醒（FR-266 终审 P2）：`changedFileCount` / `skippedFileCount` / `backupPresent` 是**历史事实**——
+// 由最近一次推送 / 生效回执落定，重试重置（`retry_failed` / 回滚重试）**刻意不清零**（保留「该目标盘上的最近
+// 已知事实」，供运维判断是否需要回滚），故目标处于 pending / running 等非终态时，这三个字段仍可能展示**上一轮**
+// 的值；判定「本轮结果」请看 `status` 与 `error`，不要把历史计数读成本轮进度。
+
 type ChangeTargetView struct {
 	ServerID         string     `json:"serverId"`
 	BatchNo          int        `json:"batchNo"`

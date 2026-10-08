@@ -6,19 +6,20 @@ import top.wcpe.beacon.agent.core.delivery.DeliveryTargetManifest
 import top.wcpe.beacon.agent.core.delivery.DeliveryUploadItem
 import top.wcpe.beacon.agent.core.delivery.DeliveryUploadManifest
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.log.LogRedactor
 import top.wcpe.beacon.agent.core.transport.HttpRequest
 
 /**
  * 拉取模板源待上传 blob 清单：GET /beacon/v2/agent/delivery/orders/{id}/upload-manifest（FR-165，spec §5.2）。
  * 同步调用，请在异步线程使用。
  *
- * 200 返回待上传项（path/sha256/size，已就绪 blob 不在列）；其它（403 非模板源 / 404 单不存在 / 连接失败）返回 null
- * （交付上传流程据此回执 failed）。
+ * 200 返回待上传项（path/sha256/size，已就绪 blob 不在列）；其它（403 非模板源 / 404 单不存在 / 连接失败）
+ * 返回失败结果并**保留状态码与错误码**（交付上传流程据此回执 failed，原因可诊断）。
  */
 fun BeaconApiClient.fetchDeliveryUploadManifest(
     identity: AgentIdentity,
     orderId: Long,
-): DeliveryUploadManifest? {
+): DeliveryFetchResult<DeliveryUploadManifest> {
     val resp =
         exec(
             HttpRequest(
@@ -28,9 +29,9 @@ fun BeaconApiClient.fetchDeliveryUploadManifest(
                 body = null,
                 readTimeoutMs = settings.requestTimeoutMs,
             ),
-        ) ?: return null
-    if (resp.statusCode != 200) return null
-    return parseDeliveryUploadManifest(resp.body)
+        ) ?: return deliveryNotSent()
+    if (resp.statusCode != HTTP_OK) return deliveryFailure(resp.statusCode, resp.body)
+    return parseOrFail(resp) { parseDeliveryUploadManifest(it) }
 }
 
 /**
@@ -38,12 +39,12 @@ fun BeaconApiClient.fetchDeliveryUploadManifest(
  * 同步调用，请在异步线程使用。
  *
  * 200 返回文件项（sourceKind/path/action/sha256/size）与生效方式；普通文件差异和配置冻结工件统一在 files 中。
- * 其它（403 非目标 / 404 / 连接失败）返回 null（推送或生效流程据此回执 failed）。
+ * 其它（403 非目标 / 404 / 连接失败）返回失败结果并保留状态码与错误码（推送或生效流程据此回执 failed）。
  */
 fun BeaconApiClient.fetchDeliveryManifest(
     identity: AgentIdentity,
     orderId: Long,
-): DeliveryTargetManifest? {
+): DeliveryFetchResult<DeliveryTargetManifest> {
     val resp =
         exec(
             HttpRequest(
@@ -53,9 +54,9 @@ fun BeaconApiClient.fetchDeliveryManifest(
                 body = null,
                 readTimeoutMs = settings.requestTimeoutMs,
             ),
-        ) ?: return null
-    if (resp.statusCode != 200) return null
-    return parseDeliveryManifest(resp.body)
+        ) ?: return deliveryNotSent()
+    if (resp.statusCode != HTTP_OK) return deliveryFailure(resp.statusCode, resp.body)
+    return parseOrFail(resp) { parseDeliveryManifest(it) }
 }
 
 /**
@@ -89,8 +90,65 @@ fun BeaconApiClient.postDeliveryResult(
                 readTimeoutMs = settings.requestTimeoutMs,
             ),
         ) ?: return false
-    return resp.statusCode == 204
+    return resp.statusCode == HTTP_NO_CONTENT
 }
+
+/** 200 响应体解析；解析异常（非 JSON / 结构不符）→ 失败结果而非上抛，避免打断命令排空循环。 */
+private fun <T> BeaconApiClient.parseOrFail(
+    resp: top.wcpe.beacon.agent.core.transport.HttpResponse,
+    parse: (String) -> T,
+): DeliveryFetchResult<T> =
+    try {
+        DeliveryFetchResult(parse(resp.body), resp.statusCode, "")
+    } catch (e: Exception) {
+        DeliveryFetchResult(null, resp.statusCode, "HTTP ${resp.statusCode} ${e.javaClass.simpleName}: 响应体解析失败")
+    }
+
+/** 连接级失败（请求未发出 / 无响应）结果：statusCode=[HTTP_NOT_SENT]，说明控制面不可达并附最近一次连接失败原因。 */
+private fun BeaconApiClient.deliveryNotSent(): DeliveryFetchResult<Nothing> =
+    DeliveryFetchResult(null, HTTP_NOT_SENT, "请求未发出（控制面不可达 / 连接失败）：${connectFailReason()}")
+
+/** 非 200 失败结果：HTTP 码 + 服务端错误码 / 说明（脱敏并截断），无明细时只给码。 */
+private fun BeaconApiClient.deliveryFailure(
+    statusCode: Int,
+    body: String,
+): DeliveryFetchResult<Nothing> {
+    val detail = deliveryErrorDetail(body)
+    return DeliveryFetchResult(null, statusCode, "HTTP $statusCode" + if (detail.isEmpty()) "" else " $detail")
+}
+
+/**
+ * 从错误响应体取「错误码: 说明」（camelCase `code` / `message`，与控制面 render.WriteError 一致）。
+ *
+ * 取不到（空体 / 非 JSON / 字段缺失）返回空串——宁少给上下文也不抛异常（本函数只服务于失败摘要）。
+ * 展示前先经 [LogRedactor] 脱敏（治法在源头，见 error-surfacing 规则），并按 [MAX_ERROR_DETAIL_CHARS] 截断。
+ */
+private fun BeaconApiClient.deliveryErrorDetail(body: String): String {
+    val obj = decodeBodyOrEmpty(body)
+    val parts = listOf(JsonTree.strOr(obj, "code", ""), JsonTree.strOr(obj, "message", "")).filter { it.isNotEmpty() }
+    return if (parts.isEmpty()) "" else LogRedactor.redact(parts.joinToString(": ")).take(MAX_ERROR_DETAIL_CHARS)
+}
+
+/** 解响应体为对象树；空体 / 非 JSON 返回空表（失败摘要只求尽力，不因解析问题放大成异常）。 */
+private fun BeaconApiClient.decodeBodyOrEmpty(body: String): Map<String, Any?> =
+    if (body.isEmpty()) {
+        emptyMap()
+    } else {
+        try {
+            JsonTree.asObject(codec.decode(body))
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+/** 失败摘要最大字符数：够定位原因，又不至于把整段控制面文案灌进回执与日志。 */
+private const val MAX_ERROR_DETAIL_CHARS = 240
+
+/** 成功码（清单拉取）。 */
+private const val HTTP_OK = 200
+
+/** 成功码（阶段回执）。 */
+private const val HTTP_NO_CONTENT = 204
 
 /** 解析待上传清单响应（orderId + items[path/sha256/size]，camelCase 键，缺失项按空 / 0 兜底）。 */
 internal fun BeaconApiClient.parseDeliveryUploadManifest(jsonBody: String): DeliveryUploadManifest {

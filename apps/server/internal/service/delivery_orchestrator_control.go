@@ -224,6 +224,8 @@ func (s *DeliveryOrchestrator) resumeCircuitBatch(repoTx *repository.ChangeOrder
 		return e
 	}
 	// retry_failed：熔断批回 running，批内 failed / skipped 目标重置 pending 重推。
+	// 注意：这里**刻意不清 `changed_file_count` / `backup_present`**（只清 error / pushed_at / activated_at）——
+	// 它们是「该目标盘上的最近已知事实」（回滚资格与运维判断的依据），重试不清零；视图层据此标注为历史事实。
 	if _, e := repoTx.BulkUpdateTargetStatusByBatch(batch.ID,
 		[]string{model.ChangeTargetStatusFailed, model.ChangeTargetStatusSkipped},
 		map[string]any{"status": model.ChangeTargetStatusPending, "error": "", "pushed_at": nil, "activated_at": nil}); e != nil {

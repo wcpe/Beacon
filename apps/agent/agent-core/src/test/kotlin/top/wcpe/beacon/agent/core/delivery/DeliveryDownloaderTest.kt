@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.delivery
 
+import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.testsupport.ManualAsyncAdapter
 import top.wcpe.beacon.agent.core.testutil.FakeBlobStreamTransport
 import top.wcpe.beacon.agent.core.transport.BlobDownloadOutcome
@@ -15,15 +16,25 @@ import kotlin.test.assertTrue
  * 交付下载器 [DeliveryDownloader] 单测（FR-165，spec §4.5.3）：
  * - 中断后按 Range 从已收字节续传，最终齐全并校验通过；
  * - 校验不符删除重下，重下正确即成功；
- * - 校验持续不符，重试上限（3）后判失败。
+ * - 校验持续不符，重试上限（3）后判失败，且每次重试前按指数退避等待（FR-269）。
  */
 class DeliveryDownloaderTest {
     private val tempDir: File = DeliveryTestSupport.tempDir("delivery-dl-tmp")
     private val adapter = ManualAsyncAdapter(tempDir)
     private val transport = FakeBlobStreamTransport()
 
+    /** 记录退避等待时长（注入 sleep，测试不真等）。 */
+    private val delays = mutableListOf<Long>()
+
     private fun downloader(): DeliveryDownloader =
-        DeliveryDownloader(transport, blobUrl = { it }, authHeaders = { emptyMap() }, adapter = adapter)
+        DeliveryDownloader(
+            transport = transport,
+            blobUrl = { it },
+            authHeaders = { emptyMap() },
+            adapter = adapter,
+            backoff = BACKOFF,
+            sleep = delays::add,
+        )
 
     @Test
     fun `中断后按 Range 续传直至齐全并校验通过`() {
@@ -87,9 +98,29 @@ class DeliveryDownloaderTest {
         assertEquals(3, transport.downloadCalls.size, "下载重试上限为 3")
     }
 
+    @Test
+    fun `下载重试间按指数退避等待`() {
+        val content = "want".toByteArray()
+        val sha = DeliveryTestSupport.sha256(content)
+        transport.onDownload = { _, _, sink ->
+            sink.write("junk".toByteArray())
+            BlobDownloadOutcome(200, 4L)
+        }
+
+        val result = downloader().downloadAll(listOf(op("plugins/y.dat", sha, content.size.toLong())), tempDir)
+
+        assertFalse(result.ok)
+        assertEquals(listOf(10L, 20L), delays, "重试间隔应按指数退避递增（10 → 20），不做最后一次的无谓等待")
+    }
+
     private fun op(
         path: String,
         sha: String,
         size: Long,
     ) = DeliveryFileOp(path, DeliveryFileOp.Kind.ADD, sha, size)
+
+    private companion object {
+        /** 退避设置：抖动归零、间隔小且可预期（10 → 20），配合注入 sleep 断言确定性序列。 */
+        private val BACKOFF = BackoffSettings(initialMs = 10, maxMs = 100, multiplier = 2.0, jitterRatio = 0.0)
+    }
 }

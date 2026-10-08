@@ -53,7 +53,8 @@ class DeliveryOverwriter(
     /**
      * 应用操作计划：ADD / UPDATE 从临时目录原子移入目标，DELETE 删除目标。返回实际变更文件数（不含 SKIP）。
      *
-     * 任一步 IO 失败抛 [IOException]（此时备份已在盘，调用方判目标 failed，可整单回滚）。
+     * 任一步 IO 失败抛 [DeliveryApplyException]（携**已变更文件数**；此时备份已在盘）：失败回执据此如实上报
+     * 「盘上已经改了多少项」，而不是回一条与「什么都没做」同形的 0（FR-266 评审 P2）。
      */
     fun apply(
         ops: List<DeliveryFileOp>,
@@ -61,18 +62,22 @@ class DeliveryOverwriter(
     ): Int {
         var changed = 0
         for (op in ops) {
-            when (op.kind) {
-                DeliveryFileOp.Kind.ADD, DeliveryFileOp.Kind.UPDATE -> {
-                    moveIntoPlace(op, tempDir)
-                    changed++
-                }
+            try {
+                when (op.kind) {
+                    DeliveryFileOp.Kind.ADD, DeliveryFileOp.Kind.UPDATE -> {
+                        moveIntoPlace(op, tempDir)
+                        changed++
+                    }
 
-                DeliveryFileOp.Kind.DELETE -> {
-                    deleteTarget(op)
-                    changed++
-                }
+                    DeliveryFileOp.Kind.DELETE -> {
+                        deleteTarget(op)
+                        changed++
+                    }
 
-                DeliveryFileOp.Kind.SKIP -> Unit // 本地已一致，不动
+                    DeliveryFileOp.Kind.SKIP -> Unit // 本地已一致，不动
+                }
+            } catch (e: IOException) {
+                throw DeliveryApplyException(changed, op.path, e)
             }
         }
         return changed
@@ -107,3 +112,15 @@ class DeliveryOverwriter(
 class DeliveryPathException(
     path: String,
 ) : IOException("交付目标路径非法：$path")
+
+/**
+ * 交付覆盖 / 删除中途失败（FR-266 评审 P2）：携**已成功变更的文件数**与失败项路径。
+ *
+ * 值语义：`appliedCount` 是「盘上确实已经改了多少项」的忠实计数（失败那一项不计），供失败回执如实上报；
+ * 继承 [IOException] 以保持调用方既有的 IO 边界捕获口径不变。
+ */
+class DeliveryApplyException(
+    val appliedCount: Int,
+    path: String,
+    cause: IOException,
+) : IOException("交付覆盖 / 删除中途失败（已变更 $appliedCount 项，失败于 $path）：${cause.message ?: cause.javaClass.simpleName}", cause)

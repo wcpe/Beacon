@@ -1,6 +1,6 @@
 # ADR-0070：agent 优雅关服平台原语（restart 生效方式）
 
-**状态**：已接受
+**状态**：已接受（决策部分；其中决策 2 的「目标 agent 收到 `delivery_activate` 后**先回执「开始生效」，再调 `gracefulShutdown`**」这一顺序描述已被 [ADR-0088](0088-restart-activation-single-receipt-and-shutdown-capability.md) 取代——改为**关服原语成功下发之后**才回执，并补关服能力探测 fail-closed；决策 1 / 3 / 4 继续有效）
 
 ## 背景
 

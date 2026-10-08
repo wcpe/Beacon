@@ -114,6 +114,8 @@ class BungeePlatformAdapter(
         proxy.pluginManager.dispatchCommand(proxy.console, command)
     }
 
+    override val gracefulShutdownSupported: Boolean = true
+
     override fun gracefulShutdown(reason: String) {
         // restart 生效（FR-171，见 ADR-0070）：代理端优雅停机 = ProxyServer.stop()（代理无 tick 主线程概念，直接停即可）；
         // 进程重启交宿主自启脚本，本类无 Runtime.exec/ProcessBuilder（ADR-0011 决策 2 铁律，物理落不到 OS shell）。

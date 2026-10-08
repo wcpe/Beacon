@@ -1,6 +1,8 @@
 package top.wcpe.beacon.agent.core.delivery
 
+import top.wcpe.beacon.agent.core.backoff.ExponentialBackoff
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
+import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.transport.BlobStreamTransport
 import java.io.File
 import java.io.FileInputStream
@@ -10,7 +12,8 @@ import java.io.IOException
  * 交付模板源流式上传器（FR-165，spec §4.5.2）。
  *
  * 逐文件先 `HEAD blobs/{sha256}` 去重（已就绪则跳过——sha256 寻址跨单 / 跨路径复用），未就绪再流式 `PUT`
- * （`Content-Length` 必填）；上传失败整文件重试上限 [MAX_ATTEMPTS]，耗尽即整体失败（原因含路径）。
+ * （`Content-Length` 必填）；上传失败整文件重试上限 [MAX_ATTEMPTS]，**每次重试前按指数退避等待**（FR-269，
+ * 控制面短暂抖动时不打满），耗尽即整体失败（原因含路径）。
  *
  * 全程流式读源文件、绝不整读入内存；调用方保证在 async 线程使用。
  *
@@ -19,6 +22,8 @@ import java.io.IOException
  * @param blobUrl     由 sha256 构造完整 blob URL
  * @param authHeaders 取当前鉴权头
  * @param adapter     平台日志
+ * @param backoff     重试退避设置（指数退避 + 抖动，复用既有 ExponentialBackoff）
+ * @param sleep       退避等待实现（测试注入免真睡；生产用 Thread.sleep，调用方已在 async 线程）
  */
 class DeliveryUploader(
     private val transport: BlobStreamTransport,
@@ -26,6 +31,8 @@ class DeliveryUploader(
     private val blobUrl: (String) -> String,
     private val authHeaders: () -> Map<String, String>,
     private val adapter: PlatformAdapter,
+    private val backoff: BackoffSettings,
+    private val sleep: (Long) -> Unit = { Thread.sleep(it) },
 ) {
     /** 逐项上传待传清单；任一项失败即整体失败返回（含已上传 / 去重计数供回执与日志）。 */
     fun upload(items: List<DeliveryUploadItem>): DeliveryUploadResult {
@@ -68,12 +75,14 @@ class DeliveryUploader(
             false
         }
 
-    /** 整文件重试 PUT（不做分块断点，spec §4.5.2 第 3 步）：成功码即成功；耗尽返回 false。 */
+    /** 整文件重试 PUT（不做分块断点，spec §4.5.2 第 3 步）：成功码即成功；每次重试前指数退避等待，耗尽返回 false。 */
     private fun putWithRetry(
         item: DeliveryUploadItem,
         file: File,
     ): Boolean {
         var attempt = 0
+        // 单项独立退避实例：间隔随本项失败次数指数增长（含抖动），换下一项即重新起算。
+        val retryBackoff = ExponentialBackoff(backoff)
         while (attempt < MAX_ATTEMPTS) {
             attempt++
             try {
@@ -83,6 +92,7 @@ class DeliveryUploader(
             } catch (e: IOException) {
                 adapter.warn("交付上传中断：路径=${item.path}，尝试=$attempt，原因=${e.javaClass.simpleName}")
             }
+            if (attempt < MAX_ATTEMPTS) sleep(retryBackoff.nextDelayMs())
         }
         return false
     }

@@ -179,12 +179,30 @@ func (h *orchestratorHarness) completeAllPushes(t *testing.T, orderID uint) {
 	}
 }
 
+// completeAllPushesWithResult 把某单全部目标的推送命令置成功并附指定回执摘要（计数用例自定 changedFileCount / backupPresent）。
+func (h *orchestratorHarness) completeAllPushesWithResult(t *testing.T, orderID uint, result string) {
+	t.Helper()
+	targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(orderID)
+	for _, tg := range targets {
+		completeDeliveryCommand(t, h.env.db, orderID, tg.ServerID, model.CommandTypeDeliveryPush, model.CommandStatusDone, result)
+	}
+}
+
 // completeAllActivates 把某单全部目标的生效命令置指定终态（模拟 agent 回执，如 restart 的「已开始关服」done）。
 func (h *orchestratorHarness) completeAllActivates(t *testing.T, orderID uint, status string) {
 	t.Helper()
 	targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(orderID)
 	for _, tg := range targets {
 		completeDeliveryCommand(t, h.env.db, orderID, tg.ServerID, model.CommandTypeDeliveryActivate, status, "")
+	}
+}
+
+// completeAllActivatesWithResult 把某单全部目标的生效命令置指定终态并附回执摘要（计数 / 备份字段用）。
+func (h *orchestratorHarness) completeAllActivatesWithResult(t *testing.T, orderID uint, status, result string) {
+	t.Helper()
+	targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(orderID)
+	for _, tg := range targets {
+		completeDeliveryCommand(t, h.env.db, orderID, tg.ServerID, model.CommandTypeDeliveryActivate, status, result)
 	}
 }
 
@@ -936,6 +954,209 @@ func TestOrchestratorHotReloadAckStateMachine(t *testing.T) {
 				if expired != 2 {
 					t.Fatalf("超时后生效命令应有 2 个 expired，实际 %d", expired)
 				}
+			}
+		})
+	}
+}
+
+// TestOrchestratorActivateFailureCarriesCounts 锁定 FR-266「已落盘仅通知失败」的部分成功口径：
+// agent 生效回执 failed 时携带的变更计数与备份标记必须落到目标行、并经目标视图透出——否则失败目标与
+// 「什么都没做」同形，运维与机器主体都无从判断该回滚还是重推。
+func TestOrchestratorActivateFailureCarriesCounts(t *testing.T) {
+	h, order := prepareHotReloadActivatingOrder(t)
+	// 生效回执 failed：文件已落盘、仅通知失败（部分成功）——带 2 个变更文件与备份存在。
+	h.completeAllActivatesWithResult(t, order.ID, model.CommandStatusFailed,
+		`{"changedFileCount":2,"skippedFileCount":0,"backupPresent":true,"error":"文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败"}`)
+	h.tick()
+
+	targets, err := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+	if err != nil {
+		t.Fatalf("查目标失败: %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("应有 2 个目标，实际 %d", len(targets))
+	}
+	for i := range targets {
+		if targets[i].Status != model.ChangeTargetStatusFailed {
+			t.Fatalf("目标应 failed，实际 %s", targets[i].Status)
+		}
+		if targets[i].ChangedFileCount != 2 {
+			t.Fatalf("失败目标应保留回执变更计数 2，实际 %d", targets[i].ChangedFileCount)
+		}
+		if !targets[i].BackupPresent {
+			t.Fatalf("失败目标应保留备份标记（可否回滚的依据）")
+		}
+		if targets[i].Error == "" {
+			t.Fatalf("失败目标应留可读原因")
+		}
+	}
+
+	// 视图透出：目标视图（GET .../targets 的数据源）逐字段带出计数与备份标记。
+	views := changeTargetViews(targets, map[uint]int{}, nil)
+	if len(views) != 2 {
+		t.Fatalf("视图应有 2 行，实际 %d", len(views))
+	}
+	for i := range views {
+		if views[i].ChangedFileCount != 2 || !views[i].BackupPresent {
+			t.Fatalf("视图应透出计数与备份标记，实际 count=%d backup=%v",
+				views[i].ChangedFileCount, views[i].BackupPresent)
+		}
+		if views[i].Error == nil || *views[i].Error == "" {
+			t.Fatalf("视图应透出失败原因")
+		}
+	}
+}
+
+// TestOrchestratorActivateFailureZeroCountsKeepsPushedFacts 锁定计数「只增不减」：
+// restart 关服失败一类 0 计数回执不得把推送阶段已落定的 changed_file_count / backup_present 清零。
+func TestOrchestratorActivateFailureZeroCountsKeepsPushedFacts(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushes(t, order.ID) // 推送回执：changedFileCount=1、backupPresent=true
+	h.tick()
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivating] != 2 {
+		t.Fatalf("restart 推送落定后应 activating: %v", c)
+	}
+
+	// 关服原语失败：agent 回执只带原因、无计数。
+	h.completeAllActivatesWithResult(t, order.ID, model.CommandStatusFailed, `{"error":"优雅关服失败：调度器不可用"}`)
+	h.tick()
+
+	targets, err := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+	if err != nil {
+		t.Fatalf("查目标失败: %v", err)
+	}
+	for i := range targets {
+		if targets[i].Status != model.ChangeTargetStatusFailed {
+			t.Fatalf("目标应 failed，实际 %s", targets[i].Status)
+		}
+		if targets[i].ChangedFileCount != 1 {
+			t.Fatalf("0 计数回执不得清零推送阶段计数，实际 %d", targets[i].ChangedFileCount)
+		}
+		if !targets[i].BackupPresent {
+			t.Fatalf("0 计数回执不得清零推送阶段备份标记")
+		}
+	}
+}
+
+// TestOrchestratorActivateFailureSmallerCountKeepsPushedFacts 锁定「只增不减」对**更小正数**同样成立：
+// 推送阶段落定 3 项（1 个普通文件 + 2 个配置工件），生效阶段按工件数取下界 2 → 目标行必须保持 3，
+// 否则「改了 3 个」会被下界回执改写成「改了 2 个」（FR-266 评审 P1）。
+func TestOrchestratorActivateFailureSmallerCountKeepsPushedFacts(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodHotReload, 0)
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushesWithResult(t, order.ID, `{"changedFileCount":3,"skippedFileCount":0,"backupPresent":true}`)
+	h.tick()
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivating] != 2 {
+		t.Fatalf("hot_reload 推送落定后应 activating: %v", c)
+	}
+
+	// 生效失败回执按配置工件数取下界（2 < 3）：不得把已落定的 3 覆写成 2。
+	h.completeAllActivatesWithResult(t, order.ID, model.CommandStatusFailed,
+		`{"changedFileCount":2,"skippedFileCount":0,"backupPresent":true,"error":"文件已落盘，仅配置变更通知失败"}`)
+	h.tick()
+
+	targets, err := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+	if err != nil {
+		t.Fatalf("查目标失败: %v", err)
+	}
+	for i := range targets {
+		if targets[i].Status != model.ChangeTargetStatusFailed {
+			t.Fatalf("目标应 failed，实际 %s", targets[i].Status)
+		}
+		if targets[i].ChangedFileCount != 3 {
+			t.Fatalf("更小的正数回执不得覆写已落定计数（期望 3，实际 %d）", targets[i].ChangedFileCount)
+		}
+		if !targets[i].BackupPresent {
+			t.Fatalf("备份标记应保持 true")
+		}
+	}
+}
+
+// TestOrchestratorPushingFailureMarksPushed 锁定「推送中途失败但盘上已改」的回滚资格（FR-266 终审 P2）：
+// 变更计数 > 0 或备份已在 → 补 pushed_at（回滚候选 / 预检都以它为准），目标可被整单回滚覆盖；
+// 下载 / 备份阶段失败（计数 0 且无备份）不补，保持「没动盘就不入回滚集」。
+func TestOrchestratorPushingFailureMarksPushed(t *testing.T) {
+	cases := []struct {
+		name         string
+		result       string
+		wantPushedAt bool
+		wantChanged  int
+		wantBackup   bool
+	}{
+		{
+			name:         "覆盖中途失败且备份在盘",
+			result:       `{"changedFileCount":1,"backupPresent":true,"error":"覆盖中途失败（已变更 1 项，备份已在盘）"}`,
+			wantPushedAt: true, wantChanged: 1, wantBackup: true,
+		},
+		{
+			name:         "覆盖 0 项但备份已在",
+			result:       `{"changedFileCount":0,"backupPresent":true,"error":"覆盖中途失败（已变更 0 项，备份已在盘）"}`,
+			wantPushedAt: true, wantChanged: 0, wantBackup: true,
+		},
+		{
+			name:         "下载阶段失败未动盘",
+			result:       `{"changedFileCount":0,"backupPresent":false,"error":"流式下载 / 校验失败"}`,
+			wantPushedAt: false, wantChanged: 0, wantBackup: false,
+		},
+		{
+			name:         "备份阶段失败未动盘",
+			result:       `{"changedFileCount":0,"backupPresent":false,"error":"备份失败，未改动原文件"}`,
+			wantPushedAt: false, wantChanged: 0, wantBackup: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newOrchestratorHarness(t)
+			order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
+			if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
+				t.Fatalf("启动失败: %v", err)
+			}
+			h.tick()
+			// 推送回执 failed（携部分成功事实）。
+			targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+			for _, tg := range targets {
+				completeDeliveryCommand(t, h.env.db, order.ID, tg.ServerID, model.CommandTypeDeliveryPush, model.CommandStatusFailed, tc.result)
+			}
+			h.tick()
+
+			rows, err := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+			if err != nil {
+				t.Fatalf("查目标失败: %v", err)
+			}
+			for i := range rows {
+				if rows[i].Status != model.ChangeTargetStatusFailed {
+					t.Fatalf("目标应 failed，实际 %s", rows[i].Status)
+				}
+				if (rows[i].PushedAt != nil) != tc.wantPushedAt {
+					t.Fatalf("pushed_at 命中期望 %v，实际 %v", tc.wantPushedAt, rows[i].PushedAt)
+				}
+				if rows[i].ChangedFileCount != tc.wantChanged {
+					t.Fatalf("计数期望 %d，实际 %d", tc.wantChanged, rows[i].ChangedFileCount)
+				}
+				if rows[i].BackupPresent != tc.wantBackup {
+					t.Fatalf("备份标记期望 %v，实际 %v", tc.wantBackup, rows[i].BackupPresent)
+				}
+			}
+			// 回滚候选口径：仅「曾覆盖磁盘」的目标计入整单回滚目标集。
+			n, err := repository.NewChangeOrderRepository(h.env.db).CountTargetsToRollback(order.ID)
+			if err != nil {
+				t.Fatalf("统计回滚候选失败: %v", err)
+			}
+			want := int64(0)
+			if tc.wantPushedAt {
+				want = int64(len(rows))
+			}
+			if n != want {
+				t.Fatalf("回滚候选数期望 %d，实际 %d", want, n)
 			}
 		})
 	}
