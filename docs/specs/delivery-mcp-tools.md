@@ -31,7 +31,8 @@
 不做（范围外）：
 
 - 机器审批决定（归 FR-223 的 `allow-approval-decide` 开关，本规格不碰）。
-- 回滚类工具（已有 `order.rollback` / `rollback.finish`；目标级回滚见 FR-270 的独立规格）。
+- 回滚类工具的**新增**（已有 `order.rollback` / `rollback.finish`；目标级回滚在 [delivery-rollback-resilience](delivery-rollback-resilience.md) §3.4 决定为**扩 `order.rollback` 的 `serverIds` 入参**而非新增工具——同一 operation、同一票据契约，新增工具会让同一危险动作在目录里出现两个等级与两套拒绝文案）。
+- `targets.list` 的 `deliveredVersion` 为 FR-271 新增（同源投影 HTTP 目标视图字段，键名一致）。
 - 交付数据面（blob / manifest / 回执）的 MCP 暴露——那是 agent 面，不是操作者面。
 - 前端消费（202 展示、审批进度视图）归 FR-252 / FR-255，本规格只冻结契约。
 
@@ -71,7 +72,7 @@
 |---|---|---|
 | `order.list` | `namespaceId`（必填）、`status?`、`createdBy?`、`keyword?`、`page?`、`pageSize?` | `items[]`（`id`/`title`/`status`/`pauseKind?`/`createdBy`/`createdAt`/`payloadState`）、`total`（对齐既有 `ChangeOrderListView`，不含额外键） |
 | `order.get` | `orderId` | 单字段摘要（沿既有详情视图：`id`/`title`/`description?`/`namespaceId`/`status`/`pauseKind?`/`pauseReason?`/selector 摘要/`batchMode`/`batchSizes`/`activationMethod`/`observeWindowSec`/`activateTimeoutSec`/阈值两项/`payloadState`/`createdBy`/`submittedAt?`/`approvedAt?`/`startedAt?`/`finishedAt?`/`cancelReason?`/回滚三项）+ 计数（沿既有视图的 `targetCounts`/`rollbackCounts` 映射；其余计数以 `delivery_views.go` 既有字段为准，不得自造键名） |
-| `targets.list` | `orderId`、`batch?`、`status?`、`serverId?`、`page?`、`pageSize?` | `items[]`（沿既有目标视图：`serverId`/`batchNo`/`status`/`rollbackStatus?`/`error?`/`rollbackError?`/`backupPresent`/`changedFileCount`/`skippedFileCount`/`pushedAt?`/`activatedAt?`）、`total` |
+| `targets.list` | `orderId`、`batch?`、`status?`、`serverId?`、`page?`、`pageSize?` | `items[]`（沿既有目标视图：`serverId`/`batchNo`/`status`/`rollbackStatus?`/`error?`/`rollbackError?`/`backupPresent`/`changedFileCount`/`skippedFileCount`/`pushedAt?`/`activatedAt?`/`deliveredVersion?`）、`total` |
 | `impact.get` | `orderId`、`page?`、`pageSize?` | `summary`（沿既有影响视图：目标数/批次划分/差异文件数/总字节/预计传输字节/配置作用域命中数/`snapshotAt`）+ `targets[]`（逐台：`serverId`/在线/健康/新增覆盖删除跳过计数/命中配置作用域数） |
 | `observe.get` | `orderId` | 当前批观察窗序列（沿既有视图：时间桶/健康分/健康等级/TPS/告警计数） |
 | `events.list` | `orderId` | 派生事件列表（沿既有视图：阶段/时间/摘要；不含 SSE 流式语义） |
