@@ -78,7 +78,13 @@ type DeliveryOrchestrator struct {
 	// observeMu 独立保护观察窗内存缓冲（推进器采样写、Observe/SSE 读），与 mu 有序嵌套（mu→observeMu，不反向）。
 	observeMu      *sync.RWMutex
 	observeByOrder map[uint]*observeState
-	// stallByOrder 记录各单「推进停滞」的观测状态（推进器每轮检查，mu 保护，FR-262）。
+	// stallMu 独立保护停滞观测表（FR-262 / P0 回归）。**刻意不复用 mu**：
+	// clearObserve 有两条调用方——Cancel / applyConfirmBatch 已持 mu 同步调用，
+	// 而审批执行适配器的 afterCommit 闭包由审批 worker 在事务提交后执行、**全程不持 mu**；
+	// Go 互斥锁不可重入，若这里复用 mu，前一条路径会直接死锁。
+	// 独立锁下两条路径都安全；锁序为 mu → stallMu（与 mu → observeMu 同向，不反向嵌套）。
+	stallMu *sync.Mutex
+	// stallByOrder 记录各单「推进停滞」的观测状态（推进器每轮检查，stallMu 保护，FR-262）。
 	// 停滞 = 单在装载集里、但推进器已无事可做且无人来推：确认门等人确认、或根本没有活动批。
 	// 这两类都不会自行恢复（推进器只会重复空转），此前完全静默——运维只能靠「感觉单卡住了」去翻库。
 	stallByOrder map[uint]*deliveryStallState
@@ -118,6 +124,7 @@ func NewDeliveryOrchestrator(db *gorm.DB, repo *repository.ChangeOrderRepository
 		mu:             &sync.Mutex{},
 		observeMu:      &sync.RWMutex{},
 		observeByOrder: map[uint]*observeState{},
+		stallMu:        &sync.Mutex{},
 		stallByOrder:   map[uint]*deliveryStallState{},
 	}
 }
@@ -194,6 +201,10 @@ func (s *DeliveryOrchestrator) detectStall(rt *orderRuntime) {
 		return
 	}
 	now := s.now()
+	// 整段「读表 → 判定 → 写表」在 stallMu 下完成：clearStall 可能来自不持 mu 的 afterCommit，
+	// 若只在写时加锁而读在外面，仍与并发 delete 构成竞态。
+	s.stallMu.Lock()
+	defer s.stallMu.Unlock()
 	st := s.stallByOrder[rt.order.ID]
 	if st == nil || st.kind != kind {
 		st = &deliveryStallState{kind: kind, since: now}
@@ -245,7 +256,12 @@ func stallRemindRhythm(kind string) (time.Duration, time.Duration) {
 }
 
 // clearStall 清除某单的停滞观测（单终态化 / 恢复推进时调用，防止内存随单无界增长）。
+//
+// 必须在 stallMu 下操作：本函数的调用方之一是不持 mu 的审批 afterCommit 闭包
+// （见 clearObserve），而推进器在 mu 下经 detectStall 读写同一张表——无锁即并发读写。
 func (s *DeliveryOrchestrator) clearStall(orderID uint) {
+	s.stallMu.Lock()
+	defer s.stallMu.Unlock()
 	delete(s.stallByOrder, orderID)
 }
 
