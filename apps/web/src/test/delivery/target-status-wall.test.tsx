@@ -43,7 +43,8 @@ describe('TargetStatusWall 单服级状态墙', () => {
     // 区块标题 + 汇总（总台数与失败计数）
     expect(await screen.findByText('单服状态')).toBeInTheDocument()
     expect(await screen.findByText(/共 \d+ 台目标/)).toBeInTheDocument()
-    expect(screen.getByText(/台失败/)).toBeInTheDocument()
+    // 计数只覆盖当前页，文案显式限定「本页」（主口径是响应 total）
+    expect(screen.getByText(/本页 \d+ 台失败/)).toBeInTheDocument()
     // 状态徽标（失败）与失败原因（真因可见，不静默隐藏）
     const table = screen.getByRole('table')
     expect(within(table).getAllByText('失败').length).toBeGreaterThan(0)
@@ -120,7 +121,7 @@ describe('TargetStatusWall 单服级状态墙', () => {
     expect(within(table).getByText('回滚失败')).toBeInTheDocument()
     expect(within(table).getByText('备份不存在（已被保留策略清理），无法文件回滚')).toBeInTheDocument()
     expect(within(table).getByText('已回滚')).toBeInTheDocument()
-    // 汇总行：总台数 + 回滚失败计数（同一段落内，用正则匹配）
-    expect(screen.getByText(/1 台回滚失败/)).toBeInTheDocument()
+    // 汇总行：总台数 + 本页回滚失败计数（同一段落内，用正则匹配）
+    expect(screen.getByText(/本页 1 台回滚失败/)).toBeInTheDocument()
   })
 })

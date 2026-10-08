@@ -158,8 +158,8 @@ describe('ApprovalProgress 审批进度视图', () => {
     expect(screen.getAllByText('继续灰度').length).toBeGreaterThan(0)
     expect(screen.getByText('已通过')).toBeInTheDocument()
     expect(screen.getByText('执行中')).toBeInTheDocument()
-    // 超出展示上限的条数只提示不铺开
-    expect(screen.getByText('另有 1 条历史申请')).toBeInTheDocument()
+    // 超出展示上限只提示不铺开（按响应 total 判定截断）
+    expect(screen.getByText('共 6 条申请，仅显示最近 5 条')).toBeInTheDocument()
     const list = screen.getByRole('list')
     expect(within(list).getAllByRole('listitem')).toHaveLength(5)
   })

@@ -134,6 +134,56 @@ describe('/changes 变更单页', () => {
   }, 20_000)
 
   // 单次渲染巡检四个只读 Tab（合并跑，避免多次整页渲染在并行 worker 下拖爆时限）
+  it('批次放行连续两次各用新幂等键（成功即作废，不复用旧键）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    const keys: (string | null)[] = []
+    server.use(
+      http.post('*/admin/v2/change-orders/:id/batches/:batchNo/confirm', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'))
+        return HttpResponse.json(
+          {
+            approvalRequestId: `apr_change_5004_${String(keys.length)}`,
+            status: 'pending',
+            operationKey: 'delivery.confirm_batch',
+            orderId: 5004,
+            impactSummary: { targetCount: 6, batchCount: 3, payloadFiles: 6, payloadConfigs: 1 },
+          },
+          { status: 202 },
+        )
+      }),
+    )
+    renderPage(<ChangesPage />)
+
+    const row = (await screen.findByText('Quests 插件灰度 v1.9')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+    await user.click(screen.getByRole('tab', { name: '灰度批次' }))
+    await screen.findByText('当前批')
+
+    // 第一次放行意图
+    await user.click(await screen.findByRole('button', { name: '确认放行下一批' }))
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: '确认推进' }))
+    expect(await screen.findByText(/已提交审批（申请号/)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(keys).toHaveLength(1)
+    })
+
+    // 第二次放行意图（真机上下一批 payload 已变）：必须换新键，否则服务端按
+    // idempotency_key_reused 拒掉，后续批次永远放不出去
+    await user.click(await screen.findByRole('button', { name: '确认放行下一批' }))
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: '确认推进' }))
+    await waitFor(() => {
+      expect(keys).toHaveLength(2)
+    })
+    expect(keys[0]).not.toBeNull()
+    expect(keys[0] ?? '').not.toBe('')
+    expect(keys[1]).not.toBe(keys[0])
+  }, 20_000)
+
   it('详情四 Tab 复用共享控件：变更项 / 影响预览 / 观察窗 / 时间线双模式', async () => {
     useScenario('normal')
     const user = userEvent.setup()
@@ -253,6 +303,42 @@ describe('/changes 变更单页', () => {
     expect((await screen.findAllByText('待审批')).length).toBeGreaterThan(0)
   }, 20_000)
 
+  it('提审后审批进度卡显示新产生的申请（走 devmock 全量 handlers，锁死资源类型真值）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    // 草稿单「大厅插件升级 v2.4」此前无任何申请：进度卡不渲染
+    const row = (await screen.findByText('大厅插件升级 v2.4')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+    expect(screen.queryByText('审批进度')).not.toBeInTheDocument()
+
+    await user.click(await screen.findByRole('button', { name: '提交审批' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByRole('textbox'), '插件已在模板源验证通过，申请审批')
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+
+    // 票据反馈带申请号
+    expect(await screen.findByText(/已提交审批（申请号/)).toBeInTheDocument()
+
+    // 进度卡按单号反查必须命中这条新申请（真机资源类型是 change-order 带连字符；
+    // mock 物化行写错资源类型时这里查不到 → 本用例即该回归的守卫）。
+    // toast 文案里也有申请号，故取落在卡片行（li）内的那一个
+    expect(await screen.findByText('审批进度')).toBeInTheDocument()
+    // 用卡片行内的「查看申请」深链定位（toast 里也有申请号，不能按文本取行）
+    const applyLink = await screen.findByRole('link', { name: /查看申请/ })
+    expect(applyLink).toHaveAttribute('href', expect.stringContaining('/approvals/apr_change_5001_'))
+    const cardRow = applyLink.closest('li')
+    if (!cardRow) {
+      throw new Error('审批进度卡未显示新产生的申请')
+    }
+    expect(within(cardRow).getByText('待审批')).toBeInTheDocument()
+  }, 20_000)
+
   it('详情页提审携带幂等键，且重试复用同一键', async () => {
     useScenario('normal')
     const user = userEvent.setup()
@@ -294,6 +380,55 @@ describe('/changes 变更单页', () => {
     expect(keys[0]).not.toBeNull()
     expect(keys[0] ?? '').not.toBe('')
     expect(keys[1]).toBe(keys[0])
+  }, 20_000)
+
+  it('熔断暂停的「继续」必填原因与恢复方式（真机对非人工暂停强制 reason 非空）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    const captured: { key: string | null; body: unknown } = { key: null, body: null }
+    server.use(
+      http.post('*/admin/v2/change-orders/:id/resume', async ({ request }) => {
+        captured.key = request.headers.get('Idempotency-Key')
+        captured.body = (await request.json()) as unknown
+        return HttpResponse.json(
+          {
+            approvalRequestId: 'apr_change_5006_1',
+            status: 'pending',
+            operationKey: 'delivery.resume',
+            orderId: 5006,
+            impactSummary: { targetCount: 1, batchCount: 1, payloadFiles: 6, payloadConfigs: 1 },
+          },
+          { status: 202 },
+        )
+      }),
+    )
+    renderPage(<ChangesPage />)
+
+    // 「PVP 平衡性补丁」为熔断暂停单（pauseKind=circuit_break）
+    const row = (await screen.findByText('PVP 平衡性补丁')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    await user.click(await screen.findByRole('button', { name: '继续' }))
+    const dialog = await screen.findByRole('alertdialog')
+    // 恢复方式选择 + 原因必填（未填不可提交）
+    expect(within(dialog).getByRole('combobox', { name: '恢复方式' })).toBeInTheDocument()
+    const confirmButton = within(dialog).getByRole('button', { name: '继续' })
+    expect(confirmButton).toBeDisabled()
+
+    await user.type(within(dialog).getByRole('textbox'), '熔断原因已排除，重试失败目标')
+    expect(confirmButton).toBeEnabled()
+    await user.click(confirmButton)
+
+    // 请求体带 mode + reason，请求头带幂等键；成功回票据反馈
+    await waitFor(() => {
+      expect(captured.key).not.toBeNull()
+    })
+    expect(captured.body).toEqual({ mode: 'retry_failed', reason: '熔断原因已排除，重试失败目标' })
+    expect(await screen.findByText(/已提交审批（申请号/)).toBeInTheDocument()
   }, 20_000)
 
   it('提审被后端拒绝时内联展示脱敏错误，弹窗不关闭且单据仍为草稿', async () => {

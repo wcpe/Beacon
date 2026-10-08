@@ -43,8 +43,13 @@ export default function BatchesTab({ order, onQuickAction }: BatchesTabProps) {
 
   const [confirmBatchNo, setConfirmBatchNo] = useState<number | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
-  // 同一放行意图重试复用同一幂等键（后端据此去重），弹窗关闭即作废重来
+  // 同一放行意图重试复用同一幂等键（后端据此去重）；意图结束（成功 / 弹窗关闭）即作废，
+  // 否则下一批放行会拿旧键发新 payload，被服务端按 idempotency_key_reused 拒掉。
   const keyRef = useRef<string | null>(null)
+
+  const resetKey = () => {
+    keyRef.current = null
+  }
 
   const confirmMutation = useMutation({
     mutationFn: (batchNo: number) => {
@@ -57,6 +62,7 @@ export default function BatchesTab({ order, onQuickAction }: BatchesTabProps) {
         queryClient.invalidateQueries({ queryKey: ['change-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['approvals'] }),
       ])
+      resetKey()
       setConfirmBatchNo(null)
       notifyTicket(ticket)
     },
@@ -105,6 +111,7 @@ export default function BatchesTab({ order, onQuickAction }: BatchesTabProps) {
         open={confirmBatchNo !== null}
         onOpenChange={(open) => {
           if (!open) {
+            resetKey()
             setConfirmBatchNo(null)
           }
         }}

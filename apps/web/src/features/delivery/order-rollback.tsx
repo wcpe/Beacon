@@ -38,11 +38,16 @@ export function OrderRollbackActions({ order }: OrderRollbackProps) {
   const [rollbackOpen, setRollbackOpen] = useState(false)
   const [finishOpen, setFinishOpen] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
-  // 幂等键按意图各存一个：同一意图重试复用同键（后端据此去重），弹窗关闭即作废重来
+  // 幂等键按意图各存一个：同一意图重试复用同键（后端据此去重）；
+  // 意图结束（成功 / 弹窗关闭）即清该键，否则下次回滚会拿旧键发新 payload（真机 409 idempotency_key_reused）
   const keysRef = useRef<{ rollback: string | null; finish: string | null }>({
     rollback: null,
     finish: null,
   })
+
+  const resetKey = (kind: 'rollback' | 'finish') => {
+    keysRef.current[kind] = null
+  }
 
   const invalidate = async () => {
     await Promise.all([
@@ -59,6 +64,7 @@ export function OrderRollbackActions({ order }: OrderRollbackProps) {
     },
     onSuccess: async (ticket) => {
       await invalidate()
+      resetKey('rollback')
       setRollbackOpen(false)
       notifyTicket(ticket)
     },
@@ -75,6 +81,7 @@ export function OrderRollbackActions({ order }: OrderRollbackProps) {
     },
     onSuccess: async (ticket) => {
       await invalidate()
+      resetKey('finish')
       setFinishOpen(false)
       notifyTicket(ticket)
     },
@@ -133,6 +140,7 @@ export function OrderRollbackActions({ order }: OrderRollbackProps) {
         onOpenChange={(open) => {
           setRollbackOpen(open)
           if (!open) {
+            resetKey('rollback')
             setErrorText(null)
           }
         }}
@@ -143,6 +151,9 @@ export function OrderRollbackActions({ order }: OrderRollbackProps) {
         open={finishOpen}
         onOpenChange={(open) => {
           setFinishOpen(open)
+          if (!open) {
+            resetKey('finish')
+          }
         }}
         title={t('delivery.rollback.finishTitle')}
         description={t('delivery.rollback.finishDesc')}

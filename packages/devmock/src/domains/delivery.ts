@@ -39,6 +39,11 @@ import { deliveryApprovalSpecs, registerDeliveryApproval, type DeliveryApprovalS
 interface OrderState extends ChangeOrderDetail {
   targets: ChangeTarget[]
   events: ChangeOrderEvent[]
+  /**
+   * 演示态自用：本单提审票据的申请号（真机变更单表不落该列、详情响应也不带）。
+   * mock 只拿它把「审批通过」回拨到对应单据；前端不得依赖该字段（审批进度按单号反查）。
+   */
+  approvalRequestId: string | null
 }
 
 interface DeliveryState {
@@ -272,6 +277,7 @@ function makeOrder(
     rollbackCounts: {},
     targets: [],
     events: [],
+    approvalRequestId: null,
   }
   if (executed && options.serverIds && options.serverIds.length > 0) {
     const shape = status === 'rolling' ? 'rolling' : status === 'paused' ? 'paused' : status === 'rolled_back' || status === 'rolling_back' ? 'rolled_back' : 'completed'
@@ -774,6 +780,7 @@ export const deliveryHandlers: HttpHandler[] = [
       rollbackCounts: {},
       targets: [],
       events: [],
+      approvalRequestId: null,
     }
     state.nextId += 1
     state.orders.unshift(order)

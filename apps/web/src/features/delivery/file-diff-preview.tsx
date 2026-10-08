@@ -24,8 +24,10 @@ interface FileDiffPreviewProps {
   item: ChangeOrderItem
 }
 
-// 需审批（真机恒 409）：内容读取必须先经统一审批放行
+// 需审批（真机恒 409 operation_requires_approval）：内容读取必须先经统一审批放行。
+// 状态码与错误码都要对：将来其他 409（如资源冲突）不该被误报成「需审批」。
 const NEEDS_APPROVAL_STATUS = 409
+const NEEDS_APPROVAL_CODE = 'operation_requires_approval'
 
 export default function FileDiffPreview({ orderId, item }: FileDiffPreviewProps) {
   const { t } = useTranslation()
@@ -36,8 +38,8 @@ export default function FileDiffPreview({ orderId, item }: FileDiffPreviewProps)
     retry: false,
   })
 
-  const status = query.error instanceof ApiClientError ? query.error.status : null
-  if (status === NEEDS_APPROVAL_STATUS) {
+  const apiError = query.error instanceof ApiClientError ? query.error : null
+  if (apiError?.status === NEEDS_APPROVAL_STATUS && apiError.code === NEEDS_APPROVAL_CODE) {
     return <NeedsApprovalHint />
   }
 

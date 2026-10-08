@@ -43,8 +43,8 @@ import EventsTab from './events-tab'
 // 本页可执行的动作类型（申请类动作走 202 票据，直执动作为暂停 / 终止）
 type ActionKind = 'submit' | 'delete' | 'pause' | 'resume' | 'cancel'
 
-// 生命周期动作（多一个「撤回」：只在审批中心执行，本页只给跳转入口）
-type LifecycleAction = ActionKind | 'withdraw'
+// 生命周期动作（含两个跳转入口：待审批可撤回、已批准只能查看申请——审批撤回只允许 pending）
+type LifecycleAction = ActionKind | 'withdraw' | 'viewApproval'
 
 // 动作响应：申请类动作 → 202 票据；直执动作（暂停 / 终止）→ 200 最新详情
 type ActionOutcome = ChangeOrderDetail | DeliveryApprovalTicket
@@ -106,6 +106,8 @@ export default function DetailView({ orderId }: DetailViewProps) {
     },
     onSuccess: async (data) => {
       await invalidate()
+      // 申请意图已提交：清键，避免下一次动作复用旧键（真机按 idempotency_key_reused 拒掉）
+      keysRef.current = {}
       setAction(null)
       // 申请动作返回 202 票据：反馈申请号并给去审批中心的入口（直执动作无需票据反馈）
       if (isApprovalTicket(data)) {
@@ -194,7 +196,7 @@ export default function DetailView({ orderId }: DetailViewProps) {
           title={confirmConfig(action, t).title}
           description={confirmConfig(action, t).description}
           confirmLabel={confirmConfig(action, t).confirmLabel}
-          requireReason={needsReason(action)}
+          requireReason={needsReason(action) || needsResumeReason(action, order)}
           requireMode={action === 'resume' && order.pauseKind !== 'manual'}
           pending={runMutation.isPending}
           errorText={errorText}
@@ -224,9 +226,13 @@ function LifecycleActions({
   return (
     <div className="flex flex-wrap gap-2">
       {actions.map((kind) =>
-        kind === 'withdraw' ? (
+        kind === 'withdraw' || kind === 'viewApproval' ? (
           <Button key={kind} size="sm" variant="outline" asChild>
-            <Link to="/approvals">{t('delivery.changes.actions.withdraw')}</Link>
+            <Link to="/approvals">
+              {kind === 'withdraw'
+                ? t('delivery.changes.actions.withdraw')
+                : t('delivery.changes.approval.openCenter')}
+            </Link>
           </Button>
         ) : (
           <Button
@@ -251,9 +257,11 @@ function availableActions(status: ChangeOrderDetail['status']): LifecycleAction[
     case 'draft':
       return ['submit', 'delete']
     case 'pending_approval':
-    case 'approved':
-      // 待审批 / 已批准都由申请人撤回：走审批中心（本页不再直调废弃的 /withdraw）
+      // 待审批可撤回：走审批中心（本页不再直调废弃的 /withdraw）
       return ['withdraw']
+    case 'approved':
+      // 已批准不可撤回（服务端只允许 pending 撤回）：给「去审批中心」看执行进度
+      return ['viewApproval']
     case 'paused':
       return ['resume', 'cancel']
     case 'rolling':
@@ -261,6 +269,12 @@ function availableActions(status: ChangeOrderDetail['status']): LifecycleAction[
     default:
       return []
   }
+}
+
+// 熔断 / 准备失败的「继续」也要填原因：真机 validateResumeArgs 对非人工暂停强制 reason 非空
+// （缺则 400 missing_reason，弹窗不给输入框时该动作永远发不出去）
+function needsResumeReason(kind: ActionKind, order: ChangeOrderDetail): boolean {
+  return kind === 'resume' && order.pauseKind !== 'manual'
 }
 
 // 需要填写原因的动作：提审 / 终止 / 删除（后端三个 Request* 均校验原因非空）

@@ -739,8 +739,8 @@ export const delivery = {
       targets: {
         title: 'Per-server status',
         summary: '{{total}} target servers',
-        failedCount: '{{count}} failed',
-        rollbackFailedCount: '{{count}} rollback failed',
+        failedCount: '{{count}} failed on this page',
+        rollbackFailedCount: '{{count}} rollback failed on this page',
         rollbackNone: 'Not rolled back',
         noFailure: '—',
         backupPresent: 'Backup present',
@@ -804,7 +804,7 @@ export const delivery = {
       updatedAt: 'Updated',
       reason: 'Request reason',
       rejectReason: 'Rejection reason',
-      more: '{{count}} more historical request(s)',
+      truncated: '{{total}} requests in total; showing the latest {{shown}}',
       operation: {
         submit: 'Submit for approval',
         draftDelete: 'Delete draft',

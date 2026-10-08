@@ -738,8 +738,8 @@ export const delivery = {
       targets: {
         title: '单服状态',
         summary: '共 {{total}} 台目标',
-        failedCount: '{{count}} 台失败',
-        rollbackFailedCount: '{{count}} 台回滚失败',
+        failedCount: '本页 {{count}} 台失败',
+        rollbackFailedCount: '本页 {{count}} 台回滚失败',
         rollbackNone: '未回滚',
         noFailure: '—',
         backupPresent: '已备份',
@@ -803,7 +803,7 @@ export const delivery = {
       updatedAt: '更新时间',
       reason: '申请原因',
       rejectReason: '驳回理由',
-      more: '另有 {{count}} 条历史申请',
+      truncated: '共 {{total}} 条申请，仅显示最近 {{shown}} 条',
       operation: {
         submit: '提交审批',
         draftDelete: '删除草稿',

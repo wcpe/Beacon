@@ -58,6 +58,8 @@ export default function ApprovalProgress({ orderId }: ApprovalProgressProps) {
   const rows = (query.data?.items ?? [])
     .filter((row) => isChangeOrderOf(row, orderId))
     .sort((left, right) => Date.parse(right.updatedAt ?? '') - Date.parse(left.updatedAt ?? ''))
+  // 截断判定用响应 total（接口无按资源过滤的参数，50 条拉取可能截断）：只展示最近 MAX_ROWS 条
+  const total = query.data?.total ?? rows.length
 
   // 草稿单还没有任何申请：不渲染空卡（也不占版面）
   if (!query.isLoading && !query.isError && rows.length === 0) {
@@ -78,9 +80,9 @@ export default function ApprovalProgress({ orderId }: ApprovalProgressProps) {
             <ApprovalProgressRow key={row.requestId} row={row} />
           ))}
         </ul>
-        {rows.length > MAX_ROWS && (
+        {total > MAX_ROWS && (
           <p className="text-xs text-ink-3">
-            {t('delivery.changes.approval.more', { count: rows.length - MAX_ROWS })}
+            {t('delivery.changes.approval.truncated', { total, shown: MAX_ROWS })}
           </p>
         )}
       </AsyncSection>

@@ -99,10 +99,11 @@ export default function TargetStatusWall({ orderId, orderStatus }: TargetStatusW
       />
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         <div className="grid gap-2">
-          {/* 汇总一行：总台数 + 失败 / 回滚失败计数（无失败不额外占位） */}
+          {/* 汇总一行：全单总台数 + 本页失败 / 回滚失败计数（计数只覆盖当前页，故显式标「本页」） */}
           <p className="text-xs text-ink-3">
             {t('delivery.changes.detail.targets.summary', { total })}
-            {failedCount > 0 && ` · ${t('delivery.changes.detail.targets.failedCount', { count: failedCount })}`}
+            {failedCount > 0 &&
+              ` · ${t('delivery.changes.detail.targets.failedCount', { count: failedCount })}`}
             {rollbackFailedCount > 0 &&
               ` · ${t('delivery.changes.detail.targets.rollbackFailedCount', { count: rollbackFailedCount })}`}
           </p>

@@ -315,7 +315,8 @@ function materializeDeliveryApprovals(state: ApprovalState): void {
         ordinal: 20_000 + spec.orderId,
         requestId: spec.requestId,
         operationKey: spec.operationKey,
-        resourceType: 'change_order',
+        // 真机真值见 model.TargetTypeChangeOrder（带连字符）；写错会让审批进度卡过滤不到本单
+        resourceType: 'change-order',
         resourceId: String(spec.orderId),
         riskLevel: 'high',
         status: 'pending',

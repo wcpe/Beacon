@@ -47,6 +47,21 @@ describe('FileDiffPreview 需审批形态', () => {
     expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
   })
 
+  it('409 但错误码不是 operation_requires_approval：走通用错误展示，不误报「需审批」', async () => {
+    useScenario('normal')
+    const item = await itemByPath('Essentials/config.yml')
+    server.use(
+      http.get('*/admin/v2/change-orders/:id/items/:itemId/file-diff', () =>
+        HttpResponse.json({ code: 'asset_conflict', message: '该文件资产存在冲突，请先解决' }, { status: 409 }),
+      ),
+    )
+    renderPage(<FileDiffPreview orderId={ORDER_ID} item={item} />)
+
+    // 真实原因照原样展示（不静默），且不给出与成因不符的审批引导
+    expect(await screen.findByText(/该文件资产存在冲突/)).toBeInTheDocument()
+    expect(screen.queryByText('该文件内容需审批后查看')).not.toBeInTheDocument()
+  })
+
   it('审批放行后的文本项：渲染内容与对比目标标签（200 形态仍可用）', async () => {
     useScenario('normal')
     const item = await itemByPath('Essentials/config.yml')
