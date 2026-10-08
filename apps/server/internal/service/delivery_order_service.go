@@ -162,7 +162,8 @@ func changeInvalidParam(reason string) *apperr.Error {
 }
 
 // Create 创建 draft 变更单（POST /admin/v2/change-orders）。
-// configChanges 按契约为 PATCH 专用，创建时忽略（与 devmock 一致）。
+// configChanges 与编辑路径同义（整组写入）：创建即可一次成型携带配置变更项，不必「先建 draft 再 PATCH 补」；
+// 未提供即纯文件单。校验与 from 锚点计算复用 replaceConfigChanges，任一配置项不合法则整事务回滚（不落空单）。
 func (s *DeliveryOrderService) Create(namespaceID uint, input ChangeOrderInput, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	if namespaceID == 0 || input.Title == nil || strings.TrimSpace(*input.Title) == "" {
 		return nil, changeInvalidParam("namespaceId / title 必填")
@@ -179,8 +180,16 @@ func (s *DeliveryOrderService) Create(namespaceID uint, input ChangeOrderInput, 
 		if e := s.repo.WithTx(tx).Create(order); e != nil {
 			return e
 		}
-		return s.writeAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderCreate, order.ID,
-			map[string]any{"orderId": order.ID, "title": order.Title})
+		if input.ConfigChanges != nil {
+			if e := s.replaceConfigChanges(tx, order, *input.ConfigChanges); e != nil {
+				return e
+			}
+		}
+		detail := map[string]any{"orderId": order.ID, "title": order.Title}
+		if input.ConfigChanges != nil {
+			detail["configChanges"] = len(*input.ConfigChanges)
+		}
+		return s.writeAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderCreate, order.ID, detail)
 	})
 	if err != nil {
 		return nil, err

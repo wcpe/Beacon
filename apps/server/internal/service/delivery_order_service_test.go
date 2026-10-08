@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -618,6 +619,56 @@ func TestChangeOrderConfigChangesFromAnchor(t *testing.T) {
 	dup := ChangeConfigInput{ConfigScopeKind: model.ConfigScopeZone, ConfigScopeID: f.zone1ID, ConfigToVersionID: v1.ID}
 	if _, err := env.orders.Update(order.ID, ChangeOrderInput{ConfigChanges: &[]ChangeConfigInput{dup, dup}}, "ops", ""); err == nil {
 		t.Fatal("重复作用域应拒绝")
+	}
+}
+
+// TestChangeOrderCreateCarriesConfigChanges 创建即可携带 configChanges（一次成型，FR-246 的修复点）：
+// 配置项与单在同一事务内落库，任一配置项非法则整单不落（不留空壳单），与编辑路径共用校验与锚点计算。
+func TestChangeOrderCreateCarriesConfigChanges(t *testing.T) {
+	env := newDeliveryTestEnv(t)
+	f := seedDeliveryFixture(t, env)
+
+	file := model.ConfigFile{NamespaceID: f.nsID, Name: "plugins/Foo/config.yml", Format: "yaml"}
+	mustCreate(t, env.db, &file)
+	version := model.ConfigLayerVersion{ConfigFileID: file.ID, ScopeLevel: model.ConfigScopeZone,
+		ScopeRefID: f.zone1ID, VersionNo: 1, Content: "a: 1", ContentHash: strings.Repeat("cd", 32)}
+	mustCreate(t, env.db, &version)
+
+	detail, err := env.orders.Create(f.nsID, ChangeOrderInput{
+		Title: strPtr("带配置一次成型"),
+		ConfigChanges: &[]ChangeConfigInput{
+			{ConfigScopeKind: model.ConfigScopeZone, ConfigScopeID: f.zone1ID, ConfigToVersionID: version.ID},
+		},
+	}, "ops-chen", "192.0.2.10")
+	if err != nil {
+		t.Fatalf("创建携带配置项失败: %v", err)
+	}
+	items, err := env.orders.repo.ListItems(detail.ID)
+	if err != nil {
+		t.Fatalf("回读变更项失败: %v", err)
+	}
+	if len(items) != 1 || items[0].Kind != model.ChangeItemKindConfigChange {
+		t.Fatalf("创建应写入配置变更项，实际 %+v", items)
+	}
+
+	// 非法配置项（版本不存在）→ 整事务回滚：单不落库。
+	var before int64
+	if err := env.db.Model(&model.ChangeOrder{}).Count(&before).Error; err != nil {
+		t.Fatalf("统计变更单失败: %v", err)
+	}
+	_, err = env.orders.Create(f.nsID, ChangeOrderInput{
+		Title:         strPtr("坏配置单"),
+		ConfigChanges: &[]ChangeConfigInput{{ConfigScopeKind: model.ConfigScopeZone, ConfigScopeID: f.zone1ID, ConfigToVersionID: 9999}},
+	}, "ops-chen", "192.0.2.10")
+	if !errors.Is(err, apperr.ErrChangeConfigVersionInvalid) {
+		t.Fatalf("版本不存在应回 config_version_invalid，实际 %v", err)
+	}
+	var after int64
+	if err := env.db.Model(&model.ChangeOrder{}).Count(&after).Error; err != nil {
+		t.Fatalf("统计变更单失败: %v", err)
+	}
+	if before != after {
+		t.Fatalf("配置项非法时不应落单：前 %d 张、后 %d 张", before, after)
 	}
 }
 
