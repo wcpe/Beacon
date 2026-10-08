@@ -853,7 +853,10 @@ func (s *DeliveryOrderService) applyOrderInput(order *model.ChangeOrder, input C
 			return err
 		}
 	}
-	return validateObserveWindowCombination(order)
+	// 组合防呆只对「本次动到相关字段」的请求生效（FR-265 / P1）：
+	// 存量单可能带着历史上合法的短观察窗（如 restart + 30s），无条件校验会让这些单
+	// 连改个标题都被 400 拒死——而错误文案只谈观察窗，运维走不出来，等于把活单变成死单。
+	return validateObserveWindowCombination(order, observeWindowCombinationTouched(input))
 }
 
 // applyOrderTextFields 应用标题 / 说明 / 模板源 / 扫描目录并做字段级校验。
@@ -970,13 +973,25 @@ func (s *DeliveryOrderService) validateSelectorNamespace(namespaceID uint, selec
 	return err
 }
 
+// observeWindowCombinationTouched 判本次入参是否触及观察窗组合的三个相关字段之一。
+// 只有触及才校验——见 validateObserveWindowCombination 对存量单的说明。
+func observeWindowCombinationTouched(input ChangeOrderInput) bool {
+	return input.ActivationMethod != nil || input.UnhealthyRateThresholdPercent != nil || input.ObserveWindowSec != nil
+}
+
 // validateObserveWindowCombination 观察窗与 restart 预热宽限的组合防呆（FR-265）。
 //
 // 观察窗 < restartHealthWarmup（90s）时，restart 生效方式的目标在整段观察窗里都处于「重启预热期」，
 // 被 evalHealthDegradation 整体排除出健康恶化评估——健康恶化熔断在这一组合下恒不触发（分母恒为 0）。
 // 运维若同时开了 unhealthyRateThresholdPercent，就会得到一个「配了但永不生效」的熔断，
 // 且界面上完全看不出为什么没熔断。此处显式拒绝这种组合，把坑摆在组单那一刻。
-func validateObserveWindowCombination(order *model.ChangeOrder) error {
+//
+// touched=false（本次未动相关字段）时跳过：存量单可能带着历史上合法的短观察窗，
+// 无条件校验会让它们连改标题都被 400 拒死，等于把活单变成死单（评审 P1）。
+func validateObserveWindowCombination(order *model.ChangeOrder, touched bool) error {
+	if !touched {
+		return nil
+	}
 	if order.ActivationMethod != model.ActivationMethodRestart || order.UnhealthyRateThresholdPercent <= 0 {
 		return nil
 	}
