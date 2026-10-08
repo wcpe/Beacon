@@ -1,6 +1,6 @@
 # 功能规格：交付 MCP 工具集与审批面
 
-> 状态：已交付（FR-245 / FR-246 / FR-247 / FR-248 / FR-249；FR-250 的入参与审计口径收口项一并落地）
+> 状态：**代码与单测已交付，待真机验收**（FR-245 / FR-246 / FR-247 / FR-248 / FR-249；FR-250 的入参与审计口径收口项一并落地）。真机维度（真实控制面 + automation MCP 客户端）尚未实测——按 §6 共同硬闸，验收结论以真机通过为准，PRD 各 FR 行保持「开发中」直到真机验收通过。
 > 关联 PRD：FR-245、FR-246、FR-247、FR-248、FR-249
 > 分支：feature/fr-245-mcp-read-tools、feature/fr-249-approval-surface、feature/fr-246-mcp-write-tools
 > 决策依据：FR-220 / FR-236 / FR-237 / FR-242 既有 MCP 架构；本规格不引入新 ADR
@@ -26,7 +26,7 @@
 - 全部只读返回**有界投影**（见 §3.2），不透传大字段（吸取 `metrics.health.list` 直接透传的反例）。
 - 交付系工具（含既有 6 个）的拒绝文案改为可区分原因（§3.5）。
 - 交付申请票据补 `orderId` 与影响摘要；`beacon.approvals.own.get/list` 投影补执行与失败信息（§3.6）。
-- 顺带修复（FR-246 范围内）：`Create` 忽略 `configChanges` 导致组单必须"先建后改"两段式。
+- 顺带修复（FR-246 范围内）：`Create` 此前忽略 `configChanges`，导致组单必须「先建后改」两段式（已随本 FR 修复）。
 
 不做（范围外）：
 
@@ -41,19 +41,19 @@
 
 命名统一遵循既有规范 `beacon.<域>.<资源>.<动词>`（先例：`beacon.metrics.health.list`、`beacon.topology.snapshot.get`），**一律 4 段、动词结尾**（仓库既有 81 项最长为 4 段）。
 
-| 工具名 | 语义 | 风险 | AutomationOnly | OperationKind | 写语义 | 归属 FR（状态） |
+| 工具名 | 语义 | 风险 | AutomationOnly | OperationKind | 写语义 | 归属 FR（开发状态） |
 |---|---|---|---|---|---|---|
-| `beacon.delivery.order.list` | 变更单列表（分页筛选） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
-| `beacon.delivery.order.get` | 变更单详情（含计数摘要） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
-| `beacon.delivery.targets.list` | 目标分页（含逐台状态/失败原因/备份标记） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
-| `beacon.delivery.impact.get` | 影响预览（汇总+逐目标） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
-| `beacon.delivery.observe.get` | 当前批观察窗序列 | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
-| `beacon.delivery.events.list` | 进度事件（有界条数） | low | 否（observer 可见） | 空 | 只读 | FR-245（已交付） |
-| `beacon.delivery.order.create` | 建 draft（含 configChanges 一次成型） | low | 是 | 空 | direct + 审计 | FR-246（已交付） |
-| `beacon.delivery.order.update` | 编辑 draft | low | 是 | 空 | direct + 审计 | FR-246（已交付） |
-| `beacon.delivery.order.diff-scan` | 同步重扫差异 | low | 是 | 空 | direct + 审计 | FR-246（已交付） |
-| `beacon.delivery.order.pause` | 人工暂停（止损） | high | 是 | 空 | direct + 强审计 | FR-247（已交付） |
-| `beacon.delivery.order.cancel` | 紧急终止（止损，原因必填） | high | 是 | 空 | direct + 强审计 | FR-247（已交付） |
+| `beacon.delivery.order.list` | 变更单列表（分页筛选） | low | 否（observer 可见） | 空 | 只读 | FR-245（开发完成） |
+| `beacon.delivery.order.get` | 变更单详情（含计数摘要） | low | 否（observer 可见） | 空 | 只读 | FR-245（开发完成） |
+| `beacon.delivery.targets.list` | 目标分页（含逐台状态/失败原因/备份标记） | low | 否（observer 可见） | 空 | 只读 | FR-245（开发完成） |
+| `beacon.delivery.impact.get` | 影响预览（汇总+逐目标） | low | 否（observer 可见） | 空 | 只读 | FR-245（开发完成） |
+| `beacon.delivery.observe.get` | 当前批观察窗序列 | low | 否（observer 可见） | 空 | 只读 | FR-245（开发完成） |
+| `beacon.delivery.events.list` | 进度事件（有界条数） | low | 否（observer 可见） | 空 | 只读 | FR-245（开发完成） |
+| `beacon.delivery.order.create` | 建 draft（含 configChanges 一次成型） | low | 是 | 空 | direct + 审计 | FR-246（开发完成） |
+| `beacon.delivery.order.update` | 编辑 draft | low | 是 | 空 | direct + 审计 | FR-246（开发完成） |
+| `beacon.delivery.order.diff-scan` | 同步重扫差异 | low | 是 | 空 | direct + 审计 | FR-246（开发完成） |
+| `beacon.delivery.order.pause` | 人工暂停（止损） | high | 是 | 空 | direct + 强审计 | FR-247（开发完成） |
+| `beacon.delivery.order.cancel` | 紧急终止（止损，原因必填） | high | 是 | 空 | direct + 强审计 | FR-247（开发完成） |
 
 定级与可见性依据（对齐既有先例）：
 
@@ -85,7 +85,7 @@
 
 | 工具 | 输入 | 输出 | 说明 |
 |---|---|---|---|
-| `order.create` | `namespaceId`、`title`、`description?`、`sourceServerId?`、`scanDir?`、`selector`（JSON 对象）、`batchMode`、`batchSizes`、`activationMethod`、`observeWindowSec?`、`activateTimeoutSec?`、`failureRateThresholdPercent?`、`unhealthyRateThresholdPercent?`、`configChanges?`（`[{configScopeKind, configScopeId, configToVersionId}]`） | `{orderId, status}` | **修复点**：`Create` 现忽略 `configChanges`（service 注释明示），本项使其一次成型；无 `configChanges` 即纯文件单 |
+| `order.create` | `namespaceId`、`title`、`description?`、`sourceServerId?`、`scanDir?`、`selector`（JSON 对象）、`batchMode`、`batchSizes`、`activationMethod`、`observeWindowSec?`、`activateTimeoutSec?`、`failureRateThresholdPercent?`、`unhealthyRateThresholdPercent?`、`configChanges?`（`[{configScopeKind, configScopeId, configToVersionId}]`） | `{orderId, status}` | **修复点**：`Create` 此前忽略 `configChanges`（service 注释明示），本项**已使其一次成型**；无 `configChanges` 即纯文件单 |
 | `order.update` | `orderId` + 可改字段子集（同 create 除去 `namespaceId`） | `{orderId, status}` | 仅 draft 可改（领域守卫不变） |
 | `order.diff-scan` | `orderId` | `{add, update, delete, total, snapshotAt}` | 同步扫描；要求 draft + 有模板源（错误走 §3.5 映射） |
 
@@ -171,15 +171,15 @@
 
 ## 5. 任务拆分
 
-**FR-245 / FR-249：**
+**FR-245 / FR-249（开发完成，待真机验收）：**
 
-- [ ] 任务 A1：六个只读工具实现（投影层 + 注册 + 目录登记）
-- [ ] 任务 A2：只读工具测试（observer/automation 可见性、投影有界性、跨 namespace 拒绝）
-- [ ] 任务 A3：文档同步（FR-245 专属：`docs/API.md` MCP 工具清单补六个只读工具；`docs/specs/mcp-tool-risk-grading.md` §3.3 清单与合计（81 → 92 项中 +6 low）同步；PRD FR-245 行状态翻「开发中」；CHANGELOG 末尾追加）
-- [ ] 任务 B1：`DeliveryApprovalTicketView` 扩 `orderId` + `impactSummary`（六类申请点接入 + `mcpDeliveryTicketView` 同步补键）
-- [ ] 任务 B2：`own.get/list` 投影扩字段（`mcpApprovalView` 拆分轻量/全量档 + 字段投影）
-- [ ] 任务 B3：票据与审批视图测试（票据字段、视图字段、机器主体隔离不变）
-- [ ] 任务 B4：文档同步（FR-249 专属：`docs/API.md` 票据/审批视图字段段——与 FR-245 的工具清单段不重叠；PRD FR-249 行状态；CHANGELOG 末尾追加）
+- [x] 任务 A1：六个只读工具实现（投影层 + 注册 + 目录登记）
+- [x] 任务 A2：只读工具测试（observer/automation 可见性、投影有界性、跨 namespace 拒绝）
+- [x] 任务 A3：文档同步（FR-245 专属：`docs/API.md` MCP 工具清单补六个只读工具；`docs/specs/mcp-tool-risk-grading.md` §3.3 清单与合计（81 → 92 项中 +6 low）同步；PRD FR-245 行状态翻「开发中」；CHANGELOG 末尾追加）
+- [x] 任务 B1：`DeliveryApprovalTicketView` 扩 `orderId` + `impactSummary`（六类申请点接入 + `mcpDeliveryTicketView` 同步补键）
+- [x] 任务 B2：`own.get/list` 投影扩字段（`mcpApprovalView` 拆分轻量/全量档 + 字段投影）
+- [x] 任务 B3：票据与审批视图测试（票据字段、视图字段、机器主体隔离不变）
+- [x] 任务 B4：文档同步（FR-249 专属：`docs/API.md` 票据/审批视图字段段——与 FR-245 的工具清单段不重叠；PRD FR-249 行状态；CHANGELOG 末尾追加）
 
 **文件边界（并行防冲突）**：
 
@@ -187,7 +187,7 @@
 - **B（FR-249）改**：`apps/server/internal/server/mcp_tools.go`（`mcpApprovalView` 拆分与扩字段、`mcpDeliveryTicketView` 补键）+ `delivery_order_service.go` / `delivery_dangerous_approval.go`（ticket 结构体与六类申请点）+ 对应测试；文档：`API.md` 票据/审批视图字段段。
 - 共享文件**无重叠**（catalog 仅 A 改、mcp_tools.go 仅 B 改）；PRD 各改自己那行、CHANGELOG 各自末尾追加。
 
-**FR-246 / FR-247 / FR-248（已交付）：**
+**FR-246 / FR-247 / FR-248（开发完成，待真机验收）：**
 
 - [x] 任务 D：组单三工具（含 `Create` 支持 `configChanges`）
 - [x] 任务 E：止损两工具
