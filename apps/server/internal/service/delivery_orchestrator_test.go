@@ -992,7 +992,7 @@ func TestOrchestratorActivateFailureCarriesCounts(t *testing.T) {
 	}
 
 	// 视图透出：目标视图（GET .../targets 的数据源）逐字段带出计数与备份标记。
-	views := changeTargetViews(targets, map[uint]int{})
+	views := changeTargetViews(targets, map[uint]int{}, nil)
 	if len(views) != 2 {
 		t.Fatalf("视图应有 2 行，实际 %d", len(views))
 	}
