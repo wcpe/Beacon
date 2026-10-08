@@ -169,10 +169,10 @@ completed / paused / cancelled ──rollback──→ rolling_back → rolled_b
 |---|---|---|---|
 | draft | pending_approval | 提交审批 | ≥1 个变更项；selector 解析出 ≥1 目标；模板源与全部目标同 namespace |
 | pending_approval | draft | 统一审批请求被驳回、撤回或过期 | 仅由审批 adapter 终态回调在同一事务迁移；变更单旧 reject/withdraw 入口不得直改状态 |
-| pending_approval | approved | 审批通过 | 统一审批决定权限（`approval.decide`）；默认职责分离开启时审批人不得是创建人（§4.8.1、§8#6） |
+| pending_approval | approved | 审批通过 | 统一审批决定权限（`approval.decide`）；默认职责分离开启时审批人不得是创建人（§4.8.1、§8 第 6 行） |
 | approved | draft | 统一审批申请被撤回；或任何对 items / selector / 批次策略 / 生效策略的编辑 | **approved 后改单 = 审批自动作废回 draft**，重新走审批，作废动作入审计 |
 | draft / pending_approval / approved | cancelled | 放弃整单 | 未执行过任何目标 |
-| approved | rolling | 统一审批「批准并自动执行」 | 无独立公开启动入口（`POST .../{id}/start` 与 `.../{id}/approve` 固定 `403`）；human 在 `/approvals` 点「批准并执行」后由持久 worker 自动执行，目标快照固化落 `change_target`；**冲突守卫**：目标集与其他活动单（rolling / paused / rolling_back）的目标集有交集，或本单 config_change 的 `(config_file, scope)` 与其他活动单重叠，则拒绝启动（[ADR-0071](../adr/0071-config-gray-effectuation-model.md)） |
+| approved | rolling | 统一审批「批准并自动执行」 | 无独立公开启动入口（`POST .../{id}/start` 路由已移除，`.../{id}/approve` 固定 `403`）；human 在 `/approvals` 点「批准并执行」后由持久 worker 自动执行，目标快照固化落 `change_target`；**冲突守卫**：目标集与其他活动单（rolling / paused / rolling_back）的目标集有交集，或本单 config_change 的 `(config_file, scope)` 与其他活动单重叠，则拒绝启动（[ADR-0071](../adr/0071-config-gray-effectuation-model.md)） |
 | rolling | paused | 人工暂停 / 自动熔断（§4.4.4）/ payload 准备失败 | pause_kind 区分三种来源 |
 | paused | rolling | 继续 | 熔断暂停与准备失败需填原因 + 二次确认；mode 见 §4.4.5 |
 | rolling | completed | 末批推进门人工确认 | 确认时执行配置正式切版（§4.6.2） |
@@ -400,14 +400,14 @@ skipped    failed               failed
 | 中 | 文本文件内容预览与 diff；配置编辑保存草稿；创建 / 编辑变更单；影响预览；触发重扫 | 对应写权限；文件内容查看入审计（执行归文件资产域） |
 | 高 | 审批 / 驳回；启动；批次放行确认；暂停后继续（熔断场景）；紧急终止；整单回滚；删除 draft 单；消息 payload 查看；敏感配置明文查看 | **权限 + 填写原因 + 二次确认**，全部入审计 |
 
-- 权限能力位（实现真实名）：本域不新造 `delivery.*` 能力位，全部高风险动作登记为**统一审批 operation**——`delivery.approve`（首次提交 / 启动）/ `delivery.resume` / `delivery.confirm_batch` / `delivery.rollback` / `delivery.rollback_finish` / `delivery.draft_delete`；主体侧能力位沿用统一审批内核的 `management.read` / `management.direct` / `approval.request` / `approval.read` / `approval.decide` / `approval.withdraw.own`，挂接管理面既有登录角色 / API 密钥机制（不重设计）。落到本域即：读端点走 `management.read`（readonly 可读）；写端点与全部高风险动作另受路由层 `requireFullRole`（readonly 一律 403）与统一审批申请所需的 `approval.request` 约束；审批决定需 `approval.decide`、撤回自己的申请需 `approval.withdraw.own`。
+- 权限能力位（实现真实名）：本域不新造 `delivery.*` 能力位，全部高风险动作登记为**统一审批 operation**——`delivery.approve`（首次提交 / 启动）/ `delivery.resume` / `delivery.confirm_batch` / `delivery.rollback` / `delivery.rollback_finish` / `delivery.draft_delete`；主体侧能力位沿用统一审批内核的 `management.read` / `management.direct` / `approval.request` / `approval.read` / `approval.decide` / `approval.withdraw.own`，挂接管理面既有登录角色 / API 密钥机制（不重设计）。落到本域即：读端点走 `management.read`（readonly 可读）；写方法端点由路由层 `readonlyWriteGuard` 拦 readonly（`403`），而「方法是 GET 但带写副作用」的端点（如 `file-diff`）另挂 `requireFullRole` 专挡 readonly；全部高风险动作在发起时还需 `approval.request`。审批决定需 `approval.decide`、撤回自己的申请需 `approval.withdraw.own`。
 - 职责分离：默认开启运维设置 `delivery.approver-separation-enabled`——**统一审批的决定人（= 变更单审批人）不得是该变更单创建人**，命中返回 `403 approver_separation`。单管理员小规模部署可在运维设置关闭该限制以允许创建人自批（关闭动作本身入审计）。实现位置是领域适配器内的 `applyApprove`：比对决定人审计引用与 `change_order.created_by`。
 - payload 查看、敏感路径文件、敏感配置的具体执行分别归消息域 / 文件资产域 / 配置域，本矩阵是统一分级口径（§6）。
 
 #### 4.8.2 审计贯通
 
 - 全生命周期动作写统一审计：`delivery.order.create / update / delete / submit / withdraw / approve / reject / start / pause / resume / batch_confirm / config_switch / cancel / rollback / rollback_finish`，系统动作 `delivery.order.circuit_break / blob_cleanup`（actor=system）。
-- `delivery.order.config_switch` 由末批推进门确认事务内自动记一条（当日单含 config_change 项时），detail 逐项列出 `(scopeKind, scopeId, fromVersionId → toVersionId)` 版本指针；无配置项则空操作，detail 绝不含配置明文（§4.6.2）。
+- `delivery.order.config_switch` 由末批推进门确认事务内自动记一条（当本单含 config_change 项时），detail 逐项列出 `(scopeKind, scopeId, fromVersionId → toVersionId)` 版本指针；无配置项则空操作，detail 绝不含配置明文（§4.6.2）。
 - 每条审计 detail 必含 `orderId`（批 / 目标级动作再含 batchNo / serverId）；`/audits` 按 orderId 过滤即得一条变更单从创建到回滚的完整链路。
 - 审计 detail 不落文件内容、配置明文、blob 数据；错误文案经脱敏（ADR-0057）。
 
@@ -449,7 +449,7 @@ skipped    failed               failed
 
 #### file-diff 端点契约（变更项文件内容预览）
 
-> **现状：fail-closed（恒 `409 operation_requires_approval`）**。FR-209 落地后，任何文件内容读取入口在没有匹配执行许可时必须失败关闭，本端点的 handler 因此改为无条件返回 `409 operation_requires_approval`（`{code, message, traceId}`），不再直接经 `asset-read` 取内容。**正确路径**：走文件资产域的敏感内容审批通道——先 `POST /admin/v2/assets/preview/approval-requests` 建申请（冻结目标与理由），审批通过后 `POST /admin/v2/assets/preview/grants/{grantId}/consume` 一次性消费许可并现取内容；`serverId` 目标选择、敏感路径保护与查看审计仍由该通道的 `asset.preview` 载荷承担。本端点保留在路由表内只为「已知旧入口不再可用」这一事实留痕（带写副作用，仍挂 `requireFullRole` 挡 readonly），不再是可用的内容预览契约。
+> **现状：fail-closed（恒 `409 operation_requires_approval`）**。FR-209 落地后，任何文件内容读取入口在没有匹配执行许可时必须失败关闭，本端点的 handler 因此改为无条件返回 `409 operation_requires_approval`（`{code, message, traceId}`），不再直接经 `asset-read` 取内容。**正确路径**：走文件资产域的敏感内容审批通道——先 `POST /admin/v2/assets/preview/approval-requests` 建申请（冻结目标与理由），审批通过后 `POST /admin/v2/assets/preview/grants/{grantId}/consume` 一次性消费许可并现取内容；`serverId` 目标选择、敏感路径保护与查看审计仍由该通道的 `asset.preview` 载荷承担。本端点保留在路由表内只为「已知旧入口不再可用」这一事实留痕（路由仍按历史写副作用归类挂 `requireFullRole`，readonly 仍 403），不再是可用的内容预览契约。
 
 以下是本端点**设计期**的契约原文，保留用于追溯；在统一审批把文件内容读取收口到审批通道之前，它不描述当前可用行为：
 
