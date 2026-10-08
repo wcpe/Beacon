@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -139,9 +140,14 @@ func (s *DeliveryOrchestrator) prepareStart(order *model.ChangeOrder) (*startPla
 	return plan, nil
 }
 
-// resolvePayloadPlan 计算 payload 准备决策：先由控制面渲染写入配置项灰度 blob，再查文件项缺失 blob，
-// 无缺则 ready、有缺则备下 delivery_upload 命令（spec §4.4.2 / ADR-0071）。
+// resolvePayloadPlan 计算 payload 准备决策：先刷新本单 blob 引用（清理保护）→ 由控制面渲染写入配置项灰度 blob，
+// 再查文件项缺失 blob，无缺则 ready、有缺则备下 delivery_upload 命令（spec §4.4.2 / ADR-0071）。
 func (s *DeliveryOrchestrator) resolvePayloadPlan(order *model.ChangeOrder, plan *startPlan) error {
+	// FR-261：启动即刷新本单引用 blob 的 last_referenced_at——approved 后的准备期上传窗口可能很长
+	// （等模板源上传），保留期清理不得在此期间把本单尚在消费的 blob 判为超期删掉。
+	if err := s.blobs.TouchReferences(order.ID); err != nil {
+		slog.Error("交付编排启动刷新 blob 引用失败", "orderId", order.ID, "错误", err)
+	}
 	// 配置项载荷由控制面在准备期按目标渲染灰度生效明文并写入内容寻址 blob（区别于文件项的模板源上传中转）：
 	// 供目标随文件清单下载落盘、restart 读盘生效。渲染失败即启动失败（脱敏后展示给运维，ADR-0057）。
 	if err := s.blobs.PrepareConfigBlobs(order.ID, plan.serverIDs); err != nil {

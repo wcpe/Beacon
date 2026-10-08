@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
@@ -60,9 +61,20 @@ func (r *DeliveryBlobRepository) UpsertUploading(sha string, size int64, at time
 }
 
 // MarkReady 把 blob 落账为就绪：置 state=ready + 实收字节数 + 刷新引用时间（上传完成 / 秒传命中共用）。
+//
+// FR-261：校验 UPDATE 实际影响行数——为 0 表示占位行在落账前已被清理器回收（或从未建立），
+// 此时**必须报错**而非静默成功：静默会让「元数据无行」与「上传成功」两种事实互不相认，
+// 目标下载时才 404、且无任何告警。报错后 agent 可安全重传（重传会重新建占位行）。
 func (r *DeliveryBlobRepository) MarkReady(sha string, size int64, at time.Time) error {
-	return r.db.Model(&model.DeliveryBlob{}).Where("sha256 = ?", sha).
-		Updates(map[string]any{"size_bytes": size, "state": model.DeliveryBlobStateReady, "last_referenced_at": at}).Error
+	res := r.db.Model(&model.DeliveryBlob{}).Where("sha256 = ?", sha).
+		Updates(map[string]any{"size_bytes": size, "state": model.DeliveryBlobStateReady, "last_referenced_at": at})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return apperr.ErrDeliveryBlobSlotLost
+	}
+	return nil
 }
 
 // SumBytesExcluding 统计除指定 sha 外全部 blob 的声明 / 实收字节总量（容量预检基数）。

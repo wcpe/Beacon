@@ -181,6 +181,16 @@ func (s *DeliveryOrchestrator) advanceActiveOrders(ctx context.Context) {
 		}
 		s.advanceOrder(rt)
 	}
+	// FR-261：活动单引用的 blob 每轮刷新一次引用时间——保留期清理以 last_referenced_at 为准，
+	// 只在「模板源上传回执成功」那一刻刷新的话，长跑单（观察窗久、暂停后继续）超期即被误删，
+	// 目标侧表现为下载 404 且无告警。刷新是廉价的按 sha 批量 UPDATE，重复调用无副作用。
+	orderIDs := make([]uint, 0, len(orders))
+	for i := range orders {
+		orderIDs = append(orderIDs, orders[i].ID)
+	}
+	if e := s.blobs.TouchReferencesForOrders(orderIDs); e != nil {
+		slog.Error("交付编排刷新活动单 blob 引用失败", "错误", e)
+	}
 	// 目标级（子集）回滚不改单主状态，故这些单不在上面的活动单集合里，需单独扫描推进（FR-270）。
 	s.advanceTargetRollbacks()
 }

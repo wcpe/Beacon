@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -61,8 +62,9 @@ func (c *DeliveryBlobCleaner) interval() time.Duration {
 func (c *DeliveryBlobCleaner) SweepOnce() {
 	deleted, freed := c.purgeTerminalBlobs()
 	staleDeleted, staleFreed := c.purgeStaleUploading()
-	deleted += staleDeleted
-	freed += staleFreed
+	orphanDeleted, orphanFreed := c.purgeOrphans()
+	deleted += staleDeleted + orphanDeleted
+	freed += staleFreed + orphanFreed
 	if deleted > 0 {
 		c.recordAudit(deleted, freed)
 	}
@@ -111,15 +113,90 @@ func (c *DeliveryBlobCleaner) purgeTerminalBlobs() (int, int64) {
 	return deleted, freed
 }
 
-// purgeStaleUploading 清除上传中断残留：uploading 元数据（超 24h）+ tmp 目录旧临时文件。
+// purgeOrphans 回收元数据与磁盘互不相认的孤儿（FR-261）：两类形态各自收口，使「表里说有」与「盘上真有」重新对齐。
+//
+//   - ① 磁盘有文件、元数据无行或非 ready（落盘后元数据被回滚 / 手工删库 / 落账丢失）→ 删文件，防磁盘泄漏。
+//   - ② 元数据标 ready、磁盘文件缺失（外部清理 / 落盘中断）→ 删元数据行：让 Head 回到「未就绪」而不是
+//     「以为就绪、直到目标下载时才 404」——后者的代价是目标侧推送失败且无告警。
+//
+// 文件名不是 64 位小写 hex 的一律跳过：blobs 目录可能被人手工放过别的东西，清理器不得越界删本域之外的产物。
+func (c *DeliveryBlobCleaner) purgeOrphans() (int, int64) {
+	root := filepath.Join(c.svc.root, "blobs")
+	shards, err := os.ReadDir(root)
+	if err != nil {
+		return 0, 0 // 根目录尚未创建（从未上传过），无孤儿可回收
+	}
+	var deleted int
+	var freed int64
+	for _, shard := range shards {
+		if !shard.IsDir() {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(root, shard.Name()))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if !isSHA256Hex(name) {
+				continue // 非本域产物，不碰
+			}
+			deletedOne, freedOne := c.purgeOrphan(name)
+			deleted += deletedOne
+			freed += freedOne
+		}
+	}
+	return deleted, freed
+}
+
+// purgeOrphan 收口单个 sha 的孤儿形态（返回是否删了东西、释放字节）。
+func (c *DeliveryBlobCleaner) purgeOrphan(sha string) (int, int64) {
+	path := c.svc.blobPath(sha)
+	info, statErr := os.Stat(path)
+	blob, err := c.svc.blobs.FindBySHA256(sha)
+	if err != nil {
+		return 0, 0 // 元数据读失败不猜、不动盘
+	}
+	// 形态①：文件在、元数据缺或非 ready → 删文件。
+	if statErr == nil {
+		if blob == nil || blob.State != model.DeliveryBlobStateReady {
+			if os.Remove(path) == nil {
+				return 1, info.Size()
+			}
+		}
+		return 0, 0
+	}
+	// 形态②：文件缺失、元数据标 ready → 删元数据行（文件已无可删）。
+	if errors.Is(statErr, os.ErrNotExist) && blob != nil && blob.State == model.DeliveryBlobStateReady {
+		if c.svc.blobs.Delete(sha) == nil {
+			return 1, blob.SizeBytes
+		}
+	}
+	return 0, 0
+}
+
+// purgeStaleUploading 清除上传中断残留：uploading 元数据（超 24h）+ 该 sha 的磁盘文件 + tmp 目录旧临时文件。
+//
+// FR-261：此前只删元数据行、不删该 sha 的盘上文件——文件永久滞留占容量，且后续同 sha 重传会因
+// placeBlobFile 的「目标已存在即视为去重成功」而跳过实算哈希校验，把一段内容未经校验地当成有效 blob。
 func (c *DeliveryBlobCleaner) purgeStaleUploading() (int, int64) {
 	cutoff := c.now().Add(-deliveryUploadingStaleHours * time.Hour)
 	var deleted int
 	var freed int64
 	if stale, err := c.svc.blobs.ListUploadingBefore(cutoff); err == nil {
 		for i := range stale {
-			if c.svc.blobs.Delete(stale[i].SHA256) == nil {
-				deleted++
+			if c.svc.blobs.Delete(stale[i].SHA256) != nil {
+				continue
+			}
+			deleted++
+			// 同时回收该 sha 的盘上残留（可能不存在，Remove 幂等）。
+			if info, statErr := os.Stat(c.svc.blobPath(stale[i].SHA256)); statErr == nil {
+				if os.Remove(c.svc.blobPath(stale[i].SHA256)) == nil {
+					freed += info.Size()
+				}
 			}
 		}
 	}

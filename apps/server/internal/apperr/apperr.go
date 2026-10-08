@@ -451,6 +451,9 @@ var (
 	// ErrDeliveryConfigArtifactMissing 单含配置项但该目标的冻结渲染工件缺失（payload 未准备，见 ADR-0071）：
 	// 明确报错而非静默漏发配置，运维据此重试 / 重启变更单。
 	ErrDeliveryConfigArtifactMissing = New(http.StatusConflict, "config_artifact_missing", "配置渲染工件未就绪（payload 未准备），请重试或重新启动变更单")
+	// ErrDeliveryBlobSlotLost 上传占位行在落账前已被清理器回收（FR-261）：明确报错让 agent 重传，
+	// 不得静默「假就绪」——那会让元数据与磁盘互不相认，目标下载时才 404。
+	ErrDeliveryBlobSlotLost = New(http.StatusConflict, "blob_upload_slot_lost", "上传占位已被回收（可能上传过久或清理器已介入），请重新上传")
 
 	// ErrAssetNotFound 文件资产在该服最新清单中不存在（预览 / diff 目标缺失，FR-164，spec §5.2；code 对齐 devmock）。
 	ErrAssetNotFound = New(http.StatusNotFound, "asset_not_found", "该服清单中不存在此文件")
