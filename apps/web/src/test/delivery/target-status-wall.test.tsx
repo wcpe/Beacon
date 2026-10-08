@@ -345,7 +345,9 @@ describe('全选判定基数（可回滚口径）', () => {
         const batch = new URL(request.url).searchParams.get('batch')
         const all = [target('t-1', 1, true), target('t-2', 1, true), target('t-3', 2, true)]
         const items = batch === null ? all : all.filter((row) => String(row.batchNo) === batch)
-        return HttpResponse.json({ items, total: all.length, rollbackEligibleCount: all.length })
+        // total 与真机同口径：**筛选后**的总数（受 batch 影响），不是全单总数——
+        // 否则「勾满本页」与「勾满全单」在断言上不可区分，用例对基数错误没有判别力。
+        return HttpResponse.json({ items, total: items.length, rollbackEligibleCount: all.length })
       }),
     )
     renderPage(
