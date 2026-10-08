@@ -92,19 +92,20 @@ func MCPToolNames(profile string) []string
 
 > 前 9 项在既有 descriptor 上为 `high`，本 FR 在 **MCP 面提级**为 `critical`，不改动 descriptor。依据：MCP 调用方是机器主体，其可发现面应**严于**人类管理台（管理台仍可正常发起这些操作的审批申请）。
 
-**`high`（46 项）**：其余全部申请类与敏感读消费类工具，等级继承既有 descriptor（`config.*` 8、`file.*` 8、`override-set.*` 3、`identity.*` 5、`namespace_trust.grant` 1、`topology` 审批 5、`lifecycle` archive/restore 4、`agent.server.resync` 1、`delivery` 其余 5、`assets.preview.*` 2、`messages.payload.*` 2），外加 **2 项告警处置工具**（`beacon.alerts.events.handle` / `.batch-handle`：直接执行 + 同事务写审计、无审批票据——批量一条 UPDATE 且只影响 `status='open'` 行故幂等、单条可再改故可逆；但因关闭告警会隐藏故障信号、改变生产可见状态，取 `high` 而非 `low`）。
+**`high`（48 项）**：其余全部申请类与敏感读消费类工具，等级继承既有 descriptor（`config.*` 8、`file.*` 8、`override-set.*` 3、`identity.*` 5、`namespace_trust.grant` 1、`topology` 审批 5、`lifecycle` archive/restore 4、`agent.server.resync` 1、`delivery` 其余 7、`assets.preview.*` 2、`messages.payload.*` 2），外加 **2 项告警处置工具**（`beacon.alerts.events.handle` / `.batch-handle`：直接执行 + 同事务写审计、无审批票据——批量一条 UPDATE 且只影响 `status='open'` 行故幂等、单条可再改故可逆；但因关闭告警会隐藏故障信号、改变生产可见状态，取 `high` 而非 `low`）。其中交付域新增的 2 项是 **FR-247 的止损工具**（`beacon.delivery.order.pause` / `.order.cancel`）：同样直执且无审批票据，但会改变**生产**状态（进行中的灰度被暂停 / 终止），只是可逆（可 resume / 可回滚）——故与告警处置同档取 `high`，不与 draft 阶段组单同档。
 
-**`low`（31 项）**：
+**`low`（34 项）**：
 
 - 18 个只读工具：直查服务，无副作用。其中 12 个为既有观测域只读（元数据 / 拓扑 / 指标 / 历史 / 审计）；另 6 个为 **FR-245 的交付域只读**（`beacon.delivery.order.list` / `.order.get` / `.targets.list` / `.impact.get` / `.observe.get` / `.events.list`）——无副作用、返回一律有界投影，且**不带 `AutomationOnly`**（只读工具须对 observer 同样可见；该标记的真实语义是「仅 automation 可发现」）。
 - 1 个告警事件只读列表：`beacon.alerts.events.list`（分页 + 状态/级别/环境/实例/时间过滤，且**不透传 detail**——该列含状态前后与实例地址上下文）。
 - 2 个审批自查：`beacon.approvals.own.list` / `.get`（仅读自己的申请）。
 - 1 个自查变更：`beacon.approvals.own.withdraw`（仅撤回自己的 pending 申请）。
 - 9 个建树工具（FR-221）：低风险结构操作，FR-221 已明确直执且 service 层有非空拒绝保护。
+- 3 个交付组单工具（FR-246）：`beacon.delivery.order.create` / `.order.update` / `.order.diff-scan`——均为 **draft 阶段**操作，无生产副作用，且领域守卫已限界（draft 状态机 CAS、selector 跨 namespace 拒绝、模板源结构校验），直接执行 + 写审计、无审批票据（对齐建树先例）。带 `AutomationOnly`（写工具对 observer 封闭）。
 
-> **合计校验**：critical 10 + high 46 + low 31 = 87。
+> **合计校验**：critical 10 + high 48 + low 34 = 92。
 
-> 本节计数随 catalog 增长更新（FR-236 交付时为 78 项；本表当前为 87 项 = 78 + 3 个告警工具 + 6 个交付只读工具；交付组单与止损的 5 个写工具落地后为 92 项）。§1 / §2 / §4 / §5 中的「78 项」是 FR-236 交付时的历史快照，不再随目录增长维护；**当前档位与计数的真源始终是 `mcpToolCatalog` 与本节**。
+> 本节计数随 catalog 增长更新（FR-236 交付时为 78 项；本表当前为 92 项 = 78 + 3 个告警工具 + 6 个交付只读工具（FR-245）+ 5 个交付组单与止损工具（FR-246 / FR-247））。§1 / §2 / §4 / §5 中的「78 项」是 FR-236 交付时的历史快照，不再随目录增长维护；**当前档位与计数的真源始终是 `mcpToolCatalog` 与本节**。新增的 5 项 `OperationKind` 全部留空（直执无审批票据），故 `mcp_tool_catalog_test.go` 的 `wantChecked` 精确值（49）无需调整。
 
 **关于 `assets.preview.consume` / `messages.payload.consume`**：不创建审批、只消费既有 grant，故无 descriptor。定为 `high`——它们读取敏感内容，虽受上游 grant 约束，但不应与只读工具同档。
 
@@ -139,6 +140,8 @@ func mcpAddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.Too
 
 ## 4. 任务拆分
 
+> 计数说明：下表的「78 项」是 **FR-236 交付时**的历史快照，保留原样不追溯改写；当前档位与计数的真源见 §3.3（现已随 FR-245 / FR-246 / FR-247 增长为 92 项）。
+
 - [ ] 新建 `mcp_tool_catalog.go`（常量 + `mcpToolSpec` + 78 项目录 + 查表/判定/派生函数）
 - [ ] 重构 `MCPToolNames` 从 catalog 派生
 - [ ] 新增 `mcpAddTool` 并替换 69 处 `mcp.AddTool` 调用
@@ -148,10 +151,10 @@ func mcpAddTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.Too
 
 ## 5. 验收标准
 
-- catalog 覆盖全部 78 个工具，无遗漏、无多余；新增工具未登记 catalog 时，覆盖测试失败（fail-closed）。
+- catalog 覆盖全部 92 个工具，无遗漏、无多余；新增工具未登记 catalog 时，覆盖测试失败（fail-closed）。
 - in-memory 枚举集合与 catalog 派生集合**双向一致**。
 - 每个有 operation kind 的工具，catalog 等级 **不低于** descriptor 等级。
-- `MCPToolNames` 对外行为不变（FR-236 重构前后逐项一致）。**当前计数**：observer 21 项、automation 85 / 87 项（随 `allow-approval-decide` 两态：关闭 85、开启 87）；计数随目录增长更新——FR-236 交付时为 observer 14、automation 76 / 78，真源见 §3.3。
+- `MCPToolNames` 对外行为不变（FR-236 重构前后逐项一致）。**当前计数**：observer 21 项、automation 90 / 92 项（随 `allow-approval-decide` 两态：关闭 90、开启 92）；计数随目录增长更新——FR-236 交付时为 observer 14、automation 76 / 78，真源见 §3.3。
 - 既有测试全绿。
 
 ## 6. 风险 / 待定
