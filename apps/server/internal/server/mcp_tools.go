@@ -1242,10 +1242,11 @@ const (
 
 // mcpDeliveryRejectedReasons 是交付系工具的错误码 → 稳定中文短语映射表（FR-248，规格 §3.5）。
 //
-// 本表只做「code → 短语」一件事，**不复制错误语义**：code 一律取自既有真源（全部直接引用
-// apperr 的预定义错误，故改名会编译失败、不会静默失配），短语是面向 AI 的稳定文案——同一错误码的
-// 文案不随领域内部措辞调整而漂移，AI 可据此分支处置。未列入的 code 沿用领域错误自带的中文说明
-// （见 mcpDeliveryErrReason），绝不回空文案。
+// 本表只做「code → 短语」一件事，**不复制错误语义**：code 取自既有真源——除 missing_reason 外
+// 全部直接引用 apperr 的预定义错误（改名会编译失败、不会静默失配）；missing_reason 尚无 apperr
+// 预定义项（由 service 的 Cancel / applyRollback 以「同一个字面量」产出，配置中心也复用该码），
+// 故此处按同一字面量登记。短语是面向 AI 的稳定文案——同一错误码的文案不随领域内部措辞调整而漂移，
+// AI 可据此分支处置。未列入的 code 沿用领域错误自带的中文说明（见 mcpDeliveryErrReason），绝不回空文案。
 //
 // 表中比规格 §3.5 多一项 missing_reason：它是交付域自身产出的「原因必填」错误码（终止 / 整单回滚），
 // 与 approval_reason_required 同义，故映射到同一条文案——避免同一件事在 AI 侧出现两种说法。
