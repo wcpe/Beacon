@@ -285,6 +285,16 @@ describe('变更单生命周期闭环', () => {
     const ok = await callJson('POST', path, { reason: '补原因提审' })
     expect(ok.status).toBe(200)
     expect((ok.json as { status: string }).status).toBe('pending_approval')
+
+    // 判定顺序与真机同序（先 reason 再状态）：非 draft 单缺原因仍是 400，而不是 409
+    const nonDraftNoReason = await callJson('POST', path)
+    expect(nonDraftNoReason.status).toBe(400)
+    expect((nonDraftNoReason.json as { code: string }).code).toBe('approval_reason_required')
+
+    // 有原因而状态非法，才落到 409
+    const nonDraftWithReason = await callJson('POST', path, { reason: '重复提审' })
+    expect(nonDraftWithReason.status).toBe(409)
+    expect((nonDraftWithReason.json as { code: string }).code).toBe('illegal_state')
   })
 
   it('目标集与活动单交叠时启动被 409 拒绝（冲突守卫）', async () => {

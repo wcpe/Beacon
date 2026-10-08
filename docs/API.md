@@ -316,7 +316,7 @@ agent 面：
 | DELETE | `/admin/v2/change-orders/{id}` | 创建 draft 删除统一审批申请，返回 `202 + approvalRequestId` |
 | POST | `/admin/v2/change-orders/{id}/diff-scan` | 同步读最新快照重算差异返回 items；重扫另设（复用文件资产域 asset-rescan） |
 | GET | `/admin/v2/change-orders/{id}/impact` | 影响预览（汇总 + 逐目标分页） |
-| POST | `/admin/v2/change-orders/{id}/submit` | 冻结变更单与 items 摘要并创建唯一统一审批申请，返回 `202 + approvalRequestId` |
+| POST | `/admin/v2/change-orders/{id}/submit` | 冻结变更单与 items 摘要并创建唯一统一审批申请（原因必填，缺则 `400 approval_reason_required`），返回 `202 + approvalRequestId` |
 | POST | `/admin/v2/change-orders/{id}/withdraw` | 旧入口，统一返回 `403`；创建人应调用对应统一审批申请的 withdraw |
 | POST | `/admin/v2/change-orders/{id}/approve` | 旧第二步审批入口，统一返回 `403`；审批决定只能在审批中心完成 |
 | POST | `/admin/v2/change-orders/{id}/reject` | 旧入口，统一返回 `403`；审批人应调用对应统一审批申请的 reject |
