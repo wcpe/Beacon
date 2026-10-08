@@ -71,19 +71,23 @@ class DeliveryCommandExecutor(
     }
 
     /**
-     * 并发重复命令回执 failed（FR-269）：单飞门拒收的命令若不回执，会一直挂在控制面 `fetched` 等过期清理——
-     * 运维只看到「卡住」而不知为何。交付回执端点按「该身份 + 该单 + 该类型**最新的** fetched 命令」定位
-     * （控制面 findDeliveryCommand 取 id 最大者），刚被拒的这条正是最新的那条，故失败能准确挂到它自己身上。
+     * 单飞门 / 启动清扫拒收的命令回执 failed（FR-269）：不回执会一直挂在控制面 `fetched` 等过期清理，
+     * 运维只看到「卡住」而不知为何。
+     *
+     * 定位口径按控制面实际实现：回执端点以**该身份 + 该单 + 该 phase 类型的最新在途 `fetched` 命令**定位
+     * （`findDeliveryCommand` 取同类型 fetched 中 id 最大且 payload.orderId 匹配者）。被拒命令通常是该类型
+     * 最新的一条，故失败一般能挂到它自己身上；但若同一类型存在多条在途（重复下发），回执可能落到那条更晚的
+     * fetched 命令上——这是控制面定位口径的固有语义，agent 侧无从更精确寻址，故只保证「不静默丢弃」。
      */
     private fun rejectConcurrent(command: AgentCommand) {
-        val error = "同一 agent 已有交付命令在执行，本命令并发重复、已跳过（未执行）"
-        adapter.error("交付命令并发重复被拒：id=${command.id}，type=${command.type}", null)
+        val reason = "同一 agent 已有交付命令在执行，本命令并发重复、已跳过（未执行）"
+        adapter.error("交付命令未执行并回执 failed（$reason）：id=${command.id}，type=${command.type}", null)
         val orderId = command.deliveryPayload?.orderId ?: 0L
         if (orderId <= 0L) {
             reportUnaddressable(command)
             return
         }
-        postResult(orderId, DeliveryStageReport(phaseOf(command.type), STATUS_FAILED, 0, 0, false, error))
+        postResult(orderId, DeliveryStageReport(phaseOf(command.type), STATUS_FAILED, 0, 0, false, reason))
     }
 
     /** 按类型分派；orderId 缺失或非法则回报告警（无 orderId 无处回执，见 [reportUnaddressable]）。 */
@@ -345,7 +349,13 @@ class DeliveryCommandExecutor(
         adapter.info("交付回滚完成（还原即生效，随下次自然重启读盘）：orderId=$orderId，还原=$restored")
     }
 
-    /** hot_reload：重拉 V2 清单并直接通知配置工件路径，不经过 Legacy ConfigApplier / EffectiveConfigStore。 */
+    /**
+     * hot_reload：重拉 V2 清单并直接通知配置工件路径，不经过 Legacy ConfigApplier / EffectiveConfigStore。
+     *
+     * **生效阶段回执的计数口径（FR-266 评审 P1）**：本阶段能核计的事实只有「本单涉及的配置工件数」，
+     * 正推阶段的真实变更数已由推送回执上报、此处不重复声明，故取 `max(入参计数, 配置工件数)` 作**下界**——
+     * 让「已落盘仅通知失败」的失败回执与控制面目标行不再是 0，运维据此知道盘上确实变了多少。
+     */
     private fun runHotReload(
         orderId: Long,
         phase: String,
@@ -362,8 +372,9 @@ class DeliveryCommandExecutor(
             return
         }
         val configFiles = normalizedConfigFiles(manifest.files)
-        if (publishConfigChanged(orderId, phase, configFiles, changedFileCount, backupPresent)) {
-            postResult(orderId, DeliveryStageReport(phase, STATUS_SUCCESS, changedFileCount, 0, backupPresent, ""))
+        val effectiveCount = maxOf(changedFileCount, configFiles.size)
+        if (publishConfigChanged(orderId, phase, configFiles, effectiveCount, backupPresent)) {
+            postResult(orderId, DeliveryStageReport(phase, STATUS_SUCCESS, effectiveCount, 0, backupPresent, ""))
             adapter.info("交付 hot_reload 完成：orderId=$orderId，phase=$phase，配置工件=${configFiles.size}")
         }
     }
@@ -403,8 +414,12 @@ class DeliveryCommandExecutor(
      * 有配置工件时派发一次通知；无配置工件成功 no-op。
      *
      * 通知失败按**部分成功**回执（FR-266）：文件在推送阶段已落盘、只是生效通知没送到，与「什么都没做」是两回事——
-     * 故失败回执仍带上真实变更计数与 backupPresent，并在原因里点明「文件已落盘，仅通知失败、可按需回滚」，
-     * 让运维 / 机器主体知道盘上已经变了、该回滚还是该手工重载，而不是只看到一句无上下文的失败。
+     * 故失败回执仍带上真实变更计数与 backupPresent，并点明「文件已落盘、仅通知失败」，而不是一句无上下文的失败。
+     *
+     * **处置建议按 phase 分野**（FR-266 评审 P1）：控制面是否下发整单回滚由**它自己的预检**决定
+     * （目标须 `pushed_at` 非空且有可回滚备份），agent 无从核实，故正推阶段（`activate`）不得承诺「可整单回滚」——
+     * 只给 agent 自己就能保证的处置（手工重载 / 按同版本重推）；只有回滚阶段（`rollback`，此时备份确实已在盘）
+     * 才保留回滚建议。
      */
     private fun publishConfigChanged(
         orderId: Long,
@@ -424,11 +439,22 @@ class DeliveryCommandExecutor(
                 phase = phase,
                 changedFileCount = changedFileCount,
                 backupPresent = backupPresent,
-                error = "文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：${reasonOf(e)}；可整单回滚还原，或手工重载后重试",
+                error = "文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：${reasonOf(e)}${remedyHint(phase)}",
             )
             false
         }
     }
+
+    /**
+     * 通知失败时的处置建议：正推阶段只给 agent 可保证的处置（手工重载 / 按同版本重推），
+     * 回滚阶段才提整单回滚——是否可回滚由控制面预检（`pushed_at` + 备份存在性）判定，agent 不代它承诺。
+     */
+    private fun remedyHint(phase: String): String =
+        if (phase == PHASE_ROLLBACK) {
+            "；可整单回滚还原，或手工重载后重试"
+        } else {
+            "；请手工重载，或按同版本重推（是否下发整单回滚由控制面按备份与推送留痕预检判定）"
+        }
 
     /** 按通知时磁盘实际状态计算小写 md5；回滚后摘要会随还原内容变化。 */
     private fun configArtifactMd5(configFiles: List<DeliveryManifestFile>): String {

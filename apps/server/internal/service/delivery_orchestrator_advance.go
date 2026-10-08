@@ -63,7 +63,8 @@ func (s *DeliveryOrchestrator) reconcilePushing(rt *orderRuntime, t *model.Chang
 			s.activateTarget(rt, t) // 推送落定即接续生效判定（push_only 立即 activated，其它下发 delivery_activate）
 		}
 	case model.CommandStatusFailed:
-		s.failTarget(rt, t, model.ChangeTargetStatusPushing, targetErrorOr(parseDeliveryCmdResult(cmd.ResultDetail).Error, "推送失败"))
+		res := parseDeliveryCmdResult(cmd.ResultDetail)
+		s.failTargetWithResult(rt, t, model.ChangeTargetStatusPushing, targetErrorOr(res.Error, "推送失败"), res)
 	case model.CommandStatusExpired:
 		s.failTarget(rt, t, model.ChangeTargetStatusPushing, "推送命令过期（agent 离线或长时间未回执）")
 	default:
@@ -129,10 +130,11 @@ func (s *DeliveryOrchestrator) reconcileActivatingRestart(rt *orderRuntime, t *m
 	if err != nil {
 		return
 	}
-	// 关服指令回执失败 → 直接 failed（spec §4.6.1 failed 判据之一）。
+	// 关服指令回执失败 → 直接 failed（spec §4.6.1 failed 判据之一）；回执带的计数事实一并落到目标行。
 	if cmd != nil && cmd.Status == model.CommandStatusFailed {
-		s.failTarget(rt, t, model.ChangeTargetStatusActivating,
-			targetErrorOr(parseDeliveryCmdResult(cmd.ResultDetail).Error, "关服指令回执失败"))
+		res := parseDeliveryCmdResult(cmd.ResultDetail)
+		s.failTargetWithResult(rt, t, model.ChangeTargetStatusActivating,
+			targetErrorOr(res.Error, "关服指令回执失败"), res)
 		return
 	}
 	// 心跳回归即 activated；否则按 activate_timeout_sec 从 activating 起始计时判超时。
@@ -156,7 +158,8 @@ func (s *DeliveryOrchestrator) reconcileActivatingByAck(rt *orderRuntime, t *mod
 		s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusActivated,
 			map[string]any{"activated_at": s.now()})
 	case model.CommandStatusFailed:
-		s.failTarget(rt, t, model.ChangeTargetStatusActivating, targetErrorOr(parseDeliveryCmdResult(cmd.ResultDetail).Error, "生效失败"))
+		res := parseDeliveryCmdResult(cmd.ResultDetail)
+		s.failTargetWithResult(rt, t, model.ChangeTargetStatusActivating, targetErrorOr(res.Error, "生效失败"), res)
 	case model.CommandStatusExpired:
 		s.failTarget(rt, t, model.ChangeTargetStatusActivating, "生效命令过期（agent 离线或长时间未回执）")
 	default:
@@ -549,6 +552,24 @@ func (s *DeliveryOrchestrator) casTarget(rt *orderRuntime, t *model.ChangeTarget
 // failTarget 把目标从 from 迁 failed 并落脱敏原因（ADR-0057），返回是否命中。
 func (s *DeliveryOrchestrator) failTarget(rt *orderRuntime, t *model.ChangeTarget, from, reason string) bool {
 	return s.casTarget(rt, t, []string{from}, model.ChangeTargetStatusFailed, map[string]any{"error": reason})
+}
+
+// failTargetWithResult 与 failTarget 同语义，并一并落该阶段回执携带的计数事实（FR-266）。
+//
+// 语义：agent 在推送 / 生效阶段回执 failed 但文件其实已落盘（「已落盘、仅通知失败」的部分成功）时，目标行必须
+// 留下「盘上确实变了多少、有无备份可回滚」，否则与「什么都没做」同形，运维与机器主体都无从判断该回滚还是重推。
+// 口径为**只增不减**：仅在回执计数为正 / 备份存在时才覆写，避免 restart 一类 0 计数回执把推送阶段已落定的
+// changed_file_count / backup_present 清零。
+func (s *DeliveryOrchestrator) failTargetWithResult(rt *orderRuntime, t *model.ChangeTarget, from, reason string,
+	res deliveryCmdResult) bool {
+	updates := map[string]any{"error": reason}
+	if res.ChangedFileCount > 0 {
+		updates["changed_file_count"] = res.ChangedFileCount
+	}
+	if res.BackupPresent {
+		updates["backup_present"] = res.BackupPresent
+	}
+	return s.casTarget(rt, t, []string{from}, model.ChangeTargetStatusFailed, updates)
 }
 
 // casBatch 事务外单表 CAS 迁移批状态并就地更新快照，成功发批事件、返回是否命中。

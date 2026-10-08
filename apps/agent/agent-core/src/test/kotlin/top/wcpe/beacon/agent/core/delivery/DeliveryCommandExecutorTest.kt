@@ -483,6 +483,50 @@ class DeliveryCommandExecutorTest {
         assertTrue(body.contains("changedFileCount=1"), "文件已落盘：失败回执须保留真实变更计数：$body")
         assertTrue(body.contains("backupPresent=true"), "文件已落盘：失败回执须保留备份标记（可否回滚）：$body")
         assertTrue(body.contains("已落盘"), "原因应点明「已落盘、仅通知失败」，便于决定回滚还是手工重载：$body")
+        assertTrue(body.contains("可整单回滚还原"), "回滚阶段备份已在盘，可给回滚建议：$body")
+    }
+
+    @Test
+    fun `正推 hot_reload 通知失败不承诺整单回滚且计数取下界`() {
+        // 正推生效阶段：控制面是否下发整单回滚由它自己的预检（推送留痕 + 备份存在性）决定，agent 不得代它承诺。
+        adapter.configChangeError = RuntimeException("事件总线不可用")
+        val tree = manifestTree(listOf(configFileNode("plugins/upd.txt", "a".repeat(64))))
+
+        executorWith(seededBackupForeverUnused(), tree).execute(activateCommand("hot_reload"))
+
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=failed"), "通知失败仍是失败：$body")
+        assertTrue(!body.contains("可整单回滚还原"), "正推阶段不得承诺整单回滚：$body")
+        assertTrue(body.contains("手工重载") || body.contains("重推"), "正推阶段应给 agent 可保证的处置：$body")
+        assertTrue(body.contains("changedFileCount=1"), "生效阶段计数取下界（配置工件数），不再恒为 0：$body")
+    }
+
+    @Test
+    fun `正推 hot_reload 成功回执计数取下界`() {
+        val tree =
+            manifestTree(
+                listOf(
+                    configFileNode("plugins/A/config.yml", "a".repeat(64)),
+                    configFileNode("plugins/B/config.yml", "b".repeat(64)),
+                ),
+            )
+
+        executorWith(seededBackupForeverUnused(), tree).execute(activateCommand("hot_reload"))
+
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=success"), "无通知异常应成功：$body")
+        assertTrue(body.contains("changedFileCount=2"), "生效成功回执应以配置工件数为下界计数：$body")
+    }
+
+    /** 造一份正推用例可用的备份管理器（不参与断言，仅满足管道装配）。 */
+    private fun seededBackupForeverUnused(): DeliveryBackupManager {
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())
+        return DeliveryBackupManager(
+            File(dataDir, "delivery-backups"),
+            DeliveryTargetResolver(serverRoot, dataDir),
+            BackupManifestCodec(),
+            adapter,
+        )
     }
 
     /** 造一份 update 项备份（旧内容 OLD），返回其 backupManager 供回滚测试复用（往返 codec）。 */
