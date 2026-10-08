@@ -23,7 +23,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
-// deliveryMCPWriteToolNames 是第二波的五个直执工具（4 段、动词结尾，与图纸 §3.1 逐字一致）。
+// deliveryMCPWriteToolNames 是 FR-246 / FR-247 交付的五个直执工具（4 段、动词结尾，与图纸 §3.1 逐字一致）。
 var deliveryMCPWriteToolNames = []string{
 	"beacon.delivery.order.create",
 	"beacon.delivery.order.update",
@@ -33,7 +33,7 @@ var deliveryMCPWriteToolNames = []string{
 }
 
 // deliveryMCPApprovalToolNames 是既有六项「只建审批申请」的交付工具：
-// FR-248 的拒绝文案收口对象（本波不改它们的语义，只换拒绝文案）。
+// FR-248 的拒绝文案收口对象（语义不变，只换拒绝文案）。
 var deliveryMCPApprovalToolNames = []string{
 	"beacon.delivery.order.submit",
 	"beacon.delivery.order.delete",
@@ -105,7 +105,7 @@ func TestMCPDeliveryRejectedReasonsCoverEveryDeliveryCode(t *testing.T) {
 	// 期望表 = 图纸 §3.5 全部 16 行 + 交付域自身的 missing_reason（终止 / 整单回滚原因必填）。
 	want := map[string]string{
 		apperr.ErrApprovalReasonRequired.Code:       "必须填写原因（reason）",
-		"illegal_state":                             "当前状态不允许该操作",
+		apperr.ErrIllegalState.Code:                 "当前状态不允许该操作",
 		apperr.ErrChangeNoItems.Code:                "变更单没有任何变更项，无法提交审批",
 		apperr.ErrChangeNoTarget.Code:               "未解析出任何合格目标",
 		apperr.ErrChangeNoRollbackTarget.Code:       "单内无曾推送的目标可回滚",
@@ -131,11 +131,16 @@ func TestMCPDeliveryRejectedReasonsCoverEveryDeliveryCode(t *testing.T) {
 		if got, ok := mcpDeliveryRejectedReasons[code]; !ok || got != phrase {
 			t.Fatalf("错误码 %s 的短语应为 %q，实际 %q（存在=%v）", code, phrase, got, ok)
 		}
-		// illegal_state 的短语是稳定骨架，具体卡点（当前状态与动作）由领域错误细节拼上。
-		if code == "illegal_state" {
-			got := mcpDeliveryErrReason(&apperr.Error{Code: code, Message: "当前状态 rolling 不允许 编辑"})
-			if got != phrase+"：当前状态 rolling 不允许 编辑" {
-				t.Fatalf("illegal_state 应带当前状态与动作，实际 %q", got)
+		// illegal_state 的短语是稳定骨架，具体卡点（当前状态与动作）由 service 的
+		// changeIllegalState 给出的 Message 补上；领域错误直接用 apperr.ErrIllegalState
+		// （Message 就是短语本身）时不重复拼接。
+		if code == apperr.ErrIllegalState.Code {
+			withDetail := mcpDeliveryErrReason(&apperr.Error{Code: code, Message: "当前状态 rolling 不允许 编辑"})
+			if withDetail != phrase+"：当前状态 rolling 不允许 编辑" {
+				t.Fatalf("illegal_state 带细节时应拼上当前状态与动作，实际 %q", withDetail)
+			}
+			if plain := mcpDeliveryErrReason(apperr.ErrIllegalState); plain != phrase {
+				t.Fatalf("illegal_state 无额外细节时应只回短语，实际 %q", plain)
 			}
 			continue
 		}
@@ -186,7 +191,7 @@ func (*deliveryWritePlainError) Error() string { return "sql: connection refused
 // ── 夹具 ──
 
 // deliveryWriteMCPFixture 接好交付组单 / 差异面 / 编排器三个真服务与审批域，
-// 供第二波（FR-246/247/248/250）经真实 MCP 协议路径断言。
+// 供 FR-246 / FR-247 / FR-248 / FR-250 的交付写工具经真实 MCP 协议路径断言。
 type deliveryWriteMCPFixture struct {
 	db        *gorm.DB
 	repo      *repository.ChangeOrderRepository
@@ -257,10 +262,12 @@ func newDeliveryWriteMCPFixture(t *testing.T) *deliveryWriteMCPFixture {
 	diff := service.NewDeliveryDiffService(db, repo, repository.NewFileAssetRepository(db), auditRepo, nil, health)
 	orch := service.NewDeliveryOrchestrator(db, repo, nil, nil, auditRepo, nil, nil, nil)
 
-	// 审批域：本用例只走「建申请」路径，适配器体不执行领域动作。
+	// 审批域：申请类六工具在真实拒绝 / 成功路径上都会走到建申请，故六个交付操作都要登记描述与适配器
+	// （适配器体不执行领域动作——本文件断言正是「申请阶段不执行」）。
 	approvalRegistry := authz.NewApprovalRegistry()
 	for _, kind := range []string{
 		authz.OperationDeliveryApprove, authz.OperationDeliveryDraftDelete, authz.OperationDeliveryRollbackFinish,
+		authz.OperationDeliveryResume, authz.OperationDeliveryRollback, authz.OperationDeliveryConfirmBatch,
 	} {
 		approvalRegistry.Register(kind,
 			authz.TransactionalAdapterFunc(func(_ *gorm.DB, _ authz.ApprovalRequest, _ authz.Permit) (func(), error) { return nil, nil }))
@@ -567,20 +574,39 @@ func TestMCPDeliveryOrderPauseAndCancelTakeEffect(t *testing.T) {
 
 // ── FR-248 拒绝文案（真实服务 + 真实拒绝路径） ──
 
-// TestMCPDeliveryWriteToolsRejectWithStableReasons 逐工具走真实拒绝路径，断言返回的是
-// §3.5 表中的稳定短语（而不是既有的硬编码文案）。
+// TestMCPDeliveryWriteToolsRejectWithStableReasons 逐工具走真实拒绝路径，断言返回的正是
+// §3.5 表里的短语（期望值一律取自 mcpDeliveryRejectedReasons，不抄领域错误文案——
+// 否则「表被摘掉、只靠兜底透出领域说明」也能让用例通过，映射表就失去了守护）。
 func TestMCPDeliveryWriteToolsRejectWithStableReasons(t *testing.T) {
 	f := newDeliveryWriteMCPFixture(t)
 	server := f.server(t)
-	// draft 单（无模板源）：差异扫描应报「未指定黄金模板源」。
+	// draft 单（无模板源）：差异扫描应报 missing_source。
 	draftNoSource := f.seedOrder(t, f.nsID, "无源草稿", model.ChangeOrderStatusDraft, "")
 	rolling := f.seedOrder(t, f.nsID, "进行中", model.ChangeOrderStatusRolling, "")
+	// 有变更项但 selector 未选中任何目标（合法空选区，不是引用不存在的实体——那会先撞
+	// selector_cross_namespace）：提交应在 no_target 处被拒。
+	// 用**配置项**而非文件差异项：文件差异项必须先有模板源（那样会先撞 missing_source，
+	// 到不了目标解析这一步）。
+	noTarget := f.seedOrder(t, f.nsID, "无目标草稿", model.ChangeOrderStatusDraft, "")
+	scopeKind, scopeID, toVersion := model.ConfigScopeZone, f.zoneID, uint(1)
+	if err := f.db.Create(&model.ChangeOrderItem{OrderID: noTarget, Kind: model.ChangeItemKindConfigChange,
+		ConfigScopeKind: &scopeKind, ConfigScopeID: &scopeID, ConfigToVersionID: &toVersion}).Error; err != nil {
+		t.Fatalf("写入配置项失败: %v", err)
+	}
+	if err := f.db.Model(&model.ChangeOrder{}).Where("id = ?", noTarget).
+		Update("selector", `{"all":false,"regions":[],"zones":[],"servers":[],"excludes":[]}`).Error; err != nil {
+		t.Fatalf("改 selector 失败: %v", err)
+	}
 
+	illegalEdit := mcpDeliveryRejectedReasons[apperr.ErrIllegalState.Code] + "：当前状态 rolling 不允许 编辑"
 	cases := []struct {
 		name   string
 		tool   string
 		args   map[string]any
 		reason string
+		// absent 是**不该**出现的文案（领域错误自带措辞）：表内短语是它的子串时，
+		// 只断言「含短语」无法区分「走了映射表」与「走了兜底透出」，本条补上前者。
+		absent string
 	}{
 		{
 			name: "建单缺落地环境", tool: "beacon.delivery.order.create",
@@ -597,24 +623,41 @@ func TestMCPDeliveryWriteToolsRejectWithStableReasons(t *testing.T) {
 			reason: "namespaceId / title 必填",
 		},
 		{
+			// 显式空批次不是「未提供」：原样交给领域层拒绝，不被工具静默忽略。
+			name: "建单空批次", tool: "beacon.delivery.order.create",
+			args: map[string]any{
+				"namespaceId": strconv.FormatUint(uint64(f.nsID), 10), "title": "空批次",
+				"batchSizes": []int{}, "selector": map[string]any{"all": true},
+			},
+			reason: "batchSizes 不能为空",
+		},
+		{
 			name: "编辑进行中的单", tool: "beacon.delivery.order.update",
 			args:   map[string]any{"orderId": rolling, "title": "改标题"},
-			reason: "当前状态不允许该操作：当前状态 rolling 不允许 编辑",
+			reason: illegalEdit,
 		},
 		{
 			name: "无源草稿扫差异", tool: "beacon.delivery.order.diff-scan",
 			args:   map[string]any{"orderId": draftNoSource},
-			reason: apperr.ErrChangeSourceMissing.Message,
+			reason: mcpDeliveryRejectedReasons[apperr.ErrChangeSourceMissing.Code],
+		},
+		{
+			// 该短语是领域错误措辞的子串，故附带断言领域措辞**不出现**——真正证明工具回的是
+			// 表内短语，而不是兜底透出的领域说明。
+			name: "提交无合格目标", tool: "beacon.delivery.order.submit",
+			args:   map[string]any{"orderId": noTarget, "reason": "提审", "idempotencyKey": "mcp-write-no-target"},
+			reason: mcpDeliveryRejectedReasons[apperr.ErrChangeNoTarget.Code],
+			absent: apperr.ErrChangeNoTarget.Message,
 		},
 		{
 			name: "暂停未启动的单", tool: "beacon.delivery.order.pause",
 			args:   map[string]any{"orderId": draftNoSource},
-			reason: "当前状态不允许该操作：当前状态 draft 不允许 暂停",
+			reason: mcpDeliveryRejectedReasons[apperr.ErrIllegalState.Code] + "：当前状态 draft 不允许 暂停",
 		},
 		{
 			name: "终止未启动的单", tool: "beacon.delivery.order.cancel",
 			args:   map[string]any{"orderId": draftNoSource, "reason": "停"},
-			reason: "当前状态不允许该操作：当前状态 draft 不允许 紧急终止",
+			reason: mcpDeliveryRejectedReasons[apperr.ErrIllegalState.Code] + "：当前状态 draft 不允许 紧急终止",
 		},
 		{
 			name: "提交缺原因", tool: "beacon.delivery.order.submit",
@@ -636,7 +679,22 @@ func TestMCPDeliveryWriteToolsRejectWithStableReasons(t *testing.T) {
 			if !strings.Contains(mcpResultText(res), tc.reason) {
 				t.Fatalf("%s 的拒绝文案应含 %q，实际 %q", tc.tool, tc.reason, mcpResultText(res))
 			}
+			if tc.absent != "" && strings.Contains(mcpResultText(res), tc.absent) {
+				t.Fatalf("%s 的拒绝文案不应出现领域措辞 %q（说明没走映射表），实际 %q",
+					tc.tool, tc.absent, mcpResultText(res))
+			}
 		})
+	}
+	// 无目标与空批次两条都不得留下半成品单：提交冻结失败要整笔回退、建单校验失败不落单。
+	if status := f.orderRow(t, noTarget).Status; status != model.ChangeOrderStatusDraft {
+		t.Fatalf("提交被拒后单应保持 draft，实际 %s", status)
+	}
+	var emptyBatchOrders int64
+	if err := f.db.Model(&model.ChangeOrder{}).Where("title = ?", "空批次").Count(&emptyBatchOrders).Error; err != nil {
+		t.Fatalf("统计失败: %v", err)
+	}
+	if emptyBatchOrders != 0 {
+		t.Fatalf("空批次建单被拒后不应落单，实际 %d 张", emptyBatchOrders)
 	}
 }
 
@@ -673,31 +731,64 @@ func TestMCPDeliveryResumeModeIsDescribedInSchema(t *testing.T) {
 	}
 }
 
-// TestMCPDeliveryApprovalToolsLeaveBusinessTablesUntouched 是「只建申请」的零副作用闸与幂等闸：
-// 交付申请类工具只创建审批申请——业务表（单 / 目标 / 批次 / 执行回执）逐表不变，
+// TestMCPDeliveryApprovalToolsOnlyCreateRequests 是申请类六工具的「只建申请」闸与幂等闸：
+// 申请阶段**不执行领域动作**——业务表（单 / 变更项 / 批次 / 目标）的行数与批次 / 目标状态都不被改写
+// （唯一例外是 submit 的冻结：draft → pending_approval，见末尾单列断言），也绝不产生执行回执；
 // 同 idempotencyKey 重放返回同一申请且只落一行。
-func TestMCPDeliveryApprovalToolsLeaveBusinessTablesUntouched(t *testing.T) {
+func TestMCPDeliveryApprovalToolsOnlyCreateRequests(t *testing.T) {
 	f := newDeliveryWriteMCPFixture(t)
-	orderID := f.seedOrder(t, f.nsID, "待删除草稿", model.ChangeOrderStatusDraft, "")
-	rollbackOrder := f.seedOrder(t, f.nsID, "回滚中", model.ChangeOrderStatusRollingBack, "")
 	server := f.server(t)
 
+	// 每个申请类工具各铺一张前置状态就位的单：删除（draft）、结束回滚（rolling_back）、
+	// 继续（paused）、整单回滚（completed）、批次确认（rolling + 待确认批）、提交（draft + 变更项 + 合格目标）。
+	deleteID := f.seedOrder(t, f.nsID, "待删除草稿", model.ChangeOrderStatusDraft, "")
+	finishID := f.seedOrder(t, f.nsID, "回滚中", model.ChangeOrderStatusRollingBack, "")
+	resumeID := f.seedOrder(t, f.nsID, "已暂停", model.ChangeOrderStatusPaused, "")
+	// 真实的人工暂停会留下 pause_kind=manual；申请继续时会把它写进审批依据，
+	// 空值不是合法状态（审批层要求依据行的值非空）。
+	if err := f.db.Model(&model.ChangeOrder{}).Where("id = ?", resumeID).
+		Update("pause_kind", model.PauseKindManual).Error; err != nil {
+		t.Fatalf("置 pause_kind 失败: %v", err)
+	}
+	rollbackID := f.seedOrder(t, f.nsID, "已完成待回滚", model.ChangeOrderStatusCompleted, "")
+	confirmID := f.seedOrder(t, f.nsID, "待确认批次", model.ChangeOrderStatusRolling, "")
+	confirmBatch := &model.ChangeBatch{OrderID: confirmID, BatchNo: 1, Status: model.ChangeBatchStatusAwaitingConfirm, PlannedCount: 1}
+	if err := f.db.Create(confirmBatch).Error; err != nil {
+		t.Fatalf("写入批次失败: %v", err)
+	}
+	confirmTarget := &model.ChangeTarget{OrderID: confirmID, BatchID: confirmBatch.ID, ServerID: "t-1", Status: model.ChangeTargetStatusPending}
+	if err := f.db.Create(confirmTarget).Error; err != nil {
+		t.Fatalf("写入目标失败: %v", err)
+	}
+	// 提交需要「有变更项 + selector 能解析出合格目标」：纯配置项不需模板源，目标 t-1 走 seedServer 建。
+	submitID := f.seedOrder(t, f.nsID, "待提交草稿", model.ChangeOrderStatusDraft, "")
+	f.seedServer(t, f.nsID, "t-1")
+	submitScopeKind, submitScopeID, submitToVersion := model.ConfigScopeZone, f.zoneID, uint(1)
+	if err := f.db.Create(&model.ChangeOrderItem{OrderID: submitID, Kind: model.ChangeItemKindConfigChange,
+		ConfigScopeKind: &submitScopeKind, ConfigScopeID: &submitScopeID, ConfigToVersionID: &submitToVersion}).Error; err != nil {
+		t.Fatalf("写入配置项失败: %v", err)
+	}
+
 	before := deliveryBusinessRowCounts(t, f.db)
-	args := map[string]any{"orderId": orderID, "reason": "清理草稿", "idempotencyKey": "mcp-write-idem"}
-	first := mcpStructuredMap(t, mustCallMCPTool(t, server, "beacon.delivery.order.delete", args))
-	second := mcpStructuredMap(t, mustCallMCPTool(t, server, "beacon.delivery.order.delete", args))
-	if first["approvalRequestId"] != second["approvalRequestId"] {
-		t.Fatalf("同幂等键重放应返回同一申请：%v vs %v", first["approvalRequestId"], second["approvalRequestId"])
+	calls := []struct {
+		tool string
+		args map[string]any
+	}{
+		{"beacon.delivery.order.delete", map[string]any{"orderId": deleteID, "reason": "清理草稿", "idempotencyKey": "mcp-write-idem"}},
+		{"beacon.delivery.rollback.finish", map[string]any{"orderId": finishID, "idempotencyKey": "mcp-write-finish"}},
+		{"beacon.delivery.order.resume", map[string]any{"orderId": resumeID, "mode": mcpDeliveryResumeModeRetryFailed, "reason": "继续灰度", "idempotencyKey": "mcp-write-resume"}},
+		{"beacon.delivery.order.rollback", map[string]any{"orderId": rollbackID, "reason": "回滚到发布前", "idempotencyKey": "mcp-write-rollback"}},
+		{"beacon.delivery.batch.confirm", map[string]any{"orderId": confirmID, "batchNo": 1, "idempotencyKey": "mcp-write-confirm"}},
 	}
-	// 结束回滚同样是「只建申请」：回滚中的单在申请阶段不得被改成终态。
-	finishOut := mcpStructuredMap(t, mustCallMCPTool(t, server, "beacon.delivery.rollback.finish", map[string]any{
-		"orderId": rollbackOrder, "idempotencyKey": "mcp-write-finish",
-	}))
-	if finishOut["orderId"] != float64(rollbackOrder) {
-		t.Fatalf("结束回滚票据应带归属单号，实际 %v", finishOut)
-	}
-	if got := f.orderRow(t, rollbackOrder).Status; got != model.ChangeOrderStatusRollingBack {
-		t.Fatalf("结束回滚申请阶段状态应保持 rolling_back，实际 %s", got)
+	for _, call := range calls {
+		res := mustCallMCPTool(t, server, call.tool, call.args)
+		if res.IsError {
+			t.Fatalf("%s 不应被拒: %s", call.tool, mcpResultText(res))
+		}
+		out := mcpStructuredMap(t, res)
+		if out["orderId"] == nil || out["approvalRequestId"] == nil || out["approvalRequestId"] == "" {
+			t.Fatalf("%s 应回票据（含归属单号），实际 %v", call.tool, out)
+		}
 	}
 
 	// 业务表逐表零副作用（审批表与审计表不在其中：建申请本就该落它们）。
@@ -707,9 +798,62 @@ func TestMCPDeliveryApprovalToolsLeaveBusinessTablesUntouched(t *testing.T) {
 			t.Fatalf("只建申请的工具不应改动业务表 %s：前 %d 行、后 %d 行", table, before[table], after[table])
 		}
 	}
-	if got := f.orderRow(t, orderID).Status; got != model.ChangeOrderStatusDraft {
+	// 单与目标 / 批次的状态也不得被申请阶段改写（否则 AI 申请后以为动作已经执行）。
+	if got := f.orderRow(t, deleteID).Status; got != model.ChangeOrderStatusDraft {
 		t.Fatalf("草稿删除申请阶段单应仍为 draft，实际 %s", got)
 	}
+	if got := f.orderRow(t, finishID).Status; got != model.ChangeOrderStatusRollingBack {
+		t.Fatalf("结束回滚申请阶段状态应保持 rolling_back，实际 %s", got)
+	}
+	if got := f.orderRow(t, resumeID).Status; got != model.ChangeOrderStatusPaused {
+		t.Fatalf("继续灰度申请阶段单应仍为 paused，实际 %s", got)
+	}
+	if got := f.orderRow(t, rollbackID).Status; got != model.ChangeOrderStatusCompleted {
+		t.Fatalf("整单回滚申请阶段单应仍为 completed，实际 %s", got)
+	}
+	var batchRow model.ChangeBatch
+	if err := f.db.First(&batchRow, confirmBatch.ID).Error; err != nil {
+		t.Fatalf("回读批次失败: %v", err)
+	}
+	if batchRow.Status != model.ChangeBatchStatusAwaitingConfirm {
+		t.Fatalf("批次确认申请阶段批次应仍为 awaiting_confirm，实际 %s", batchRow.Status)
+	}
+	var targetRow model.ChangeTarget
+	if err := f.db.First(&targetRow, confirmTarget.ID).Error; err != nil {
+		t.Fatalf("回读目标失败: %v", err)
+	}
+	if targetRow.Status != model.ChangeTargetStatusPending {
+		t.Fatalf("申请阶段目标状态不应变化，实际 %s", targetRow.Status)
+	}
+
+	// 幂等：同 idempotencyKey 重放返回同一申请。
+	replayArgs := map[string]any{"orderId": deleteID, "reason": "清理草稿", "idempotencyKey": "mcp-write-idem"}
+	firstTicket := mcpStructuredMap(t, mustCallMCPTool(t, server, "beacon.delivery.order.delete", replayArgs))
+	secondTicket := mcpStructuredMap(t, mustCallMCPTool(t, server, "beacon.delivery.order.delete", replayArgs))
+	if firstTicket["approvalRequestId"] != secondTicket["approvalRequestId"] {
+		t.Fatalf("同幂等键重放应返回同一申请：%v vs %v", firstTicket["approvalRequestId"], secondTicket["approvalRequestId"])
+	}
+
+	// submit 是唯一会写业务表的申请类工具，且只冻结状态：draft → pending_approval，
+	// 变更项 / 批次 / 目标行数与内容不变，也不产生执行回执。
+	submitOut := mcpStructuredMap(t, mustCallMCPTool(t, server, "beacon.delivery.order.submit",
+		map[string]any{"orderId": submitID, "reason": "提审", "idempotencyKey": "mcp-write-submit"}))
+	if submitOut["orderId"] != float64(submitID) {
+		t.Fatalf("提交票据应带归属单号，实际 %v", submitOut)
+	}
+	if got := f.orderRow(t, submitID).Status; got != model.ChangeOrderStatusPendingApproval {
+		t.Fatalf("提交应冻结为 pending_approval，实际 %s", got)
+	}
+	afterSubmit := deliveryBusinessRowCounts(t, f.db)
+	for _, table := range []string{"change_order_item", "change_batch", "change_target"} {
+		if after[table] != afterSubmit[table] {
+			t.Fatalf("提交冻结不得改动业务表 %s：前 %d 行、后 %d 行", table, after[table], afterSubmit[table])
+		}
+	}
+	if afterSubmit["change_order"] != after["change_order"] {
+		t.Fatalf("提交只改状态、不增删单行：前 %d 行、后 %d 行", after["change_order"], afterSubmit["change_order"])
+	}
+
 	var receipts int64
 	if err := f.db.Model(&model.ApprovalExecutionReceipt{}).Count(&receipts).Error; err != nil {
 		t.Fatalf("统计执行回执失败: %v", err)
@@ -717,13 +861,13 @@ func TestMCPDeliveryApprovalToolsLeaveBusinessTablesUntouched(t *testing.T) {
 	if receipts != 0 {
 		t.Fatalf("申请类工具不得产生执行回执，实际 %d 行", receipts)
 	}
-	// 同幂等键只落一行申请。
+	// 六项工具各落一行申请（删除的那行被同键重放复用，不新增）。
 	var approvals int64
 	if err := f.db.Model(&model.ApprovalRequest{}).Count(&approvals).Error; err != nil {
 		t.Fatalf("统计审批申请失败: %v", err)
 	}
-	if approvals != 2 {
-		t.Fatalf("两次调用（删除 + 结束回滚）应各落一行申请，实际 %d 行", approvals)
+	if approvals != 6 {
+		t.Fatalf("六项工具应各落一行申请（同键重放不新增），实际 %d 行", approvals)
 	}
 }
 

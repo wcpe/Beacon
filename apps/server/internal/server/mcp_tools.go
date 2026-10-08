@@ -304,8 +304,8 @@ type mcpDeliveryRollbackInput struct {
 //
 // 结束回滚在 HTTP 面与 service 侧都不接受调用方原因（申请原因固定为「结束交付回滚」，
 // 已写入冻结 payload 与审批依据），此前 MCP 面却声明了 reason 字段并静默丢弃——AI 以为
-// 提供了原因、实际什么都没发生。收口方式是移除该字段而不是新增持久化：给它补原因要改冻结
-// payload（连带审批指纹与执行侧），属本波范围外的审批契约变更（FR-250 二选一）。
+// 提供了原因、实际什么都没发生。FR-250 收口时选择**移除该字段**而非新增持久化：给它补原因
+// 要改冻结 payload（连带审批指纹与执行侧适配器），属交付 MCP 工具之外的审批契约变更。
 type mcpDeliveryRollbackFinishInput struct {
 	OrderID        uint   `json:"orderId"`
 	IdempotencyKey string `json:"idempotencyKey"`
@@ -409,11 +409,14 @@ func (f mcpDeliveryOrderEditFields) toServiceInput() service.ChangeOrderInput {
 		FailureRateThresholdPercent:   f.FailureRateThresholdPercent,
 		UnhealthyRateThresholdPercent: f.UnhealthyRateThresholdPercent,
 	}
-	if len(f.BatchSizes) > 0 {
+	// BatchSizes 按「字段是否出现」判断而非长度：显式传入空数组是**合法 JSON 但非法取值**，
+	// 必须原样交给领域层拒绝（batchSizes 不能为空），不能被工具侧静默当成「未提供」——否则
+	// 客户端传了空数组、以为已改成零批次，实际沿用默认值，失败与成功都看不出来。
+	if f.BatchSizes != nil {
 		sizes := append([]int(nil), f.BatchSizes...)
 		input.BatchSizes = &sizes
 	}
-	// 显式传入空数组 = 清空配置项（与 service 的 nil 语义区分），故按「字段是否出现」而非长度判断。
+	// 同上：显式传入空数组 = 清空配置项（与 service 的 nil 语义区分）。
 	if f.ConfigChanges != nil {
 		changes := make([]service.ChangeConfigInput, 0, len(f.ConfigChanges))
 		for _, change := range f.ConfigChanges {
@@ -1117,8 +1120,11 @@ func (r *MCPToolRegistry) registerDeliveryOrderWriteTools(server *mcp.Server, op
 }
 
 // registerDeliveryDiffScanTool 登记差异扫描工具（另依赖差异面服务；未装配即整项不注册）。
+//
+// 除差异面服务外还必须已接组单读服务：观测范围判定按 orderId 取单（mcpDeliveryWritableOrder），
+// 缺了它工具会注册成一个恒拒的壳——宁可少暴露，也不暴露注定不可用的工具。
 func (r *MCPToolRegistry) registerDeliveryDiffScanTool(server *mcp.Server, op string) {
-	if r.reads.deliveryDiff == nil {
+	if r.reads.deliveryDiff == nil || r.orders == nil {
 		return
 	}
 	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.diff-scan", Description: "同步重扫文件差异（要求 draft + 已指定模板源；只回计数聚合，不回逐文件清单）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderWriteInput) (*mcp.CallToolResult, map[string]any, error) {
@@ -1218,9 +1224,6 @@ func mcpDeliveryDiffScanView(view *service.DiffScanView) map[string]any {
 // ── FR-248：交付域拒绝理由映射 ──
 
 const (
-	// mcpDeliveryIllegalStateCode 是交付状态机非法迁移的错误码：由 service 的 changeIllegalState 构造
-	// （无 apperr 预定义项），其 Message 自带当前状态与目标动作。
-	mcpDeliveryIllegalStateCode = "illegal_state"
 	// mcpDeliveryResumeModeRetryFailed / SkipFailed 是恢复模式枚举（与 service 的 resumeMode* 常量、
 	// HTTP 面 resumeBody.mode 同取值）。
 	mcpDeliveryResumeModeRetryFailed = "retry_failed"
@@ -1239,16 +1242,16 @@ const (
 
 // mcpDeliveryRejectedReasons 是交付系工具的错误码 → 稳定中文短语映射表（FR-248，规格 §3.5）。
 //
-// 本表只做「code → 短语」一件事，**不复制错误语义**：code 一律取自既有真源（多数直接用
-// apperr 的定义，故改名会编译失败、不会静默失配），短语是面向 AI 的稳定文案——同一错误码的文案
-// 不随领域内部措辞调整而漂移，AI 可据此分支处置。未列入的 code 沿用领域错误自带的中文说明（见
-// mcpDeliveryErrReason），绝不回空文案。
+// 本表只做「code → 短语」一件事，**不复制错误语义**：code 一律取自既有真源（全部直接引用
+// apperr 的预定义错误，故改名会编译失败、不会静默失配），短语是面向 AI 的稳定文案——同一错误码的
+// 文案不随领域内部措辞调整而漂移，AI 可据此分支处置。未列入的 code 沿用领域错误自带的中文说明
+// （见 mcpDeliveryErrReason），绝不回空文案。
 //
 // 表中比规格 §3.5 多一项 missing_reason：它是交付域自身产出的「原因必填」错误码（终止 / 整单回滚），
 // 与 approval_reason_required 同义，故映射到同一条文案——避免同一件事在 AI 侧出现两种说法。
 var mcpDeliveryRejectedReasons = map[string]string{
 	apperr.ErrApprovalReasonRequired.Code:       "必须填写原因（reason）",
-	mcpDeliveryIllegalStateCode:                 "当前状态不允许该操作",
+	apperr.ErrIllegalState.Code:                 "当前状态不允许该操作",
 	apperr.ErrChangeNoItems.Code:                "变更单没有任何变更项，无法提交审批",
 	apperr.ErrChangeNoTarget.Code:               "未解析出任何合格目标",
 	apperr.ErrChangeNoRollbackTarget.Code:       "单内无曾推送的目标可回滚",
@@ -1300,9 +1303,10 @@ func mcpDeliveryErrReason(err error) string {
 		return mcpDeliveryRejectedFallbackReason
 	}
 	// illegal_state 是唯一「稳定骨架 + 领域细节」的条目：短语说明处置方向，具体卡点（当前状态与
-	// 目标动作）由领域错误给出，拼在后面便于 AI 定位到具体迁移。
-	if domainErr.Code == mcpDeliveryIllegalStateCode && strings.TrimSpace(domainErr.Message) != "" {
-		return reason + "：" + domainErr.Message
+	// 目标动作）由 service 的 changeIllegalState 给出的 Message 补上，便于 AI 定位到具体迁移。
+	// 领域错误直接用 apperr.ErrIllegalState（Message 就是短语本身）时不重复拼接。
+	if detail := strings.TrimSpace(domainErr.Message); domainErr.Code == apperr.ErrIllegalState.Code && detail != "" && detail != reason {
+		return reason + "：" + detail
 	}
 	return reason
 }
