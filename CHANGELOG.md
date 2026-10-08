@@ -19,7 +19,23 @@
   - **隔离不变**：机器主体仍只可见自己创建的申请（服务端强制注入 `RequesterType` / `RequesterID`），新增负向用例锁定他人申请在列表不可见、详情一律拒绝且与"不存在"同形。
   - **测试**：六类申请点逐类断言 `orderId` 与四项计数，并断言计数**未进**冻结 payload；MCP 协议路径实测 `beacon.delivery.order.submit` 的结构化输出带两键；列表 / 详情字段集合逐键锁定（含两档字段数）与主体隔离负向用例。
 
+- **MCP 交付组单与止损工具（FR-246 / FR-247）**：只读侧补齐（FR-245）后，交付域机器主体仍**建不了单、也止不了血**——HTTP 面 21 项操作里最常用的组单与止损只对人类管理台开放，AI 发现问题后没有任何处置手段。现补上五个**直接执行**（不创建审批票据）的工具，语义与 `/admin/v2/change-orders` 系列端点逐一对齐：组单三项 `beacon.delivery.order.create` / `.order.update` / `.order.diff-scan`（`low`）、止损两项 `beacon.delivery.order.pause` / `.order.cancel`（`high`）。规格见 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md) §3.3 / §3.4。
+  - **组单一次成型**：`create` 可携带 `configChanges`，配置项与单在同一事务内落库（任一配置项非法则整单不落）；未提供即纯文件单。`update` 支持 `configChanges` 整组替换（传空数组即清空）。显式传入空 `batchSizes` 不会被当成「未提供」静默忽略，而是原样交给领域层拒绝（`batchSizes 不能为空`）——否则客户端以为改成了零批次、实际沿用默认值，成功与失败都看不出来。`diff-scan` 只回**计数聚合** `{add,update,delete,total,snapshotAt}`——逐文件明细在大单（上千差异项）下会撑爆返回体，明细仍走 HTTP 面。
+  - **止损直执**：`pause` 把 `rolling` 打成 `paused(manual)` 且不打断在途目标；`cancel` 把 `rolling` / `paused` 打成 `cancelled`，`reason` **必填**（与 HTTP 面一致）并入审计与单据。两项均为可逆操作（可 resume / 可回滚），故取 `high` 而非 `low`。
+  - **观测范围与只读工具同源**：建单必须落在调用者可观测的 namespace 内；其余四项按单所属 namespace 判归属，**跨 namespace 的 `orderId` 与不存在的单共用同一条拒绝文案**（不把范围校验变成存在性探针）。
+  - **门禁**：五项全部登记 `mcpToolCatalog`（组单 `low` / 止损 `high`、均带 `AutomationOnly`、`OperationKind` 留空），走 `mcpAddTool` 唯一注册入口；`observer` 一个都不可见。
+  - **测试**：目录等级与可见性、真实注册路径、一次成型（含非法配置项整单回滚）、差异扫描计数聚合、暂停/终止真效果与审计、拒绝文案逐条断言、跨 namespace 与不存在同文案。
+
+- **交付系工具的拒绝理由透出（FR-248）**：交付系工具（六项既有申请类 + FR-246 / FR-247 的五项直执工具）被拒时此前**一律回硬编码文案并丢弃领域错误**，AI 只能得知「被拒了」而不知为何——而状态不允许、缺模板源、无目标、缺原因这几类的处置方向完全不同（等状态 / 补源 / 改 selector / 补参数）。现改为回**可区分的中文原因**，与告警域先例对齐。
+  - **一处常量表**：领域错误码 → 稳定短语集中在 `mcpDeliveryRejectedReasons`（覆盖规格 §3.5 全部 16 个错误码，含大写的 `FORBIDDEN` 与 `not_creator`，另含交付域自身产出的 `missing_reason`）；code 取自既有真源（多数直接用 `apperr` 定义，改名即编译失败），短语不随领域内部措辞漂移。`illegal_state` 额外拼上**当前状态与目标动作**（如 `当前状态不允许该操作：当前状态 rolling 不允许 编辑`），便于直接定位卡点。
+  - **不回空文案**：未列入表的错误沿用领域错误自带的中文说明（已按 [ADR-0057](docs/adr/0057-surface-desensitized-errors.md) 脱敏），非领域错误（存储层等）回统一兜底文案，不透传内部细节。
+  - **测试**：逐错误码断言表内条目与映射结果（并断言表条目数精确匹配，防止静默增删）、兜底三条路径（领域说明 / 空说明 / 非领域错误）、以及经真实拒绝路径的逐工具文案断言。
+
+- **交付 MCP 工具的入参与审计口径收口**：`beacon.delivery.order.resume` 的 `mode` 明确枚举并在输入 schema 里带上字段描述（`retry_failed` / `skip_failed`，越界在调用领域层之前即拒）；`beacon.delivery.rollback.finish` **移除 `reason` 入参**——HTTP 面与 service 都不接受调用方原因（申请原因固定为「结束交付回滚」且已进冻结 payload），此前声明该字段却静默丢弃，会让 AI 误以为原因已生效；`beacon.delivery.order.delete` 改用**独立入参类型**（与 `order.submit` 解耦，避免任一方字段变更改到另一方的对外契约）；机器主体经 MCP 调用交付工具时，审计来源地址统一记 **`mcp`**（表达来源类别而非 IP，人类管理台仍记真实地址）。
+
 ### 修复
+
+- **交付建单可一次携带配置变更项（FR-246）**：`DeliveryOrderService.Create` 此前按「`configChanges` 是 PATCH 专用」的旧约定**忽略该字段**，要挂配置变更只能「先建 draft、再 PATCH」两段式——中间态会被并发读到，机器主体也无法一次成单。现在创建路径与编辑路径共用同一套校验与 from 锚点计算（ADR-0071），配置项与单在同一事务内落库、任一配置项非法则整单不落（不留空壳单），审计 detail 记 `configChanges` 计数。HTTP 面请求体契约不变（原本就可传该字段，只是被忽略），前端既有两段式调用逐字兼容。
 
 - **管理台提审必填原因与幂等键（FR-251）**：`/changes` 的两个「提交审批」入口（详情页生命周期动作、引导创建向导第 5 步）此前**既不携带请求体、也不携带 `Idempotency-Key` 头**调用 `POST /admin/v2/change-orders/{id}/submit`。真机上这必然失败，且失败方式很恶劣：后端 `RequestSubmit` 强制 reason 非空（缺则 `400 approval_reason_required`）；即便补上原因，建审批申请时还会校验幂等键（缺则 `400 INVALID_PARAM`），而 submit 是「先冻结状态、后建申请」两步非事务——**键校验失败发生在状态冻结之后**，单据会被永久卡在 `pending_approval` 且审批列表里查无对应申请（真机实测单 1 / 单 4 均已卡死，该死结由批 2 的 FR-259 收敛）。演示模式下 mock 两道都不校验，问题被完整掩盖。现在两处入口都先收集提审原因再提交：详情页复用既有高风险确认弹窗的原因输入（与驳回 / 终止同形，未填写时确认置灰），向导第 5 步新增必填「提审原因」字段（未填写时底部「提交审批」置灰）；提审时按 `randomId()`（非安全上下文可用的 UUID 生成器，与 API 密钥 / MCP 客户端先例一致）生成一次性幂等键随 `Idempotency-Key` 头发送，**同一提审意图重试复用同一键**（后端据此去重，换键会把重试变成新申请），弹窗关闭 / 向导重开即作废重来。原因与键一并进入审批申请与审计留痕。
   - **mock 对齐真机契约**：devmock 的提审端点补齐两道守卫并**保持真机判定顺序**（先 reason → 再查单 404 → 再状态 409 → 最后校验幂等键，键规则对齐 `validIdempotencyKey`：非空、≤64、可打印 ASCII），避免「演示模式能提审、真机 400」再次被掩盖；键校验刻意置于任何状态变更之前，演示模式不产生真机那种不可恢复的卡死单据。

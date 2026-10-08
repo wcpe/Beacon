@@ -179,6 +179,21 @@ var mcpToolCatalog = []mcpToolSpec{
 	{Name: "beacon.delivery.order.rollback", RiskLevel: MCPRiskCritical, AutomationOnly: true, OperationKind: "delivery.rollback"},
 	{Name: "beacon.delivery.batch.confirm", RiskLevel: MCPRiskHigh, AutomationOnly: true, OperationKind: "delivery.confirm_batch"},
 	{Name: "beacon.delivery.rollback.finish", RiskLevel: MCPRiskHigh, AutomationOnly: true, OperationKind: "delivery.rollback_finish"},
+
+	// ── 交付直执写工具（FR-246 / FR-247）：draft 阶段组单与止损，直接执行 + 同事务写审计、无审批票据 ──
+	//
+	// 组单三项取 low：均为 draft 阶段操作，无生产副作用，且领域守卫已限界（draft 状态机、
+	// selector 跨 namespace 拒绝、模板源结构校验）。止损两项取 high：直执改变生产状态
+	// （进行中的灰度被暂停 / 终止），但可逆（可 resume / 可回滚）——与告警处置同档（FR-247）。
+	//
+	// 五项 OperationKind **全部留空**：直执无审批票据（对齐告警处置先例），故不触发
+	// 「catalog 等级 ≥ descriptor」约束，也**不改覆盖测试的 wantChecked 计数**；
+	// 若将来给任一项挂上 kind，必须同步核对并更新该计数。
+	{Name: "beacon.delivery.order.create", RiskLevel: MCPRiskLow, AutomationOnly: true},
+	{Name: "beacon.delivery.order.update", RiskLevel: MCPRiskLow, AutomationOnly: true},
+	{Name: "beacon.delivery.order.diff-scan", RiskLevel: MCPRiskLow, AutomationOnly: true},
+	{Name: "beacon.delivery.order.pause", RiskLevel: MCPRiskHigh, AutomationOnly: true},
+	{Name: "beacon.delivery.order.cancel", RiskLevel: MCPRiskHigh, AutomationOnly: true},
 }
 
 // mcpToolSpecIndex 是 mcpToolCatalog 的名到登记项索引，构造期一次建成。

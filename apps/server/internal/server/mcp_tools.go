@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -135,6 +137,9 @@ func (r *MCPToolRegistry) NewMCPServer(principal auth.Principal) *mcp.Server {
 		r.registerAgentCommandApproval(server, principal)
 		r.registerSystemApproval(server, principal)
 		r.registerDeliveryApproval(server, principal)
+		// 交付组单 / 止损（FR-246 / FR-247）：draft 阶段组单与进行中单的止损都是**直接执行 + 写审计**，
+		// 不发审批票据（对齐告警处置先例）——故与上面的申请类工具分两个注册函数、两种语义。
+		r.registerDeliveryDirectTools(server, principal)
 		// 告警处置：**高风险**（`mcpToolCatalog` 登记为 high、与 spec / API 文档同档）但直接执行——
 		// 管理台同语义可直执、故不发审批票据；批量仅影响 open 行、幂等且同事务写审计；
 		// 单条与批量都受调用者观测范围约束（见 mcp_alert_tools.go）。风险等级与是否走审批是两把尺子，
@@ -258,27 +263,173 @@ type mcpDangerousSettingInput struct {
 	IdempotencyKey string `json:"idempotencyKey"`
 }
 
+// mcpDeliveryResumeInput 是「创建继续灰度审批申请」的入参。
+//
+// Mode 是恢复模式，只接受 retry_failed / skip_failed（与 HTTP 面 resumeBody.mode 及 service 的
+// resumeMode* 常量同一枚举）；MCP 面按告警处置的 status 白名单先例**先判枚举**，不把非法值交给领域层。
+// 字段描述随 schema 下发给客户端，使 AI 无需读文档即知合法取值。
 type mcpDeliveryResumeInput struct {
 	OrderID        uint   `json:"orderId"`
-	Mode           string `json:"mode"`
+	Mode           string `json:"mode" jsonschema:"恢复模式：retry_failed（重试失败的目标）或 skip_failed（跳过失败的目标）"`
 	Reason         string `json:"reason"`
 	IdempotencyKey string `json:"idempotencyKey"`
 }
+
+// mcpDeliverySubmitInput 是提交审批申请入参。
 type mcpDeliverySubmitInput struct {
 	OrderID        uint   `json:"orderId"`
 	Reason         string `json:"reason"`
 	IdempotencyKey string `json:"idempotencyKey"`
 }
+
+// mcpDeliveryDeleteInput 是草稿删除申请入参。
+//
+// 与 mcpDeliverySubmitInput **刻意分成两个类型**：两者当前字段集相同纯属巧合，语义（删除 vs 提交）
+// 与后续演进（删除可能补确认串、提交可能补摘要）互不相干；共用一个类型会让任一方的字段变更悄悄
+// 改到另一方的对外契约。
+type mcpDeliveryDeleteInput struct {
+	OrderID        uint   `json:"orderId"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+// mcpDeliveryRollbackInput 是整单回滚申请入参。
 type mcpDeliveryRollbackInput struct {
 	OrderID        uint   `json:"orderId"`
 	Reason         string `json:"reason"`
 	IdempotencyKey string `json:"idempotencyKey"`
 }
+
+// mcpDeliveryRollbackFinishInput 是结束回滚申请入参：**不收 reason**。
+//
+// 结束回滚在 HTTP 面与 service 侧都不接受调用方原因（申请原因固定为「结束交付回滚」，
+// 已写入冻结 payload 与审批依据），此前 MCP 面却声明了 reason 字段并静默丢弃——AI 以为
+// 提供了原因、实际什么都没发生。FR-250 收口时选择**移除该字段**而非新增持久化：给它补原因
+// 要改冻结 payload（连带审批指纹与执行侧适配器），属交付 MCP 工具之外的审批契约变更。
+type mcpDeliveryRollbackFinishInput struct {
+	OrderID        uint   `json:"orderId"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+// mcpDeliveryBatchInput 是批次确认申请入参。
 type mcpDeliveryBatchInput struct {
 	OrderID        uint   `json:"orderId"`
 	BatchNo        int    `json:"batchNo"`
 	IdempotencyKey string `json:"idempotencyKey"`
 }
+
+// ── FR-246 / FR-247：交付域直执写工具入参 ──
+
+// mcpDeliveryConfigChangeInput 是组单的配置变更项入参（键名沿用 HTTP 面 changeConfigChangeInput，
+// 即 contracts 的 ConfigChangeInput）：configFromVersionId 由服务端按 ADR-0071 计算，客户端携带值不采信。
+type mcpDeliveryConfigChangeInput struct {
+	ConfigScopeKind   string `json:"configScopeKind"`
+	ConfigScopeID     uint   `json:"configScopeId"`
+	ConfigToVersionID uint   `json:"configToVersionId"`
+}
+
+// mcpDeliverySelectorInput 是组单的目标筛选器入参。
+//
+// 与 service.ChangeSelector 同键名（键名即 HTTP 契约），但各选取维度**都可缺省**（缺省 = 空集合）：
+// 直接用 service 的结构体会让 schema 把 regions / zones / servers / excludes 全部标成必填，
+// 客户端为了通过校验不得不把空数组一个个写出来——那是把存储形状当成入参契约。
+type mcpDeliverySelectorInput struct {
+	All      bool     `json:"all,omitempty"`
+	Regions  []uint   `json:"regions,omitempty"`
+	Zones    []uint   `json:"zones,omitempty"`
+	Servers  []string `json:"servers,omitempty"`
+	Excludes []string `json:"excludes,omitempty"`
+}
+
+// toService 映射为组单服务的筛选器。
+func (s *mcpDeliverySelectorInput) toService() *service.ChangeSelector {
+	if s == nil {
+		return nil
+	}
+	return &service.ChangeSelector{
+		All: s.All, Regions: s.Regions, Zones: s.Zones, Servers: s.Servers, Excludes: s.Excludes,
+	}
+}
+
+// mcpDeliveryOrderEditFields 是组单的可编辑字段集（create 与 update 共形，故抽成一处防漂移）。
+//
+// 指针字段 = 「未提供」（创建取默认、编辑保持不变），与 service.ChangeOrderInput 同语义；
+// 故阈值类字段用指针而非值——`failureRateThresholdPercent: 0` 是「关闭熔断」的有效取值，
+// 用值类型会与「未提供」混淆。
+type mcpDeliveryOrderEditFields struct {
+	Description                   *string                        `json:"description,omitempty"`
+	SourceServerID                *string                        `json:"sourceServerId,omitempty"`
+	ScanDir                       *string                        `json:"scanDir,omitempty"`
+	Selector                      *mcpDeliverySelectorInput      `json:"selector,omitempty"`
+	BatchMode                     *string                        `json:"batchMode,omitempty"`
+	BatchSizes                    []int                          `json:"batchSizes,omitempty"`
+	ActivationMethod              *string                        `json:"activationMethod,omitempty"`
+	ObserveWindowSec              *int                           `json:"observeWindowSec,omitempty"`
+	ActivateTimeoutSec            *int                           `json:"activateTimeoutSec,omitempty"`
+	FailureRateThresholdPercent   *int                           `json:"failureRateThresholdPercent,omitempty"`
+	UnhealthyRateThresholdPercent *int                           `json:"unhealthyRateThresholdPercent,omitempty"`
+	ConfigChanges                 []mcpDeliveryConfigChangeInput `json:"configChanges,omitempty"`
+}
+
+// mcpDeliveryCreateInput 是建 draft 变更单入参（组单一次成型：configChanges 随创建一并写入）。
+// namespaceId 走 mcpScopeInput（字符串形式的数值 ID，必填），与交付只读工具同口径。
+type mcpDeliveryCreateInput struct {
+	mcpScopeInput
+	Title string `json:"title"`
+	mcpDeliveryOrderEditFields
+}
+
+// mcpDeliveryUpdateInput 是编辑 draft 入参：orderId 定位 + 同 create 的可改字段子集（无 namespaceId）。
+type mcpDeliveryUpdateInput struct {
+	mcpScopeInput
+	OrderID uint    `json:"orderId"`
+	Title   *string `json:"title,omitempty"`
+	mcpDeliveryOrderEditFields
+}
+
+// mcpDeliveryOrderWriteInput 是按 orderId 定位的直执工具入参（差异扫描 / 暂停共形）。
+type mcpDeliveryOrderWriteInput struct {
+	mcpScopeInput
+	OrderID uint `json:"orderId"`
+}
+
+// mcpDeliveryCancelInput 是紧急终止入参：reason **必填**（与 HTTP 面一致，原因入审计与单据）。
+type mcpDeliveryCancelInput struct {
+	mcpScopeInput
+	OrderID uint   `json:"orderId"`
+	Reason  string `json:"reason"`
+}
+
+// toServiceInput 把 MCP 入参映射为组单服务入参（nil = 未提供，与 HTTP 面 toServiceInput 同语义）。
+func (f mcpDeliveryOrderEditFields) toServiceInput() service.ChangeOrderInput {
+	input := service.ChangeOrderInput{
+		Description: f.Description, SourceServerID: f.SourceServerID, ScanDir: f.ScanDir,
+		Selector: f.Selector.toService(), BatchMode: f.BatchMode, ActivationMethod: f.ActivationMethod,
+		ObserveWindowSec: f.ObserveWindowSec, ActivateTimeoutSec: f.ActivateTimeoutSec,
+		FailureRateThresholdPercent:   f.FailureRateThresholdPercent,
+		UnhealthyRateThresholdPercent: f.UnhealthyRateThresholdPercent,
+	}
+	// BatchSizes 按「字段是否出现」判断而非长度：显式传入空数组是**合法 JSON 但非法取值**，
+	// 必须原样交给领域层拒绝（batchSizes 不能为空），不能被工具侧静默当成「未提供」——否则
+	// 客户端传了空数组、以为已改成零批次，实际沿用默认值，失败与成功都看不出来。
+	if f.BatchSizes != nil {
+		sizes := append([]int(nil), f.BatchSizes...)
+		input.BatchSizes = &sizes
+	}
+	// 同上：显式传入空数组 = 清空配置项（与 service 的 nil 语义区分）。
+	if f.ConfigChanges != nil {
+		changes := make([]service.ChangeConfigInput, 0, len(f.ConfigChanges))
+		for _, change := range f.ConfigChanges {
+			changes = append(changes, service.ChangeConfigInput{
+				ConfigScopeKind: change.ConfigScopeKind, ConfigScopeID: change.ConfigScopeID,
+				ConfigToVersionID: change.ConfigToVersionID,
+			})
+		}
+		input.ConfigChanges = &changes
+	}
+	return input
+}
+
 type mcpConfigInput struct {
 	ID             uint     `json:"id"`
 	Content        string   `json:"content"`
@@ -847,22 +998,28 @@ func (r *MCPToolRegistry) registerSystemApproval(server *mcp.Server, principal a
 	})
 }
 
+// registerDeliveryApproval 登记交付域「只创建审批申请」的六个工具：工具本身不执行领域动作，
+// 只把单据冻到待审批态并创建统一审批申请，批准后由 approval worker 执行（spec §3 的审批链路）。
+//
+// 拒绝路径统一经 mcpDeliveryErrReason 映射为可区分的中文原因（FR-248）：此前一律回硬编码文案、
+// 把领域错误整个丢掉，AI 只能得到「被拒了」而不知为何——状态不允许、缺模板源、无目标、缺原因
+// 这几类处置方向完全不同（等状态 / 补源 / 改 selector / 补参数）。
 func (r *MCPToolRegistry) registerDeliveryApproval(server *mcp.Server, principal auth.Principal) {
 	if r.delivery == nil && r.orders == nil {
 		return
 	}
 	if r.orders != nil {
 		mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.submit", Description: "提交变更单统一审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliverySubmitInput) (*mcp.CallToolResult, map[string]any, error) {
-			ticket, err := r.orders.RequestSubmit(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
+			ticket, err := r.orders.RequestSubmit(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), mcpClientIP)
 			if err != nil {
-				return mcpRejectedResult()
+				return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
 			}
 			return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 		})
-		mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.delete", Description: "提交变更单草稿删除审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliverySubmitInput) (*mcp.CallToolResult, map[string]any, error) {
-			ticket, err := r.orders.RequestDelete(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
+		mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.delete", Description: "提交变更单草稿删除审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
+			ticket, err := r.orders.RequestDelete(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), mcpClientIP)
 			if err != nil {
-				return mcpRejectedResult()
+				return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
 			}
 			return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 		})
@@ -870,34 +1027,289 @@ func (r *MCPToolRegistry) registerDeliveryApproval(server *mcp.Server, principal
 	if r.delivery == nil {
 		return
 	}
-	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.resume", Description: "提交交付变更单继续审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryResumeInput) (*mcp.CallToolResult, map[string]any, error) {
-		ticket, err := r.delivery.RequestResume(in.OrderID, in.Mode, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.resume", Description: "提交交付变更单继续审批申请（mode 仅 retry_failed / skip_failed）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryResumeInput) (*mcp.CallToolResult, map[string]any, error) {
+		if _, ok := mcpDeliveryResumeMode(in.Mode); !ok {
+			return mcpRejectedResultWithReason(mcpDeliveryResumeModeRejectedReason)
+		}
+		ticket, err := r.delivery.RequestResume(in.OrderID, in.Mode, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), mcpClientIP)
 		if err != nil {
-			return mcpRejectedResult()
+			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
 		}
 		return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 	})
-	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.rollback", Description: "提交交付变更单回滚审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
-		ticket, err := r.delivery.RequestRollback(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.rollback", Description: "提交交付变更单回滚审批申请（原因必填）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
+		ticket, err := r.delivery.RequestRollback(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), mcpClientIP)
 		if err != nil {
-			return mcpRejectedResult()
+			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
 		}
 		return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 	})
 	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.batch.confirm", Description: "提交交付批次确认审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryBatchInput) (*mcp.CallToolResult, map[string]any, error) {
-		ticket, err := r.delivery.RequestConfirmBatch(in.OrderID, in.BatchNo, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
+		ticket, err := r.delivery.RequestConfirmBatch(in.OrderID, in.BatchNo, principal, in.IdempotencyKey, principal.AuditRef(), mcpClientIP)
 		if err != nil {
-			return mcpRejectedResult()
+			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
 		}
 		return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 	})
-	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.rollback.finish", Description: "提交交付回滚结束审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
-		ticket, err := r.delivery.RequestFinishRollback(in.OrderID, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.rollback.finish", Description: "提交交付回滚结束审批申请（无原因入参，申请原因由服务端固定）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryRollbackFinishInput) (*mcp.CallToolResult, map[string]any, error) {
+		ticket, err := r.delivery.RequestFinishRollback(in.OrderID, principal, in.IdempotencyKey, principal.AuditRef(), mcpClientIP)
 		if err != nil {
-			return mcpRejectedResult()
+			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
 		}
 		return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 	})
+}
+
+// ── FR-246 / FR-247：交付域直执写工具 ──
+//
+// 五项工具与上面六项**分档**：组单（create / update / diff-scan）与止损（pause / cancel）按 FR-211
+// 与规格 §3.1 的口径**直接执行并写审计**，不创建审批票据（catalog 的 OperationKind 留空），
+// 因此不经统一审批服务、也没有幂等键入参（领域动作自身幂等：创建各建一单、编辑是整组覆盖、
+// 重扫是整组替换、暂停/终止有状态机 CAS 守卫）。
+//
+// 观测范围与只读工具同源：建单必须落在调用者可观测的 namespace 内（缺 namespaceId 或范围外即拒），
+// 其余四项按 orderId 定位、按单所属 namespace 判归属，**范围外与不存在共用同一条文案**
+// （不把范围校验变成存在性探针，与 mcp_alert_tools.go 单条处置同口径）。
+//
+// 审计口径（FR-250）：五项都把 clientIP 记为 mcpClientIP，与既有六项申请类工具逐字一致，
+// 使审计能区分「机器主体经 MCP 直执」与「人类管理台操作」。
+func (r *MCPToolRegistry) registerDeliveryDirectTools(server *mcp.Server, principal auth.Principal) {
+	op := principal.AuditRef()
+	r.registerDeliveryOrderWriteTools(server, op)
+	r.registerDeliveryDiffScanTool(server, op)
+	r.registerDeliveryStopTools(server, op)
+}
+
+// registerDeliveryOrderWriteTools 登记组单工具（建单 / 编辑），依赖组单生命周期服务。
+func (r *MCPToolRegistry) registerDeliveryOrderWriteTools(server *mcp.Server, op string) {
+	if r.orders == nil {
+		return
+	}
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.create", Description: "创建 draft 变更单（可携带 configChanges 一次成型；namespaceId 为字符串形式的数值 ID，必填）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryCreateInput) (*mcp.CallToolResult, map[string]any, error) {
+		scope, ok := r.mcpObservationScope(in.mcpScopeInput)
+		if !ok {
+			return mcpRejectedResultWithReason(mcpScopeRejectedReason)
+		}
+		if in.NamespaceID == "" {
+			return mcpRejectedResultWithReason(mcpDeliveryNamespaceRejectedReason)
+		}
+		nsID, err := r.mcpResolveNamespaceID("", in.NamespaceID, scope)
+		if err != nil {
+			return mcpRejectedResultWithReason(mcpScopeRejectedReason)
+		}
+		input := in.toServiceInput()
+		input.Title = &in.Title
+		detail, err := r.orders.Create(nsID, input, op, mcpClientIP)
+		if err != nil {
+			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryWriteOrderView(detail), nil
+	})
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.update", Description: "编辑 draft 变更单（approved 单编辑会作废审批回 draft；configChanges 整组替换，传空数组即清空）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryUpdateInput) (*mcp.CallToolResult, map[string]any, error) {
+		if _, ok := r.mcpDeliveryWritableOrder(in.mcpScopeInput, in.OrderID); !ok {
+			return mcpRejectedResultWithReason(mcpDeliveryOutOfScopeRejectedReason)
+		}
+		input := in.toServiceInput()
+		input.Title = in.Title
+		detail, err := r.orders.Update(in.OrderID, input, op, mcpClientIP)
+		if err != nil {
+			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryWriteOrderView(detail), nil
+	})
+}
+
+// registerDeliveryDiffScanTool 登记差异扫描工具（另依赖差异面服务；未装配即整项不注册）。
+//
+// 除差异面服务外还必须已接组单读服务：观测范围判定按 orderId 取单（mcpDeliveryWritableOrder），
+// 缺了它工具会注册成一个恒拒的壳——宁可少暴露，也不暴露注定不可用的工具。
+func (r *MCPToolRegistry) registerDeliveryDiffScanTool(server *mcp.Server, op string) {
+	if r.reads.deliveryDiff == nil || r.orders == nil {
+		return
+	}
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.diff-scan", Description: "同步重扫文件差异（要求 draft + 已指定模板源；只回计数聚合，不回逐文件清单）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderWriteInput) (*mcp.CallToolResult, map[string]any, error) {
+		if _, ok := r.mcpDeliveryWritableOrder(in.mcpScopeInput, in.OrderID); !ok {
+			return mcpRejectedResultWithReason(mcpDeliveryOutOfScopeRejectedReason)
+		}
+		view, err := r.reads.deliveryDiff.DiffScan(in.OrderID, op, mcpClientIP)
+		if err != nil {
+			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryDiffScanView(view), nil
+	})
+}
+
+// registerDeliveryStopTools 登记止损工具（暂停 / 终止），依赖灰度编排器的直执入口。
+func (r *MCPToolRegistry) registerDeliveryStopTools(server *mcp.Server, op string) {
+	if r.delivery == nil {
+		return
+	}
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.pause", Description: "人工暂停进行中的变更单（rolling → paused，不打断在途目标）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryOrderWriteInput) (*mcp.CallToolResult, map[string]any, error) {
+		if _, ok := r.mcpDeliveryWritableOrder(in.mcpScopeInput, in.OrderID); !ok {
+			return mcpRejectedResultWithReason(mcpDeliveryOutOfScopeRejectedReason)
+		}
+		detail, err := r.delivery.Pause(in.OrderID, op, mcpClientIP)
+		if err != nil {
+			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryWriteOrderView(detail), nil
+	})
+	mcpAddTool(server, &mcp.Tool{Name: "beacon.delivery.order.cancel", Description: "紧急终止变更单（rolling / paused → cancelled；reason 必填并入审计）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryCancelInput) (*mcp.CallToolResult, map[string]any, error) {
+		if strings.TrimSpace(in.Reason) == "" {
+			return mcpRejectedResultWithReason(mcpDeliveryReasonRequiredRejectedReason)
+		}
+		if _, ok := r.mcpDeliveryWritableOrder(in.mcpScopeInput, in.OrderID); !ok {
+			return mcpRejectedResultWithReason(mcpDeliveryOutOfScopeRejectedReason)
+		}
+		detail, err := r.delivery.Cancel(in.OrderID, in.Reason, op, mcpClientIP)
+		if err != nil {
+			return mcpRejectedResultWithReason(mcpDeliveryErrReason(err))
+		}
+		return &mcp.CallToolResult{}, mcpDeliveryWriteOrderView(detail), nil
+	})
+}
+
+// mcpClientIP 是 MCP 面写操作在审计 / 冻结 payload 里登记的来源地址口径。
+//
+// MCP 工具拿不到（也不需要）调用方的网络地址，而领域方法都要一个 clientIP：统一记 "mcp"，
+// 使审计能区分「机器主体经 MCP 直执」与「人类管理台操作（记真实来源地址）」。语义为**来源类别**
+// 而非网络地址，已在 docs/API.md 的 MCP 段声明。
+const mcpClientIP = "mcp"
+
+// mcpDeliveryWritableOrder 解析观察范围并按 orderId 取单，校验单归属落在范围内（写工具版）。
+//
+// 复用只读工具的取值口径（mcpDeliveryOrderDetail）：单的 namespace 是服务端事实，范围外与不存在
+// 都返回 false，调用方因此只能回同一条拒绝文案——不泄露范围外单是否存在。
+func (r *MCPToolRegistry) mcpDeliveryWritableOrder(in mcpScopeInput, orderID uint) (*service.ChangeOrderDetailView, bool) {
+	if r.orders == nil {
+		return nil, false
+	}
+	return r.mcpDeliveryOrderDetail(in, orderID)
+}
+
+// mcpDeliveryWriteOrderView 投影直执工具的执行结果：只回单据定位与生效状态。
+//
+// 不回详情视图：create / update / pause / cancel 的返回体是「这次动作把单带到了哪个状态」，
+// 全貌走只读工具 order.get / targets.list / events.list 按需拉取（与本域只读投影分工一致）。
+func mcpDeliveryWriteOrderView(view *service.ChangeOrderDetailView) map[string]any {
+	if view == nil {
+		return map[string]any{}
+	}
+	return map[string]any{"orderId": view.ID, "status": view.Status}
+}
+
+// mcpDeliveryDiffScanView 投影差异扫描结果为**计数聚合**：
+// 逐文件明细在大单（上千差异项）下会撑爆返回体，且 AI 关心的是「差异面有多大」；
+// 明细仍可由 HTTP 面 / 后续按需工具拉取。键名对齐规格 §3.3，动作取值对齐 model.ChangeItemAction*。
+func mcpDeliveryDiffScanView(view *service.DiffScanView) map[string]any {
+	out := map[string]any{"add": 0, "update": 0, "delete": 0, "total": 0, "snapshotAt": nil}
+	if view == nil {
+		return out
+	}
+	counts := map[string]int{"add": 0, "update": 0, "delete": 0}
+	for _, item := range view.Items {
+		if item.Action == nil {
+			continue
+		}
+		if _, known := counts[*item.Action]; known {
+			counts[*item.Action]++
+		}
+	}
+	out["add"], out["update"], out["delete"] = counts["add"], counts["update"], counts["delete"]
+	out["total"] = len(view.Items)
+	out["snapshotAt"] = mcpNullableTime(view.DiffSnapshotAt)
+	return out
+}
+
+// ── FR-248：交付域拒绝理由映射 ──
+
+const (
+	// mcpDeliveryResumeModeRetryFailed / SkipFailed 是恢复模式枚举（与 service 的 resumeMode* 常量、
+	// HTTP 面 resumeBody.mode 同取值）。
+	mcpDeliveryResumeModeRetryFailed = "retry_failed"
+	mcpDeliveryResumeModeSkipFailed  = "skip_failed"
+	// mcpDeliveryResumeModeRejectedReason 是恢复模式越界的拒绝文案。
+	mcpDeliveryResumeModeRejectedReason = "mode 仅支持 retry_failed / skip_failed"
+	// mcpDeliveryNamespaceRejectedReason 是组单缺少落点环境的拒绝文案（写操作必须显式声明 namespace）。
+	mcpDeliveryNamespaceRejectedReason = "必须填写 namespaceId（字符串形式的数值 ID）"
+	// mcpDeliveryOutOfScopeRejectedReason 是写工具「目标单不可操作」文案，**刻意同时覆盖**两种情况：
+	// ① 单不在调用者观测范围内；② 单不存在。共用一条理由，避免调用方拿两者差异探测范围外是否存在该单
+	// （与只读工具、告警处置同口径）。
+	mcpDeliveryOutOfScopeRejectedReason = "变更单不存在或不在观察范围内"
+	// mcpDeliveryRejectedFallbackReason 是非领域错误（存储层等）的统一兜底文案：不透传内部细节，也绝不回空文案。
+	mcpDeliveryRejectedFallbackReason = "交付操作未完成"
+)
+
+// mcpDeliveryRejectedReasons 是交付系工具的错误码 → 稳定中文短语映射表（FR-248，规格 §3.5）。
+//
+// 本表只做「code → 短语」一件事，**不复制错误语义**：code 取自既有真源——除 missing_reason 外
+// 全部直接引用 apperr 的预定义错误（改名会编译失败、不会静默失配）；missing_reason 尚无 apperr
+// 预定义项（由 service 的 Cancel / applyRollback 以「同一个字面量」产出，配置中心也复用该码），
+// 故此处按同一字面量登记。短语是面向 AI 的稳定文案——同一错误码的文案不随领域内部措辞调整而漂移，
+// AI 可据此分支处置。未列入的 code 沿用领域错误自带的中文说明（见 mcpDeliveryErrReason），绝不回空文案。
+//
+// 表中比规格 §3.5 多一项 missing_reason：它是交付域自身产出的「原因必填」错误码（终止 / 整单回滚），
+// 与 approval_reason_required 同义，故映射到同一条文案——避免同一件事在 AI 侧出现两种说法。
+var mcpDeliveryRejectedReasons = map[string]string{
+	apperr.ErrApprovalReasonRequired.Code:       "必须填写原因（reason）",
+	apperr.ErrIllegalState.Code:                 "当前状态不允许该操作",
+	apperr.ErrChangeNoItems.Code:                "变更单没有任何变更项，无法提交审批",
+	apperr.ErrChangeNoTarget.Code:               "未解析出任何合格目标",
+	apperr.ErrChangeNoRollbackTarget.Code:       "单内无曾推送的目标可回滚",
+	apperr.ErrChangeSourceMissing.Code:          "未指定黄金模板源，无法扫描文件差异",
+	apperr.ErrChangeSourceInvalid.Code:          "模板源必须已确认绑定且在线的 backend 子服",
+	apperr.ErrChangeSourceSnapshotMissing.Code:  "模板源尚无文件资产快照，请先重扫",
+	apperr.ErrChangeSelectorCrossNamespace.Code: "selector 引用了不属于本环境的实体",
+	apperr.ErrChangeConfigVersionInvalid.Code:   "配置版本不存在或与作用域不匹配",
+	apperr.ErrChangeBatchNotFound.Code:          "批次不存在",
+	apperr.ErrChangeResumeModeRequired.Code:     "熔断/准备失败暂停必须指定 mode 与原因",
+	apperr.ErrChangeOrderNotFound.Code:          "变更单不存在",
+	apperr.ErrChangeApproverSeparation.Code:     "审批人不得是创建人",
+	apperr.ErrChangeNotCreator.Code:             "仅创建人可撤回变更单",
+	apperr.ErrForbidden.Code:                    "当前主体无权执行该操作",
+	"missing_reason":                            "必须填写原因（reason）",
+}
+
+// mcpDeliveryReasonRequiredRejectedReason 是 MCP 面前置校验「原因必填」的文案：
+// 取映射表中 approval_reason_required 的短语，使前置校验与服务侧错误码共用同一处文案。
+var mcpDeliveryReasonRequiredRejectedReason = mcpDeliveryRejectedReasons[apperr.ErrApprovalReasonRequired.Code]
+
+// mcpDeliveryResumeMode 校验恢复模式枚举；不合法即拒绝（MCP 面先判，不把非法值交给领域层）。
+func mcpDeliveryResumeMode(raw string) (string, bool) {
+	switch raw {
+	case mcpDeliveryResumeModeRetryFailed, mcpDeliveryResumeModeSkipFailed:
+		return raw, true
+	default:
+		return "", false
+	}
+}
+
+// mcpDeliveryErrReason 把交付领域错误映射为可区分的中文原因（FR-248）。
+//
+// 顺序：查常量映射表 → 未列入则沿用领域错误自带的中文说明（已按 ADR-0057 脱敏）→ 非领域错误回统一兜底。
+// 任何分支都不回空文案（规格 §3.5「其他」行）。
+func mcpDeliveryErrReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	var domainErr *apperr.Error
+	if !errors.As(err, &domainErr) {
+		return mcpDeliveryRejectedFallbackReason
+	}
+	reason, ok := mcpDeliveryRejectedReasons[domainErr.Code]
+	if !ok {
+		if strings.TrimSpace(domainErr.Message) != "" {
+			return domainErr.Message
+		}
+		return mcpDeliveryRejectedFallbackReason
+	}
+	// illegal_state 是唯一「稳定骨架 + 领域细节」的条目：短语说明处置方向，具体卡点（当前状态与
+	// 目标动作）由 service 的 changeIllegalState 给出的 Message 补上，便于 AI 定位到具体迁移。
+	// 领域错误直接用 apperr.ErrIllegalState（Message 就是短语本身）时不重复拼接。
+	if detail := strings.TrimSpace(domainErr.Message); domainErr.Code == apperr.ErrIllegalState.Code && detail != "" && detail != reason {
+		return reason + "：" + detail
+	}
+	return reason
 }
 
 func normalizedMCPPage(page int) int {
