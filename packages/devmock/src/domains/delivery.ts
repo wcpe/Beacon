@@ -664,7 +664,9 @@ function applyFinishRollbackApproved(order: OrderState): void {
 }
 
 function toSummary(order: OrderState): ChangeOrderSummary {
-  const summary: ChangeOrderSummary & { selector?: unknown; items?: unknown; batches?: unknown; targets?: unknown; events?: unknown; targetCounts?: unknown; rollbackCounts?: unknown } = { ...order }
+  const summary: ChangeOrderSummary & { selector?: unknown; items?: unknown; batches?: unknown; targets?: unknown; events?: unknown; targetCounts?: unknown; rollbackCounts?: unknown; approvalRequestId?: unknown } = { ...order }
+  // 真机变更单表不落该列、列表/详情都不带：mock 内部保留，响应一律剔除（防演示模式外泄已被证伪的字段）
+  delete summary.approvalRequestId
   delete summary.selector
   delete summary.items
   delete summary.batches
@@ -676,9 +678,10 @@ function toSummary(order: OrderState): ChangeOrderSummary {
 }
 
 function toDetail(order: OrderState): ChangeOrderDetail {
-  const detail: ChangeOrderDetail & { targets?: unknown; events?: unknown } = { ...order }
+  const detail: ChangeOrderDetail & { targets?: unknown; events?: unknown; approvalRequestId?: unknown } = { ...order }
   delete detail.targets
   delete detail.events
+  delete detail.approvalRequestId
   return detail
 }
 

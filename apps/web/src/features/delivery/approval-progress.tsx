@@ -41,6 +41,9 @@ const OPERATION_LABEL_KEYS: Record<string, string | undefined> = {
 /** 关联申请的展示上限（超出只提示条数，避免详情页被历史申请撑开） */
 const MAX_ROWS = 5
 
+/** 审批列表拉取页大小（接口无按资源过滤的参数，只按单号关键词拉一页后本地精确过滤） */
+const FETCH_PAGE_SIZE = 50
+
 interface ApprovalProgressProps {
   orderId: number
 }
@@ -50,19 +53,25 @@ export default function ApprovalProgress({ orderId }: ApprovalProgressProps) {
 
   const query = useQuery({
     queryKey: ['approvals', 'list', { changeOrderId: orderId }],
-    queryFn: () => fetchApprovals({ keyword: String(orderId), pageSize: 50 }),
+    queryFn: () => fetchApprovals({ keyword: String(orderId), pageSize: FETCH_PAGE_SIZE }),
     // 审批在审批中心推进，详情页需保持可见进度：轻量轮询（页面停留期间）
     refetchInterval: 5000,
   })
 
-  const rows = (query.data?.items ?? [])
+  const items = query.data?.items ?? []
+  const rows = items
     .filter((row) => isChangeOrderOf(row, orderId))
     .sort((left, right) => Date.parse(right.updatedAt ?? '') - Date.parse(left.updatedAt ?? ''))
-  // 截断判定用响应 total（接口无按资源过滤的参数，50 条拉取可能截断）：只展示最近 MAX_ROWS 条
-  const total = query.data?.total ?? rows.length
+  // 两层口径分开，避免互相灌水：
+  // ① 「本单超过展示上限」= 本地精确过滤后的条数（准确）；
+  // ② 「服务端分页截断」= 响应 total > 本页条数（keyword 命中含无关行，故只提示审批中心命中数）
+  const serverTruncated = (query.data?.total ?? items.length) > items.length
+  // 本页没有任何本单申请、但服务端可能还有下一页（响应 total 大于本页条数，或本页正好拉满一页）：
+  // 不能静默——用户无法区分「本单没有申请」与「申请在下一页」
+  const maybeUnmatched = rows.length === 0 && (serverTruncated || items.length >= FETCH_PAGE_SIZE)
 
-  // 草稿单还没有任何申请：不渲染空卡（也不占版面）
-  if (!query.isLoading && !query.isError && rows.length === 0) {
+  // 确无关联申请且无分页截断：不渲染空卡（也不占版面）
+  if (!query.isLoading && !query.isError && rows.length === 0 && !maybeUnmatched) {
     return null
   }
 
@@ -80,9 +89,19 @@ export default function ApprovalProgress({ orderId }: ApprovalProgressProps) {
             <ApprovalProgressRow key={row.requestId} row={row} />
           ))}
         </ul>
-        {total > MAX_ROWS && (
+        {rows.length > MAX_ROWS && (
           <p className="text-xs text-ink-3">
-            {t('delivery.changes.approval.truncated', { total, shown: MAX_ROWS })}
+            {t('delivery.changes.approval.truncatedOrder', { total: rows.length, shown: MAX_ROWS })}
+          </p>
+        )}
+        {maybeUnmatched && (
+          <p className="text-xs text-ink-3">{t('delivery.changes.approval.unmatched')}</p>
+        )}
+        {serverTruncated && (
+          <p className="text-xs text-ink-3">
+            {t('delivery.changes.approval.truncatedServer', {
+              count: query.data?.total ?? items.length,
+            })}
           </p>
         )}
       </AsyncSection>

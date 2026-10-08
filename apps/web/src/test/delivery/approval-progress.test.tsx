@@ -134,6 +134,47 @@ describe('ApprovalProgress 审批进度视图', () => {
     expect(screen.queryByText('审批进度')).not.toBeInTheDocument()
   })
 
+  it('服务端分页截断：只报审批中心命中数，不冒充本单申请数', async () => {
+    useScenario('normal')
+    // keyword 命中含无关行：本页 2 条都与本单无关，但 total=80 说明还有下一页
+    server.use(
+      http.get('*/admin/v2/approval-requests', () =>
+        HttpResponse.json({
+          items: [
+            approvalRow({ requestId: 'apr_server_8001', resourceType: 'server', resourceId: '8001' }),
+            approvalRow({ requestId: 'apr_change_9999', resourceId: '9999' }),
+          ],
+          total: 80,
+        }),
+      ),
+    )
+
+    renderPage(<ApprovalProgress orderId={8001} />)
+
+    // 本页确实没有本单申请 → 给非静默提示（用户无法区分「没有」与「在下一页」）
+    expect(await screen.findByText(/本页未见本单的申请/)).toBeInTheDocument()
+    // 服务端截断提示按 keyword 命中数措辞，不提「本单 N 条」
+    expect(screen.getByText('审批中心按该单号命中 80 条记录，可能还有未展示的申请')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '去审批中心' })).toHaveAttribute('href', '/approvals')
+  })
+
+  it('本页未命中但服务端未截断：仍不渲染空卡（确无关联申请）', async () => {
+    useScenario('normal')
+    server.use(
+      http.get('*/admin/v2/approval-requests', () =>
+        HttpResponse.json({
+          items: [approvalRow({ requestId: 'apr_server_8101', resourceType: 'server', resourceId: '8101' })],
+          total: 1,
+        }),
+      ),
+    )
+
+    renderPage(<ApprovalProgress orderId={8101} />)
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.queryByText('审批进度')).not.toBeInTheDocument()
+  })
+
   it('非提审申请（继续 / 批次放行 / 回滚）按操作键显示对应动作名，并列出多条历史申请', async () => {
     useScenario('normal')
     const rows = Array.from({ length: 6 }, (_, index) =>
@@ -158,8 +199,8 @@ describe('ApprovalProgress 审批进度视图', () => {
     expect(screen.getAllByText('继续灰度').length).toBeGreaterThan(0)
     expect(screen.getByText('已通过')).toBeInTheDocument()
     expect(screen.getByText('执行中')).toBeInTheDocument()
-    // 超出展示上限只提示不铺开（按响应 total 判定截断）
-    expect(screen.getByText('共 6 条申请，仅显示最近 5 条')).toBeInTheDocument()
+    // 超出展示上限只提示不铺开（本单口径：本地精确过滤后的条数）
+    expect(screen.getByText('本单共 6 条申请，仅显示最近 5 条')).toBeInTheDocument()
     const list = screen.getByRole('list')
     expect(within(list).getAllByRole('listitem')).toHaveLength(5)
   })

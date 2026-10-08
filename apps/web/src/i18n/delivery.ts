@@ -803,7 +803,12 @@ export const delivery = {
       updatedAt: '更新时间',
       reason: '申请原因',
       rejectReason: '驳回理由',
-      truncated: '共 {{total}} 条申请，仅显示最近 {{shown}} 条',
+      // 本单超出展示上限（本地精确过滤后的条数，准确）
+      truncatedOrder: '本单共 {{total}} 条申请，仅显示最近 {{shown}} 条',
+      // 服务端分页截断：keyword 命中含无关行，故只报审批中心命中数，不冒充本单条数
+      truncatedServer: '审批中心按该单号命中 {{count}} 条记录，可能还有未展示的申请',
+      // 本页无本单申请但服务端还有下一页：不静默，给出去审批中心的引导
+      unmatched: '本页未见本单的申请（可能分页在后），去审批中心查看完整列表',
       operation: {
         submit: '提交审批',
         draftDelete: '删除草稿',

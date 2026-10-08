@@ -804,7 +804,12 @@ export const delivery = {
       updatedAt: 'Updated',
       reason: 'Request reason',
       rejectReason: 'Rejection reason',
-      truncated: '{{total}} requests in total; showing the latest {{shown}}',
+      // Order exceeds the display cap (accurate: locally filtered rows)
+      truncatedOrder: '{{total}} requests for this order; showing the latest {{shown}}',
+      // Server-side paging truncation: keyword matches may include unrelated rows
+      truncatedServer: 'The approval center matched {{count}} records for this order id; more may exist',
+      // No matching row on this page while the server has more pages: never silent
+      unmatched: 'No request for this order on this page (paging may have more); open the approval center',
       operation: {
         submit: 'Submit for approval',
         draftDelete: 'Delete draft',
