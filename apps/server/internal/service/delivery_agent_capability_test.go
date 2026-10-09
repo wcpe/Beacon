@@ -57,6 +57,8 @@ func TestDeliveryAgentSupportsStreaming(t *testing.T) {
 // TestDeliveryGuardAgentCapability 启动守卫：目标或模板源不支持流式交付时整单拒绝启动、一条命令都不建。
 func TestDeliveryGuardAgentCapability(t *testing.T) {
 	h := newOrchestratorHarness(t)
+	// 显式开启守卫：harness 默认与生产一致（空串 = 不校验）。
+	h.env.settings.Set(SettingDeliveryMinAgentVersion, deliveryTestMinAgentVersion)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 100)
 	// 全部目标与模板源都给一个低于下限的旧版本（fixture 默认没上报版本 → 空串亦按不支持处理）。
 	h.seedAgentVersions(t, map[string]string{"t-1": "0.28.0", "t-2": "0.28.0", "src-1": "0.28.0"})
@@ -82,6 +84,8 @@ func TestDeliveryGuardAgentCapability(t *testing.T) {
 // TestDeliveryGuardAgentCapabilityAllowsNewAgent 新版 agent 行为完全不变：守卫放行、命令照常下发。
 func TestDeliveryGuardAgentCapabilityAllowsNewAgent(t *testing.T) {
 	h := newOrchestratorHarness(t)
+	// 显式开启守卫：harness 默认与生产一致（空串 = 不校验）。
+	h.env.settings.Set(SettingDeliveryMinAgentVersion, deliveryTestMinAgentVersion)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 100)
 	h.seedAgentVersions(t, map[string]string{"t-1": "1.4.0", "t-2": "1.4.0", "src-1": "1.4.0"})
 
@@ -104,6 +108,8 @@ func TestDeliveryGuardAgentCapabilityAllowsNewAgent(t *testing.T) {
 // TestDeliveryGuardAgentCapabilitySkipsTarget 下发守卫：批内单台旧 agent 被拒且原因可读，其余照常推进。
 func TestDeliveryGuardAgentCapabilitySkipsTarget(t *testing.T) {
 	h := newOrchestratorHarness(t)
+	// 显式开启守卫：harness 默认与生产一致（空串 = 不校验）。
+	h.env.settings.Set(SettingDeliveryMinAgentVersion, deliveryTestMinAgentVersion)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 100)
 	// 先按新版放行启动，再把 t-2 压成旧版本，使下发起的守卫命中单台。
 	h.seedAgentVersions(t, map[string]string{"t-1": "1.4.0", "t-2": "1.4.0", "src-1": "1.4.0"})
