@@ -172,15 +172,17 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar → 
 
 ## 文档
 
-**在线文档站**：<https://wcpe.github.io/Beacon/>（收录下列使用与接入文档）
+**在线文档站**：<https://beacon.wcpe.top/>（支持中文全文搜索与版本切换）
 
 面向使用与接入：
 
 | 文档 | 说明 |
 |------|------|
-| [docs/wiki/](docs/wiki/README.md) | 使用 Wiki：快速开始、集群搭建、功能教程与排障 |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | 部署 / 升级 / 备份 / 排障 |
-| [docs/SDK.md](docs/SDK.md) | 业务插件接入 Agent API |
+| [快速开始](https://beacon.wcpe.top/docs/wiki/quick-start) | 5 分钟跑起控制面与一台 Paper 服务 |
+| [搭建集群](https://beacon.wcpe.top/docs/wiki/build-a-cluster) | BC 代理 + 大厅 + 业务小区的完整拓扑 |
+| [配置与交付](https://beacon.wcpe.top/docs/wiki/configuration-and-delivery) | 配置中心、变更单、灰度与回滚 |
+| [部署与运维](https://beacon.wcpe.top/docs/OPERATIONS) | 部署 / 升级 / 备份 / 排障 |
+| [业务插件 SDK](https://beacon.wcpe.top/docs/SDK) | 接入 Agent API 读配置与查服务发现 |
 
 面向二次开发的参考（含内部机制说明，仅仓库内可读）：
 
