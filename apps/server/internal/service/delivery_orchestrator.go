@@ -108,6 +108,7 @@ type DeliveryOrchestrator struct {
 	// 未装配（nil）即不校验——守卫自身的装配缺失不得阻断交付。
 	capability *capabilityGuard
 }
+
 func (s *DeliveryOrchestrator) SetApprovalService(approval *ApprovalService) { s.approval = approval }
 
 // configRollbacker 交付域对配置版本回退的窄依赖（整单回滚记账用，由 ConfigCenterService 实现）：

@@ -30,10 +30,10 @@ func TestDeliveryGuardDisabledByDefault(t *testing.T) {
 // TestDeliveryAgentSupportsStreaming 版本下限判定纯函数（空版本 / 旧版本一律不支持，空下限即不校验）。
 func TestDeliveryAgentSupportsStreaming(t *testing.T) {
 	cases := []struct {
-		name     string
-		version  string
-		min      string
-		want     bool
+		name    string
+		version string
+		min     string
+		want    bool
 	}{
 		{"空版本视为旧 agent 不支持", "", "0.29.0", false},
 		{"低于下限不支持", "0.28.9", "0.29.0", false},
