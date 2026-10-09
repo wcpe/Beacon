@@ -37,8 +37,9 @@ const config: Config = {
   tagline: '面向 Minecraft 多群组服务器的集群调度中间件控制面',
   favicon: 'img/dashboard.png',
 
-  url: 'https://wcpe.github.io',
-  baseUrl: '/Beacon/',
+  // 自定义域：需在 DNS 添加 CNAME 记录 beacon → wcpe.github.io（见网站 README 的部署说明）
+  url: 'https://beacon.wcpe.top',
+  baseUrl: '/',
   organizationName: 'wcpe',
   projectName: 'Beacon',
   trailingSlash: false,
