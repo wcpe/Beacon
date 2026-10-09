@@ -5,14 +5,14 @@
 pluginManagement {
     val mcTestkitIncludeBuild = System.getenv("MC_TESTKIT_INCLUDE_BUILD").orEmpty().trim()
     if (mcTestkitIncludeBuild.isNotEmpty()) {
-        // 仅联调未发布版本时替换插件解析；默认仍消费 maven.wcpe.top 的正式工件。
+        // 仅联调未发布版本时替换插件解析；默认仍消费 repo.wcpe.top 的正式工件。
         includeBuild(mcTestkitIncludeBuild)
     }
     repositories {
         gradlePluginPortal()
         mavenCentral()
         // mc-testkit 0.5.0 与其它 WCPE Gradle 插件的正式解析仓库。
-        maven("https://maven.wcpe.top/repository/maven-public/")
+        maven("https://repo.wcpe.top/repository/maven-public/")
         // TabooLib 官方发布仓库（解析 io.izzel.taboolib gradle 插件）。
         maven("https://repo.tabooproject.org/repository/releases")
     }

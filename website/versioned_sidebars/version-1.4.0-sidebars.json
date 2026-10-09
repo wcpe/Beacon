@@ -1,0 +1,44 @@
+{
+  "userDocs": [
+    {
+      "type": "category",
+      "label": "开始使用",
+      "collapsed": false,
+      "items": [
+        "wiki/README",
+        "wiki/quick-start",
+        "wiki/build-a-cluster"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "功能指南",
+      "collapsed": false,
+      "items": [
+        "wiki/configuration-and-delivery",
+        "wiki/global-lobby-operations",
+        "wiki/approval-lifecycle-and-mcp",
+        "wiki/observability-and-operations",
+        "wiki/business-plugin-sdk"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "配置参考",
+      "items": [
+        "wiki/bukkit-agent-full-config",
+        "wiki/bc-agent-full-config"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "运维与排障",
+      "items": [
+        "OPERATIONS",
+        "wiki/security-and-maintenance",
+        "wiki/troubleshooting",
+        "SDK"
+      ]
+    }
+  ]
+}

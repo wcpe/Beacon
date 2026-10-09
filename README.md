@@ -85,7 +85,9 @@ namespace、serverId、大区 / 小区 / 默认入口都是**控制面权威数�
 ### 3. 业务插件（compileOnly）
 
 ```kotlin
-repositories { mavenLocal() /* 或贵方私有仓库 */ }
+repositories {
+    maven("https://repo.wcpe.top/repository/maven-public/")
+}
 dependencies {
     compileOnly("top.wcpe.beacon:beacon-agent-api:<GA_VERSION>")
     compileOnly("top.wcpe.beacon:beacon-agent-kit:<GA_VERSION>")
@@ -170,16 +172,22 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar → 
 
 ## 文档
 
-面向使用与接入（不含内部需求文档 / 路线图 / ADR）：
+**在线文档站**：<https://wcpe.github.io/Beacon/>（收录下列使用与接入文档）
+
+面向使用与接入：
 
 | 文档 | 说明 |
 |------|------|
 | [docs/wiki/](docs/wiki/README.md) | 使用 Wiki：快速开始、集群搭建、功能教程与排障 |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 部署 / 升级 / 备份 / 排障 |
 | [docs/SDK.md](docs/SDK.md) | 业务插件接入 Agent API |
+
+面向二次开发的参考（含内部机制说明，仅仓库内可读）：
+
+| 文档 | 说明 |
+|------|------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构说明与边界 |
 | [docs/API.md](docs/API.md) | HTTP API 参考 |
-| [docs/UI-WIKI.md](docs/UI-WIKI.md) | UI 控件博物馆：启动、覆盖率门禁与新增控件流程 |
 | [CHANGELOG.md](CHANGELOG.md) | 更新日志 |
 
 ---
@@ -189,6 +197,7 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar → 
 欢迎提交 Issue 与 PR。动手前请先读 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)——含分支模型、提交信息规范、质量门与发版流程。
 
 - **缺陷与功能建议** → [Issues](https://github.com/wcpe/Beacon/issues)
+- **安全漏洞** → **请勿公开开 Issue**，按 [SECURITY.md](SECURITY.md) 私下报告
 - **本地验证**：构建见「快速开始 §4」；提交前请确保 `make lint` 与 `go test ./...` 全绿（CI 会跑更严格的全量门禁）
 - **变更与发版**：见 [CHANGELOG.md](CHANGELOG.md)
 
