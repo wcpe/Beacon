@@ -212,6 +212,10 @@ func (s *DeliveryOrchestrator) resumeBody(tx *gorm.DB, repoTx *repository.Change
 }
 
 // resumeCircuitBatch 恢复熔断批：retry_failed 把批回 running 并重置失败 / skipped 目标为 pending；skip_failed 批进推进门。
+//
+// CAS 口径统一（FR-262）：本函数全程走 CAS 而非「先查后写」，与 tripBreaker / persistConfirmInTx
+// 同口径。此前 UpdateBatchCAS 的返回值被丢弃，两次并发恢复（或恢复撞上推进器自己的迁移）会静默失败——
+// 批留在 failed 而单已回 rolling，推进器再也找不到活动批，单就此停摆且无任何告警。
 func (s *DeliveryOrchestrator) resumeCircuitBatch(repoTx *repository.ChangeOrderRepository, order *model.ChangeOrder, mode string) error {
 	batch, err := s.findFailedBatch(repoTx, order.ID)
 	if err != nil || batch == nil {
@@ -219,9 +223,16 @@ func (s *DeliveryOrchestrator) resumeCircuitBatch(repoTx *repository.ChangeOrder
 	}
 	if mode == resumeModeSkipFailed {
 		// skip_failed：保留失败记录，熔断批进推进门等待人工确认后放行下一批（spec §4.4.5，本域取「进推进门」口径）。
-		_, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusFailed},
+		ok, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusFailed},
 			map[string]any{"status": model.ChangeBatchStatusAwaitingConfirm, "break_reason": ""})
-		return e
+		if e != nil {
+			return e
+		}
+		if !ok {
+			// 批已被并发迁移（不再 failed）：不再静默吞掉，按冲突回报，避免单回 rolling 却无活动批。
+			return changeIllegalState(batch.Status, "继续")
+		}
+		return nil
 	}
 	// retry_failed：熔断批回 running，批内 failed / skipped 目标重置 pending 重推。
 	// 注意：这里**刻意不清 `changed_file_count` / `backup_present`**（只清 error / pushed_at / activated_at）——
@@ -231,9 +242,15 @@ func (s *DeliveryOrchestrator) resumeCircuitBatch(repoTx *repository.ChangeOrder
 		map[string]any{"status": model.ChangeTargetStatusPending, "error": "", "pushed_at": nil, "activated_at": nil}); e != nil {
 		return e
 	}
-	_, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusFailed},
+	ok, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusFailed},
 		map[string]any{"status": model.ChangeBatchStatusRunning, "break_reason": "", "finished_at": nil})
-	return e
+	if e != nil {
+		return e
+	}
+	if !ok {
+		return changeIllegalState(batch.Status, "继续")
+	}
+	return nil
 }
 
 // findFailedBatch 取单内唯一的熔断批（status=failed）；无则 (nil, nil)。
@@ -251,7 +268,13 @@ func (s *DeliveryOrchestrator) findFailedBatch(repoTx *repository.ChangeOrderRep
 }
 
 // Cancel 紧急终止（POST .../cancel，spec §4.1）：原因必填；rolling/paused→cancelled，
-// 未开始批 / 目标置 skipped；在途推送尽力中止（不主动打断）、已进入生效的目标不中断。
+// 未开始批 / 目标置 skipped；在途目标（pushing/pushed/activating）一律收口到终态，
+// 已进入生效的目标不中断（FR-260：把它们留在在途态会变成无人认领的孤儿）。
+//
+// 为什么必须收口：cancelled 不在推进器装载集（deliveryActiveOrderStatuses）内，
+// 终止后推进器再也不看这张单——留在 pushing/pushed/activating 的目标永远等不到回执处理能力，
+// 既不通向 activated 也不通向 failed，成为「既不推进也不收尸」的在途孤儿：
+// 目标计数与状态墙长期停在中间态，冲突守卫还可能因为它们过不了预检。
 func (s *DeliveryOrchestrator) Cancel(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	if strings.TrimSpace(reason) == "" {
 		return nil, apperr.New(http.StatusBadRequest, "missing_reason", "紧急终止原因必填")
@@ -270,6 +293,7 @@ func (s *DeliveryOrchestrator) Cancel(id uint, reason, operator, clientIP string
 		return nil, err
 	}
 	now := s.now()
+	var settled map[string]any
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		repoTx := s.repo.WithTx(tx)
 		ok, e := repoTx.UpdateStatusCAS(order.ID, []string{model.ChangeOrderStatusRolling, model.ChangeOrderStatusPaused},
@@ -277,22 +301,66 @@ func (s *DeliveryOrchestrator) Cancel(id uint, reason, operator, clientIP string
 		if e != nil || !ok {
 			return errOrSkip(e, ok)
 		}
+		settled, e = s.settleInFlightTargets(repoTx, order.ID)
+		if e != nil {
+			return e
+		}
 		if _, e := repoTx.BulkUpdateTargetStatusByOrder(order.ID, []string{model.ChangeTargetStatusPending},
 			map[string]any{"status": model.ChangeTargetStatusSkipped}); e != nil {
 			return e
 		}
+		// 未开始的 pending 批直接 skipped；承载在途目标的活动批（running/observing/awaiting_confirm）
+		// 同样要收终态——批停在非终态会让它 finished_at 恒空、终态批事件永不派生，
+		// 也和同单其它已 skipped 的批形态不一致。
 		if _, e := repoTx.BulkUpdateBatchStatusByOrder(order.ID, []string{model.ChangeBatchStatusPending},
 			map[string]any{"status": model.ChangeBatchStatusSkipped}); e != nil {
 			return e
 		}
-		return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderCancel, order.ID,
-			map[string]any{"orderId": order.ID, "reason": reason})
+		if _, e := repoTx.BulkUpdateBatchStatusByOrder(order.ID, []string{
+			model.ChangeBatchStatusRunning, model.ChangeBatchStatusObserving, model.ChangeBatchStatusAwaitingConfirm,
+		}, map[string]any{"status": model.ChangeBatchStatusSkipped, "finished_at": now}); e != nil {
+			return e
+		}
+		detail := map[string]any{"orderId": order.ID, "reason": reason, "settled": settled}
+		return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderCancel, order.ID, detail)
 	})
 	if err != nil {
 		return nil, mapCASConflict(err, order.Status, "紧急终止")
 	}
-	s.clearObserve(order.ID)
+	// 紧急终止即单终态化：走统一释放出口（FR-265）。
+	s.releaseTerminalMemory(order.ID)
 	return s.detailView(order.ID)
+}
+
+// cancelInFlightStatuses 是紧急终止要收口的在途目标状态集（FR-260）。
+var cancelInFlightStatuses = []string{
+	model.ChangeTargetStatusPushing, model.ChangeTargetStatusPushed, model.ChangeTargetStatusActivating,
+}
+
+// inFlightTargetCancelReason 是紧急终止收口在途目标的脱敏原因（按最后所处阶段分野，
+// 让运维知道这台是被「已推送未生效」还是「正在生效」拦下的）。
+var inFlightTargetCancelReason = "变更单已紧急终止，目标未确认生效（以盘上现状为准，需回滚请看回滚能力）"
+
+// settleInFlightTargets 把单内在途目标（pushing/pushed/activating）收口到 failed 终态，返回收口计数明细。
+//
+// 收口取 failed 而非 skipped（FR-260）：skipped 的语义是「从未开始、未动盘」，
+// 而 pushing/pushed/activating 三态都**已经动了盘**（推送覆盖 / 可能已下发生效命令），
+// 标 skipped 会让运维误判「这台没被碰过」，失去回滚判断依据；
+// 同时 `pushed_at` 已落成回滚候选，failed + 保留 pushed_at 才与「曾覆盖磁盘」事实自洽。
+func (s *DeliveryOrchestrator) settleInFlightTargets(repoTx *repository.ChangeOrderRepository,
+	orderID uint) (map[string]any, error) {
+	counts := map[string]any{}
+	for _, status := range cancelInFlightStatuses {
+		n, err := repoTx.BulkUpdateTargetStatusByOrder(orderID, []string{status},
+			map[string]any{"status": model.ChangeTargetStatusFailed, "error": inFlightTargetCancelReason})
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			counts[status] = n
+		}
+	}
+	return counts, nil
 }
 
 // Rollback 禁止旧公开回滚入口，防止调用方绕过统一审批 worker 恢复已交付内容。
@@ -657,6 +725,8 @@ func (s *DeliveryOrchestrator) applyFinishRollback(id uint, operator, clientIP s
 	if err != nil {
 		return nil, mapCASConflict(err, order.Status, "结束回滚")
 	}
+	// 人工收单同样是终态出口：释放观察窗缓冲与停滞观测（FR-265，见 releaseTerminalMemory 说明）。
+	s.releaseTerminalMemory(order.ID)
 	return s.detailView(order.ID)
 }
 
@@ -782,7 +852,8 @@ func (s *DeliveryOrchestrator) applyConfirmBatch(id uint, batchNo int, operator,
 	}); err != nil {
 		return nil, err
 	}
-	s.clearObserve(order.ID)
+	// 确认批后走统一释放出口（FR-265）：非末批切到下一批，旧批的观察窗缓冲不再需要。
+	s.releaseTerminalMemory(order.ID)
 	if !last {
 		s.wake() // 下一批已置 running，唤醒推进器下发
 	}

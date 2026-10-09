@@ -78,7 +78,17 @@ type DeliveryOrchestrator struct {
 	// observeMu 独立保护观察窗内存缓冲（推进器采样写、Observe/SSE 读），与 mu 有序嵌套（mu→observeMu，不反向）。
 	observeMu      *sync.RWMutex
 	observeByOrder map[uint]*observeState
-	approval       *ApprovalService
+	// stallMu 独立保护停滞观测表（FR-262 / P0 回归）。**刻意不复用 mu**：
+	// clearObserve 有两条调用方——Cancel / applyConfirmBatch 已持 mu 同步调用，
+	// 而审批执行适配器的 afterCommit 闭包由审批 worker 在事务提交后执行、**全程不持 mu**；
+	// Go 互斥锁不可重入，若这里复用 mu，前一条路径会直接死锁。
+	// 独立锁下两条路径都安全；锁序为 mu → stallMu（与 mu → observeMu 同向，不反向嵌套）。
+	stallMu *sync.Mutex
+	// stallByOrder 记录各单「推进停滞」的观测状态（推进器每轮检查，stallMu 保护，FR-262）。
+	// 停滞 = 单在装载集里、但推进器已无事可做且无人来推：确认门等人确认、或根本没有活动批。
+	// 这两类都不会自行恢复（推进器只会重复空转），此前完全静默——运维只能靠「感觉单卡住了」去翻库。
+	stallByOrder map[uint]*deliveryStallState
+	approval     *ApprovalService
 	// config 配置版本回退能力（整单回滚记账用，ConfigCenterService 实现；未装配则跳过 config 回退，测试兼容）
 	config configRollbacker
 	// cfgVers 配置版本仓库（回滚 from==nil 项撤销贡献时反查 configFileID）
@@ -114,6 +124,8 @@ func NewDeliveryOrchestrator(db *gorm.DB, repo *repository.ChangeOrderRepository
 		mu:             &sync.Mutex{},
 		observeMu:      &sync.RWMutex{},
 		observeByOrder: map[uint]*observeState{},
+		stallMu:        &sync.Mutex{},
+		stallByOrder:   map[uint]*deliveryStallState{},
 	}
 }
 
@@ -173,6 +185,86 @@ func (s *DeliveryOrchestrator) advanceActiveOrders(ctx context.Context) {
 	s.advanceTargetRollbacks()
 }
 
+// detectStall 检测某单是否**停滞**（推进器已无事可做、且不会自行恢复），命中即按节律告警（FR-262）。
+//
+// 为什么必须有这层：推进器每 2s 空转一轮，单卡在「等人工确认」或「根本没有活动批」时，
+// 没有任何日志、告警或事件——运维只看到「单还 rolling 但不动了」，只能去翻库猜原因。
+// 停滞检测把「不动」这件事本身变成可观测信号，并指明卡在哪一类等待上。
+//
+// 两类停滞：
+//   - confirm_gate：批已到 awaiting_confirm，等人工确认才放量下一批（正常等待，超时才提醒）；
+//   - no_active_batch：rolling 单连一个活动批都没有（异常，通常是批被并发迁走或数据不一致）。
+func (s *DeliveryOrchestrator) detectStall(rt *orderRuntime) {
+	kind := stalledKindOf(rt)
+	if kind == "" {
+		s.clearStall(rt.order.ID) // 本轮有事可做 → 计时清零，下次重新起算
+		return
+	}
+	now := s.now()
+	// 整段「读表 → 判定 → 写表」在 stallMu 下完成：clearStall 可能来自不持 mu 的 afterCommit，
+	// 若只在写时加锁而读在外面，仍与并发 delete 构成竞态。
+	s.stallMu.Lock()
+	defer s.stallMu.Unlock()
+	st := s.stallByOrder[rt.order.ID]
+	if st == nil || st.kind != kind {
+		st = &deliveryStallState{kind: kind, since: now}
+		s.stallByOrder[rt.order.ID] = st
+	}
+	first, every := stallRemindRhythm(kind)
+	elapsed := now.Sub(st.since)
+	if elapsed < first {
+		return
+	}
+	if !st.remindedAt.IsZero() && now.Sub(st.remindedAt) < every {
+		return
+	}
+	st.remindedAt = now
+	batchNo := 0
+	if b := activeBatch(rt.batches); b != nil {
+		batchNo = b.BatchNo
+	}
+	if kind == deliveryStallKindConfirmGate {
+		slog.Warn("交付编排：批次已到推进门等待人工确认，确认前不会放量下一批",
+			"orderId", rt.order.ID, "batchNo", batchNo, "已等待", elapsed.Round(time.Second).String())
+		return
+	}
+	slog.Warn("交付编排：活动单没有活动批，推进器无批可推（批可能被并发迁走或数据不一致，请人工核对）",
+		"orderId", rt.order.ID, "status", rt.order.Status, "已停滞", elapsed.Round(time.Second).String())
+}
+
+// stalledKindOf 判定某单本轮是否停滞，返回停滞类型；空串表示推进正常、不需告警。
+// 只对 rolling 单判「无活动批」——paused / rolling_back 不下发新批是设计使然，不是停滞。
+func stalledKindOf(rt *orderRuntime) string {
+	if b := activeBatch(rt.batches); b != nil {
+		if b.Status == model.ChangeBatchStatusAwaitingConfirm {
+			return deliveryStallKindConfirmGate
+		}
+		return ""
+	}
+	if rt.order.Status == model.ChangeOrderStatusRolling && rt.order.PayloadState == model.PayloadStateReady {
+		return deliveryStallKindNoActiveBatch
+	}
+	return ""
+}
+
+// stallRemindRhythm 返回某类停滞的（首提醒点, 重复间隔）。
+func stallRemindRhythm(kind string) (time.Duration, time.Duration) {
+	if kind == deliveryStallKindConfirmGate {
+		return deliveryConfirmGateRemindAfter, deliveryConfirmGateRemindEvery
+	}
+	return deliveryNoActiveBatchRemindAfter, deliveryNoActiveBatchRemindEvery
+}
+
+// clearStall 清除某单的停滞观测（单终态化 / 恢复推进时调用，防止内存随单无界增长）。
+//
+// 必须在 stallMu 下操作：本函数的调用方之一是不持 mu 的审批 afterCommit 闭包
+// （见 clearObserve），而推进器在 mu 下经 detectStall 读写同一张表——无锁即并发读写。
+func (s *DeliveryOrchestrator) clearStall(orderID uint) {
+	s.stallMu.Lock()
+	defer s.stallMu.Unlock()
+	delete(s.stallByOrder, orderID)
+}
+
 // orderRuntime 是一次推进所需的单快照（单 + 批次 + 目标 + namespace code + batch_id→batch_no 索引），
 // 一轮装载一次、传递复用防重复查库；推进函数就地更新 targets/batches 主状态以保本轮快照一致。
 type orderRuntime struct {
@@ -204,6 +296,37 @@ func (s *DeliveryOrchestrator) loadOrderRuntime(order *model.ChangeOrder) (*orde
 	return &orderRuntime{order: order, batches: batches, targets: targets, nsCode: nsCode, batchNoByID: batchNoByID}, nil
 }
 
+// restartHealthWarmup 见上；此段补停滞检测的节律常量（FR-262）。
+const (
+	// deliveryConfirmGateRemindAfter 确认门开启后多久开始提醒（首提醒点）。
+	// 取 5 分钟：短于「审批人读完一屏影响面 + 决策」的正常耗时，不打扰正常流程。
+	deliveryConfirmGateRemindAfter = 5 * time.Minute
+	// deliveryConfirmGateRemindEvery 此后每隔多久重复提醒一次（避免刷屏，也避免只报一次后被淹没）。
+	deliveryConfirmGateRemindEvery = 30 * time.Minute
+	// deliveryNoActiveBatchRemindAfter rolling 单「无活动批」持续多久开始告警。
+	// 取 2 分钟：正常批切换（确认末批 → 启动次批）在秒级完成，超过即异常。
+	deliveryNoActiveBatchRemindAfter = 2 * time.Minute
+	// deliveryNoActiveBatchRemindEvery 无活动批告警的重复间隔。
+	deliveryNoActiveBatchRemindEvery = 10 * time.Minute
+)
+
+// deliveryStallState 是某单的停滞观测状态（FR-262）：记录「已停滞多久、提醒过几次」，
+// 使提醒可去重（不每 tick 刷屏）且可恢复（单重新推进即清零）。
+type deliveryStallState struct {
+	// kind 停滞类型（confirm_gate / no_active_batch），类型切换即重置计时。
+	kind string
+	// since 首次观测到该类型停滞的时刻
+	since time.Time
+	// remindedAt 上次提醒时刻（零值 = 从未提醒）
+	remindedAt time.Time
+}
+
+// deliveryStallKindConfirmGate 停滞类型：确认门等待人工确认。
+const deliveryStallKindConfirmGate = "confirm_gate"
+
+// deliveryStallKindNoActiveBatch 停滞类型：rolling 单无活动批（推进器无批可推）。
+const deliveryStallKindNoActiveBatch = "no_active_batch"
+
 // advanceOrder 按单状态分派推进：rolling 走完整推进；paused 仅收口在途目标（不下发新目标 / 新批 / 不推进批）。
 func (s *DeliveryOrchestrator) advanceOrder(rt *orderRuntime) {
 	switch rt.order.Status {
@@ -216,6 +339,8 @@ func (s *DeliveryOrchestrator) advanceOrder(rt *orderRuntime) {
 	case model.ChangeOrderStatusRollingBack:
 		s.advanceRollingBack(rt)
 	}
+	// 每轮末尾统一做停滞检测：本单本轮是否有事可做、是否已在等人。
+	s.detectStall(rt)
 }
 
 // —— 命令下发共享 helper ——
