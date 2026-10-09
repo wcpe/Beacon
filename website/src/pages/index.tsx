@@ -36,10 +36,10 @@ const HIGHLIGHTS = [
 
 /** 首屏截图（文件名与 static/img 下一致）。 */
 const SHOTS: {src: string; alt: string; caption: string}[] = [
-  {src: 'img/dashboard.png', alt: '运维总览', caption: '运维总览：健康 KPI、服务器状态墙与连接流'},
-  {src: 'img/topology.png', alt: '集群拓扑', caption: '集群拓扑：代理 → 小区放射链路与异常边'},
-  {src: 'img/delivery.png', alt: '交付变更单', caption: '交付变更单：分批灰度、目标级回滚与交付历史'},
-  {src: 'img/servers.png', alt: '服务器资产', caption: '服务器资产：注册待确认、身份与健康运维'},
+  {src: 'img/overview.png', alt: '运维总览', caption: '运维总览：健康 KPI、服务器状态墙与连接流'},
+  {src: 'img/cluster-topology.png', alt: '集群拓扑', caption: '集群拓扑：代理 → 小区放射链路与异常边'},
+  {src: 'img/delivery-orders.png', alt: '交付变更单', caption: '交付变更单：分批灰度、目标级回滚与交付历史'},
+  {src: 'img/server-assets.png', alt: '服务器资产', caption: '服务器资产：注册待确认、身份与健康运维'},
 ]
 
 function Hero(): ReactNode {

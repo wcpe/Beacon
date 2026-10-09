@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" role="img" aria-label="Beacon">
+  <!-- 内部下界之星发光核（青色，参照 MC 信标内光）：先画，透过半透明玻璃可见 -->
+  <circle cx="12" cy="10.6" r="4.3" fill="#22d3ee" />
+  <circle cx="12" cy="9.6" r="2.7" fill="#67e8f9" />
+  <!-- 底部黑曜石基座（深色，发光核坐其上） -->
+  <path d="M12 13.8 L17.6 16.6 L12 19.4 L6.4 16.6 Z" fill="#1e293b" />
+  <!-- 信标玻璃方块三面（半透明、近透明玻璃质感，内部隐约可见）：顶 / 左 / 右 -->
+  <path d="M12 4 L19 7.5 L12 11 L5 7.5 Z" fill="#ecfeff" opacity="0.5" />
+  <path d="M5 7.5 L12 11 L12 20 L5 16.5 Z" fill="#a5f3fc" opacity="0.32" />
+  <path d="M19 7.5 L12 11 L12 20 L19 16.5 Z" fill="#67e8f9" opacity="0.32" />
+  <!-- 玻璃棱边（浅青边框勾勒立方体轮廓，crisp） -->
+  <path d="M12 4 L19 7.5 L12 11 L5 7.5 Z M12 11 L12 20 M5 7.5 L5 16.5 L12 20 L19 16.5 L19 7.5" stroke="#cffafe" stroke-width="0.7" stroke-linejoin="round" stroke-linecap="round" opacity="0.9" />
+  <!-- 顶面玻璃反光高光 -->
+  <path d="M12 5 L15 7.5 L12 7.5 Z" fill="#ffffff" opacity="0.6" />
+  <!-- 白热光点（信标之光最亮处，浮于玻璃之上） -->
+  <circle cx="12" cy="8.8" r="1.4" fill="#ffffff" />
+</svg>

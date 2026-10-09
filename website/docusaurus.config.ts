@@ -35,7 +35,7 @@ const INTERNAL_DOC_EXCLUDE = [
 const config: Config = {
   title: 'Beacon',
   tagline: '面向 Minecraft 多群组服务器的集群调度中间件控制面',
-  favicon: 'img/dashboard.png',
+  favicon: 'img/logo.svg',
 
   // 自定义域：需在 DNS 添加 CNAME 记录 beacon → wcpe.github.io（见网站 README 的部署说明）
   url: 'https://beacon.wcpe.top',
@@ -58,6 +58,22 @@ const config: Config = {
     },
   },
 
+  // 客户端模块：汉化插件硬编码的英文文案（见模块内说明）。
+  clientModules: ['./src/clientModules/localize-search.ts'],
+
+  // 本地全文搜索（离线索引，随站点发布；不依赖 Algolia 申请与外部服务）。
+  // 中文支持：languages 传 'zh' 时加载 lunr-languages 的 lunr.zh 分词器。
+  plugins: [
+    [
+      require.resolve('docusaurus-lunr-search'),
+      {
+        languages: ['zh'],
+        // 站点为单语言中文站，索引全量路由（含首页落地页）。
+        indexBaseUrl: true,
+      },
+    ],
+  ],
+
   presets: [
     [
       'classic',
@@ -70,6 +86,16 @@ const config: Config = {
           exclude: INTERNAL_DOC_EXCLUDE,
           routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
+          // 版本策略：以「当前文档」为最新版并直接占 /docs（而非 /docs/next），
+          // 冻结版本走 /docs/<version>。发布新版时执行 `pnpm docs:version <版本>` 沿用同一约定。
+          lastVersion: 'current',
+          versions: {
+            current: {
+              // 标签取自仓库 VERSION（发版时同步更新此处即可，避免与根 VERSION 漂移）。
+              label: '1.4.0',
+              path: '',
+            },
+          },
           // 精确指回仓库 docs/ 下的真实文件（站点是「读取」而非「副本」）。
           editUrl: ({docPath}) =>
             `https://github.com/wcpe/Beacon/edit/master/docs/${docPath}`,
@@ -87,7 +113,7 @@ const config: Config = {
   themeConfig: {
     navbar: {
       title: 'Beacon',
-      logo: {alt: 'Beacon', src: 'img/dashboard.png'},
+      logo: {alt: 'Beacon', src: 'img/logo.svg'},
       items: [
         {type: 'docSidebar', sidebarId: 'userDocs', position: 'left', label: '文档'},
         {

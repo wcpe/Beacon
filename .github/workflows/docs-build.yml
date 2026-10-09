@@ -66,13 +66,17 @@ jobs:
       - name: 校验站点未收录内部内容
         run: |
           set -euo pipefail
-          # 站点应恰好收录 14 篇使用文档（wiki 12 + OPERATIONS + SDK）
+          # 站点每份文档集应为 14 篇（wiki 12 + OPERATIONS + SDK）。
+          # 版本快照会等量复制，故总数须是 14 的整数倍：1 份=当前版，2 份=当前版+1 快照，以此类推。
           count=$(find build/docs -name '*.html' | wc -l)
-          echo "站点文档数：$count"
-          if [ "$count" -ne 14 ]; then
-            echo "::error::站点文档数应为 14，实际 $count；请检查 docusaurus.config.ts 的 include 白名单"
+          echo "站点文档页总数：$count"
+          if [ $((count % 14)) -ne 0 ] || [ "$count" -eq 0 ]; then
+            echo "::error::站点文档页总数应为 14 的整数倍（每份文档集 14 篇），实际 $count"
+            echo "请检查 docusaurus.config.ts 的 include 白名单与 versioned_docs/ 快照内容"
             exit 1
           fi
+          sets=$((count / 14))
+          echo "文档集份数（当前版 + 冻结快照）：$sets"
           # 内部编号零容忍
           if grep -rlE 'FR-[0-9]{2,}|ADR-[0-9]{3,}' build/ >/dev/null 2>&1; then
             echo "::error::站点产物出现内部需求 / 决策编号"
