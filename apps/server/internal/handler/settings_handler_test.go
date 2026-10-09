@@ -81,11 +81,12 @@ func TestSettingsListReturnsHotKeys(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("解析响应失败: %v", err)
 	}
-	// 40 项：FR-240 新增 archive.retention-days.mcp-invocation；FR-232 新增 alert.orphan-timeout-hours
-	// （失联孤儿告警自动关闭阈值，真机降噪）；新增 archive.retention-days.alert-event（告警表纳入归档域）。
+	// 41 项：FR-240 新增 archive.retention-days.mcp-invocation；FR-232 新增 alert.orphan-timeout-hours
+	// （失联孤儿告警自动关闭阈值，真机降噪）；新增 archive.retention-days.alert-event（告警表纳入归档域）；
+	// FR-264 新增 delivery.min-agent-version（交付能力最低 agent 版本）。
 	// 口径说明详见 settings_service_test.go。
-	if len(resp.Items) != 40 {
-		t.Fatalf("应列出 40 个热改项，实际 %d", len(resp.Items))
+	if len(resp.Items) != 41 {
+		t.Fatalf("应列出 41 个热改项，实际 %d", len(resp.Items))
 	}
 }
 

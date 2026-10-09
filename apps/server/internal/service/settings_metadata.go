@@ -43,6 +43,9 @@ const (
 	SettingDeliveryUploadConcurrency      = "delivery.upload-concurrency"
 	SettingDeliveryDownloadConcurrency    = "delivery.download-concurrency"
 	SettingDeliveryCleanupIntervalMinutes = "delivery.cleanup-interval-minutes"
+	// SettingDeliveryMinAgentVersion 交付能力最低 agent 版本（FR-264，落实 ADR-0069 L58）：
+	// 目标 / 模板源 agent 自报版本低于此值即被拒绝下发交付命令；留空 = 不校验（运维逃生口）。
+	SettingDeliveryMinAgentVersion = "delivery.min-agent-version"
 	// 热冷归档策略键（FR-151，见 ADR-0066）：各域热库保留天数（≥7 守卫）+ 调度 / 批量 / 校验 / 冷查询参数。
 	// 注意 `archive.retention-days.alert-event` 只对**已处理**（status=resolved）告警生效：未处理告警是运维待办、
 	// 永不搬运（域注册表的 extraWhere 约束），调小该保留期不会让待办从热库消失。
@@ -102,6 +105,14 @@ const (
 	deliveryDefaultUploadConcurrency      = 4
 	deliveryDefaultDownloadConcurrency    = 64
 	deliveryDefaultCleanupIntervalMinutes = 60
+	// deliveryDefaultMinAgentVersion 是交付能力守卫的默认最低 agent 版本（FR-264）。
+	//
+	// **默认为空串 = 守卫默认关闭（显式配置才启用）**：agent 上报的版本串尚未经真机核对其形态
+	// （实际来自 TabooLib `pluginVersion`，与 Gradle 坐标不同源），而守卫是 fail-closed 的
+	// （未上报版本一律按「不支持」处理）。若拍一个猜测值作默认，真机上一旦上报串不符
+	// （例如 `0.1.0` 或空串），**全部目标都会被拒、首日无任何已批准单能启动**——
+	// 这是上线即全量拒服的事故级风险，故以「不校验」上线，真机核对后再由运维设为确定值。
+	deliveryDefaultMinAgentVersion = ""
 	// 容量上限的可配上界（1 TiB）与下界（1 MiB）：防误配 0 / 负值当场拒绝所有上传。
 	deliveryBlobCapacityMinBytes = 1048576
 	deliveryBlobCapacityMaxBytes = 1099511627776
@@ -276,6 +287,13 @@ var settingsWhitelist = map[string]settingMeta{
 		valueType: model.SettingValueTypeInt, desc: "交付中转 blob 后台清理周期（分钟）",
 		min: 5, max: 10080,
 		defaultFromConfig: func(config.Config) string { return strconv.Itoa(deliveryDefaultCleanupIntervalMinutes) },
+	},
+	SettingDeliveryMinAgentVersion: {
+		valueType: model.SettingValueTypeString,
+		desc:      "交付能力最低 agent 版本：agent 自报版本低于此值或不提供版本时拒绝下发交付命令；留空则不校验",
+		// 版本串形态自由（可能带预发布后缀、也可能留空关闭守卫），故不做枚举约束。
+		enumOK:            nil,
+		defaultFromConfig: func(config.Config) string { return deliveryDefaultMinAgentVersion },
 	},
 	// 热冷归档保留期（FR-151，见 ADR-0066）：各域热库保留天数，下限 7（防误配当天删光）、上限 3650（约 10 年）。
 	SettingArchiveRetentionMetricSample: {

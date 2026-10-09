@@ -80,12 +80,28 @@ func (s *DeliveryOrchestrator) activateTarget(rt *orderRuntime, t *model.ChangeT
 			map[string]any{"activated_at": s.now()})
 		return
 	}
+	// FR-264：生效命令同样先过能力守卫（目标可能在推送期间被换成旧 agent / 身份重绑）。
+	if len(s.rejectUnsupportedTargets(rt, []*model.ChangeTarget{t})) > 0 {
+		return
+	}
 	payload := deliveryActivatePayload{OrderID: rt.order.ID, ActivationMethod: rt.order.ActivationMethod}
 	if rt.order.ActivationMethod == model.ActivationMethodRestart {
 		payload.ActivateTimeoutSec = rt.order.ActivateTimeoutSec
 	}
-	cmd := newDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryActivate, payload)
 	startedAt := s.now() // activating 起始锚点：restart 只认此刻之后接收的心跳批为回归（排除关服前残留）
+	// FR-263：生效命令重发幂等——已在途的同类型同单命令复用，不建第二条（重复 activate 会二次关服 / 二次回调）。
+	if existing, e := s.cmdRepo.FindActiveByTypeAndOrder(rt.nsCode, t.ServerID,
+		model.CommandTypeDeliveryActivate, rt.order.ID); e != nil {
+		slog.Error("交付编排查在途生效命令失败", "orderId", rt.order.ID, "serverId", t.ServerID, "错误", e)
+		return
+	} else if existing != nil {
+		// 命令已在途（控制面重启续跑）：补上内存快照与事件即可，不再下发。
+		t.Status = model.ChangeTargetStatusActivating
+		t.ActivatingStartedAt = &startedAt
+		s.emitTargetEvent(rt, t)
+		return
+	}
+	cmd := newDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryActivate, payload)
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		ok, e := s.repo.WithTx(tx).UpdateTargetCAS(t.ID, []string{model.ChangeTargetStatusPushed},
 			map[string]any{"status": model.ChangeTargetStatusActivating, "activating_started_at": startedAt})
@@ -254,11 +270,38 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 	if len(pending) == 0 {
 		return
 	}
+	// FR-264：下发前先过能力守卫——启动期全员合格不代表此刻仍合格（agent 期间被换回旧版 / 身份重绑），
+	// 不合格目标就地置 failed 并写可读原因，不下发命令（旧 agent 收到也执行不了，只会挂到超时）。
+	blocked := s.rejectUnsupportedTargets(rt, pending)
+	if len(blocked) > 0 {
+		blockedSet := make(map[uint]struct{}, len(blocked))
+		for _, id := range blocked {
+			blockedSet[id] = struct{}{}
+		}
+		kept := make([]*model.ChangeTarget, 0, len(pending))
+		for _, t := range pending {
+			if _, hit := blockedSet[t.ID]; !hit {
+				kept = append(kept, t)
+			}
+		}
+		pending = kept
+	}
+	if len(pending) == 0 {
+		return
+	}
 	fileCount, totalBytes := s.manifestSummary(rt.order.ID)
 	dispatched := make([]*model.ChangeTarget, 0, len(pending))
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		repoTx := s.repo.WithTx(tx)
 		cmdTx := s.cmdRepo.WithTx(tx)
+		// FR-263：命令重发幂等——控制面重启后重跑下发时，若该目标本单已有在途同类型命令则复用，
+		// 不建第二条（重复命令会让 agent 收到两条 push，产生二次备份 / 二次覆盖）。
+		// 批量一次取回后走内存索引，避免逐台查在大批量次下退化成 N 次查询。
+		inFlight, e := cmdTx.FindActiveByTypeAndOrderBulk(rt.nsCode, model.CommandTypeDeliveryPush,
+			serverIDsOf(pending), rt.order.ID)
+		if e != nil {
+			return e
+		}
 		for _, t := range pending {
 			ok, e := repoTx.UpdateTargetCAS(t.ID, []string{model.ChangeTargetStatusPending},
 				map[string]any{"status": model.ChangeTargetStatusPushing})
@@ -267,6 +310,10 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 			}
 			if !ok {
 				continue // 已被并发推进（幂等护栏），跳过
+			}
+			if _, exists := inFlight[t.ServerID]; exists {
+				dispatched = append(dispatched, t)
+				continue
 			}
 			cmd := newDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryPush,
 				deliveryPushPayload{OrderID: rt.order.ID, FileCount: fileCount, TotalBytes: totalBytes})
@@ -286,6 +333,59 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 		s.notifyAgent(rt.nsCode, t.ServerID)
 		s.emitTargetEvent(rt, t)
 	}
+}
+
+// rejectUnsupportedTargets 对一批目标执行 agent 能力版本守卫（FR-264）：把不具备流式交付能力的目标
+// 就地置 failed 并写可读原因，返回被拒目标的 id 列表（调用方据此把它们排除出本轮下发）。
+//
+// 为什么不是「跳过去、什么都不落」：不下发命令的目标若仍留在 pending，推进器每轮都会重扫重试，
+// 运维只看到「卡住」；置 failed 并带原因才把「为什么没动」表达出来（与 ADR-0088 同族的可观测纪律）。
+// 守卫未装配 / 最低版本设置为空 → 返回空列表（不校验）。
+//
+// **调用顺序约束（P1-1）**：本函数在**事务外**执行，守卫查询走的是编排器自身的 `s.capability`
+// （非事务连接）。调用方必须在 `s.db.Transaction` **之前**调用它，否则在单连接池（测试 / 受限部署）
+// 下会出现「外层事务持连接等守卫查询、守卫查询等连接池」的互等死锁。
+// 事务内需要能力判定的场景（如审批适配器在事务内启动）走 `capabilityGuard.withTx`，别复用本函数。
+func (s *DeliveryOrchestrator) rejectUnsupportedTargets(rt *orderRuntime, targets []*model.ChangeTarget) []uint {
+	if s.capability == nil || len(targets) == 0 {
+		return nil
+	}
+	serverIDs := make([]string, 0, len(targets))
+	for _, t := range targets {
+		serverIDs = append(serverIDs, t.ServerID)
+	}
+	unsupported, err := s.capability.filterUnsupported(rt.order.NamespaceID, serverIDs)
+	if err != nil {
+		slog.Error("交付编排校验 agent 交付能力失败", "orderId", rt.order.ID, "错误", err)
+		return nil // 查询失败不猜、不误伤目标（守卫是护栏不是闸门）
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	minVersion := s.capability.minVersion()
+	blocked := make([]uint, 0, len(unsupported))
+	for _, t := range targets {
+		actual, hit := unsupported[t.ServerID]
+		if !hit {
+			continue
+		}
+		reason := deliveryCapabilityRejectReason(actual, minVersion)
+		if s.casTarget(rt, t, []string{model.ChangeTargetStatusPending, model.ChangeTargetStatusPushed},
+			model.ChangeTargetStatusFailed, map[string]any{"error": reason}) {
+			s.emitTargetEvent(rt, t)
+			blocked = append(blocked, t.ID)
+		}
+	}
+	return blocked
+}
+
+// serverIDsOf 取一批目标的 serverId（供批量查询入参）。
+func serverIDsOf(targets []*model.ChangeTarget) []string {
+	out := make([]string, 0, len(targets))
+	for _, t := range targets {
+		out = append(out, t.ServerID)
+	}
+	return out
 }
 
 // manifestSummary 求某单清单摘要（文件数 / 总字节）：写入 delivery_push 命令载荷，仅摘要绝不含内容。

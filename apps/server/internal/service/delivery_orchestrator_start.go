@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -68,6 +69,8 @@ func (s *DeliveryOrchestrator) applyStartApprovedInTx(tx *gorm.DB, id uint, reas
 	transactional.repo = s.repo.WithTx(tx)
 	transactional.cmdRepo = s.cmdRepo.WithTx(tx)
 	transactional.blobs = s.blobs.withTx(tx)
+	// 能力守卫同样绑到本事务：审批适配器在事务内启动变更单，守卫若另开连接会与外层事务互等（FR-264）。
+	transactional.capability = s.capability.withTx(tx)
 	order, err := requireChangeOrder(transactional.repo, id)
 	if err != nil {
 		return nil, err
@@ -104,7 +107,8 @@ type startPlan struct {
 	nsCode string
 }
 
-// prepareStart 启动前置计算：固化目标 → 目标集冲突守卫 → 配置作用域冲突守卫 → 批次规划 → payload 准备决策。
+// prepareStart 启动前置计算：固化目标 → 目标集冲突守卫 → 配置作用域冲突守卫 → **agent 能力版本守卫**
+// → 批次规划 → payload 准备决策。
 func (s *DeliveryOrchestrator) prepareStart(order *model.ChangeOrder) (*startPlan, error) {
 	targets, err := resolveChangeTargets(s.db, order.NamespaceID, decodeSelector(order.Selector), order.SourceServerID)
 	if err != nil {
@@ -123,6 +127,12 @@ func (s *DeliveryOrchestrator) prepareStart(order *model.ChangeOrder) (*startPla
 	if err := s.guardConfigConflict(order); err != nil {
 		return nil, err
 	}
+	// FR-264：能力守卫在批次规划之前——目标集里有不支持流式交付的旧 agent 时整单拒绝启动，
+	// 一条命令都不建（不做「跳过部分目标继续」的部分成功：启动是运维显式动作，拒了要说得清是谁）。
+	// 模板源同样要校验：payload 未就绪时上传命令下发给源，源是旧 agent 则整单永远推不动。
+	if err := s.guardAgentCapability(order.NamespaceID, serverIDs, order.SourceServerID); err != nil {
+		return nil, err
+	}
 	plan := &startPlan{
 		serverIDs:    serverIDs,
 		batchMembers: planBatchMembers(order.BatchMode, decodeBatchSizes(order.BatchSizes), serverIDs),
@@ -139,9 +149,14 @@ func (s *DeliveryOrchestrator) prepareStart(order *model.ChangeOrder) (*startPla
 	return plan, nil
 }
 
-// resolvePayloadPlan 计算 payload 准备决策：先由控制面渲染写入配置项灰度 blob，再查文件项缺失 blob，
-// 无缺则 ready、有缺则备下 delivery_upload 命令（spec §4.4.2 / ADR-0071）。
+// resolvePayloadPlan 计算 payload 准备决策：先刷新本单 blob 引用（清理保护）→ 由控制面渲染写入配置项灰度 blob，
+// 再查文件项缺失 blob，无缺则 ready、有缺则备下 delivery_upload 命令（spec §4.4.2 / ADR-0071）。
 func (s *DeliveryOrchestrator) resolvePayloadPlan(order *model.ChangeOrder, plan *startPlan) error {
+	// FR-261：启动即刷新本单引用 blob 的 last_referenced_at——approved 后的准备期上传窗口可能很长
+	// （等模板源上传），保留期清理不得在此期间把本单尚在消费的 blob 判为超期删掉。
+	if err := s.blobs.TouchReferences(order.ID); err != nil {
+		slog.Error("交付编排启动刷新 blob 引用失败", "orderId", order.ID, "错误", err)
+	}
 	// 配置项载荷由控制面在准备期按目标渲染灰度生效明文并写入内容寻址 blob（区别于文件项的模板源上传中转）：
 	// 供目标随文件清单下载落盘、restart 读盘生效。渲染失败即启动失败（脱敏后展示给运维，ADR-0057）。
 	if err := s.blobs.PrepareConfigBlobs(order.ID, plan.serverIDs); err != nil {
@@ -162,6 +177,28 @@ func (s *DeliveryOrchestrator) resolvePayloadPlan(order *model.ChangeOrder, plan
 	plan.uploadCommand = newDeliveryCommand(plan.nsCode, order.SourceServerID,
 		model.CommandTypeDeliveryUpload, deliveryUploadPayload{OrderID: order.ID, MissingCount: len(missing)})
 	return nil
+}
+
+// guardAgentCapability agent 交付能力版本守卫（FR-264，落实 ADR-0069 L58）：
+// 目标集 + 模板源里任一 agent 不具备流式交付能力即整单拒绝启动，并把不合格 serverId 与原因带在错误里。
+// 未装配守卫 / 最低版本设置为空 → 不校验（不因守卫自身的装配缺失阻断交付）。
+func (s *DeliveryOrchestrator) guardAgentCapability(namespaceID uint, serverIDs []string, sourceServerID string) error {
+	if s.capability == nil {
+		return nil
+	}
+	probe := make([]string, 0, len(serverIDs)+1)
+	probe = append(probe, serverIDs...)
+	if sourceServerID != "" {
+		probe = append(probe, sourceServerID)
+	}
+	unsupported, err := s.capability.filterUnsupported(namespaceID, probe)
+	if err != nil {
+		return err
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	return deliveryCapabilityUnsupported(unsupported, s.capability.minVersion())
 }
 
 // guardStartConflict 目标集冲突守卫（ADR-0071 §4.1）：目标集与其他活动单目标集相交即拒绝。

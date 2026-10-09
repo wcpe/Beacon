@@ -629,19 +629,23 @@ func (r *ChangeOrderRepository) ListOrdersReferencingSHA(namespaceID uint, sha s
 
 // ListSHAsReferencedByStatusNotIn 取给定 sha 集合中仍被「状态不在 excluded 集合内的变更单」引用的子集
 // （blob 清理阻断判定：命中即不可删；入参为空返回空集）。
+//
+// **excluded 为空表示不施加状态过滤**（查「被任意状态单引用过」的全部 sha）——
+// 供「无人引用的 blob 立即回收」补偿删除使用；此时刻意不加 `NOT IN` 子句（空集合会生成非法 SQL）。
 func (r *ChangeOrderRepository) ListSHAsReferencedByStatusNotIn(shas []string, excluded []string) (map[string]struct{}, error) {
 	blocked := make(map[string]struct{}, len(shas))
 	if len(shas) == 0 {
 		return blocked, nil
 	}
 	var rows []string
-	err := r.db.Model(&model.ChangeOrderItem{}).
+	query := r.db.Model(&model.ChangeOrderItem{}).
 		Distinct().
 		Joins("JOIN change_order AS o ON o.id = change_order_item.order_id").
-		Where("change_order_item.kind = ? AND change_order_item.sha256 IN ?", model.ChangeItemKindFileDiff, shas).
-		Where("o.status NOT IN ?", excluded).
-		Pluck("change_order_item.sha256", &rows).Error
-	if err != nil {
+		Where("change_order_item.kind = ? AND change_order_item.sha256 IN ?", model.ChangeItemKindFileDiff, shas)
+	if len(excluded) > 0 {
+		query = query.Where("o.status NOT IN ?", excluded)
+	}
+	if err := query.Pluck("change_order_item.sha256", &rows).Error; err != nil {
 		return nil, err
 	}
 	for _, sha := range rows {

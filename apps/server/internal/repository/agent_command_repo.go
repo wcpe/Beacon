@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -167,6 +168,58 @@ func (r *AgentCommandRepository) FindLatestByType(ns, serverID, cmdType string) 
 		return nil, err
 	}
 	return &c, nil
+}
+
+// FindActiveByTypeAndOrder 取某目标某类型、payload 内 orderId 等于给定单号的**在途**（pending/fetched）命令；
+// 无命中返回 (nil, nil)（FR-263：交付命令重发的幂等键 = namespace × serverId × type × payload.orderId）。
+//
+// 为什么按应用层匹配 payload 而非加列：payload 是 TEXT JSON，用 SQL JSON 函数会破坏 DB 可移植
+// （架构不变量 §4）；单服在途交付命令量级为个位数，全取后在内存匹配代价可忽略。
+// 只看在途态是刻意的：已 done/failed/expired 的历史命令不得阻拦下一轮下发（否则重试 / 回滚再下发被永久挡住）。
+func (r *AgentCommandRepository) FindActiveByTypeAndOrder(ns, serverID, cmdType string, orderID uint) (*model.AgentCommand, error) {
+	var cmds []model.AgentCommand
+	err := r.db.Where("namespace = ? AND server_id = ? AND type = ? AND status IN ?",
+		ns, serverID, cmdType, []string{model.CommandStatusPending, model.CommandStatusFetched}).
+		Order("id desc").Find(&cmds).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range cmds {
+		var payload struct {
+			OrderID uint `json:"orderId"`
+		}
+		if json.Unmarshal([]byte(cmds[i].Payload), &payload) == nil && payload.OrderID == orderID {
+			return &cmds[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// FindActiveByTypeAndOrderBulk 批量取「某单 × 某类型」在途命令的**目标 serverId 索引**：
+// 一次查询覆盖全部目标，避免下发路径逐台查退化成 N 次查询（大批量次下发时 N 可达数百）。
+// 语义与 FindActiveByTypeAndOrder 一致（在途 = pending/fetched，按 payload 内 orderId 应用层匹配）。
+func (r *AgentCommandRepository) FindActiveByTypeAndOrderBulk(ns, cmdType string, serverIDs []string,
+	orderID uint) (map[string]struct{}, error) {
+	out := make(map[string]struct{}, len(serverIDs))
+	if len(serverIDs) == 0 {
+		return out, nil
+	}
+	var cmds []model.AgentCommand
+	err := r.db.Where("namespace = ? AND server_id IN ? AND type = ? AND status IN ?",
+		ns, serverIDs, cmdType, []string{model.CommandStatusPending, model.CommandStatusFetched}).
+		Find(&cmds).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range cmds {
+		var payload struct {
+			OrderID uint `json:"orderId"`
+		}
+		if json.Unmarshal([]byte(cmds[i].Payload), &payload) == nil && payload.OrderID == orderID {
+			out[cmds[i].ServerID] = struct{}{}
+		}
+	}
+	return out, nil
 }
 
 // ListFetchedByType 取某目标实例某类型全部 fetched 态命令（id 倒序）。

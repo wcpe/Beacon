@@ -420,9 +420,42 @@ func (s *DeliveryBlobService) PrepareConfigBlobs(orderID uint, serverIDs []strin
 // TouchReferences 刷新某变更单全部文件项引用 blob 的 last_referenced_at（清理保护）。
 // M3 编排器在单启动 / 准备期调用；本切片在模板源上传回执成功时调用。
 func (s *DeliveryBlobService) TouchReferences(orderID uint) error {
-	items, err := s.orders.ListItems(orderID)
+	shas, err := s.referencedSHAs(orderID)
 	if err != nil {
 		return err
+	}
+	return s.blobs.TouchAll(shas, time.Now().UTC())
+}
+
+// TouchReferencesForOrders 批量刷新多个变更单引用的 blob（FR-261）：内部按单去重后一次性 TouchAll，
+// 供启动 / 下发等批量场景挂载。空集合与不存在的单都为空操作——刷新是廉价的 UPDATE，调用点可无条件挂载。
+func (s *DeliveryBlobService) TouchReferencesForOrders(orderIDs []uint) error {
+	if len(orderIDs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	shas := make([]string, 0, len(orderIDs))
+	for _, orderID := range orderIDs {
+		one, err := s.referencedSHAs(orderID)
+		if err != nil {
+			return err
+		}
+		for _, sha := range one {
+			if _, dup := seen[sha]; dup {
+				continue
+			}
+			seen[sha] = struct{}{}
+			shas = append(shas, sha)
+		}
+	}
+	return s.blobs.TouchAll(shas, time.Now().UTC())
+}
+
+// referencedSHAs 求某变更单引用（文件项 + 配置冻结工件）的全部 blob sha，去重后返回。
+func (s *DeliveryBlobService) referencedSHAs(orderID uint) ([]string, error) {
+	items, err := s.orders.ListItems(orderID)
+	if err != nil {
+		return nil, err
 	}
 	seen := make(map[string]struct{}, len(items))
 	shas := make([]string, 0, len(items))
@@ -436,10 +469,10 @@ func (s *DeliveryBlobService) TouchReferences(orderID uint) error {
 		seen[*item.SHA256] = struct{}{}
 		shas = append(shas, *item.SHA256)
 	}
-	// 配置冻结渲染工件 sha（ADR-0071）一并刷新引用，防保留期清理误删 config blob。
+	// 配置冻结渲染工件 sha（ADR-0071）一并计入：config blob 不落 change_order_item，只在这里汇合。
 	cfgSHAs, err := s.artifacts.ListSHAsByOrder(orderID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, sha := range cfgSHAs {
 		if _, dup := seen[sha]; dup {
@@ -448,7 +481,7 @@ func (s *DeliveryBlobService) TouchReferences(orderID uint) error {
 		seen[sha] = struct{}{}
 		shas = append(shas, sha)
 	}
-	return s.blobs.TouchAll(shas, time.Now().UTC())
+	return shas, nil
 }
 
 // derefString 安全解引用字符串指针（nil 返回空串）。

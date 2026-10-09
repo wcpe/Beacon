@@ -54,6 +54,16 @@ var deliveryActiveOrderStatuses = []string{
 	model.ChangeOrderStatusRolling, model.ChangeOrderStatusPaused, model.ChangeOrderStatusRollingBack,
 }
 
+// deliveryBlobReferenceRefreshStatuses 是**每轮刷新 blob 引用时间**的单状态集（FR-261）：
+// 推进状态集 + **approved**。approved 单在「审批通过 → 等模板源上传」的准备期可能停留远超
+// 补偿删除的 1 小时宽限，若引用只在启动时刷一次，宽限一过就会被判为无人引用误删——
+// 而这张单马上就要消费它（目标侧表现为下载 404 且无告警）。
+// 宽限从「最后一次刷新」起算，故持续刷新即持续保护；draft 不纳（未提审，谈不上消费）。
+var deliveryBlobReferenceRefreshStatuses = []string{
+	model.ChangeOrderStatusApproved, model.ChangeOrderStatusRolling,
+	model.ChangeOrderStatusPaused, model.ChangeOrderStatusRollingBack,
+}
+
 // DeliveryOrchestrator 是交付编排 M3 灰度推进引擎（FR-166，spec §4.1/§4.4/§4.6）：
 // 进程内单 goroutine 驱动 rolling 单的批次推进 → 命令下发 → 回执驱动三层状态机 → 熔断 / 推进门 → 完成。
 //
@@ -93,9 +103,12 @@ type DeliveryOrchestrator struct {
 	config configRollbacker
 	// cfgVers 配置版本仓库（回滚 from==nil 项撤销贡献时反查 configFileID）
 	cfgVers *repository.ConfigLayerVersionRepository
+	// capability 交付能力版本守卫（FR-264，落实 ADR-0069 L58）：启动 / 下发前校验目标与模板源的
+	// agent 版本是否够新到认识流式交付命令，不具备则拒绝下发并给出可读原因。
+	// 未装配（nil）即不校验——守卫自身的装配缺失不得阻断交付。
+	capability *capabilityGuard
 }
 
-// SetApprovalService 注入统一审批申请服务；未装配时危险继续操作失败关闭。
 func (s *DeliveryOrchestrator) SetApprovalService(approval *ApprovalService) { s.approval = approval }
 
 // configRollbacker 交付域对配置版本回退的窄依赖（整单回滚记账用，由 ConfigCenterService 实现）：
@@ -109,6 +122,15 @@ type configRollbacker interface {
 func (s *DeliveryOrchestrator) SetConfigRollbacker(config configRollbacker, cfgVers *repository.ConfigLayerVersionRepository) {
 	s.config = config
 	s.cfgVers = cfgVers
+}
+
+// SetCapabilityGuard 注入交付能力版本守卫（FR-264，启动时装配）：versions 提供 agent 版本批量查询、
+// minFn 热读运维设置的最低版本（留空即关闭守卫）。未注入则不校验。
+func (s *DeliveryOrchestrator) SetCapabilityGuard(versions *repository.AgentIdentityRepository, minFn func() string) {
+	if versions == nil {
+		return
+	}
+	s.capability = newCapabilityGuard(&agentVersionLookup{repo: versions}, minFn)
 }
 
 // NewDeliveryOrchestrator 构造编排推进器。
@@ -162,6 +184,7 @@ func (s *DeliveryOrchestrator) wake() {
 }
 
 // advanceActiveOrders 装载并推进全部活动单（rolling 全量推进、paused 仅收口在途）；持 mu 与控制操作互斥。
+// 之外还每轮刷新「活动单 + 已审批单」引用的 blob 引用时间（FR-261，见 refreshBlobReferences）。
 func (s *DeliveryOrchestrator) advanceActiveOrders(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -181,8 +204,33 @@ func (s *DeliveryOrchestrator) advanceActiveOrders(ctx context.Context) {
 		}
 		s.advanceOrder(rt)
 	}
+	s.refreshBlobReferences()
 	// 目标级（子集）回滚不改单主状态，故这些单不在上面的活动单集合里，需单独扫描推进（FR-270）。
 	s.advanceTargetRollbacks()
+}
+
+// refreshBlobReferences 每轮刷新「活动单 + 已审批单」引用的 blob 的 last_referenced_at（FR-261）。
+//
+// 为什么必须持续刷新：保留期与「无人引用」宽限都以 `last_referenced_at` 为准。只在「模板源上传
+// 回执成功」那一刻刷新的话，长跑单、久暂停单、以及准备期漫长的 **approved** 单都会被判为超期或
+// 无人引用而误删——而它们马上就要消费这批 blob（目标侧表现为下载 404 且无告警）。
+// 宽限从「最后一次刷新」起算，故持续刷新即持续保护。刷新是廉价的按 sha 批量 UPDATE，重复调用无副作用。
+func (s *DeliveryOrchestrator) refreshBlobReferences() {
+	orders, err := s.repo.ListActiveOrders(deliveryBlobReferenceRefreshStatuses)
+	if err != nil {
+		slog.Error("交付编排装载待刷新引用的单失败", "错误", err)
+		return
+	}
+	if len(orders) == 0 {
+		return
+	}
+	orderIDs := make([]uint, 0, len(orders))
+	for i := range orders {
+		orderIDs = append(orderIDs, orders[i].ID)
+	}
+	if e := s.blobs.TouchReferencesForOrders(orderIDs); e != nil {
+		slog.Error("交付编排刷新 blob 引用失败", "错误", e)
+	}
 }
 
 // detectStall 检测某单是否**停滞**（推进器已无事可做、且不会自行恢复），命中即按节律告警（FR-262）。
