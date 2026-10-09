@@ -1,0 +1,8 @@
+# 文档站为独立工作区：与根 workspace（apps/* 与 packages/*）隔离，
+# 避免被 turbo 管线收编、也避免其 React 版本影响管理台构建。
+packages:
+  - .
+
+onlyBuiltDependencies:
+  - core-js
+  - esbuild

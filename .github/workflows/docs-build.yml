@@ -1,0 +1,94 @@
+# 文档站构建门禁：PR 与 push 都跑，只验证「站点能构建成功」，不部署。
+#
+# 与 deploy-docs.yml 分开是官方建议：若把 build 与 deploy 写在同一个 workflow，
+# 部署 job 在 PR 上恒为 skipped，会污染 PR 的 check suite 状态。
+name: Docs Build
+
+on:
+  pull_request:
+    paths:
+      - 'docs/wiki/**'
+      - 'docs/OPERATIONS.md'
+      - 'docs/SDK.md'
+      - 'docs/images/**'
+      - 'website/**'
+      - '.github/workflows/docs-build.yml'
+      - '.github/workflows/deploy-docs.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'docs/wiki/**'
+      - 'docs/OPERATIONS.md'
+      - 'docs/SDK.md'
+      - 'docs/images/**'
+      - 'website/**'
+      - '.github/workflows/docs-build.yml'
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: docs-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 文档站构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.1
+          dest: website
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 内容护栏：站点只允许收录面向使用者的文档。若内部文档（含 FR / ADR 编号）
+      # 意外进入站点产物，此处直接失败——避免内部内容通过文档站对外暴露。
+      - name: 构建站点
+        run: pnpm build
+
+      - name: 校验站点未收录内部内容
+        run: |
+          set -euo pipefail
+          # 站点应恰好收录 14 篇使用文档（wiki 12 + OPERATIONS + SDK）
+          count=$(find build/docs -name '*.html' | wc -l)
+          echo "站点文档数：$count"
+          if [ "$count" -ne 14 ]; then
+            echo "::error::站点文档数应为 14，实际 $count；请检查 docusaurus.config.ts 的 include 白名单"
+            exit 1
+          fi
+          # 内部编号零容忍
+          if grep -rlE 'FR-[0-9]{2,}|ADR-[0-9]{3,}' build/ >/dev/null 2>&1; then
+            echo "::error::站点产物出现内部需求 / 决策编号"
+            grep -rlE 'FR-[0-9]{2,}|ADR-[0-9]{3,}' build/ | head -20
+            exit 1
+          fi
+          # 内部文档路径零容忍
+          if grep -rlE 'docs/(specs|adr)/' build/ >/dev/null 2>&1; then
+            echo "::error::站点产物出现内部文档路径"
+            grep -rlE 'docs/(specs|adr)/' build/ | head -20
+            exit 1
+          fi
+          echo "内容护栏校验通过"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-site
+          path: website/build
+          retention-days: 7

@@ -2,11 +2,11 @@
 
 本文说明如何部署并验收一套「BC → 全局大厅集群 → 业务小区」拓扑。它只描述运维步骤；业务插件负责大厅内选区、排队、小区默认服与后续转服，Beacon 不接管这些行为。
 
-相关权威决策：
+实现本文拓扑需先明确三条前提，它们决定了后续所有操作步骤：
 
-- [ADR-0075：LobbyCluster 与 BC 首次落脚](../adr/0075-lobby-cluster-and-bc-first-entry.md)
-- [ADR-0076：极简身份接入](../adr/0076-control-plane-identity-bootstrap.md)
-- [ADR-0077：多 listener 地址权威](../adr/0077-agent-endpoint-address-authority.md)
+- 每个 namespace 有且仅有一个全局 LobbyCluster，成员必须是同 namespace 的已确认 backend；BC 自身的首次落脚只从该大厅的可调度成员中选择。
+- Agent 本地只保留控制面地址与 namespace 接入 token，serverId、区服归属和大厅归属均由控制面分配，未经确认的身份不会启动依赖权威 serverId 的运行循环。
+- 地址以控制面保存的 endpoint 记录为准：BC 的全部 listener 都会被登记，外部可达地址由控制面探测得出，必要时按 listener 单独覆盖。
 
 ## 1. 目标拓扑
 

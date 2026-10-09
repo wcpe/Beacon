@@ -1,0 +1,125 @@
+/* 首页（落地页）样式：CSS Modules，仅作用于 src/pages/index.tsx。 */
+
+.hero {
+  padding: 4rem 0;
+  text-align: center;
+}
+
+.heroTitle {
+  font-size: 3rem;
+  letter-spacing: 0.02em;
+}
+
+.heroTagline {
+  font-size: 1.25rem;
+  opacity: 0.95;
+  margin-bottom: 1rem;
+}
+
+.heroLead {
+  font-size: 1rem;
+  opacity: 0.9;
+  max-width: 46rem;
+  margin: 0 auto 1.25rem;
+}
+
+.heroCallout {
+  font-size: 0.95rem;
+  max-width: 46rem;
+  margin: 0 auto 2rem;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--ifm-color-primary-lightest);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  text-align: left;
+}
+
+.heroButtons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.section {
+  padding: 3.5rem 0;
+}
+
+.sectionAlt {
+  background: var(--ifm-background-surface-color);
+}
+
+.sectionTitle {
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.sectionNote {
+  text-align: center;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: 2rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1.25rem;
+  margin-top: 2rem;
+}
+
+.card {
+  padding: 1.25rem 1.25rem 1rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 8px;
+  background: var(--ifm-background-color);
+}
+
+.cardTitle {
+  font-size: 1.05rem;
+  margin-bottom: 0.5rem;
+}
+
+.cardBody {
+  font-size: 0.92rem;
+  color: var(--ifm-color-emphasis-700);
+  margin: 0;
+  line-height: 1.65;
+}
+
+.shotGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr));
+  gap: 1.5rem;
+}
+
+.shot {
+  margin: 0;
+}
+
+.shot img {
+  width: 100%;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+.shot figcaption {
+  margin-top: 0.6rem;
+  font-size: 0.88rem;
+  color: var(--ifm-color-emphasis-600);
+  text-align: center;
+}
+
+@media screen and (max-width: 996px) {
+  .hero {
+    padding: 2.5rem 0;
+  }
+
+  .heroTitle {
+    font-size: 2.25rem;
+  }
+
+  .shotGrid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -94,4 +94,11 @@ scheduling.acquireCandidate("zone-a", "matchmaking")
 
 上线前确认 Agent、SDK 和业务插件版本兼容；在测试 namespace 验证配置订阅、调度失败分支、消息幂等和 Agent 缺席时的业务回退。生产问题优先查看 Agent `/beacon status`、命令观测和调度 trace，再联系运维；不要要求业务插件暴露控制面 token。
 
-完整 API、发布坐标与配置/发现示例见 [SDK 接入指南](../SDK.md)。调度真源见 [指标、健康与调度 V2](../specs/v2-metrics-health-scheduling.md)，消息真源见 [连接与跨服消息 V2](../specs/v2-connection-message-storage.md) 与 [ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md)。
+## 6. 接口口径复查
+
+本节复述第 3、4 节对外契约的判断要点，便于发布前自查：
+
+- 调度与健康：`acquireCandidate` 在控制面可用时返回控制面决策，网络超时或服务端故障时自动改用本地快照，结果中的 `source` 会标明 `CONTROL_PLANE` 或 `LOCAL_FALLBACK`；`candidatesInZone` 与 `healthOf` 读的也是本地快照，适合展示而不适合强实时判断。
+- 跨服消息：控制面负责保存受控元数据并做单跳转发，Agent 消息门面是对外唯一入口。业务插件不直连数据面端点、不自配 Redis、不依赖消息投递维护不可丢失的账务状态，也不得用消息绕过 namespace 隔离。
+
+完整 API、发布坐标与配置/发现示例见 [SDK 接入指南](../SDK.md)。
