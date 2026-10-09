@@ -206,7 +206,7 @@ describe('error 场景：统一错误体', () => {
     const check = json as { status: string; failureReason?: string; hasUpdate: boolean }
     expect(status).toBe(200)
     expect(check.status).toBe('check-failed')
-    expect(check.failureReason).toContain('connection refused')
+    expect(check.failureReason).toContain('无法连接更新源')
     expect(check.hasUpdate).toBe(false)
   })
 

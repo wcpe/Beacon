@@ -15,6 +15,8 @@ import { fileAssetsHandlers } from './domains/file-assets'
 import { deliveryHandlers } from './domains/delivery'
 import { approvalHandlers } from './domains/approval'
 import { systemHandlers } from './domains/system'
+// 演示版本常量：测试与页面断言引用它，避免版本号变更时断言漂移。
+export { DEMO_VERSION, DEMO_NEXT_VERSION } from './domains/system'
 import { observabilityHandlers } from './domains/observability'
 import { envHandlers } from './domains/env'
 import { mcpHandlers } from './domains/mcp'

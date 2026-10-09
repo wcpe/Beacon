@@ -75,7 +75,7 @@
 
 ### 3.2 能力版本守卫（FR-264）
 
-- 新增运维设置 `delivery.min-agent-version`（**默认为空串 = 不校验，显式配置才启用**；`0.29.0` 是 FR-165 数据面落地版本，待真机核对上报串形态后作为候选值）。
+- 新增运维设置 `delivery.min-agent-version`（**默认为空串 = 不校验，显式配置才启用**；`0.29.0` 是 FR-165 数据面落地版本，作为启用时的候选下限）。
 - 新增纯函数 `deliveryAgentSupportsStreaming(version string, minVersion string) bool`：按 `.` 切分逐段数值比较，长度不等补 0；**空版本 → false**（旧 agent 未上报）；含非数字段（如 `1.4.0-rc.1`）取前缀数字段比较，非数字后缀不影响主版本判定。
 - 新增窄查询 `AgentIdentityRepository.FindVersionsByServerIDs(namespaceID uint, serverIDs []string) (map[string]string, error)`：一次批量取回，避免逐目标查库。同键多行取 `status_changed_at` 最新一行；无身份行的服**不回键**（由调用方按「无版本 = 旧 agent」fail-closed 处理）。
 - 守卫挂点（**只读 `delivery_order_service.go` 与 orchestrator，最小改动**）：
@@ -129,7 +129,7 @@
 
 - **版本下限取值（已核对，结论：默认关闭）**：agent 上报的版本串来源是 **TabooLib `pluginVersion`**（`BeaconAgentBukkit.kt` 经 `pluginVersion` 注入 `AgentBootstrap`），**不是** Gradle 坐标——`apps/agent/gradle.properties` 的 `version=0.1.0` 被根构建脚本的 `beaconVersion`（读仓库根 `VERSION`）覆盖，故 Gradle 侧 0.1.0 对上报串**不生效**，实际串形态度未经真机实测。
   由于守卫是 fail-closed（未上报版本一律拒），**拍一个猜测值作默认等于上线即全量拒服**：一旦真机上报串不符，全部目标被拒、首日无任何已批准单能启动。故 `deliveryDefaultMinAgentVersion = ""`（默认不校验，显式配置才启用）。
-  **真机待办**：确认上报串形态后，由运维把 `delivery.min-agent-version` 设为确定值（FR-165 数据面落地版本 `0.29.0` 是候选，须以真机实测串为准再定）。
+  **真机核对结论（2026-10-09，生产 20020）**：agent 上报串取自 TabooLib `pluginVersion`（非 Gradle `version`），**实测值为 `1.4.0`**（仓库根 `VERSION` 派生，`agent_identity.agent_version` 四端一致）；与候选下限 `0.29.0` 比较为`1 > 0` → **通过**，故 `0.29.0` 可安全用作启用值。守卫当前仍按设计**默认关闭**，启用与否由运维显式配置决定。
 - **孤儿扫描成本**：`blobs/` 目录遍历是 O(文件数)。已做三重约束——元数据状态**批量**取回（消除 N+1）、单轮扫描文件数上限 5000、**起点每轮轮转**（游标记录上轮结束位置，下轮从其后继续）。
   - 轮转是必需的：只截断不轮转的话，字典序靠后的分片永远扫不到，孤儿持续累积成磁盘泄漏（「剩余留待下轮」并不成立）。
   - 游标只记「最后一个**已处理**的键」；若在截断处把未处理的键写进游标，下一轮的「跳过 ≤ 游标」会把它永久跳过去——那是同款泄漏的另一副面孔。
