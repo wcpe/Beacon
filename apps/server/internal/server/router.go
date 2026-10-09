@@ -613,6 +613,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		}
 	})
 
+	// 运行时诊断（pprof）：注册在 NotFound 之前，且自带管理面鉴权 + full 角色守卫，
+	// 避免重演「请求落到 SPA 回退、拿到 200 + index.html 被误当成转储」的取证失灵。
+	registerDebugRoutes(r, authn, apiKeys)
+
 	if err := ValidateAdminRouteCoverage(r); err != nil {
 		panic(err)
 	}

@@ -300,7 +300,7 @@ func newDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	case "mysql":
 		return mysql.Open(cfg.DSN), nil
 	case "sqlite":
-		return sqlite.Open(applySQLitePragmas(cfg.DSN)), nil
+		return sqlite.Open(applySQLiteTxLock(applySQLitePragmas(cfg.DSN))), nil
 	default:
 		return nil, fmt.Errorf("不支持的数据库驱动 %q（支持 mysql / sqlite）", cfg.Driver)
 	}
@@ -318,8 +318,12 @@ func newDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 // 只读恢复。WAL 为持久化设置（写入库头），仅对本地 sqlite 生效；mysql 路径不受影响。
 // 若 DSN 已显式指定 journal_mode（含 file: URI 形式），尊重用户配置不再覆盖。
 //
-// busy_timeout(5000)：多连接并发时写操作遇锁等待最多 5s 而非立即返回 SQLITE_BUSY 失败，
-// 配合 WAL 的并发读 + 单写模型，使 MaxOpenConns>1 时写操作不会因瞬态锁竞争失败。
+// busy_timeout(5000)：多连接并发时，遇到**写锁竞争**的操作等待最多 5s 而非立即返回 SQLITE_BUSY。
+//
+// 注意其能力边界（实测，见 applySQLiteTxLock 的说明）：busy_timeout 只覆盖「等待写锁释放」这一类竞争，
+// **无法**覆盖 DEFERRED 事务把读锁升级为写锁时的失败——那属于快照已陈旧、重试也无意义的情形，
+// SQLite 会立即返回 SQLITE_BUSY(5) / BUSY_SNAPSHOT(517) 而不等待。故多连接部署必须同时注入
+// _txlock=immediate（见 applySQLiteTxLock），二者缺一不可。
 func applySQLitePragmas(dsn string) string {
 	if strings.Contains(strings.ToLower(dsn), "journal_mode") {
 		return dsn
@@ -329,4 +333,32 @@ func applySQLitePragmas(dsn string) string {
 		sep = "&"
 	}
 	return dsn + sep + "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+}
+
+// applySQLiteTxLock 为 sqlite DSN 追加 `_txlock=immediate`，把「读后写」事务的写锁竞争前移到
+// BEGIN 处等待，而不是在第一条写语句上直接失败。
+//
+// 缺陷背景（实测，sqlite 3.41.2 / glebarez v1.11.0）：sqlite 默认的 DEFERRED 事务在 BEGIN 时
+// 不取任何锁，读语句只拿读锁，直到第一条写语句才需要把读锁升级为写锁。**WAL 模式下该升级不可等待**：
+// 若另一事务在本事务读之后已修改过该页，升级立即返回 SQLITE_BUSY(5) / BUSY_SNAPSHOT(517)，
+// **busy_timeout 完全不生效**（SQLite 不会为「升级失败」重试，因为重试也无法让它看到更新的快照）。
+//
+// 实测（MaxOpenConns=4，8 并发各跑「先读后写」事务共 120 个）：
+//   - 默认 DEFERRED：失败 104/120，全部为 SQLITE_BUSY；
+//   - 加 _txlock=immediate：失败 0/120。
+//
+// 代价（也已实测）：immediate 让**每个**事务在 BEGIN 处即取写者位，故并发的只读事务不再互相并行——
+// 长只读事务（2s）期间普通写事务从 4ms 变为 ~1.95s（等待而非失败）。控制面只读事务普遍短小，
+// 故该代价可接受；这也是 MaxOpenConns > 1 能够安全放开的前提。
+//
+// 若 DSN 已显式指定 _txlock（含 file: URI 形式），尊重用户配置不再覆盖。
+func applySQLiteTxLock(dsn string) string {
+	if strings.Contains(strings.ToLower(dsn), "_txlock") {
+		return dsn
+	}
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "_txlock=immediate"
 }

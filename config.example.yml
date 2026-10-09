@@ -41,10 +41,16 @@ database:
   # GORM DSN。sqlite 用文件路径（如 beacon.db，相对当前目录）；
   # mysql 用 user:pwd@tcp(host:3306)/db?charset=utf8mb4&parseTime=true&loc=UTC（必须带 parseTime=true&loc=UTC）
   dsn: "beacon.db"
-  # 连接池最大打开连接数（sqlite 建议 1；mysql 建议 ~20）
-  max-open-conns: 1
-  # 连接池最大空闲连接数（sqlite 建议 1；mysql 建议 ~10）
-  max-idle-conns: 1
+  # 连接池最大打开连接数。sqlite 建议 4（见下方说明）；mysql 建议 ~20
+  # sqlite 说明：不要回退到 1。单连接意味着「持连接的写事务」与「持内锁等连接的操作」之间
+  # 一旦形成反序请求，就没有第三条连接可打破环，进程会永久互等、只能重启恢复
+  # （生产事故 2026-10-10 02:41:05 即此形态）。给到 4 是**纵深防御**：
+  # 它不根治锁序问题（池被 N 个外层事务占满时，N 个参与者仍可闭合成环），只是抬高成环门槛。
+  # 注意：sqlite 多连接必须配合 store 层自动注入的 `_txlock=immediate`（把「先读后写」的写锁
+  # 竞争前移到 BEGIN 处等待）。若 DSN 里自行指定了 _txlock=deferred，反而会退化成频繁 SQLITE_BUSY。
+  max-open-conns: 4
+  # 连接池最大空闲连接数（sqlite 建议 2；mysql 建议 ~10）
+  max-idle-conns: 2
   # 单个连接最大存活秒数
   conn-max-lifetime-sec: 1800
 

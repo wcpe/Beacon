@@ -83,7 +83,13 @@ type DeliveryOrchestrator struct {
 	events   *deliveryEventHub
 	now      func() time.Time
 	wakeCh   chan struct{}
-	// mu 串行化控制操作（Start / Pause / Resume / Cancel / ConfirmBatch）与每轮推进，使三层状态机迁移不相互竞争。
+	// mu 串行化**控制操作之间**（Pause / Resume / Cancel / Rollback / FinishRollback / ConfirmBatch）
+	// 的多步「读后写」序列，使三层状态机迁移不相互竞争。
+	//
+	// **推进器不持本锁**（P0 死锁修复，2026-10-10 生产事故）：推进器每轮全程是 DB 访问，
+	// 一旦持 mu 就是「持 mu 等连接」；与之相对的另一条路径（审批执行事务）持连接等 mu，
+	// `max-open-conns: 1` 下两资源反序获取即永久互等。故推进器改为全程锁外执行，
+	// 它与控制操作的互斥下沉到各写点的 CAS 前态（见 advanceActiveOrders 注释）。
 	mu *sync.Mutex
 	// observeMu 独立保护观察窗内存缓冲（推进器采样写、Observe/SSE 读），与 mu 有序嵌套（mu→observeMu，不反向）。
 	observeMu      *sync.RWMutex
@@ -183,11 +189,22 @@ func (s *DeliveryOrchestrator) wake() {
 	}
 }
 
-// advanceActiveOrders 装载并推进全部活动单（rolling 全量推进、paused 仅收口在途）；持 mu 与控制操作互斥。
+// advanceActiveOrders 装载并推进全部活动单（rolling 全量推进、paused 仅收口在途）。
 // 之外还每轮刷新「活动单 + 已审批单」引用的 blob 引用时间（FR-261，见 refreshBlobReferences）。
+//
+// **整轮不得持 s.mu**（P0 死锁修复，2026-10-10 生产事故）：本轮从装载到收尾全是 DB 访问，
+// 一旦持 mu 就是「持 mu 等连接」。`max-open-conns=1`（见 config.example.yml）下，
+// 唯一连接被控制操作或审批执行事务占住时，本函数在连接池排队；而审批执行路径
+// （approval_worker.go → applyStartApprovedInTx）正持着连接等 mu —— 互等环闭合后**永不自愈**
+// （租约回收 claimNext 自身也要连接），生产表现为所有需 DB 端点挂起、靠重启恢复。
+//
+// 与「控制操作」的互斥不靠本函数持锁实现，而是下沉到各写点的 CAS 前态：tick 的每个状态迁移
+// 都是带前态条件的单表 CAS（UpdateTargetCAS / UpdateBatchCAS / UpdateStatusCAS）或小事务，
+// 控制操作（Pause / Cancel / Resume / Rollback / ConfirmBatch）并发改状态时，tick 的 CAS 直接未命中
+// 而不误动；反之控制操作也只按前态 CAS 迁移。唯一无法靠 CAS 表达的是「暂停后不得再下发新目标」，
+// 已由 dispatchPending 事务内新增的「单仍 rolling」守卫精确覆盖（见该函数注释）。
+// 这是 .claude/rules/testing-and-quality.md §3「DB IO 一律在锁外」在交付域的具体落实。
 func (s *DeliveryOrchestrator) advanceActiveOrders(ctx context.Context) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	orders, err := s.repo.ListActiveOrders(deliveryActiveOrderStatuses)
 	if err != nil {
 		slog.Error("交付编排推进器装载活动单失败", "错误", err)

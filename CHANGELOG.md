@@ -68,11 +68,27 @@
 
 ### 修复
 
-- **交付提交事务化与 `pending_approval` 死结自愈（FR-259）**：提审是「冻结单据」+「创建审批申请」两步且各自开事务，第二步失败时第一步已提交——单被冻结在 `pending_approval` 却**没有对应的审批申请**：推不动（没有申请可批准）也退不回（`submit` / `cancel` 均 `illegal_state`），只能人工改库。真机两轮验收各撞一次：批 1 验收前端漏带 `Idempotency-Key` → `400 INVALID_PARAM`，单 1 / 单 4 当场冻死；波次 A 验收 O1 里审批票据**执行失败**（`start_conflict` 目标集冲突）后票据已 `failed`（终态、不可撤回），单 #14 / #19 同样卡在「有状态无申请」。
-  - **两步同事务**：`RequestSubmit` 改为在同一事务内先 `prepareSubmit`（`draft → pending_approval`，含前置校验 + CAS + 提审计）再 `requestApprovePending`（建申请），任一步失败即整体回滚，单停在可编辑的 `draft`，运维修正后可原样重试，**不留审批申请也不留提审计**。
-  - **审批服务必须绑同一 tx**：`ApprovalService.request` 自身会开事务，在外层事务里嵌套调用会让单连接库（sqlite）自锁、MySQL 上退化为两个独立事务——两步又变回非事务。故用同包副本写法（`withTx`）把 `db` / `repo` / `audit` 一起绑上去。
-  - **死结自愈**：`pending_approval` 且 `delivery.approve` 下**无未终结申请**（`pending` / `executing`）时放行重提补建申请；仍有未终结申请时回 `409 illegal_state`，避免叠出两条并行的同单审批。未终结口径刻意只取这两态——`rejected` / `withdrawn` / `expired` / `failed` 已不再推进，不构成重提冲突。
-  - **测试**：缺幂等键提审后单仍为 `draft` 且库内 0 申请 0 审计；补键重试成功且单 `pending_approval`；票据执行失败的死结单重提被接受、未终结申请恰 1 条；有未终结申请时重提被拒且不建第二条。规格见 [delivery-orchestration-reliability](docs/specs/delivery-orchestration-reliability.md)。
+- **根治：单连接池下「审批批准」与「推进器 tick」反序获取两资源互等（生产 P0，2026-10-10）**：生产环境（sqlite）于 02:41:05 走完「建单 → 提审 → 批准」后，**所有需访问 DB 的 HTTP 端点永久挂起** 25 分钟（`healthz` / `metrics` 等不查库端点始终 200，掩盖了故障范围），靠重启恢复。**玩家不受影响**——Agent 持本地快照 fail-static，11 台生产服照常服务。本条与上条（连接池纵深防御）的关系：上条只抬高成环门槛，**本条才是消除环本身**。
+  - **根因（两资源反序获取）**：① 审批批准执行**持连接 → 等编排锁**（`approval_worker.go` 的 `db.Transaction` 取走唯一连接 → `applyStartApprovedInTx` 请求 `s.mu`）；② 推进器 tick **持编排锁 → 等连接**（`advanceActiveOrders` 先取 `s.mu`，随后整轮 `ListActiveOrders` / `loadOrderRuntime` / `advanceOrder` / `refreshBlobReferences` 全是 DB 访问）。池内仅一条连接时无第三方可破环。
+  - **为何不可自愈**：审批租约回收（`claimNext`）自身也要 DB 连接，连接被环占住 ⇒ 租约永不回收、worker 永不重试。与现场「`lease_until` 过期 20+ 分钟仍停 `executing`、`created_at == updated_at`（从未推进）」完全吻合。
+  - **为何 `busy_timeout(5000)` 无效**：等待发生在 Go 层 `database/sql` 连接池排队（`sql.DB.conn` 等 `connRequests` channel，**不读 ctx、无超时**），根本没进到 SQLite 层；`busy_timeout` 只管 SQLite 文件锁，两套机制无关。
+  - **修复①——推进器 tick 不再持编排锁**：`advanceActiveOrders` 整轮移除 `s.mu`。与控制操作的互斥**下沉到各写点的 CAS 前态**：tick 的每次状态迁移都是带前态条件的单表 CAS（`UpdateTargetCAS` / `UpdateBatchCAS` / `UpdateStatusCAS`）或小事务，控制操作并发改状态时 tick 的 CAS 直接未命中而不误动。唯一无法用 CAS 表达的「暂停后不得再下发新目标」由 `dispatchPending` 事务内新增的「单仍 rolling」守卫精确覆盖。这是 `.claude/rules/testing-and-quality.md` §3「DB IO 一律在锁外」在交付域的具体落实——该条款此前就被违反，只是未覆盖到 tick 路径。
+  - **修复②——审批批准执行不再持连接等锁**：`applyStartApprovedInTx` 移除 `s.mu`。它是全包**唯一**持锁的 `*InTx` 变体，其余五个（`applyResumeInTx` / `applyRollbackInTx` / `applyRollbackTargetsInTx` / `persistConfirmInTx` / `applyFinishRollbackInTx`）本就不持——去掉后反而**统一了口径**。不削弱互斥的三重依据：状态迁移由 `UpdateStatusCAS(approved→rolling)` 定序；审批执行在进程内串行（单个 worker goroutine）；本函数不读写 `s.mu` 保护的任何内存（`observeByOrder` / `stallByOrder` 各由独立叶子锁保护，启动路径零引用）。**FR-259 的「两步同事务」语义不变**。
+  - **测试**：新增两个复现用例（生产同款 sqlite + `MaxOpenConns=1`，驱动**真审批 worker + 真推进器**）——`TestAdvanceTickMustNotHoldMutexWhileWaitingForConnection` 与 `TestApprovalExecutionDeadlocksWithAdvanceTickOnSingleConnection`：修复前稳定失败（前者断言「tick 在等连接期间仍持 mu，db_in_use=1」；后者 10.6s 死锁超时并检出三方长停），修复后 **0.7s 通过**；另加单连接池下「审批执行期间不持 mu 等连接」的锁不变量用例。**既有测试集为何漏掉**：测试库是 MySQL + `MaxOpenConns: 2`（`testsupport/db.go`），驱动不同且多一条连接可破环——**结构性地无法触发本环**，故这些用例是首次覆盖该路径。
+  - **规格**：[control-plane-db-pool-and-runtime-profiling](docs/specs/control-plane-db-pool-and-runtime-profiling.md)。
+
+- **sqlite 默认连接池回退到 1 导致永久互等（纵深防御）**：生产 P0（2026-10-10 02:41:05）——sqlite + `max-open-conns: 1` 下，审批批准执行「持连接等内锁」与推进器 tick「持内锁等连接」反序获取两条资源，池内没有第三条连接可打破环，双方**永久互等、不可自愈，只能重启恢复**（现场审批行停在 `executing`、lease 过期 20+ 分钟无人回收，所有需 DB 的端点全部挂起，进程 37 线程全 `futex_wait`、WAL 零推进）。
+  - **样例默认值收口**：`config.example.yml` 的 `max-open-conns` 由 1 改为 **4**、`max-idle-conns` 由 1 改为 **2**，与 `config.Default()` 既有值对齐。此前内置默认是 4 而样例是 1，而**样例才是首启释放为生产 `config.yml` 的模板**（`EnsureConfigFile`），即生产实际拿到的是 1——两者不一致本身即是缺陷。
+  - **必须配套 `_txlock=immediate`（本次实测的关键发现）**：只把池调大反而会把「永久挂起」变成「频繁写失败」。sqlite 默认 DEFERRED 事务在 BEGIN 时不取锁，第一条写语句才把读锁升级为写锁，而 **WAL 下该升级不可等待**——若另一事务已改过该页，升级立即返回 `SQLITE_BUSY(5)` / `BUSY_SNAPSHOT(517)`，`busy_timeout` 完全不生效。实测池=4、8 并发各 15 轮「事务内先读后写」共 120 个事务：**DEFERRED 失败 101/120，加 `_txlock=immediate` 后 0/120**。故 `store` 层现为 sqlite DSN 自动注入 `_txlock=immediate`（把竞争前移到 BEGIN 处等待；已显式指定 `_txlock` 的 DSN 尊重用户配置），与既有 WAL / `busy_timeout` 注入合成完整的多连接前提。
+  - **明确不根治**：池被 N 个外层事务占满时，N 个参与者仍可闭合成环（实测池=2/4/8 全部永久互等）。给到 4 只是把「1 条即死」抬高成「需同时占满 4 条」，属**纵深防御**而非修复；环本身的根治在同批另两组（审批事务不持连接等锁、推进器 tick 不持锁等连接）。
+  - **测试**：`applySQLiteTxLock` 注入与不覆盖语义逐例断言；新增并发回归用例「池=4 下『先读后写』事务零失败」——移除注入即变红（已反向验证：同一用例失败 28/40）。规格与完整实测数据见 [control-plane-db-pool-and-runtime-profiling](docs/specs/control-plane-db-pool-and-runtime-profiling.md)。
+
+- **`/debug/pprof/*` 从未注册，取证被 SPA 回退静默吞掉**：事故时尝试取 goroutine 转储，`GET /debug/pprof/goroutine` **返回 200**，但内容其实是内嵌前端的 `index.html`——这些路径从未注册，请求一路落到 `r.NotFound(h.Web.ServeHTTP)` 的 SPA history 回退。于是「200 + HTML」被误读成「已拿到转储」，环图只能靠代码推理 + 测试复现，**无生产栈佐证**。
+  - **全量注册且优先于回退**：索引页 / `cmdline` / `profile` / `symbol` / `trace` 与 `goroutine`、`heap`、`allocs`、`block`、`mutex`、`threadcreate` 六个 profile 全部显式注册为 GET，并置于 `NotFound` 之前（chi 具名路由优先，不再被 SPA 回退接走）；无尾斜杠的 `/debug/pprof` 301 到标准前缀。刻意沿用标准库前缀，否则 `go tool pprof` / `go tool trace` 与现成排障文档全部失效。
+  - **不裸暴露**：复用管理面鉴权中间件（登录令牌 / API 密钥，缺 / 错 / 过期 `401`）并叠加 `requireFullRole`（readonly 角色与只读密钥 `403`）。理由是 pprof 暴露进程内部态（**堆转储可能含内存中的配置明文与凭据**），且 CPU profile / trace 会长时间占用 CPU，属仓库既有的「GET 但有真实副作用」归类。未采用「仅本机监听 / 独立端口」（与 ADR-0002 单二进制同端口冲突，且事故常需远程排障）与「仅 debug 开关启用」（会在最需要它时恰好不可用）。
+  - **测试**：端点逐条注册断言、未鉴权 401（缺凭据 / 错令牌 / 错密钥）、有效令牌可取到真实 goroutine 栈（并断言不是 HTML）、readonly 403、不污染管理面路由目录；移除注册即复现事故现象（200 + `index.html`，已反向验证）。
+  - **运维口径**：`docs/OPERATIONS.md` §6 补「所有需 DB 的端点都挂起」时的取证步骤（含登录换令牌、读栈要点），并强调**必须在重启前取栈**——互等不可自愈，重启会毁掉唯一的生产证据。
+
 
 - **变更单终止的目标收口（FR-260）**：`cancel` 只把 `pending` 目标置 `skipped`，不处置 `pushing` / `pushed` / `activating`；而 `cancelled` **不在**推进器装载集 `deliveryActiveOrderStatuses` 内——终止后推进器永不再看这张单，这些在途目标既不通向 `activated` 也不通向 `failed`，成为「既不推进也不收尸」的孤儿：状态墙长期停在中间态，运维也分不清这台到底动没动盘。现在终止事务内按 `cancelInFlightStatuses` 逐个批量 CAS 把它们收口为 `failed` 并落统一脱敏原因「变更单已紧急终止，目标未确认生效」。
   - **收口取 `failed` 而非 `skipped` 是刻意的**：`skipped` 的语义是「从未开始、未动盘」，而这三态都**已经动了盘**（推送覆盖或已下发生效命令），标 `skipped` 会让运维误判「这台没被碰过」从而错过回滚；且这些目标 `pushed_at` 已非空、属回滚候选，只有 `failed` 与「曾覆盖磁盘」的事实自洽。

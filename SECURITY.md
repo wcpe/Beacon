@@ -7,6 +7,7 @@
 - **admin / 管理台**：需登录鉴权——操作者凭据登录换取无状态签名令牌，`/admin/v1/*`（登录端点除外）须带 `Authorization: Bearer <token>`，缺 / 错 / 过期返回 `401`；写操作的 operator 以认证身份为准并入审计。
 - **脚本化 admin API 密钥**：供外部服务 / 脚本调用 `/admin/v1` 的运行时密钥，认证头 `X-Beacon-Api-Key: <bk_...>` 或 `Authorization: Bearer <bk_...>`。**库内只存 SHA-256 哈希、绝不存明文**，明文仅在创建 / 重置时一次性返回、不可二次读取（丢失只能重置轮换）。可**吊销**（软删即时失效）、可**到期**（过期即 `401`）、`full` / `readonly` 两级角色（readonly 对写端点一律 `403`，最小权限）。创建 / 吊销 / 重置均写审计（明文 / 哈希绝不入 detail）。管理台「复制为 curl」辅助仅在浏览器内拼接命令，token 不落库、不入日志。
 - **agent ↔ 控制面**：共享 `X-Beacon-Token`（请求头 `X-Beacon-Token`），仅用于**防误连**，**不是安全边界**；缺失返回 `401`。生产部署应通过网络层（内网隔离 / 防火墙 / 反向代理鉴权）保护管理面。
+- **运行时诊断端点 `/debug/pprof/*`**：挂管理面鉴权链（登录令牌 / API 密钥，缺 / 错 / 过期 `401`）**并**叠加 full 角色守卫（readonly 角色与只读密钥 `403`）。之所以不能只靠只读角色：pprof 暴露进程内部态，**堆转储可能含内存中的配置明文与凭据**；且 CPU profile / trace 会长时间占用 CPU（属「GET 但有真实副作用」，与仓库既有的 `requireFullRole` 归类一致）。用法见 `docs/OPERATIONS.md` §6；设计取舍见 [control-plane-db-pool-and-runtime-profiling](docs/specs/control-plane-db-pool-and-runtime-profiling.md) §3.2。**该端点绝不可在反向代理层放开为匿名可访问**。
 - **敏感配置值加密**：规划中，尚未实现。当下的缓解手段是把管理端口限制在内网。
 
 ## 密钥与敏感数据

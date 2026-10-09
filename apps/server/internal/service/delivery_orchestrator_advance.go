@@ -260,6 +260,7 @@ func (s *DeliveryOrchestrator) advanceObservingBatch(rt *orderRuntime, batch *mo
 }
 
 // dispatchPending 下发批内未开始目标（pending→pushing + delivery_push 命令，一事务原子），提交后唤醒各 agent。
+// 事务内先复核单仍处 rolling（暂停门）：推进器不持 mu 后，这是「暂停 / 终止后不得再下发新目标」的唯一守卫。
 func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.ChangeBatch, members []*model.ChangeTarget) {
 	pending := make([]*model.ChangeTarget, 0, len(members))
 	for _, t := range members {
@@ -294,6 +295,16 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		repoTx := s.repo.WithTx(tx)
 		cmdTx := s.cmdRepo.WithTx(tx)
+		// 暂停门（P0 死锁修复后新增的显式守卫，见 advanceActiveOrders 注释）：推进器已不持 s.mu，
+		// 故「暂停后不得再下发新目标」（spec §4.4.5）不能再靠「tick 与控制操作同持一把锁」保证——
+		// 本轮的 rt 快照可能在 Pause 提交前装载，advanceRolling 看到的是过期的 rolling。
+		// 这里在**事务内**复核单主状态：读到非 rolling（已暂停 / 已终止 / 已在回滚）即整事务回滚，
+		// 本批一台都不下发。CAS 无法表达这个条件——它约束的是**批**内的目标，而「能不能下发」取决于**单**。
+		if order, e := repoTx.FindByID(rt.order.ID); e != nil {
+			return e
+		} else if order == nil || order.Status != model.ChangeOrderStatusRolling {
+			return errCASSkip
+		}
 		// FR-263：命令重发幂等——控制面重启后重跑下发时，若该目标本单已有在途同类型命令则复用，
 		// 不建第二条（重复命令会让 agent 收到两条 push，产生二次备份 / 二次覆盖）。
 		// 批量一次取回后走内存索引，避免逐台查在大批量次下退化成 N 次查询。
@@ -325,7 +336,9 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 		return nil
 	})
 	if err != nil {
-		slog.Error("交付编排下发推送命令失败", "orderId", rt.order.ID, "batchNo", batch.BatchNo, "错误", err)
+		if err != errCASSkip {
+			slog.Error("交付编排下发推送命令失败", "orderId", rt.order.ID, "batchNo", batch.BatchNo, "错误", err)
+		}
 		return
 	}
 	for _, t := range dispatched {
@@ -603,10 +616,15 @@ func (s *DeliveryOrchestrator) tripBreaker(rt *orderRuntime, batch *model.Change
 		} else if !ok {
 			return errCASSkip
 		}
-		if _, e := repoTx.UpdateStatusCAS(rt.order.ID, []string{model.ChangeOrderStatusRolling}, map[string]any{
+		// 单 CAS 同样显式判命中：推进器已不持 mu（见 advanceActiveOrders 注释），控制操作可在本事务
+		// 之外并发迁移单状态（如操作员刚手动暂停 / 终止）。丢弃返回值会让本事务照落「批 failed +
+		// 目标 skipped」而单仍留在操作员那条状态上，形成 FR-262 明令禁止的半截状态。未命中即整事务回滚。
+		if ok, e := repoTx.UpdateStatusCAS(rt.order.ID, []string{model.ChangeOrderStatusRolling}, map[string]any{
 			"status": model.ChangeOrderStatusPaused, "pause_kind": model.PauseKindCircuitBreak, "pause_reason": reason,
 		}); e != nil {
 			return e
+		} else if !ok {
+			return errCASSkip
 		}
 		if _, e := repoTx.BulkUpdateTargetStatusByBatch(batch.ID, []string{model.ChangeTargetStatusPending},
 			map[string]any{"status": model.ChangeTargetStatusSkipped}); e != nil {
@@ -616,7 +634,9 @@ func (s *DeliveryOrchestrator) tripBreaker(rt *orderRuntime, batch *model.Change
 			map[string]any{"orderId": rt.order.ID, "batchNo": batch.BatchNo, "reason": reason})
 	})
 	if err != nil {
-		slog.Error("交付编排熔断落库失败", "orderId", rt.order.ID, "batchNo", batch.BatchNo, "错误", err)
+		if err != errCASSkip { // 未命中 = 批被并发迁移 / 单已被控制操作迁走，本轮不熔断（非错误）
+			slog.Error("交付编排熔断落库失败", "orderId", rt.order.ID, "batchNo", batch.BatchNo, "错误", err)
+		}
 		return
 	}
 	batch.Status = model.ChangeBatchStatusFailed

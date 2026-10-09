@@ -163,9 +163,29 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 
 ## 6. 排障
 - beacon 起不来：先看日志与配置校验；SQLite 检查数据卷挂载、路径和权限，外置 MySQL 再检查 DSN、网络和数据库可用性。
+- **控制面「所有需 DB 的端点都挂起」时的取证（goroutine 转储）**：这类现象通常是**锁序互等**（两条路径反序获取「DB 连接」与进程内锁），会**永久挂起、不可自愈，只能重启恢复**——所以务必在重启**之前**先取栈，否则唯一的生产证据就没了（2026-10-10 的生产事故正是因为在重启后才想起取证，环图只能靠代码推理还原）。步骤：
+  ```bash
+  # 1) 取全部 goroutine 栈（debug=2 为可读文本；不带 debug 是 pprof 二进制格式）
+  #    需管理台登录令牌；端点走管理面鉴权 + full 角色，故只读密钥/只读角色会被 403
+  curl -sS -H "Authorization: Bearer $TOKEN" \
+    'http://127.0.0.1:8848/debug/pprof/goroutine?debug=2' > goroutine.txt
+
+  # 2) 无凭据时先登录换令牌
+  TOKEN=$(curl -sS -X POST http://127.0.0.1:8848/admin/v1/auth/login \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"$BEACON_ADMIN_USERNAME\",\"password\":\"$BEACON_ADMIN_PASSWORD\"}" \
+    | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+
+  # 3) 也可取 CPU profile / 堆 / trace 供离线分析
+  curl -sS -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8848/debug/pprof/profile?seconds=30' > cpu.pprof
+  go tool pprof -top ./beacon cpu.pprof
+  ```
+  读栈要点：在 `syncthing` 之外找**成对**的阻塞点——一侧卡在 `database/sql.(*DB).conn`（等连接）而另一侧卡在 `sync.(*Mutex).Lock`（等内锁），且两者都持有对方在等的资源，即为互等环。
+  > **安全**：`/debug/pprof/*` 暴露进程内部态（堆可能含内存中的配置明文与凭据），故**只在排障时临时使用**、用完即止；**绝不可在反向代理层放开为匿名可访问**（见 [SECURITY.md](../SECURITY.md)）。
 - agent 连不上：核对控制面地址、`X-Beacon-Token`、网络连通。
 - 配置不热更：看 agent 长轮询是否在连、控制面是否唤醒了受影响集合、有效配置 md5 是否真变。
 - **控制面短暂不可用时不要重启子服**：agent 会按本地快照 fail-static 继续，控制面恢复后自动重连。
+- **改过 `database.max-open-conns` 后须重启**（属启动项）：sqlite 部署的样例默认已为 4，**不要回退到 1**——单连接下上述锁序互等一旦出现就没有第三条连接可破环。若 sqlite 连的是外部 DSN，注意 `store` 层会为连接追加 `_txlock=immediate`（把 SQLITE_BUSY 从「写失败」转为「短暂的锁等待」）；**自行在 DSN 里写死 `_txlock=deferred` 会退回频繁写失败**，排障时可用 `/admin/v1/system/observability` 的 `dbPool.waitCount` 观察连接排队情况。
 
 ## 7. 端到端验收（agent 真机接入联调）
 用仓库内 **agent 侧**的验收模块在真机 Bukkit/Bungee 上自检「首次接入 + 发布热更 + 审计可查」。Gradle 统一使用 `mc-testkit 0.5.0` 自动下载并编排 Paper 1.20.4 与原生 BungeeCord，无需手工准备 MC 服（也不再需要 jpenilla run-task 或 Waterfall 代验）。
