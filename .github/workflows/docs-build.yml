@@ -43,10 +43,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # 注意：job 已设 working-directory: website，action-setup 会沿用该目录安装，
+      # 故此处不能再传 dest（否则解析成 website/website）。
       - uses: pnpm/action-setup@v6
         with:
           version: 10.32.1
-          dest: website
 
       - uses: actions/setup-node@v7
         with:
