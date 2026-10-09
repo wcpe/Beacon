@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 
+import { DEMO_NEXT_VERSION, DEMO_VERSION } from '@beacon/devmock'
 import SystemVersionPage from '../../pages/system-version'
 import { createTestServer, renderPage, useScenario } from './harness'
 
@@ -24,11 +25,11 @@ describe('/system/version 版本与更新页', () => {
     useScenario('normal')
     renderPage(<SystemVersionPage />)
 
-    // 当前版本 v0.21.0
-    expect(await screen.findByText('v0.21.0')).toBeInTheDocument()
-    // normal 场景有可用更新 v0.22.0（版本徽标 / 更新说明标题多处出现）
+    // 当前版本（引用 devmock 常量，避免版本变更时断言漂移）
+    expect(await screen.findByText(DEMO_VERSION)).toBeInTheDocument()
+    // normal 场景有可用更新（版本徽标 / 更新说明标题多处出现）
     await waitFor(() => {
-      expect(screen.getAllByText(/v0\.22\.0/).length).toBeGreaterThan(0)
+      expect(screen.getAllByText(new RegExp(DEMO_NEXT_VERSION.replace(/\./g, '\\.'))).length).toBeGreaterThan(0)
     })
     // 紧凑分区：版本信息 / 更新与渠道 / 维护操作三段常驻
     expect(screen.getByText('版本信息')).toBeInTheDocument()
@@ -52,7 +53,7 @@ describe('/system/version 版本与更新页', () => {
         return HttpResponse.json({
           status: 'check-failed',
           failureReason: '查 release 列表失败: proxyconnect tcp 10.0.0.5:7890: connection refused',
-          currentVersion: 'v0.21.0',
+          currentVersion: DEMO_VERSION,
           channel: 'stable',
           hasUpdate: false,
           isDevBuild: false,
@@ -86,7 +87,7 @@ describe('/system/version 版本与更新页', () => {
     const user = userEvent.setup()
     renderPage(<SystemVersionPage />)
 
-    await screen.findByText('v0.21.0')
+    await screen.findByText(DEMO_VERSION)
     await user.click(screen.getByRole('button', { name: '应用更新' }))
 
     // 确认弹窗
@@ -117,11 +118,11 @@ describe('/system/version 版本与更新页', () => {
         forceValues.push(new URL(request.url).searchParams.get('force') ?? '')
         return HttpResponse.json({
           status: 'ok',
-          currentVersion: 'v0.21.0',
+          currentVersion: DEMO_VERSION,
           channel: 'stable',
           hasUpdate: false,
           isDevBuild: false,
-          latestVersion: 'v0.21.0',
+          latestVersion: DEMO_VERSION,
           releaseNotes: '',
           releaseUrl: '',
           publishedAt: '',
@@ -142,6 +143,6 @@ describe('/system/version 版本与更新页', () => {
     await waitFor(() => {
       expect(forceValues).toEqual(['true'])
     })
-    expect(await screen.findByText('v0.21.0')).toBeInTheDocument()
+    expect(await screen.findByText(DEMO_VERSION)).toBeInTheDocument()
   })
 })

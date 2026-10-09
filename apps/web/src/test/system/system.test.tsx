@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import SystemPage from '../../pages/system'
+import { DEMO_VERSION } from '@beacon/devmock'
 import { createTestServer, renderPage, useScenario } from './harness'
 
 const server = createTestServer()
@@ -24,7 +25,7 @@ describe('/system 控制面健康页', () => {
     renderPage(<SystemPage />)
 
     // 运行时块展示版本
-    expect(await screen.findByText('v0.21.0')).toBeInTheDocument()
+    expect(await screen.findByText(DEMO_VERSION)).toBeInTheDocument()
     // 子系统块标题存在
     expect(await screen.findByText('子系统健康')).toBeInTheDocument()
     // 子系统列表存在

@@ -132,13 +132,18 @@ function buildSystem(scenario: MockScenario): SystemState {
 
 const getSystemState: () => SystemState = defineScenarioStore(buildSystem)
 
+// 演示模式展示的控制面版本：与仓库 VERSION 保持同步，避免公开截图出现与真实发布不一致的版本号。
+export const DEMO_VERSION = 'v1.4.0'
+// 「有更新」场景展示的下一版本（仅用于更新检查演示，非真实发布）。
+export const DEMO_NEXT_VERSION = 'v1.4.1'
+
 export const systemHandlers: HttpHandler[] = [
   // 控制面自身状态（版本 / 运行时长 / DB 连通 / 在线实例数 / Go 运行时）
   mockGet('/admin/v1/system/status', () => {
     const cluster = getClusterState()
     const online = cluster.servers.filter((s) => s.online).length
     const status: SystemStatus = {
-      version: 'v0.21.0',
+      version: DEMO_VERSION,
       startedAt: isoOffset(-36 * 3_600_000),
       uptimeSeconds: 36 * 3600,
       db: { connected: true },
@@ -193,14 +198,14 @@ export const systemHandlers: HttpHandler[] = [
     const hasUpdate = !failed && scenario !== 'empty'
     const check: UpdateCheck = {
       status: failed ? 'check-failed' : 'ok',
-      failureReason: failed ? '查 release 列表失败: proxyconnect tcp 10.0.0.5:7890: connection refused' : undefined,
-      currentVersion: 'v0.21.0',
+      failureReason: failed ? '查 release 列表失败: 无法连接更新源（连接被拒绝）' : undefined,
+      currentVersion: DEMO_VERSION,
       channel: 'stable',
       hasUpdate,
       isDevBuild: false,
-      latestVersion: failed ? '' : hasUpdate ? 'v0.22.0' : 'v0.21.0',
+      latestVersion: failed ? '' : hasUpdate ? DEMO_NEXT_VERSION : DEMO_VERSION,
       releaseNotes: hasUpdate ? '## 变更\n- 第二版管理台 mock 全量上线\n- 修复若干问题' : '',
-      releaseUrl: hasUpdate ? 'https://github.com/wcpe/Beacon/releases/tag/v0.22.0' : '',
+      releaseUrl: hasUpdate ? `https://github.com/wcpe/Beacon/releases/tag/${DEMO_NEXT_VERSION}` : '',
       publishedAt: failed ? '' : isoOffset(-2 * DAY),
       checkedAt: isoOffset(0),
       cacheExpiresAt: isoOffset(6 * 3_600_000),
@@ -227,7 +232,7 @@ export const systemHandlers: HttpHandler[] = [
     state.update = {
       phase: 'downloading',
       percent: 42,
-      targetVersion: 'v0.22.0',
+      targetVersion: DEMO_NEXT_VERSION,
       error: '',
       rollbackAvailable: state.update.rollbackAvailable,
     }

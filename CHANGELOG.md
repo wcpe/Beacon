@@ -181,6 +181,13 @@
 
 - **新增交付回滚韧性规格（FR-262r / FR-270 / FR-271 / FR-255r）**：新建 [delivery-rollback-resilience](docs/specs/delivery-rollback-resilience.md)，把 [v2-delivery-orchestration](docs/specs/v2-delivery-orchestration.md) §4.7.2 已定下但未兑现的三处承诺（失败可重试、备份缺失预检、失败原因可见）与回滚粒度、可见性两处缺口一次性写清：数据模型（动作记录两表）、回滚重试为何走审批、目标级回滚的编排与互斥、MCP 扩参而非新增工具的理由、交付版本读模型口径与回退语义、风险与待定。同步更新 `docs/PRD.md`（FR-270 / FR-271 状态推进到开发中，FR-255 行的「回滚预检拆出单列」指向新规格）、`docs/API.md`（四个端点）与 `docs/specs/delivery-mcp-tools.md`（`targets.list` 投影补 `deliveredVersion`、回滚工具扩参口径）。
 
+- **README 面向公开项目重写与截图更新**：原 README 以「已了解本项目」为前提书写——首屏是一段堆叠六个能力域的长句，截图区 4 张里含「UI 控件博物馆」这类开发者内部物，快速开始直接进入部署而未给出「先点一遍看看」的路径；另有一处与实现不符的能力声明。现按「30 秒看懂是什么 / 怎么跑起来」重写。
+  - **首屏结论化**：标题下改为一句话定位（给谁用）+ 最硬差异化引用块（控制面挂 ≠ 数据面挂）+ 六条要点，徽章保留。
+  - **截图换产品向四张**：运维总览 / 集群拓扑 / 交付变更单（原缺）/ 服务器资产；补「免部署免登录点一遍」的演示模式命令（`pnpm --filter @beacon/web dev`）。
+  - **快速开始可照抄**：明确首启口令为**随机生成**并给出取值命令（`docker compose exec beacon cat /data/config.yml`）；Agent 接入改为可直接复制的 yaml 片段 + 取 token / 批准流程；补充「运行期 Agent 版本须 ≥ 编译所用 api/kit 版本」。
+  - **能力声明回归真**：删除代理层「Velocity」表述——控制面虽识别 `velocity` 角色字符串，但 **Agent 侧无 Velocity 适配模块**，实际无法部署，原表述超出已实现能力；文档索引去掉内部需求向措辞并补 `ARCHITECTURE.md` / `API.md`。
+  - **演示数据两处修正**（公开截图前置）：演示版本号由与仓库不一致的 `v0.21.0` 改为跟随 `VERSION` 的 `DEMO_VERSION` 常量并导出供测试引用（避免版本变更时断言漂移）；更新检查错误文案中的**内网代理地址**改为通用表述。
+
 ## 1.4.0（2026-10-07）
 
 ### 新增
