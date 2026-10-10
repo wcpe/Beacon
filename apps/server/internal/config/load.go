@@ -177,6 +177,14 @@ func (c Config) validate() error {
 	if err := c.validateMCP(); err != nil {
 		return err
 	}
+	// 连接等待预算须小于事务寿命预算（见 store 的连接等待防护）：
+	// 二者的关系是「先花 call 抢连接，抢到后事务最多活 tx」。若 call >= tx，则事务刚开起来就已超预算，
+	// 正常事务会被误杀成「等连接超时」，把可诊断的配置错误伪装成连接池故障。
+	if c.Database.CallTimeoutMs > 0 && c.Database.TxTimeoutMs > 0 &&
+		c.Database.CallTimeoutMs >= c.Database.TxTimeoutMs {
+		return fmt.Errorf("配置校验失败: database.call-timeout-ms(%d) 须小于 tx-timeout-ms(%d)（前者管等连接、后者管事务寿命，取反会误杀正常事务）",
+			c.Database.CallTimeoutMs, c.Database.TxTimeoutMs)
+	}
 	// 机器注册通道（FR-222）：开启即把 agent 共享 token 升级为安全边界（持有即受信内部调用方），
 	// 故必须显式换为强随机值——留空或仍是出厂默认值一律拒绝启动（fail-fast，避免弱 token 直通注册）。
 	if c.MCP.AllowMachineRegister && isWeakAgentToken(c.AgentToken) {

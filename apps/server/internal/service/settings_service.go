@@ -15,6 +15,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/config"
 	"github.com/wcpe/Beacon/apps/server/internal/httpx"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/pkg/lockguard"
 	"github.com/wcpe/Beacon/apps/server/internal/pkg/log"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -209,6 +210,10 @@ func (s *SettingsService) Update(key, value, operator, clientIP string) error {
 	if key == SettingLogLevel {
 		log.SetLevel(value)
 	}
+	// 锁内 DB 访问守卫：开关值推入 lockguard 的原子标志，无需重启即热生效。
+	if key == SettingLockDBGuardEnabled {
+		lockguard.SetEnabled(value == "true")
+	}
 	slog.Info("运维设置已更新", "key", key, "operator", operator)
 	return nil
 }
@@ -235,6 +240,9 @@ func (s *SettingsService) applyDangerousInTx(tx *gorm.DB, key, value string, ver
 		s.mu.Unlock()
 		if key == SettingLogLevel {
 			log.SetLevel(value)
+		}
+		if key == SettingLockDBGuardEnabled {
+			lockguard.SetEnabled(value == "true")
 		}
 	}, nil
 }

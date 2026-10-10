@@ -90,9 +90,24 @@ func normalizeServerIDs(serverIDs []string, limit int, spec serverIDScopeSpec) (
 }
 
 // Pause 人工暂停（POST .../pause，spec §4.4.5）：rolling→paused(manual)，不打断在途目标（推进器继续收口在途到终态）。
+//
+// **全程不取 s.mu**（P0 死锁修复的第二批，2026-10-10）：本函数是 HTTP 直连入口
+// （router.go 的 `POST /change-orders/{id}/pause`），整段都是 DB 访问（查单 + 查环境 code + 事务 + 详情视图）。
+// 此前它持 mu 完成这些访问，于是与「审批执行事务持连接等 mu」构成互等环的另一半——
+// 单连接池下没有第三条连接可破环，请求会永久挂起（生产事故同源形态）。
+//
+// 为什么去掉锁不削弱互斥（与 applyStartApprovedInTx 同一口径，不是「少了一把锁」）：
+//   - **状态迁移由 CAS 定序**：`UpdateStatusCAS(rolling→paused)` 带前态条件，未命中即拒
+//     （返回 409 illegal_state）。控制操作对同一张单做的都是同类带前态的条件更新，
+//     故并发下不会出现两次迁移同时成立，也不会留下半成品（迁移与审计在同一事务提交）。
+//   - **不需要「检查与迁移之间」的原子性**：前面那次「读单判状态」只用于给出**可读的拒绝原因**
+//     （非法状态该报哪个状态），真正的判定权在 CAS 的 WHERE 上；即便两次读之间状态被他人改动，
+//     CAS 也会如实失败，不会误动。
+//   - 本函数不读写 s.mu 保护的任何内存（observeByOrder / stallByOrder 在本路径零引用）。
+//
+// detailView 刻意留在事务之外：它只是读视图，无需参与互斥，只需最终一致
+// （若塞进事务，反而会把一堆只读查询拉进写事务、延长连接占用）。
 func (s *DeliveryOrchestrator) Pause(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	order, err := requireChangeOrder(s.repo, id)
 	if err != nil {
 		return nil, err
@@ -275,12 +290,23 @@ func (s *DeliveryOrchestrator) findFailedBatch(repoTx *repository.ChangeOrderRep
 // 终止后推进器再也不看这张单——留在 pushing/pushed/activating 的目标永远等不到回执处理能力，
 // 既不通向 activated 也不通向 failed，成为「既不推进也不收尸」的在途孤儿：
 // 目标计数与状态墙长期停在中间态，冲突守卫还可能因为它们过不了预检。
+// **全程不取 s.mu**（P0 死锁修复的第二批，2026-10-10）：与 Pause 同为 HTTP 直连入口
+// （router.go 的 `POST /change-orders/{id}/cancel`），整段都是 DB 访问。此前持 mu 完成这些访问，
+// 与「审批执行事务持连接等 mu」构成互等环的另一半——单连接池下无第三条连接可破环、请求永久挂起。
+//
+// 为什么去掉锁不削弱互斥（重点说明「紧急终止」为何也不怕并发）：
+//   - **主迁移由 CAS 定序**：`UpdateStatusCAS(rolling|paused → cancelled)` 带前态条件，
+//     并发下至多一次成功；另一个必定未命中并得到 409，不存在「两次终止都成立」。
+//   - **收口更新是幂等的条件批量更新**：在途目标→failed、pending 批/目标→skipped 都带
+//     `WHERE status IN (...前态)`，重复执行不会二次改写已终态的行。故即便真有并发重入，
+//     也不会把已收口的行再动一次——这是「紧急终止」语义不被削弱的关键。
+//   - **不需要检查与迁移之间的原子性**：前置读单只用于给出可读拒绝原因，判定权在 CAS 的 WHERE 上。
+//   - 本函数对 s.mu 保护的内存只有**终态释放**（releaseTerminalMemory → clearObserve/clearStall），
+//     走的是独立叶子锁 observeMu/stallMu，不依赖 mu（见 delivery_orchestrator.go 的字段说明）。
 func (s *DeliveryOrchestrator) Cancel(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	if strings.TrimSpace(reason) == "" {
 		return nil, apperr.New(http.StatusBadRequest, "missing_reason", "紧急终止原因必填")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	order, err := requireChangeOrder(s.repo, id)
 	if err != nil {
 		return nil, err

@@ -62,9 +62,8 @@ func OpenArchive(main config.DatabaseConfig, arc config.ArchiveConfig) (*gorm.DB
 	if err != nil {
 		return nil, info, fmt.Errorf("获取归档库底层连接池失败: %w", err)
 	}
-	sqlDB.SetMaxOpenConns(main.MaxOpenConns)
-	sqlDB.SetMaxIdleConns(main.MaxIdleConns)
-	sqlDB.SetConnMaxLifetime(time.Duration(main.ConnMaxLifetimeSec) * time.Second)
+	// 池参数与连接等待防护都已在 newDialector → openPool 内设好（与主库同一口径）。
+	// 这里只做连通性检查：归档库不可达时上层降级而非退出（ADR-0066 决策 4）。
 	if err := sqlDB.Ping(); err != nil {
 		return nil, info, fmt.Errorf("归档库 Ping 失败: %w", err)
 	}

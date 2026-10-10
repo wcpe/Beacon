@@ -106,8 +106,13 @@ func CheckAndAutoRollback(runPath string) {
 	if err := writeSentinel(runPath, st); err != nil {
 		slog.Warn("换版待验证标记累加写入失败", "错误", err)
 	}
+	// 在**启动 goroutine 之前**把验证期读取到局部变量：验证期应在进入验证那一刻定下，
+	// 而不是让后台定时器稍后再去读可能已被他人改写的包级变量。
+	// 这不只是风格问题——`-race` 实测：测试用 `t.Cleanup` 恢复该包级变量的同时，
+	// 上一个用例留下的定时器 goroutine 仍在读它，构成确定性 data race（实测 3/3 复现）。
+	verify := verifyDuration
 	slog.Info("换版后首启自检：进入验证期，稳定运行后确认更新成功",
-		"启动尝试次数", st.Attempt, "验证期秒", int(verifyDuration.Seconds()), "目标版本", st.Version)
+		"启动尝试次数", st.Attempt, "验证期秒", int(verify.Seconds()), "目标版本", st.Version)
 	go func() {
 		// recover 兜底：ConfirmUpdateSuccess 内部 os.Remove 在文件系统异常时可能 panic，
 		// 此 goroutine 无 recover 会让 panic 带崩整个进程（验证期已是新版在跑）。
@@ -116,7 +121,7 @@ func CheckAndAutoRollback(runPath string) {
 				slog.Error("更新验证定时器 panic，已兜底未带崩进程", "错误", r)
 			}
 		}()
-		time.Sleep(verifyDuration)
+		time.Sleep(verify)
 		ConfirmUpdateSuccess(runPath)
 		slog.Info("新版已稳定运行，更新确认成功，已清理备份", "目标版本", st.Version)
 	}()

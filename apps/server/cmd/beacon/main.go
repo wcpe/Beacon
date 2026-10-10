@@ -192,6 +192,10 @@ func run() error {
 	defer store.Close(archiveDB) // nil 安全（不可达降级时 archiveDB=nil）
 	archiveService := service.NewArchiveService(db, archiveDB, archiveInfo,
 		repository.NewArchiveJobRepository(db), settingsService, auditRepo)
+	// 「持锁期间 DB 访问」守卫的第二份装配（P1-3）：归档域的三处锁内 DB（CreateJob / RetryJob /
+	// CancelJob）此前落在观测面之外，故「系统性防护」在第二处服务上不成立。这里补挂一份，
+	// 同样默认关、经 debug.lock-db-guard-enabled 热开，装配失败只记日志（见方法内说明）。
+	archiveService.AttachLockDBGuard()
 	// 归档管理面 handler（FR-153，见 spec §5）：挂 /admin/v2/archive/*，薄接 archiveService。
 	v2ArchiveHandler := handler.NewV2ArchiveHandler(archiveService)
 
@@ -317,14 +321,18 @@ func run() error {
 	metricSampler := service.NewMetricSampler(registry, metricRepo, settingsService)
 
 	// 控制面自身状态页眉（FR-33）：DB 连通经底层连接池 Ping（不经 GORM 业务路径），在线实例数读内存注册表。
+	// 注意这里取的是**原生池**（GetDBConn 的逃生口）：它仍供自观测页读池统计（Stats 是非阻塞的）。
 	sqlDB, err := db.DB()
 	if err != nil {
 		return fmt.Errorf("获取底层连接池失败: %w", err)
 	}
 	// 进程 CPU% 采样器（gopsutil）：构造时预热一次基线，端点每次取自上次调用以来的占比。
 	cpuSampler := service.NewGopsutilCPUSampler()
+	// 连通探测注入**带预算**的探测器（P1-1）：原生 `(*sql.DB).Ping()` 在池被占满时无界等待，
+	// 而本端点恰是排障时最需要可用的——事故症状会在这里原样复现。经 store.NewBoundedPinger
+	// 拿到包装层（继承 call 预算），拿不到时它自行回退到原生池的 PingContext（仍可被 ctx 中断）。
 	// 采样器启用状态从设置 store 读、热生效（FR-61）：metric.enabled 改了页眉即反映新值。
-	systemService := service.NewSystemService(version.Version, startedAt, sqlDB, registry,
+	systemService := service.NewSystemService(version.Version, startedAt, store.NewBoundedPinger(db), registry,
 		func() bool { return settingsService.GetBool(service.SettingMetricEnabled) }, cpuSampler)
 	systemHandler := handler.NewSystemHandler(systemService)
 
@@ -570,6 +578,21 @@ func run() error {
 	deliveryOrchestrator.SetCapabilityGuard(repository.NewAgentIdentityRepository(db), func() string {
 		return settingsService.GetString(service.SettingDeliveryMinAgentVersion)
 	})
+	// 「持锁期间 DB 访问」运行时守卫（P0 死锁防回归，2026-10-10）：挂探针观测编排器的 mu，
+	// 默认关、经设置项 debug.lock-db-guard-enabled 热开。装配失败只记日志、绝不阻断启动——
+	// 它只是诊断能力，不是控制面可用性的前提（故方法内自行记 WARN，不在此增加分支）。
+	//
+	// **运行期它观测的是一处死代码**（评审 P2-7 指认，此处如实记录，勿据此以为生产路径被覆盖）：
+	// 生产上所有交付迁移都走 `*InTx` 变体（delivery_dangerous_approval.go 经审批 worker 的外层事务
+	// 调用 applyStartApprovedInTx / applyResumeInTx / applyRollbackInTx / applyFinishRollbackInTx /
+	// applyConfirmBatchInTx），它们**刻意不取 s.mu**（P0 修复），故永不触发「持 mu 做 DB」。
+	// 仍持 mu 的 applyStart / applyResume / applyRollback / applyFinishRollback / applyConfirmBatch
+	// 现在只有同包测试调用，**运行期到不了**。
+	//
+	// 那为什么还挂：它是一条**回归绊线**而非运行期防护——若日后有人把某个迁移改回「持 mu + 做 DB」
+	// （或给 tick 重新加锁），守卫在开启时就能指认调用点，而不是等它再次复现成生产事故。
+	// 生产形态的常规防护在 store 层（连接等待预算，把「无限挂起」变成「快速失败」）。
+	deliveryOrchestrator.AttachLockDBGuard()
 	service.RegisterDeliveryApprovalAdapter(approvalRegistry, deliveryOrderService, deliveryOrchestrator)
 	deliveryOrchestrator.SetApprovalService(approvalService)
 	mcpToolRegistry.SetDeliveryOrchestrator(deliveryOrchestrator)

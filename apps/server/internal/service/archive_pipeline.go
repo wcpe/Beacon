@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -36,10 +37,30 @@ type archiveItemRunner struct {
 	batchRows     int
 	batchInterval time.Duration
 	sampleSize    int
+	// longCtx 是数据面语句的期限上下文（见 archiveLongQueryTimeout）：hot / archive 两库都已绑定它，
+	// 使本域的长查询不被 store 的 call 预算误杀。**新增数据面语句请一律用 r.hot / r.archive**，
+	// 不要绕回未绑定的 *gorm.DB——那会重新落回 5s 预算里（P1-2 的成因）。
+	longCtx context.Context
 	// saveItem 持久化工作项当前状态（阶段 / 游标 / 行数 / 校验结果）。
 	saveItem func(*model.ArchiveJobItem) error
 	// cancelled 批次边界检查是否被请求取消（读任务当前状态）。
 	cancelled func() bool
+}
+
+// bindLongBudget 把数据面期限绑定到两个连接上（见 archiveLongQueryTimeout），并回传取消函数给调用方管理。
+//
+// 为什么不用 `WithContext` 的返回值覆盖字段就够：`WithContext` 返回的是**克隆**，原值不受影响；
+// 本方法正是要改 r 的两个字段本身，故必须赋值回字段（对照 db.go 里 bootDB 的独立变量写法，
+// 那里是「不能让取消影响被返回的 db」，这里是「必须让绑定生效在后续所有语句上」）。
+//
+// 为什么返回 cancel 而不是内部存着：期限的寿命属于调用方（runJob 的整单范围），
+// runner 只是使用者；让调用方持有 cancel 才能保证任务收尾时必然释放计时器。
+func (r *archiveItemRunner) bindLongBudget(ctx context.Context) context.CancelFunc {
+	ctx, cancel := context.WithTimeout(ctx, archiveLongQueryTimeout)
+	r.longCtx = ctx
+	r.hot = r.hot.WithContext(ctx)
+	r.archive = r.archive.WithContext(ctx)
+	return cancel
 }
 
 // run 推进工作项到终态（done）或返回错误：dry_run 只统计；execute 按当前阶段续跑（断点续跑）。

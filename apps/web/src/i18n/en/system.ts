@@ -53,6 +53,8 @@ export const system = {
       'alert.webhook-url': 'Alert webhook POST URL; empty disables webhook',
       'alert.webhook-timeout-ms': 'Webhook request timeout (ms)',
       'log.level': 'Log level: ERROR / WARN / INFO / DEBUG',
+      'debug.lock-db-guard-enabled':
+        'Runtime guard for DB access while holding a lock: logs an ERROR (never panics) on violation, for deadlock triage and regression checks; off by default',
       'reverse-fetch.max-file-bytes': 'Max file content bytes for reverse fetch',
       'update.proxy-url': 'Outbound proxy for updates (http/https); empty = direct',
       'update.channel': 'Update channel: stable (GA only)',

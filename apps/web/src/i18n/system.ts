@@ -50,6 +50,8 @@ export const system = {
       'alert.webhook-url': '告警 POST 目标 URL；留空则不启用 webhook 通道（仅站内信）',
       'alert.webhook-timeout-ms': '单次 webhook 请求超时（毫秒）',
       'log.level': '日志级别：ERROR / WARN / INFO / DEBUG',
+      'debug.lock-db-guard-enabled':
+        '「持锁期间 DB 访问」运行时守卫：开启时命中即记 ERROR 日志（不 panic），用于排查死锁与回归验证；默认关',
       'reverse-fetch.max-file-bytes': '反向抓取单文件内容上限（字节）；超此上限的文件须显式确认才纳入选定集',
       'update.proxy-url':
         '更新出站代理地址（http://host:port 或 https://...，可含 user:pass）；留空=直连。仅作用于控制面更新检查/下载出站，不影响 webhook',
