@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"github.com/wcpe/Beacon"
+	beacon "github.com/wcpe/Beacon"
 	"gopkg.in/yaml.v3"
 )
 
