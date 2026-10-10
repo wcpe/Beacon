@@ -242,9 +242,19 @@ func (s *SettingsService) applyDangerousInTx(tx *gorm.DB, key, value string, ver
 			log.SetLevel(value)
 		}
 		if key == SettingLockDBGuardEnabled {
-			lockguard.SetEnabled(value == "true")
+			lockguard.SetEnabled(parseBoolSetting(value)) // 同口径解析，见 Update 处说明
 		}
 	}, nil
+}
+
+// parseBoolSetting 以与设置校验端（strconv.ParseBool）相同的口径解析布尔设置值。
+//
+// 为什么需要：校验接受 TRUE / True / 1 / t，而消费端若用 `value == "true"` 字面比较，
+// 会出现「设置写入成功但行为未生效」的静默失效（守卫尤其危险——运维以为开了）。
+// 解析失败按 false 处理（校验端已拦，此处仅兜底）。
+func parseBoolSetting(value string) bool {
+	on, err := strconv.ParseBool(value)
+	return err == nil && on
 }
 
 // SeedFromConfig 首启种子：对每个热改 key，store 无该 key 才用 config.yml 值 Upsert（已有以 store 为准，不覆盖）。

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -166,11 +167,54 @@ func TestArchiveJobEndToEndWithTightCallBudget(t *testing.T) {
 	day := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	name := seedMetricDailyTable(t, hot, day, 3)
 
+	// 拦截生产路径上数据面语句**实际使用**的 ctx（gorm 用它调驱动，故这是真判据，
+	// 而非「绑定函数的期望值」）。回归背景（code review P0-1）：本文件另两条用例走
+	// `newTestRunner` 自建 runner 并手动调 bindLongBudget，只证明「绑定有效」、未证明
+	// 「生产会调用它」——实测把 runJob 里的 bindLongBudget 整行删掉，那两条**仍全绿**。
+	// 故此处必须走生产入口（CreateJob + drainActive），并断言语句真拿到长期限。
+	var ctxMu sync.Mutex
+	var seenDeadlines []time.Time
+	capCtx := func(db *gorm.DB) {
+		if db.Statement == nil {
+			return
+		}
+		if dl, ok := db.Statement.Context.Deadline(); ok {
+			ctxMu.Lock()
+			seenDeadlines = append(seenDeadlines, dl)
+			ctxMu.Unlock()
+		}
+	}
+	if err := hot.Callback().Query().Before("gorm:query").Register("test:capture-ctx", capCtx); err != nil {
+		t.Fatalf("注册 ctx 拦截回调失败: %v", err)
+	}
+	if err := archive.Callback().Query().Before("gorm:query").Register("test:capture-ctx", capCtx); err != nil {
+		t.Fatalf("注册 ctx 拦截回调失败: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = hot.Callback().Query().Remove("test:capture-ctx")
+		_ = archive.Callback().Query().Remove("test:capture-ctx")
+	})
+
 	job, err := svc.CreateJob(model.ArchiveModeExecute, []string{"metric_sample"}, "admin")
 	if err != nil {
 		t.Fatalf("创建任务失败: %v", err)
 	}
 	svc.drainActive(context.Background())
+
+	// 生产路径绑定断言：所有被捕获的语句期限都必须显著长于 call 预算（本夹具 50ms）。
+	ctxMu.Lock()
+	captured := len(seenDeadlines)
+	ctxMu.Unlock()
+	if captured == 0 {
+		t.Fatal("未捕获任何带期限的数据面语句——判据空洞（生产路径未执行查询？）")
+	}
+	for i, dl := range seenDeadlines {
+		if remaining := time.Until(dl); remaining < archiveLongQueryTimeout/2 {
+			t.Fatalf("第 %d/%d 条语句的期限余量 %v 远小于长期限（%v）——生产路径未绑定长期限（P1-2 回归）",
+				i+1, captured, remaining, archiveLongQueryTimeout)
+		}
+	}
+	t.Logf("生产路径上 %d 条数据面语句均带长期限", captured)
 
 	detail, err := svc.GetJob(job.ID)
 	if err != nil {

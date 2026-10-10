@@ -178,9 +178,9 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 
   # 3) 也可取 CPU profile / 堆 / trace 供离线分析
   curl -sS -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8848/debug/pprof/profile?seconds=30' > cpu.pprof
-  go tool pprof -top ./beacon cpu.pprof
+  go tool pprof -top ./dist/beacon cpu.pprof   # 二进制路径按实际部署位置调整（构建产物在 dist/）
   ```
-  读栈要点：在 `syncthing` 之外找**成对**的阻塞点——一侧卡在 `database/sql.(*DB).conn`（等连接）而另一侧卡在 `sync.(*Mutex).Lock`（等内锁），且两者都持有对方在等的资源，即为互等环。
+  读栈要点：先滤掉 Go 运行时内部帧（`runtime.*` / `src/internal/**`），再找**成对**的阻塞点——一侧卡在 `database/sql.(*DB).conn`（等连接）而另一侧卡在 `sync.(*Mutex).Lock`（等内锁），且两者都持有对方在等的资源，即为互等环。
   > **安全**：`/debug/pprof/*` 暴露进程内部态（堆可能含内存中的配置明文与凭据），故**只在排障时临时使用**、用完即止；**绝不可在反向代理层放开为匿名可访问**。该端点已内置管理面鉴权与 full 角色门禁（readonly 角色与只读密钥一律 `403`），但鉴权不等于可以对外暴露——管理端口应保持在内网。
 - agent 连不上：核对控制面地址、`X-Beacon-Token`、网络连通。
 - 配置不热更：看 agent 长轮询是否在连、控制面是否唤醒了受影响集合、有效配置 md5 是否真变。

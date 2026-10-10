@@ -5,6 +5,7 @@ import (
 	"net/http/pprof"
 	runtimepprof "runtime/pprof"
 	"sort"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -60,14 +61,16 @@ func registerDebugRoutes(r chi.Router, authn *auth.Authenticator, apiKeys APIKey
 		// 匹配具名路由优先，Index 只承担索引页职责。
 		r.Get(debugPprofPrefix+"/", pprof.Index)
 		r.Get(debugPprofPrefix+"/cmdline", pprof.Cmdline)
-		r.Get(debugPprofPrefix+"/profile", pprof.Profile)
+		// CPU profile 的 seconds 由客户端自定且 stdlib **无上限**（仅 `<=0` 取默认），
+		// full 角色可提交 seconds=86400 占住一天 CPU；此处钳到 [1, 300] 秒。
+		r.Get(debugPprofPrefix+"/profile", clampProfileSeconds(pprof.Profile))
+		r.Get(debugPprofPrefix+"/trace", clampProfileSeconds(pprof.Trace))
 		// symbol 必须同时接受 POST：`go tool pprof` 远程符号化固定走 POST
 		// （Go 标准库 internal/symbolizer 的 symbolizer.go）；只注册 GET 会让
 		// 「取到转储但函数名全空」——恰是本端点要解决的取证缺口。
 		// 标准库 pprof.Symbol 自身两种方法都支持，故一并注册。
 		r.Get(debugPprofPrefix+"/symbol", pprof.Symbol)
 		r.Post(debugPprofPrefix+"/symbol", pprof.Symbol)
-		r.Get(debugPprofPrefix+"/trace", pprof.Trace)
 		for _, name := range debugProfileNames() {
 			// 显式 GET：Go 1.22 起标准库 pprof 各路径本就只接受 GET；显式声明避免全方法注册。
 			r.Get(debugPprofPrefix+"/"+name, pprof.Handler(name).ServeHTTP)
@@ -80,4 +83,31 @@ func registerDebugRoutes(r chi.Router, authn *auth.Authenticator, apiKeys APIKey
 			http.Error(w, "未知的 pprof 端点（可用端点见 /debug/pprof/ 索引页）", http.StatusNotFound)
 		})
 	})
+}
+
+// profileSecondsMax 是 CPU profile / trace 允许的最长采样秒数。
+//
+// 为什么要钳制：`pprof.Profile` 与 `pprof.Trace` 直接读 query 的 `seconds`，stdlib 只在
+// `seconds <= 0` 时取默认值，**不设上限**。该端点虽已要求 full 角色，但一次 seconds=86400
+// 会占住一整天 CPU（且服务刻意不设 WriteTimeout，见 main.go 的说明）。
+const profileSecondsMax = 300
+
+// clampProfileSeconds 包装 stdlib 的 profile 处理器：把 seconds 钳到 [1, profileSecondsMax]。
+// 非数字或缺失时原样透传（交 stdlib 取默认）。
+func clampProfileSeconds(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if raw := req.URL.Query().Get("seconds"); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil {
+				if n < 1 {
+					n = 1
+				} else if n > profileSecondsMax {
+					n = profileSecondsMax
+				}
+				q := req.URL.Query()
+				q.Set("seconds", strconv.Itoa(n))
+				req.URL.RawQuery = q.Encode()
+			}
+		}
+		h(w, req)
+	}
 }

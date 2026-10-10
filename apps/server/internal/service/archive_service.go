@@ -150,10 +150,14 @@ func (s *ArchiveService) CreateJob(mode string, domains []string, operator strin
 //
 //	保留的原因——单飞判据没有 DB 兜底。「至多一个活跃任务」目前只由本处的
 //	`HasActiveJob`（check-then-act）在一个进程内维护，表上**没有**能让数据库来定序的
-//	唯一约束（活跃集是「status IN (pending,running,cancelling)」这一条件集合，sqlite 与
-//	mysql 的可移植写法都表达不出部分唯一索引）。若按方案 A 把 DB 移出锁外、改由 CAS 定序，
-//	两个并发 CreateJob 会双双读到「无活跃任务」并各自插入一条——把「至多一个」降级成「通常一个」，
-//	这是**语义削弱**而非加固，故不可取（评审给出的 A 路径以 CAS 可定序为前提，此处前提不成立）。
+//	唯一约束：活跃集是「status IN (pending,running,cancelling)」这一**条件集合**，而 MySQL
+//	语法不支持部分唯一索引（`CREATE UNIQUE INDEX ... WHERE`）——sqlite 支持，但按方言分叉
+//	建约束会让两库行为不一致，与「业务零方言绑定」的既有取向相悖。
+//	（这是**有意的取舍**：为保持方言一致而放弃在 sqlite 上把单飞从「进程内」升级为「DB 级」。
+//	若将来认为该保障值得方言分叉，应作为独立变更立项，而非在本批顺手加。）
+//	若按方案 A 把 DB 移出锁外、改由 CAS 定序，两个并发 CreateJob 会双双读到「无活跃任务」
+//	并各自插入一条——把「至多一个」降级成「通常一个」，这是**语义削弱**而非加固，
+//	故不可取（评审给出的 A 路径以 CAS 可定序为前提，此处前提不成立）。
 //
 //	不构成环的原因——本锁没有「持连接等它」的对偶路径。本服务三处锁内 DB 都是**同 goroutine
 //	顺序调用**（取锁 → 查/写 → 放锁），全程不跨调用等另一把锁；而归档 worker 的搬运循环
@@ -481,6 +485,12 @@ func (s *ArchiveService) runJob(ctx context.Context, job *model.ArchiveJob) {
 	// 基线用 context.Background()：worker 的 ctx 会随关停取消（见 drainActive 的 ctx.Err 检查），
 	// 而归档单在关停时**刻意保持 running** 以便下次启动续跑——若把数据面期限挂在关停 ctx 上，
 	// 一次重启就会把跑了一半的整单连语句一起掐断，与「断点续跑」的设计相悖。
+	//
+	// **整单一条期限的语义（勿误读为单条语句的期限）**：30 分钟覆盖本 job 的**全部** item
+	// （copying / verifying / deleting 各阶段），一旦耗尽，该 job **剩余所有 item 一起失败**。
+	// 这不是缺陷而是有意的上界：超大表靠**断点续跑**（重试从未完成处继续，done/skipped 跳过）
+	// 分多次收敛，而非指望单次运行搬完。按默认批大小 1000 行与 200ms 批间隔，单次理论上界约
+	// 900 万行；实际部署若远超此量级，应调大 archiveLongQueryTimeout 或依赖多轮重试。
 	cancelLong := runner.bindLongBudget(context.Background())
 	defer cancelLong()
 

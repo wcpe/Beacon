@@ -69,7 +69,7 @@ func TestApplySQLiteTxLock(t *testing.T) {
 //
 // 背景：sqlite 默认 DEFERRED 事务在 BEGIN 时不取锁，第一条写语句才把读锁升级为写锁；WAL 下该升级
 // **不可等待**——若另一事务已改过该页，升级立即返回 SQLITE_BUSY/BUSY_SNAPSHOT，busy_timeout 完全不生效。
-// 实测（MaxOpenConns=4、8 并发各 15 轮共 120 个事务）：默认 DEFERRED 失败 104/120；加 _txlock=immediate 后 0/120。
+// 实测（MaxOpenConns=4、8 并发各 15 轮共 120 个事务）：默认 DEFERRED 失败约 100–107/120（单次抽样有波动，四次复跑区间）；加 _txlock=immediate 后 0/120（稳定）。
 //
 // 本用例走 store.Open（生产路径，自动注入 WAL + busy_timeout + immediate），并发跑「事务内先读后写」，
 // 断言零失败——若有人去掉 _txlock 注入，本用例会立即变红。

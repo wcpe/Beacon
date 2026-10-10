@@ -178,12 +178,17 @@ func (c Config) validate() error {
 		return err
 	}
 	// 连接等待预算须小于事务寿命预算（见 store 的连接等待防护）：
-	// 二者的关系是「先花 call 抢连接，抢到后事务最多活 tx」。若 call >= tx，则事务刚开起来就已超预算，
-	// 正常事务会被误杀成「等连接超时」，把可诊断的配置错误伪装成连接池故障。
-	if c.Database.CallTimeoutMs > 0 && c.Database.TxTimeoutMs > 0 &&
-		c.Database.CallTimeoutMs >= c.Database.TxTimeoutMs {
-		return fmt.Errorf("配置校验失败: database.call-timeout-ms(%d) 须小于 tx-timeout-ms(%d)（前者管等连接、后者管事务寿命，取反会误杀正常事务）",
-			c.Database.CallTimeoutMs, c.Database.TxTimeoutMs)
+	// 二者的关系是「先花 call 抢连接，抢到后事务最多活 tx」。
+	//
+	// **判据必须用生效值而非配置原值**（code review P1-2）：`0` 在 store 侧表示「取内置默认」
+	// （resolveBudget），而字段缺省与显式 0 在解析后不可区分——若按原值判 `> 0`，
+	// 则 `call=0 + tx=3000` 会通过校验，运行时却生效为 `call=5000 > tx=3000`，
+	// 恰好落进本校验要防的「事务刚开起来就超预算」形态。故此处先把 0 规范化成默认值再比较。
+	callMs := resolveCallBudgetMs(c.Database.CallTimeoutMs)
+	txMs := resolveTxBudgetMs(c.Database.TxTimeoutMs)
+	if callMs > 0 && txMs > 0 && callMs >= txMs {
+		return fmt.Errorf("配置校验失败: database.call-timeout-ms(生效 %d) 须小于 tx-timeout-ms(生效 %d)（前者管等连接、后者管事务寿命；0 表示取内置默认 %d/%d）",
+			callMs, txMs, DefaultDatabaseCallTimeoutMs, DefaultDatabaseTxTimeoutMs)
 	}
 	// 机器注册通道（FR-222）：开启即把 agent 共享 token 升级为安全边界（持有即受信内部调用方），
 	// 故必须显式换为强随机值——留空或仍是出厂默认值一律拒绝启动（fail-fast，避免弱 token 直通注册）。
@@ -209,4 +214,31 @@ var weakAgentTokens = map[string]struct{}{
 func isWeakAgentToken(token string) bool {
 	_, weak := weakAgentTokens[strings.ToLower(strings.TrimSpace(token))]
 	return weak
+}
+
+// resolveCallBudgetMs / resolveTxBudgetMs 把配置原值规范化为**生效值**（毫秒），
+// 与 store 侧 resolveBudget 的语义一致：>0 用原值、<0 表示关闭（返回 0）、0 取内置默认。
+//
+// 为什么不复用 store 的 resolveBudget：store 依赖本包（构造 DatabaseConfig），反向 import 会成环。
+// 两处口径须同步——store 的 resolveBudget 与这里的规范化是同一语义，改动一方时必须同时改另一方。
+func resolveCallBudgetMs(configuredMs int) int {
+	switch {
+	case configuredMs > 0:
+		return configuredMs
+	case configuredMs < 0:
+		return 0
+	default:
+		return DefaultDatabaseCallTimeoutMs
+	}
+}
+
+func resolveTxBudgetMs(configuredMs int) int {
+	switch {
+	case configuredMs > 0:
+		return configuredMs
+	case configuredMs < 0:
+		return 0
+	default:
+		return DefaultDatabaseTxTimeoutMs
+	}
 }

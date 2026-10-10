@@ -30,6 +30,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/handler"
 	"github.com/wcpe/Beacon/apps/server/internal/httpx"
 	"github.com/wcpe/Beacon/apps/server/internal/metrics"
+	"github.com/wcpe/Beacon/apps/server/internal/pkg/lockguard"
 	"github.com/wcpe/Beacon/apps/server/internal/pkg/log"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
@@ -184,6 +185,10 @@ func run() error {
 	if err := settingsService.SeedFromConfig(cfg); err != nil {
 		return err
 	}
+	// 回放「锁内 DB 访问守卫」开关（code review P2-3）：该设置经 Update 热改时只推原子标志、
+	// 不落任何进程外状态；若启动时不按 store 现值回放，则「热开 → 重启」后设置页仍显示 true
+	// 而守卫实际关闭——运维据显示值判断防护已开，是典型的静默背离。
+	lockguard.SetEnabled(settingsService.GetBool(service.SettingLockDBGuardEnabled))
 	settingsHandler := handler.NewSettingsHandler(settingsService)
 
 	// 热冷归档核心（FR-151，见 ADR-0066）：第二个独立归档连接 + 任务表 + 后台工作器。
