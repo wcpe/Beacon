@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"log/slog"
 	"math"
 	"os"
@@ -13,10 +14,21 @@ import (
 	rt "github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
 
-// dbPinger 是系统状态对数据库连通性的窄依赖：仅需一次 Ping。
-// 由 *sql.DB（经 gorm DB() 获取）实现，便于以测试替身验证连通 / 断开两态。
+// systemDBPingBudget 是系统状态端点探测 DB 连通性的调用侧上限。
+//
+// 为什么与 store 的 call 预算同数量级而不更短：本端点是排障入口，误报「DB 断开」会把排障
+// 引向错误方向；正常 Ping 是毫秒级，5s 有两个数量级余量，真被耗尽时必是池枯竭或长事务占位，
+// 此时报断开正是想要的结论。
+const systemDBPingBudget = 5 * time.Second
+
+// dbPinger 是系统状态对数据库连通性的窄依赖：仅需一次带预算的探测。
+//
+// 必须带 ctx（而不是裸 `Ping()`）：`(*sql.DB).Ping()` 内部走 `context.Background()`，
+// 池被占满时**无界等待**——这正是生产事故里「所有需 DB 的端点挂起」的症状在本端点上的复现，
+// 而本端点恰恰是排障时最需要可用的。生产装配注入 store.BoundedPinger（带 call 预算），
+// 测试以替身覆盖连通 / 断开 / 超时三态。
 type dbPinger interface {
-	Ping() error
+	PingContext(ctx context.Context) error
 }
 
 // CPUSampler 是系统状态对进程 CPU 占比的窄依赖：返回 [0,100] 区间的占比与可用性。
@@ -124,14 +136,21 @@ func NewGopsutilCPUSampler() CPUSampler {
 }
 
 // Status 采集一次控制面自身状态快照。
-// DB Ping 同步执行（连接池上的轻量探测）；在线实例数读内存注册表；Go 运行时资源读 runtime。
+// DB Ping 同步执行（连接池上的轻量探测，带预算：池耗尽时在预算内快速失败而非挂起）；
+// 在线实例数读内存注册表；Go 运行时资源读 runtime。
 func (s *SystemService) Status() SystemStatus {
 	now := s.now()
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 
 	dbStatus := DBStatus{Connected: true}
-	if err := s.pinger.Ping(); err != nil {
+	// 预算 ctx：探测本身已在包装层限额（store.BoundedPinger），此处再给一层调用侧上限。
+	// 为什么不只依赖包装层：本服务的 pinger 是窄接口，测试替身与其它实现不保证自带期限；
+	// 调用侧给期限后，无论注入的是哪种实现，「本端点永不挂起」都由本处独立成立。
+	// 取值与包装层同源（CallTimeoutMs 默认 5s）——两层同值不冲突：同值下先到点的一方即预算本身。
+	ctx, cancel := context.WithTimeout(context.Background(), systemDBPingBudget)
+	defer cancel()
+	if err := s.pinger.PingContext(ctx); err != nil {
 		dbStatus = DBStatus{Connected: false, Error: err.Error()}
 	}
 

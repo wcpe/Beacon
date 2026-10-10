@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/pkg/lockguard"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
@@ -88,9 +89,13 @@ type DeliveryOrchestrator struct {
 	//
 	// **推进器不持本锁**（P0 死锁修复，2026-10-10 生产事故）：推进器每轮全程是 DB 访问，
 	// 一旦持 mu 就是「持 mu 等连接」；与之相对的另一条路径（审批执行事务）持连接等 mu，
-	// `max-open-conns: 1` 下两资源反序获取即永久互等。故推进器改为全程锁外执行，
+	// 事故当时的单连接池（`max-open-conns: 1`）下两资源反序获取即永久互等。故推进器改为全程锁外执行，
 	// 它与控制操作的互斥下沉到各写点的 CAS 前态（见 advanceActiveOrders 注释）。
-	mu *sync.Mutex
+	//
+	// 类型取 `*lockguard.Mutex` 而非 `*sync.Mutex`：它语义完全一致（同一套加解锁契约），
+	// 额外记录持有者的 goroutine id，使「持锁期间发起 DB 访问」可被自动检出（lockguard 包）。
+	// 这把锁是全包唯一被守卫观测的锁——它是 P0 环的两半都涉及的那一把。
+	mu *lockguard.Mutex
 	// observeMu 独立保护观察窗内存缓冲（推进器采样写、Observe/SSE 读），与 mu 有序嵌套（mu→observeMu，不反向）。
 	observeMu      *sync.RWMutex
 	observeByOrder map[uint]*observeState
@@ -113,9 +118,51 @@ type DeliveryOrchestrator struct {
 	// agent 版本是否够新到认识流式交付命令，不具备则拒绝下发并给出可读原因。
 	// 未装配（nil）即不校验——守卫自身的装配缺失不得阻断交付。
 	capability *capabilityGuard
+	// lockGuard 是 AttachLockDBGuard 挂上的观测句柄（未装配时为 nil）。
+	// 它不参与任何业务判定，只让「观测是否真的生效」可被核验（见该方法与 LockGuard 的说明）。
+	lockGuard *lockguard.Watcher
 }
 
 func (s *DeliveryOrchestrator) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+
+// LockGuard 返回本编排器的锁内 DB 观测句柄；未装配时返回 nil。
+//
+// 为什么把句柄暴露出来（生产不读它）：观测面**是否真的生效**只能由 Watcher 自己的计数证明。
+// 挂载失败只记 WARN、不报错（诊断件不该阻断启动），故「守卫已接线」这件事没有别的可核验依据。
+// 测试据此断言，生产可据此在诊断窗口确认开关真的生效——两者的判据同源，比测试里另造一套探测机制可靠：
+// 自造探针会与出厂实现在**归属判定**上分叉（见 lockguard 包注释：TryLock 探测法会把
+// 「他人持锁 + 本 goroutine 做 DB」误报为违规，而出厂实现按持有者 goroutine id 精确归属）。
+func (s *DeliveryOrchestrator) LockGuard() *lockguard.Watcher { return s.lockGuard }
+
+// AttachLockDBGuard 把「持锁期间发起 DB 访问」守卫挂到本编排器的 DB 上，观测 s.mu。
+//
+// 由启动装配调用一次（见 cmd/beacon/main.go）。守卫默认关闭，运维经设置项
+// `debug.lock-db-guard-enabled` 热开——它是诊断手段（命中记 ERROR 日志并指认调用点），
+// 不是常规防护：常规防护是 store 层的连接等待预算，负责把「无限挂起」变成「快速失败」。
+//
+// 为什么守卫要观测 s.mu：它是 P0 死锁环（2026-10-10 生产事故）两半都涉及的那把锁——
+// 「持 mu 等连接」与「持连接等 mu」都绕着它。其余锁（observeMu / stallMu 等）是叶子锁，
+// 其持有期间不做 DB 访问（见各自字段说明），无需观测。
+//
+// **范围说明（P1-3 订正，勿改回「其余锁都不做 DB」的笼统断言）**：本方法的观测面**仅覆盖本编排器**。
+// 仓库内还有第二处「持锁做 DB」的落点：归档服务的 `archiveService.mu`（CreateJob / RetryJob /
+// CancelJob 三处锁内查库与开事务）。它由 `ArchiveService.AttachLockDBGuard` 各自挂一份守卫观测，
+// 因此「持锁做 DB 一律被观测」在**两处都成立**——但这是两份装配共同保证的，不是本方法的性质。
+// 日后新增同类锁时，须同样挂一份，否则该锁会静默落在观测面之外。
+// 归档那三处的锁内 DB 为何保留（而不改走 CAS 定序）、以及它为何不构成环，见
+// ArchiveService.createJobInternal 的说明：单飞判据没有 DB 兜底，且本锁没有「持连接等它」的对偶。
+//
+// 刻意**不返回错误**：装配失败只记 WARN——它只是诊断能力，绝不是控制面可用性的前提。
+// 把错误抛给调用方，反而会诱导出「守卫装不上就拒绝启动」这种把可用性押在诊断件上的行为。
+func (s *DeliveryOrchestrator) AttachLockDBGuard() {
+	w, err := lockguard.Attach(s.db, s.mu)
+	if err != nil {
+		slog.Warn("锁内 DB 访问守卫装配失败（诊断能力降级，不影响交付功能）", "错误", err)
+		return
+	}
+	w.OnViolation(lockguard.LogViolation)
+	s.lockGuard = w
+}
 
 // configRollbacker 交付域对配置版本回退的窄依赖（整单回滚记账用，由 ConfigCenterService 实现）：
 // from!=nil 项回退到 from 版本、from==nil 项撤销该作用域贡献，使 config-center head 与磁盘还原对齐（ADR-0071 决策6）。
@@ -149,7 +196,7 @@ func NewDeliveryOrchestrator(db *gorm.DB, repo *repository.ChangeOrderRepository
 		events:         newDeliveryEventHub(),
 		now:            func() time.Time { return time.Now().UTC() },
 		wakeCh:         make(chan struct{}, 1),
-		mu:             &sync.Mutex{},
+		mu:             &lockguard.Mutex{},
 		observeMu:      &sync.RWMutex{},
 		observeByOrder: map[uint]*observeState{},
 		stallMu:        &sync.Mutex{},
@@ -193,7 +240,7 @@ func (s *DeliveryOrchestrator) wake() {
 // 之外还每轮刷新「活动单 + 已审批单」引用的 blob 引用时间（FR-261，见 refreshBlobReferences）。
 //
 // **整轮不得持 s.mu**（P0 死锁修复，2026-10-10 生产事故）：本轮从装载到收尾全是 DB 访问，
-// 一旦持 mu 就是「持 mu 等连接」。`max-open-conns=1`（见 config.example.yml）下，
+// 一旦持 mu 就是「持 mu 等连接」。事故当时的单连接池（`max-open-conns: 1`）下，
 // 唯一连接被控制操作或审批执行事务占住时，本函数在连接池排队；而审批执行路径
 // （approval_worker.go → applyStartApprovedInTx）正持着连接等 mu —— 互等环闭合后**永不自愈**
 // （租约回收 claimNext 自身也要连接），生产表现为所有需 DB 端点挂起、靠重启恢复。

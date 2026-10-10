@@ -2,7 +2,7 @@ package service
 
 // —— P0 死锁复现：单连接池下「批准执行」与「推进器 tick」互等（生产事件 2026-10-10 02:41:05）——
 //
-// 生产现场（v1.4.0，sqlite + `max-open-conns: 1`，见 config.example.yml:45）：
+// 生产现场（v1.4.0，sqlite + `max-open-conns: 1`，当时 config.example.yml 的释放值）：
 // 管理面走完「建单 → 提审 → 批准」后，审批行 75（operation_key=delivery.approve）停在 status=executing、
 // lease_until 过期 20+ 分钟无人回收；所有需 DB 的端点永久挂起（healthz / metrics 不查库故仍正常）；
 // 进程 6646 socket（485 CLOSE-WAIT）、37 线程全 futex_wait，CPU 与 WAL 零推进。
@@ -64,9 +64,14 @@ type p0ReproEnv struct {
 	clock    time.Time
 }
 
-// p0OpenSingleConnDB 按**生产配置**打开 sqlite：`MaxOpenConns: 1`（config.example.yml:45 默认 1）。
-// 这是复现的关键前提——测试仓里既有的 `MaxOpenConns: 2`（testsupport/db.go:59）与内存库装配
-// 都会掩盖该环。走 store.Open 以带上生产 pragma（WAL + busy_timeout），用以证明 busy_timeout 无能为力。
+// p0OpenSingleConnDB 打开 sqlite 且**刻意把池上限钉在 1**。
+//
+// 为什么不用 config.example.yml 的当前值（那是 4）：本用例复现的是**事故当时**的部署形态
+// （v1.4.0 释放的样例是 `MaxOpenConns: 1`），环只在「池内无第三条连接」时闭合。
+// 样例值提到 4 后（§2 的纵深防御），本例仍须按 1 跑——否则它会因为池够大而永远转绿，
+// 失去「锁序一旦回归即变红」的作用；池上限是**复现前提**，不是被断言的对象。
+// 测试仓里既有的 `MaxOpenConns: 2`（testsupport/db.go:59）与内存库装配都会掩盖该环。
+// 走 store.Open 以带上生产 pragma（WAL + busy_timeout），用以证明 busy_timeout 无能为力。
 func p0OpenSingleConnDB(t *testing.T, name string) *gorm.DB {
 	t.Helper()
 	db, err := store.Open(config.DatabaseConfig{
@@ -105,11 +110,29 @@ func p0NewReproEnv(t *testing.T, settings deliverySettings) *p0ReproEnv {
 	blobSvc.SetProgressWaker(orch)
 
 	env := &p0ReproEnv{db: db, orders: orders, orch: orch, approval: approval,
-		clock: time.Date(2026, 10, 10, 2, 41, 0, 0, time.UTC)}
+		clock: p0FixtureClock()}
 	orch.now = func() time.Time { return env.clock }
 	env.seedCluster(t)
 	return env
 }
+
+// p0FixtureClock 返回本组用例的固定时钟基准：**以真实当前时刻为起点、中途不再推进**。
+//
+// 为什么不再写死事故日期（2026-10-10 02:41:05）——那是一颗定时炸弹，已实测引爆：
+// 审批 worker 用本时钟写租约（`claimNext` → `lease_until = clock + approvalWorkerLease(30s)`），
+// 而许可签发判据在 `authz/authorization.go:527` 用的是**真实** `time.Now()`：
+// `!time.Now().UTC().Before(req.LeaseUntil.UTC())` → `ErrForbidden`。
+// 于是只要真实时间越过「写死时刻 + 30s」，批准执行就再也拿不到许可，
+// 两条用例**必然**失败（表现为「单未进入 rolling」/「未在 5s 内到达闸门」）——
+// 与锁序、连接池毫无关系。实测确认：仅把该写死值换成 `time.Now().UTC()`，两条用例立刻双双转绿。
+//
+// 为什么用「真实当前时刻」而不是修 authz 侧的时钟注入：本组用例要判的是**锁序**，
+// 不关心"现在是几点"；改动生产代码（给 `executionAdapter` 加可注入时钟）只为让测试能写死日期，
+// 是把测试的人为约束泄漏进生产接口。取当前时刻作基准既保留「时钟受控、测试期间恒定」的性质
+// （`env.clock` 只读，无中途推进，断言仍确定），又天然避免与真实时钟比较时的过期问题。
+//
+// 注意：本函数每次调用取一次 now，故同一用例内恒定；跨用例各取各的，不存在共享状态。
+func p0FixtureClock() time.Time { return time.Now().UTC().Truncate(time.Second) }
 
 // seedCluster 铺集群事实：namespace + 一区两小区 + 模板源与两台目标（身份 active + 健康在线）。
 func (e *p0ReproEnv) seedCluster(t *testing.T) {

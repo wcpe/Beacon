@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -9,11 +10,24 @@ import (
 )
 
 // fakePinger 是 dbPinger 测试替身：按 err 决定 Ping 成败。
+//
+// 为什么记录 ctx：dbPinger 已改为带预算形态（PingContext），而「预算是否真的传下去了」
+// 是 P1-1 的判别点之一——只断言「Ping 失败时报断开」无法排除「调用方仍用 Background()，
+// 期限全靠注入的实现自觉」。故替身把 ctx 是否带 deadline 记下来供断言。
 type fakePinger struct {
 	err error
+	// sawDeadline 在最后一次 PingContext 时被写入「ctx 是否带期限」（须传指针，否则写不回调用方）。
+	sawDeadline *bool
 }
 
-func (f fakePinger) Ping() error { return f.err }
+// PingContext 实现 dbPinger：按 err 返回成败，并把 ctx 是否带期限记到 sawDeadline。
+func (f fakePinger) PingContext(ctx context.Context) error {
+	if f.sawDeadline != nil {
+		_, ok := ctx.Deadline()
+		*f.sawDeadline = ok
+	}
+	return f.err
+}
 
 // samplerEnabledFn 把布尔常量包装为采样器启用回调（FR-61：NewSystemService 改取 func() bool）。
 func samplerEnabledFn(enabled bool) func() bool {

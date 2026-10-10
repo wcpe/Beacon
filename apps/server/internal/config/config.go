@@ -190,7 +190,28 @@ type DatabaseConfig struct {
 	MaxIdleConns int `yaml:"max-idle-conns"`
 	// 单个连接最大存活秒数
 	ConnMaxLifetimeSec int `yaml:"conn-max-lifetime-sec"`
+	// 单条语句 / 等待连接的预算（毫秒）。池被占满时以此为上限快速失败，而不是无声永久挂起
+	// （见 store 的连接等待防护）。<=0 表示显式关闭该预算（退回无上限等待，不推荐）。
+	// 须小于 TxTimeoutMs，否则事务还没开起来就该被掐断。
+	CallTimeoutMs int `yaml:"call-timeout-ms"`
+	// 单个事务的寿命预算（毫秒，从事务拿到连接算起）。<=0 表示显式关闭该预算（不推荐）。
+	// 必须显著大于最长正常事务——本仓最长是文件批量导入，实测约 8.5s，
+	// 若与 CallTimeoutMs 取同值会误杀正常导入。
+	TxTimeoutMs int `yaml:"tx-timeout-ms"`
 }
+
+// 连接等待与事务寿命的默认预算（毫秒）。定义在 config 而非 store，是因为 store 依赖 config，
+// 反向引用会成环；两处需要同一个数时以这里为唯一真源。
+const (
+	// DefaultDatabaseCallTimeoutMs 是单条语句 / 取连接的默认预算。
+	// 取值依据：业务事务实测中位 1.482ms / p95 3.817ms / 最大 11.301ms，5s 有两个数量级余量，
+	// 真被耗尽时必是池枯竭而非正常抖动。
+	DefaultDatabaseCallTimeoutMs = 5000
+	// DefaultDatabaseTxTimeoutMs 是事务寿命的默认预算。
+	// 取值依据：最长事务（导入 2000 文件）实测 8.5s，60s 留足 7 倍余量；同时仍是有限值，
+	// 保证事务一旦卡死也会在 60s 内释放连接，而不是永久占用。
+	DefaultDatabaseTxTimeoutMs = 60000
+)
 
 // ArchiveConfig 是热冷归档库连接配置（FR-151，见 ADR-0066）。
 // 归档库是控制面的第二个独立 DB 连接（非跨库 SQL）：sqlite=第二个文件、mysql=同实例第二个 database。
@@ -220,6 +241,8 @@ func Default() Config {
 			MaxOpenConns:       4,
 			MaxIdleConns:       2,
 			ConnMaxLifetimeSec: 1800,
+			CallTimeoutMs:      DefaultDatabaseCallTimeoutMs,
+			TxTimeoutMs:        DefaultDatabaseTxTimeoutMs,
 		},
 		// 归档库默认同实例模式（dsn 留空）、库名 beacon_archive（FR-151，见 ADR-0066）。
 		Archive: ArchiveConfig{

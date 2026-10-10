@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/pkg/lockguard"
 	"github.com/wcpe/Beacon/apps/server/internal/redact"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/store"
@@ -20,6 +20,30 @@ import (
 
 // archiveScheduleTick 是工作器调度检查周期：每分钟检查是否到达 schedule-hour-utc 自动触发点。
 const archiveScheduleTick = time.Minute
+
+// archiveLongQueryTimeout 是归档**数据面**语句的期限（P1-2 修复），与 HTTP 路径的 call 预算刻意分开。
+//
+// 为什么必须单独放宽（不这样做就是功能回归）：store 的连接等待防护给每条语句套了
+// `call-timeout-ms`（默认 5s），而 `database/sql` 把这个 ctx 同时绑到「等连接」「语句执行」与
+// 「Rows 生存期」上。5s 这个取值是按**在线业务语句**定的（实测中位 1.482ms），但归档的存在理由
+// 就是大表，其验证步有若干**按设计无 LIMIT 的全区间查询**：`countRows` 的 `COUNT(*)`、
+// `orderedPKs` 的全量主键 `Pluck`、`hashRows` 的 `IN ?` 大集合、`applyRange` 覆盖的「全部未归档历史」。
+// 防护上线后这些查询在 5s 处被掐断 → `runVerify` 失败 → item 判 failed → 归档任务失败：
+// 表越大越必然失败，恰好把归档能力从「慢」变成「不可用」。
+//
+// 取值 30 分钟与 `store` 的 bootstrapTimeout 同源同理由（都是「一条语句扫/改整表」这一类），
+// 不再新增配置项：两者的风险口径一致，出现第三个同类需求时再抽成配置。
+//
+// 为什么仍然**有界**（不能直接取消期限）：§2A 的全部价值就是「把无限挂起变成快速失败」，
+// 归档 worker 若允许无界等待，一条病态语句就能永久占住连接并让整个归档单卡在 running。
+// 30 分钟远超正常全表扫描（量级上比 §2A 的实测语句大 6 个数量级），到点仍会失败并落 item 错误。
+//
+// 为什么不用「分块 + 游标推进」替代（评审给出的备选）：`orderedPKs` 的全集是
+// `pickArchiveSample` 在**主键升序全集**上确定性取样的输入，分块会改变取样集合、
+// 进而改变校验语义（同一任务重跑可能取到不同样本），属校验设计的重写而非防护层修补；
+// 且 `countRows` 的相等性判据本就是「整区间行数」，分块相加还要处理搬运期间的并发增删。
+// 风险收益不划算，故取「显式长期限」这条改动面最小、语义不变的路径。
+const archiveLongQueryTimeout = 30 * time.Minute
 
 // archiveRecentJobsForOverview 是 overview 逐域推导 lastJob 时回看的最近任务条数。
 const archiveRecentJobsForOverview = 100
@@ -39,9 +63,17 @@ type ArchiveService struct {
 	now       func() time.Time
 	wakeCh    chan struct{}
 	// mu 串行化 CreateJob / RetryJob / CancelJob（单飞判据 + 写），与后台 worker 的状态迁移用 CAS 协同。
-	mu sync.Mutex
+	//
+	// 用 lockguard.Mutex 而非 sync.Mutex（P1-3）：本锁的持有期间**确实会做 DB 访问**
+	// （HasActiveJob / GetJob / hotDB.Transaction，见三处调用点），故必须纳入「持锁做 DB」守卫的
+	// 观测面——否则守卫自称的「系统性防护」对它并不成立，日后真有「持连接等本锁」的路径出现时
+	// 也无人报警。观测代价为零（守卫默认关、开启时才走慢路径），换来的是这个反模式机器可见。
+	mu lockguard.Mutex
 	// lastAutoDay 记本日已尝试的自动触发 UTC 日（仅 worker goroutine 读写，无需锁）。
 	lastAutoDay string
+	// lockGuard 是 AttachLockDBGuard 挂上的观测句柄（未装配时为 nil）。
+	// 它不参与任何业务判定，只让「观测是否真的生效」可被核验（见该方法的说明）。
+	lockGuard *lockguard.Watcher
 }
 
 // NewArchiveService 构造归档工作器。archiveDB 为 nil 表示归档库不可达（启动连通性检查失败），能力降级。
@@ -52,6 +84,32 @@ func NewArchiveService(hotDB, archiveDB *gorm.DB, info store.ArchiveInfo,
 		now:    func() time.Time { return time.Now().UTC() },
 		wakeCh: make(chan struct{}, 1),
 	}
+}
+
+// AttachLockDBGuard 把「持锁期间发起 DB 访问」守卫挂到本服务的热库连接上，观测 s.mu。
+//
+// 与交付编排器同名方法同形（见 delivery_orchestrator.go）：由启动装配调用一次，
+// 守卫默认关、经设置项 debug.lock-db-guard-enabled 热开，命中记 ERROR 日志并指认调用点。
+//
+// 为什么归档域也要挂（P1-3）：本服务是**第二处**「持锁做 DB」的落点，而守卫此前只观测交付域的
+// s.mu ——「系统性防护」的说法在第二处服务上并不成立。挂上之后：
+//   - 该模式从此机器可见（开启守卫即审计这三条路径）；
+//   - 日后若出现「持连接等 archiveService.mu」的对偶路径，守卫会直接指认，而不是等它复现成事故。
+//
+// 刻意**不返回错误**（同交付域口径）：装配失败只记 WARN——它只是诊断能力，
+// 绝不是控制面可用性（乃至归档功能）的前提。
+//
+// 保留 Watcher 句柄（不只在生产里挂完即弃）的原因：观测面**是否真的挂上了**只能由 Watcher
+// 自己的计数证明——挂载失败只记 WARN、不报错，若句柄被丢弃，「守卫已生效」就没有可核验的依据
+// （测试尤其需要它，见 archive_lockguard_test.go）。
+func (s *ArchiveService) AttachLockDBGuard() {
+	w, err := lockguard.Attach(s.hotDB, &s.mu)
+	if err != nil {
+		slog.Warn("归档域锁内 DB 访问守卫装配失败（诊断能力降级，不影响归档功能）", "错误", err)
+		return
+	}
+	w.OnViolation(lockguard.LogViolation)
+	s.lockGuard = w
 }
 
 // Run 启动后台工作器循环，直到 ctx 取消（随关停信号优雅退出）。
@@ -87,6 +145,24 @@ func (s *ArchiveService) CreateJob(mode string, domains []string, operator strin
 }
 
 // createJobInternal 创建任务的统一入口（手动 / 自动共用）。
+//
+// 持 s.mu 做 DB 是**已知例外**（P1-3 的处置），此处记录为什么保留、以及为什么它不构成环：
+//
+//	保留的原因——单飞判据没有 DB 兜底。「至多一个活跃任务」目前只由本处的
+//	`HasActiveJob`（check-then-act）在一个进程内维护，表上**没有**能让数据库来定序的
+//	唯一约束（活跃集是「status IN (pending,running,cancelling)」这一条件集合，sqlite 与
+//	mysql 的可移植写法都表达不出部分唯一索引）。若按方案 A 把 DB 移出锁外、改由 CAS 定序，
+//	两个并发 CreateJob 会双双读到「无活跃任务」并各自插入一条——把「至多一个」降级成「通常一个」，
+//	这是**语义削弱**而非加固，故不可取（评审给出的 A 路径以 CAS 可定序为前提，此处前提不成立）。
+//
+//	不构成环的原因——本锁没有「持连接等它」的对偶路径。本服务三处锁内 DB 都是**同 goroutine
+//	顺序调用**（取锁 → 查/写 → 放锁），全程不跨调用等另一把锁；而归档 worker 的搬运循环
+//	（runJob / runCopy / runVerify / runDelete）**从不取本锁**，故不存在「持连接 → 等 mu」。
+//	对照 P0 事故：那里的环是「审批持连接等 deliveryOrchestrator.mu」×「tick 持 mu 等连接」，
+//	本服务缺了前一半。
+//
+//	既然不构成环，为什么还要挂守卫：见 mu 字段与 AttachLockDBGuard 的说明——它属**潜伏风险**
+//	（反模式留在第二处服务、且此前未被观测），纳入观测后一旦真有对偶路径出现即被指认。
 func (s *ArchiveService) createJobInternal(mode string, domains []string, operator, trigger string) (*ArchiveJobDetailView, error) {
 	if !model.IsValidArchiveMode(mode) {
 		return nil, apperr.ErrInvalidParam
@@ -270,16 +346,44 @@ func (s *ArchiveService) Overview() (*ArchiveOverviewView, error) {
 
 // ---- 后台工作器内部 ----
 
-// reachable 归档库当前是否可达（archiveDB 非 nil 且 Ping 通）；overview / 创建 / 重试据此判可用。
+// archivePingBudget 是归档可达性探测的调用侧上限（与 store 的默认 call 预算同量级，见其说明）。
+//
+// 为什么这里也要给期限：包装层确实自带预算，但 `store.NewBoundedPinger` 在包装层未启用时会
+// 回退到原生池（无兜底期限）。调用侧统一给一层，探测「永不挂起」就与注入了哪种池无关。
+const archivePingBudget = 5 * time.Second
+
+// reachable 归档库当前是否可达（archiveDB 非 nil 且带预算探测通过）；overview / 创建 / 重试据此判可用。
+//
+// 为什么必须带预算（P1-1）：本函数在 `/archive/overview`、创建与重试三个入口都会走到，
+// 而原生 `(*sql.DB).Ping()` 内部用 `context.Background()`——归档库连接池被占满时它会**无界等待**，
+// 于是「归档库不可达」这个本该优雅降级的判据，反倒成了挂起控制面请求的入口。
+// 探测失败即判不可达（保守方向正确：宁可降级也不挂住）。
 func (s *ArchiveService) reachable() bool {
 	if s.archiveDB == nil {
 		return false
 	}
-	sqlDB, err := s.archiveDB.DB()
-	if err != nil {
-		return false
+	return s.ping(s.archiveDB) == nil
+}
+
+// ping 对给定连接做一次**带预算**的连通性探测。
+//
+// 优先用 store.BoundedPinger（继承 call 预算，池耗尽时报可读的等连接超时）；
+// 拿不到包装层时（两侧预算被显式关闭、或调用方传入了非本层装配的 *gorm.DB）回退到
+// `sqlDB.PingContext`——它没有本层兜底期限，但调用方 ctx 仍可中断，比裸 Ping() 强。
+func (s *ArchiveService) ping(db *gorm.DB) error {
+	if db == nil {
+		return errors.New("归档库连接为空")
 	}
-	return sqlDB.Ping() == nil
+	ctx, cancel := context.WithTimeout(context.Background(), archivePingBudget)
+	defer cancel()
+	if p := store.NewBoundedPinger(db); p != nil {
+		return p.PingContext(ctx)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
 }
 
 // wake 非阻塞唤醒工作器（channel 满即已有待处理信号，丢弃本次不阻塞）。
@@ -370,6 +474,15 @@ func (s *ArchiveService) runJob(ctx context.Context, job *model.ArchiveJob) {
 		saveItem:  s.repo.SaveItem,
 		cancelled: func() bool { return s.isCancelRequested(job.ID) },
 	}
+	// 数据面语句改用长期限（见 archiveLongQueryTimeout）：整单共用一条 ctx，任务收尾时统一取消。
+	// 为什么在整单范围内共用而不是逐语句新建：归档的「区间」概念跨语句存在（countRows 与
+	// orderedPKs 必须看到同一区间），逐语句各自的期限只会让失败点变得不可预测；一条 ctx
+	// 贯穿整单，语义是「这一个任务最多跑这么久」，与运维对归档任务的心理模型一致。
+	// 基线用 context.Background()：worker 的 ctx 会随关停取消（见 drainActive 的 ctx.Err 检查），
+	// 而归档单在关停时**刻意保持 running** 以便下次启动续跑——若把数据面期限挂在关停 ctx 上，
+	// 一次重启就会把跑了一半的整单连语句一起掐断，与「断点续跑」的设计相悖。
+	cancelLong := runner.bindLongBudget(context.Background())
+	defer cancelLong()
 
 	failed, cancelled := false, false
 	var firstErr error
@@ -408,8 +521,22 @@ func (s *ArchiveService) runJob(ctx context.Context, job *model.ArchiveJob) {
 	s.finalizeJob(job, failed, cancelled, firstErr)
 }
 
-// expandItems 按 cutoffs 快照展开工作项（日表逐张 / 单表按区间；无到期数据的域生成 skipped item）。
+// expandItems 按 cutoffs 快照展开工作项（日表逐张 / 单表按区间；无到期数据的日表生成 skipped item）。
+//
+// **长查询例外（评审 P2-1）**：单表分支按设计做「发生时间 < cutoff」的**全区间 COUNT(*)**——
+// 与归档 runner 同属大表聚合，不能受 store 的 call 预算（默认 5s）约束，否则大部署下建单即失败。
+// 故本方法自带 archiveLongQueryTimeout 期限（与 runner 的 bindLongBudget 同源同值），
+// 用 WithContext 绑定到**展开期的两条读查询**（日表清单 `expiredDailyTables` 与单表全区间 COUNT）上；
+// 期限随方法返回即 cancel 释放。收尾的 `CreateItems` / `Items` 是小写入，留在默认预算内即可
+// （它们是插入与主键回读，不随表规模增长）。
+//
+// **未纳入本例外的是 `Overview` 的三条计数**：那是交互式概览页，让页面等 30 分钟不可接受，
+// 故有意保留 5s 有界读（`safeDomainCount` 已吞错记 WARN、降级为 0），属**有意保留**而非遗漏。
 func (s *ArchiveService) expandItems(job *model.ArchiveJob) ([]model.ArchiveJobItem, error) {
+	// 展开步含大表 COUNT(*)，按长查询口径给期限（见方法注释）。
+	ctx, cancel := context.WithTimeout(context.Background(), archiveLongQueryTimeout)
+	defer cancel()
+	hotDB := s.hotDB.WithContext(ctx)
 	cutoffs := parseCutoffs(job.Cutoffs)
 	selected := parseDomainList(job.Domains)
 	selectedSet := make(map[string]struct{}, len(selected))
@@ -425,7 +552,7 @@ func (s *ArchiveService) expandItems(job *model.ArchiveJob) ([]model.ArchiveJobI
 		}
 		cutoff := cutoffs[d.name]
 		if d.form == archiveFormDaily {
-			refs, err := expiredDailyTables(s.hotDB, d.baseTable, cutoff)
+			refs, err := expiredDailyTables(hotDB, d.baseTable, cutoff)
 			if err != nil {
 				return nil, err
 			}
@@ -441,7 +568,7 @@ func (s *ArchiveService) expandItems(job *model.ArchiveJob) ([]model.ArchiveJobI
 		// 单表：按 发生时间 < cutoff 的区间；无到期行 → skipped。
 		rangeTo := cutoff
 		var cnt int64
-		if err := applyDomainFilter(s.hotDB.Table(d.baseTable), d).
+		if err := applyDomainFilter(hotDB.Table(d.baseTable), d).
 			Where(d.timeColumn+" < ?", rangeTo).Count(&cnt).Error; err != nil {
 			return nil, err
 		}

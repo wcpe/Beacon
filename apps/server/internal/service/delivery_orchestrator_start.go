@@ -62,9 +62,11 @@ func (s *DeliveryOrchestrator) applyStart(id uint, reason, operator, clientIP st
 // **全程不取 s.mu**（P0 死锁修复，2026-10-10 02:41:05 生产事故）：
 // 本函数运行在审批 worker 的外层事务里，该事务已从连接池取走连接（approval_worker.go:151）。
 // 若在此请求 s.mu，就是「持连接等 mu」；而 s.mu 的持有者可能在等连接（推进器每轮 `advanceActiveOrders`
-// 先取 mu 再查库）。`max-open-conns: 1`（config.example.yml 默认）下没有第三条连接可破环，
-// 两条路径永久互等，busy_timeout 也无效——它等的是 SQLite 文件锁，而这里等的是
-// database/sql 连接池排队（sql.DB.conn 等 connRequests channel，不读 ctx 超时），根本没进 SQLite 层。
+// 先取 mu 再查库）。池上限若小到没有第三条连接可破环（事故现场是 `max-open-conns: 1`，
+// 后已按 §2 默认提到 4），两条路径永久互等，busy_timeout 也无效——它等的是 SQLite 文件锁，
+// 而这里等的是 database/sql 连接池排队，根本没进 SQLite 层。标准库的等待其实尊重 ctx（db.conn(ctx) 的
+// select ctx.Done()），但本项目主力写法 db.Transaction(...) 不传 ctx（gorm 默认
+// context.Background() 永不取消），故表现为无限等待。
 // 复现见 delivery_deadlock_repro_test.go，本半的不变量锁定见 delivery_deadlock_approval_lock_test.go。
 //
 // 为什么去掉锁不削弱互斥（互斥由另外两层承担，不是「少了一把锁」）：

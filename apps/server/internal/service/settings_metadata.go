@@ -23,8 +23,14 @@ const (
 	SettingAlertWebhookTimeoutMs   = "alert.webhook-timeout-ms"
 	// 失联孤儿告警自动关闭阈值（小时）：实例既不在运行时注册表、也不在 server 表活动目录，
 	// 且其未处理告警最近触发已超此时长，才被后台清理器自动消解（真机降噪，见 docs/specs/alert-dedup-and-auto-resolve.md）。
-	SettingAlertOrphanTimeoutHours  = "alert.orphan-timeout-hours"
-	SettingLogLevel                 = "log.level"
+	SettingAlertOrphanTimeoutHours = "alert.orphan-timeout-hours"
+	SettingLogLevel                = "log.level"
+	// SettingLockDBGuardEnabled 「持锁期间 DB 访问」运行时守卫开关（P0 死锁防回归，2026-10-10）：
+	// 开启时每次 DB 访问都判定「发起者是否正持有受观测锁」，命中即记 ERROR 日志（不 panic）。
+	// 默认关：它是**诊断开关**，不是常规防护——常规防护由 store 层的连接等待预算承担
+	// （那里把「无限挂起」变成「快速失败」），本开关用来在事故排查或回归验证时定位到具体调用点。
+	// 依据 .claude/rules/testing-and-quality.md §3「DB IO 一律在锁外」。
+	SettingLockDBGuardEnabled       = "debug.lock-db-guard-enabled"
 	SettingReverseFetchMaxFileBytes = "reverse-fetch.max-file-bytes"
 	SettingUpdateProxyURL           = "update.proxy-url"
 	SettingUpdateChannel            = "update.channel"
@@ -219,6 +225,11 @@ var settingsWhitelist = map[string]settingMeta{
 			return ok
 		},
 		defaultFromConfig: func(c config.Config) string { return c.Log.Level },
+	},
+	SettingLockDBGuardEnabled: {
+		valueType:         model.SettingValueTypeBool,
+		desc:              "「持锁期间 DB 访问」运行时守卫开关：开启时命中即记 ERROR 日志（不 panic），用于事故排查与回归验证；默认关",
+		defaultFromConfig: func(config.Config) string { return strconv.FormatBool(false) },
 	},
 	SettingReverseFetchMaxFileBytes: {
 		valueType: model.SettingValueTypeInt, desc: "反向抓取单文件内容上限（字节）；超此上限的文件须显式确认才纳入选定集",
