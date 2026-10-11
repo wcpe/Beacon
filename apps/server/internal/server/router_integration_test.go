@@ -176,7 +176,7 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	browseHandler.SetReportAuthenticator(v2Svc)
 	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
 	// P8 文件资产索引（FR-163）：清单上报 + 搜索 / 概要 / 比对 / 重扫；复用同一 commandRepo 下发 asset-rescan。
-	assetSvc := service.NewAssetService(db, repository.NewFileAssetRepository(db), repository.NewFileAssetScanRepository(db), commandRepo, auditRepo)
+	assetSvc := service.NewAssetService(db, registry, repository.NewFileAssetRepository(db), repository.NewFileAssetScanRepository(db), commandRepo, auditRepo)
 	assetSvc.SetNotifier(notifier)
 	fileSyncSvc := service.NewFileSyncService(db, repository.NewFileSyncRepository(db), instSvc, auditRepo, service.NewFileSyncEventHub())
 	// 反向抓取受管任务（FR-58）：任务仓库 + 服务（建任务 + 互斥、scan/submit 编排、ingest 复用 Import）+ 处理器。

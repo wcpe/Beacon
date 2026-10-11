@@ -59,7 +59,7 @@ func TestNamespaceRuntimeGateRejectsInactiveLifecycle(t *testing.T) {
 			}
 			_, err := repository.NewAgentCommandRepository(db).UpdateStatus(late.ID, model.CommandStatusFetched, model.CommandStatusDone, "")
 			assertNamespaceRuntimeDenied(t, err)
-			_, err = NewAssetService(db, nil, nil, nil, nil).ApplyManifest(ManifestReportParams{
+			_, err = NewAssetService(db, nil, nil, nil, nil, nil).ApplyManifest(ManifestReportParams{
 				Identity: agentauth.Identity{NamespaceID: namespace.ID, Namespace: namespace.Code, ServerID: "game-1"}, Mode: manifestModeDelta,
 			})
 			assertNamespaceRuntimeDenied(t, err)

@@ -476,7 +476,7 @@ func run() error {
 	// P8 装配点：文件资产索引（FR-163，见 v2-file-assets.md）：agent 面清单上报（增量 / 全量分片，摘要校准）+
 	// 管理面搜索 / 概要 / 跨服比对 / 批量重扫。重扫复用同一 commandRepo（asset-rescan 类型）经既有长轮询命令通道下发，
 	// 建命令提交后经 notifier 唤醒目标 agent。本域对目标文件系统零写入（只读索引）。
-	assetService := service.NewAssetService(db,
+	assetService := service.NewAssetService(db, registry,
 		repository.NewFileAssetRepository(db), repository.NewFileAssetScanRepository(db), commandRepo, auditRepo)
 	assetService.SetNotifier(notifier)
 	v2AssetsHandler := handler.NewV2AssetsHandler(assetService)

@@ -3,17 +3,20 @@ package service
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
 
 // fr155Fixture 承载 FR-155 用例共享脚手架：一个 namespace + 一条 BC 集群 / 大区 / 两个小区。
 type fr155Fixture struct {
 	db      *gorm.DB
 	svc     *v2ControlPlaneTestService
+	reg     *runtime.Registry // 运行态注册表（online 字段真源）
 	ns      *model.Namespace
 	token   string
 	cluster *model.BCCluster
@@ -45,7 +48,17 @@ func setupFR155Cluster(t *testing.T) fr155Fixture {
 	if err != nil {
 		t.Fatalf("创建小区 B 失败: %v", err)
 	}
-	return fr155Fixture{db: db, svc: svc, ns: ns, token: token, cluster: cluster, region: region, zoneA: zoneA, zoneB: zoneB}
+	reg := runtime.NewRegistry()
+	svc.SetRuntimeRegistry(reg)
+	return fr155Fixture{db: db, svc: svc, reg: reg, ns: ns, token: token, cluster: cluster, region: region, zoneA: zoneA, zoneB: zoneB}
+}
+
+// markOnline 在运行态注册表登记一台在线实例（online 字段的真源；active 身份不再用于判在线）。
+func (f fr155Fixture) markOnline(t *testing.T, serverID string) {
+	t.Helper()
+	if _, err := f.reg.Register(&runtime.Instance{Namespace: f.ns.Code, ServerID: serverID, Role: "bukkit"}, time.Minute, time.Now().UTC()); err != nil {
+		t.Fatalf("登记 %s 在线实例失败: %v", serverID, err)
+	}
 }
 
 // approveServer 注册并确认一台 server（默认未分配），返回其 server 行 id。
@@ -343,6 +356,8 @@ func TestV2ListServersEnriched(t *testing.T) {
 	f := setupFR155Cluster(t)
 	rowID := f.approveServer(t, fr155IdentityA, "lobby-1", model.ServerKindBackend)
 	f.assign(t, rowID, model.AssignmentTargetZone, f.zoneA.ID, false)
+	// online 取运行时口径：需在运行态注册表登记在线实例（active 身份不再代表在线）。
+	f.markOnline(t, "lobby-1")
 
 	items, total, err := f.svc.ListServers(ListServersParams{NamespaceID: f.ns.ID})
 	if err != nil || total != 1 || len(items) != 1 {
@@ -359,7 +374,7 @@ func TestV2ListServersEnriched(t *testing.T) {
 		t.Fatalf("backend 不应带 bcClusterName，实际 %v", *view.BCClusterName)
 	}
 	if !view.Assigned || !view.Online {
-		t.Fatalf("已分配 active 身份的 server 应 assigned+online，实际 %+v", view)
+		t.Fatalf("已分配且运行态在线的 server 应 assigned+online，实际 %+v", view)
 	}
 }
 

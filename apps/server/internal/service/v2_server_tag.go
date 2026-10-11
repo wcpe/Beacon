@@ -153,7 +153,7 @@ func (s *V2ControlPlaneService) SetServerTags(p SetServerTagsParams) (*ServerVie
 				return err
 			}
 		}
-		view, err = enrichSingleServer(tx, *server)
+		view, err = enrichSingleServer(tx, s.runtime, *server)
 		return err
 	})
 	if err != nil {
@@ -209,7 +209,7 @@ func (s *V2ControlPlaneService) DeleteServerTag(p DeleteServerTagParams) (*Serve
 				return err
 			}
 		}
-		view, err = enrichSingleServer(tx, *server)
+		view, err = enrichSingleServer(tx, s.runtime, *server)
 		return err
 	})
 	if err != nil {

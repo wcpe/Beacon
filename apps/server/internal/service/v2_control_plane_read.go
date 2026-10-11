@@ -8,11 +8,13 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
 
 // ServerView 是 server 资产的富化视图（camelCase + 计算字段），对齐前端 zone-authority mock 的 ServerItem。
-// 名称字段沿 zone→region→bc_cluster 链取；online 为占位口径：存在 active 身份即视为在线
-// （P4 健康域接入前无注册表 / 心跳真源，故以身份 active 近似「已接入」）。
+// 名称字段沿 zone→region→bc_cluster 链取；online 取运行时口径：进程内注册表中该实例状态为 online 或 degraded
+// （真源见 runtime.Registry，与 serverOnline / 拓扑 / 发现同口径）。身份 active 只代表「已接入」，
+// 进程已死仍会停在 active，不得据其判断在线（否则运维脚本会把死进程误报在线）。
 type ServerView struct {
 	ID              uint                 `json:"id"`
 	NamespaceID     uint                 `json:"namespaceId"`
@@ -60,7 +62,8 @@ func isServerAssigned(s *model.Server) bool {
 }
 
 // enrichServers 把 server 行批量富化为视图：一次性批量取名与在线态，禁循环内查库（N+1）。
-func enrichServers(db *gorm.DB, servers []model.Server) ([]ServerView, error) {
+// registry 为运行态注册表（在线真源）；未装配（nil）时全部按离线处理。
+func enrichServers(db *gorm.DB, registry *runtime.Registry, servers []model.Server) ([]ServerView, error) {
 	if len(servers) == 0 {
 		return []ServerView{}, nil
 	}
@@ -73,7 +76,7 @@ func enrichServers(db *gorm.DB, servers []model.Server) ([]ServerView, error) {
 	if err != nil {
 		return nil, err
 	}
-	onlineKeys, err := loadOnlineServerKeys(db, serverIDs)
+	onlineKeys, err := loadOnlineServerKeys(db, registry, serverIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -161,22 +164,67 @@ func loadBCClusterNames(db *gorm.DB, bcIDs []uint) (map[uint]string, error) {
 	return byID, nil
 }
 
-// loadOnlineServerKeys 批量取 active 身份对应的 (namespace, serverId) 键集合，作为在线占位口径。
-func loadOnlineServerKeys(db *gorm.DB, serverIDs []string) (map[onlineKey]struct{}, error) {
+// instanceUsable 判运行态实例是否算「在线」：online 或 degraded（心跳已陈旧但未达 TTL，仍属可用集合）。
+// 与 serverOnline 共用同一判据，保证 /admin/v2/servers 列表 / 单台详情 / 生命周期影响预览三处口径不漂移。
+func instanceUsable(status string) bool {
+	return status == runtime.StatusOnline || status == runtime.StatusDegraded
+}
+
+// loadOnlineServerKeys 批量取「运行时在线」的 (namespaceId, serverId) 键集合。
+// 真源是进程内运行态注册表（instanceUsable：online / degraded），**不是** agent_identity.status——
+// 身份 active 只表示已接入，进程被杀后没有写点把它改回去，据此判在线会造成假阳性。
+// registry 未装配（nil）时一律按离线返回，与 serverOnline 的缺省行为一致。
+// 注意注册表内部按 namespace **code** 分桶，而 onlineKey 用 namespace **id**，故在此做 code ↔ id 换算；
+// 只对命中集合涉及的 namespace 查一次库（不做全表扫描，也不在循环内查库）。
+func loadOnlineServerKeys(db *gorm.DB, registry *runtime.Registry, serverIDs []string) (map[onlineKey]struct{}, error) {
 	keys := map[onlineKey]struct{}{}
-	if len(serverIDs) == 0 {
+	if registry == nil || len(serverIDs) == 0 {
 		return keys, nil
 	}
-	var idents []model.AgentIdentity
-	if err := db.Select("namespace_id", "server_id").
-		Where("server_id IN ? AND status = ?", serverIDs, model.AgentIdentityStatusActive).
-		Find(&idents).Error; err != nil {
+	wanted := make(map[string]struct{}, len(serverIDs))
+	for _, sid := range serverIDs {
+		if sid != "" {
+			wanted[sid] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return keys, nil
+	}
+	// 取一次全量快照（不按 namespace 过滤，避免 code/id 口径混淆）：只留可用状态且落在待查 serverId 集合内的实例。
+	// 命中实例自带所属 namespace code，因此同名 serverId 落在别的 namespace 时不会误判本 namespace 在线。
+	type codeKey struct {
+		namespaceCode string
+		serverID      string
+	}
+	hits := make([]codeKey, 0, len(wanted))
+	codes := map[string]struct{}{}
+	for _, inst := range registry.List(runtime.Filter{}) {
+		if inst == nil || !instanceUsable(inst.Status) {
+			continue
+		}
+		if _, ok := wanted[inst.ServerID]; !ok {
+			continue
+		}
+		hits = append(hits, codeKey{namespaceCode: inst.Namespace, serverID: inst.ServerID})
+		codes[inst.Namespace] = struct{}{}
+	}
+	if len(hits) == 0 {
+		return keys, nil
+	}
+	var namespaces []model.Namespace
+	if err := db.Select("id", "code").Where("code IN ?", stringKeys(codes)).Find(&namespaces).Error; err != nil {
 		return nil, err
 	}
-	for i := range idents {
-		if idents[i].ServerID.Assigned() {
-			keys[onlineKey{namespaceID: idents[i].NamespaceID, serverID: string(idents[i].ServerID)}] = struct{}{}
+	idByCode := make(map[string]uint, len(namespaces))
+	for i := range namespaces {
+		idByCode[namespaces[i].Code] = namespaces[i].ID
+	}
+	for _, hit := range hits {
+		id, ok := idByCode[hit.namespaceCode]
+		if !ok {
+			continue // namespace 行已不存在（或快照里的 code 查不到）：定位不到 server 行，跳过
 		}
+		keys[onlineKey{namespaceID: id, serverID: hit.serverID}] = struct{}{}
 	}
 	return keys, nil
 }

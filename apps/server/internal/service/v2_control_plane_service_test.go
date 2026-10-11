@@ -16,6 +16,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
 
 type v2ControlPlaneTestService struct{ *V2ControlPlaneService }
@@ -809,7 +810,7 @@ func TestFR199ServerViewProjectsNullableLobbyClusterID(t *testing.T) {
 		t.Fatalf("普通服务器应投影 lobbyClusterId=null 且 assigned=false，实际 %+v", view)
 	}
 
-	single, err := enrichSingleServer(db, lobbyServer)
+	single, err := enrichSingleServer(db, nil, lobbyServer)
 	if err != nil || single.LobbyClusterID == nil || *single.LobbyClusterID != lobby.ID || !single.Assigned {
 		t.Fatalf("单条富化读应与列表保持大厅归属一致，view=%+v err=%v", single, err)
 	}
@@ -1418,4 +1419,149 @@ func TestListServerViewsArchivedAlwaysOffline(t *testing.T) {
 	if total != 1 || len(views) != 1 || views[0].Lifecycle != model.ServerLifecycleArchived || views[0].Online {
 		t.Fatalf("归档 server 应展示 archived 且 online=false，实际 total=%d views=%+v", total, views)
 	}
+}
+
+// TestListServersOnlineFollowsRuntimeRegistry 锁定 /admin/v2/servers 的 online 取运行时口径：
+// 真源是运行态注册表（online / degraded 算在线），**不是** agent_identity.status=active。
+// 旧实现读身份表，进程被杀后身份仍停在 active，会把死进程误报在线——生产验收即因此误判（运维脚本据此断言）。
+// 本用例同时锁死 code↔id 换算与 namespace 隔离：注册表内部按 namespace code 分桶，而 onlineKey 用 namespace id。
+func TestListServersOnlineFollowsRuntimeRegistry(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "online-view", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	other, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "online-view-other", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建第二个 namespace 失败: %v", err)
+	}
+	now := time.Now().UTC()
+	// 六台 server 全部建 active 身份（旧口径下都会 online=true），差别只在运行态注册表有无可用条目。
+	seed := func(namespaceID uint, prefix string, serverIDs ...string) {
+		t.Helper()
+		for i, sid := range serverIDs {
+			if err := db.Create(&model.Server{NamespaceID: namespaceID, ServerID: sid, Kind: model.ServerKindBackend}).Error; err != nil {
+				t.Fatalf("创建 server %s 失败: %v", sid, err)
+			}
+			if err := db.Create(&model.AgentIdentity{
+				IdentityID: fmt.Sprintf("%s-0000-4000-8000-%012d", prefix, i), NamespaceID: namespaceID,
+				ServerID: model.NullableServerID(sid), Kind: model.ServerKindBackend,
+				Status: model.AgentIdentityStatusActive, StatusChangedAt: now,
+			}).Error; err != nil {
+				t.Fatalf("创建 %s 活跃身份失败: %v", sid, err)
+			}
+		}
+	}
+	// prod：alive-1 新鲜在线；stale-1 心跳陈旧→degraded（仍算在线）；lost-1 超 TTL→lost（不算）；
+	// dead-1 注册表内无条目（模拟进程已被杀）；ns-isolated-1 只在别的 namespace 有同名在线实例。
+	seed(ns.ID, "a0040000", "alive-1", "stale-1", "lost-1", "dead-1", "ns-isolated-1")
+	seed(other.ID, "a0050000", "ns-isolated-1")
+
+	reg := runtime.NewRegistry()
+	register := func(nsCode, serverID string, heartbeatAt time.Time) {
+		t.Helper()
+		if _, err := reg.Register(&runtime.Instance{Namespace: nsCode, ServerID: serverID, Role: "bukkit"}, 30*time.Second, heartbeatAt); err != nil {
+			t.Fatalf("注册运行实例 %s/%s 失败: %v", nsCode, serverID, err)
+		}
+	}
+	register(ns.Code, "alive-1", now)
+	register(ns.Code, "stale-1", now.Add(-20*time.Second))
+	register(ns.Code, "lost-1", now.Add(-40*time.Second))
+	register(other.Code, "ns-isolated-1", now)
+	// 按 heartbeatAt 陈旧度推进状态机：stale-1→degraded（>15s）、lost-1→lost（>30s），其余保持 online。
+	reg.SweepExpired(now, 15*time.Second, 30*time.Second, time.Minute)
+	svc.SetRuntimeRegistry(reg)
+
+	views, _, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, PageSize: 20})
+	if err != nil {
+		t.Fatalf("列出 server 视图失败: %v", err)
+	}
+	byID := map[string]ServerView{}
+	for _, view := range views {
+		byID[view.ServerID] = view
+	}
+	if len(byID) != 5 {
+		t.Fatalf("prod 应列出 5 台，实际 %d：%+v", len(byID), byID)
+	}
+	want := map[string]bool{
+		"alive-1":       true,  // 注册表内 online
+		"stale-1":       true,  // 注册表内 degraded：仍算在线（与 serverOnline 语义一致）
+		"lost-1":        false, // 注册表内 lost：不算在线
+		"dead-1":        false, // 身份 active 但注册表无条目（进程已死）：旧口径会误报 true
+		"ns-isolated-1": false, // 只有别的 namespace 的同名实例在线：不得串环境点亮
+	}
+	for sid, wantOnline := range want {
+		if got := byID[sid].Online; got != wantOnline {
+			t.Fatalf("%s 的 online 应为 %v（运行时口径），实际 %v", sid, wantOnline, got)
+		}
+	}
+	// 反向：另一 namespace 的同名 server 行确实由它自己的实例点亮（证明 code→id 换算生效，未把 code 当 id）。
+	otherViews, _, err := svc.ListServers(ListServersParams{NamespaceID: other.ID, PageSize: 20})
+	if err != nil {
+		t.Fatalf("列出另一 namespace 视图失败: %v", err)
+	}
+	if len(otherViews) != 1 || !otherViews[0].Online {
+		t.Fatalf("另一 namespace 的 ns-isolated-1 应在线，实际 %+v", otherViews)
+	}
+	// 单台富化（enrichSingleServer）同口径：改标签返回的视图与列表一致。
+	if tagged, err := svc.SetServerTags(SetServerTagsParams{ServerID: "alive-1", Tags: map[string]string{"tier": "core"}, Operator: "admin"}); err != nil || !tagged.Online {
+		t.Fatalf("在线 server 的标签回包应 online=true，实际 %+v err=%v", tagged, err)
+	}
+	if tagged, err := svc.SetServerTags(SetServerTagsParams{ServerID: "dead-1", Tags: map[string]string{"tier": "core"}, Operator: "admin"}); err != nil || tagged.Online {
+		t.Fatalf("注册表无条目的 server 标签回包应 online=false，实际 %+v err=%v", tagged, err)
+	}
+}
+
+// TestOnlineSemanticsAgreeAcrossViews 锁定「online = 注册表内 online 或 degraded」在列表与生命周期影响预览两处一致：
+// degraded（心跳陈旧但未达 TTL）两处都算在线，注册表内条目消失后两处都转离线——避免两条读路径各自漂移。
+func TestOnlineSemanticsAgreeAcrossViews(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "agree-view", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := &model.Server{NamespaceID: ns.ID, ServerID: "agree-1", Kind: model.ServerKindBackend}
+	if err := db.Create(server).Error; err != nil {
+		t.Fatalf("创建 server 失败: %v", err)
+	}
+	if err := db.Create(&model.AgentIdentity{
+		IdentityID: "a0060000-0000-4000-8000-000000000001", NamespaceID: ns.ID, ServerID: model.NullableServerID(server.ServerID),
+		Kind: model.ServerKindBackend, Status: model.AgentIdentityStatusActive, StatusChangedAt: time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("创建活跃身份失败: %v", err)
+	}
+	now := time.Now().UTC()
+	reg := runtime.NewRegistry()
+	if _, err := reg.Register(&runtime.Instance{Namespace: ns.Code, ServerID: server.ServerID, Role: "bukkit"}, 30*time.Second, now.Add(-20*time.Second)); err != nil {
+		t.Fatalf("注册运行实例失败: %v", err)
+	}
+	// 心跳陈旧 20s > degraded-after 15s → degraded。
+	reg.SweepExpired(now, 15*time.Second, 30*time.Second, time.Minute)
+	if inst := reg.Get(ns.Code, server.ServerID); inst == nil || inst.Status != runtime.StatusDegraded {
+		t.Fatalf("测试前置：实例应为 degraded，实际 %+v", inst)
+	}
+	svc.SetRuntimeRegistry(reg)
+	assertOnline := func(want bool, stage string) {
+		t.Helper()
+		views, _, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, PageSize: 20})
+		if err != nil || len(views) != 1 {
+			t.Fatalf("%s：列出 server 视图失败: views=%+v err=%v", stage, views, err)
+		}
+		if views[0].Online != want {
+			t.Fatalf("%s：列表 online 应为 %v，实际 %v", stage, want, views[0].Online)
+		}
+		impact, err := svc.GetServerLifecycleImpact(server.ID, "archive")
+		if err != nil {
+			t.Fatalf("%s：读取影响预览失败: %v", stage, err)
+		}
+		if impact.Online != want {
+			t.Fatalf("%s：影响预览 online 应为 %v，实际 %v", stage, want, impact.Online)
+		}
+	}
+	assertOnline(true, "注册表内 degraded")
+	// 手动下线（条目移除，等价于进程已从注册表消失）→ 两处同步转离线。
+	if !reg.Offline(ns.Code, server.ServerID) {
+		t.Fatal("测试前置：手动下线应成功")
+	}
+	assertOnline(false, "注册表内条目已移除")
 }
