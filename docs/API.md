@@ -255,13 +255,16 @@ agent 面：
 
 | 读 | 预算 | 依据 |
 |---|---|---|
-| 归档库可达性探测（Ping） | 5s，**调用侧** | `ArchiveService.reachable` 的 `archivePingBudget`。之所以在 store 预算之外再加一层：`store.NewBoundedPinger` 在连接池包装层未启用时会回退原生池（无兜底期限），调用侧统一给一层后，「探测永不挂起」与注入了哪种池无关 |
-| 各域行数统计（`hotRows` / `expiredRows` / `archiveRows`） | 5s，**store 层**单条语句预算 | `config.DefaultDatabaseCallTimeoutMs`。生产未显式配置 `database.call-timeout-ms` 时取此默认值；显式传负值可关闭 |
+| 归档库可达性探测（Ping） | 5s，**调用侧** | `ArchiveService.reachable` → `ping` 的 `archivePingBudget`。之所以在 store 预算之外再加一层：`store.NewBoundedPinger` 在连接池包装层未启用时会回退原生池（无兜底期限），调用侧统一给一层后，「探测永不挂起」与注入了哪种池无关 |
+| 热库统计（`hotRows` / `expiredRows`） | 5s，**store 层**单条语句预算 | `config.DefaultDatabaseCallTimeoutMs`（默认 5000ms），可由 `database.call-timeout-ms` 调整、显式传负值关闭 |
+| 归档库统计（`archiveRows`） | 同上（与热库同口径） | 归档连接同样在 `store.OpenArchive` 里收紧到运行期预算；**注意**此预算同时约束单条语句执行，故归档库上的大表 `COUNT(*)` 也受它限制 |
 
-降级行为——端点仍返回 200，不整页失败：
+降级行为——**归档库不可达**与**单域统计失败**这两种情形下端点仍返回 200，不整页失败：
 
 - 归档库不可达 → `target.reachable=false` 且**跳过**归档侧计数（`archiveRows=0`），热库水位照常返回；
 - 单个域统计失败（含触达预算上限）→ 该域 `*Rows=0` 并记 WARN，其余域不受影响。
+
+热库侧的读取失败（如 `RecentJobs` 查任务表出错）仍按统一错误体返回，不在此降级范围内。
 
 > 保留期等设置走运维设置域端点（`archive.*` 键已入 `/admin/v1/settings` 白名单，≥7 天守卫，**【已实现·FR-151】**）；冷查询参数 `includeArchived=true`（强制时间范围 ≤ `archive.cold-query-max-days` 默认 31、归档不可达 503、应用层归并去重保热侧）已挂各查询域端点 `/audits`、`/admin/v2/{metrics/series,sched-decisions,health/snapshots,connections,messages}`（§4.4 跨域契约，**【已实现·FR-152】**），均不在 `/archive/*` 下。归档到同实例独立 database `beacon_archive`（或独立 DSN）走双连接应用层搬运 + sha256 校验门（[ADR-0066](adr/0066-hot-cold-archive-dual-connection.md)）。前端页面接真（归档清理块 / 冷查询「包含归档」勾选 / 设置页归档策略）随后续版本。
 

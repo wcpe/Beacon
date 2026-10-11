@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -209,7 +210,6 @@ func loadOnlineServerKeys(db *gorm.DB, registry *runtime.Registry, serverIDs []s
 		serverID      string
 	}
 	hits := make([]codeKey, 0, len(wanted))
-	codes := map[string]struct{}{}
 	registry.ForEach(func(ns, serverID, status string) bool {
 		if !instanceUsable(status) {
 			return true // 可用状态判据（online/degraded）集中在 service 层，runtime 保持中立
@@ -218,28 +218,49 @@ func loadOnlineServerKeys(db *gorm.DB, registry *runtime.Registry, serverIDs []s
 			return true
 		}
 		hits = append(hits, codeKey{namespaceCode: ns, serverID: serverID})
-		codes[ns] = struct{}{}
 		return true
 	})
 	if len(hits) == 0 {
 		return keys, nil
 	}
+	// 按**归一后**的 code 建表（ToLower + TrimSpace，与 repository.AlertOrphanMatchKey 同范式）。
+	//
+	// 为什么要归一：注册表分桶键来自 agent 上报的原始字符串（instance_service 直接写 p.Namespace，
+	// 上游 ensureServerActiveForNamespace 对不存在的 namespace 返回 nil、不校验也不改写），
+	// 而这里要与 DB 的 code 列做 join。两侧仅大小写/空白不同即匹配不上——且 sqlite 的字符串
+	// 比较默认**大小写敏感**，故归一必须同时作用于查询入参与建表两端。该形态在本仓已有先例
+	// 并被定性为「安全红线被绕过」级（AlertOrphanMatchKey）。
+	//
+	// 为什么不在 SQL 侧用 `WHERE code IN (...)` 收窄：归一后的小写 code 与库中原始大小写未必
+	// 相等（sqlite 下 `IN ('prod')` 匹配不到 `code='PROD'`），收窄会重新引入同一漏配；而
+	// namespace 表极小（部署级配置表），全取一次并归一建表的代价可忽略，换来的是
+	// 「不依赖 DB 排序规则、两种方言行为一致」。
 	var namespaces []model.Namespace
-	if err := db.Select("id", "code").Where("code IN ?", stringKeys(codes)).Find(&namespaces).Error; err != nil {
+	if err := db.Select("id", "code").Find(&namespaces).Error; err != nil {
 		return nil, err
 	}
 	idByCode := make(map[string]uint, len(namespaces))
 	for i := range namespaces {
-		idByCode[namespaces[i].Code] = namespaces[i].ID
+		idByCode[normalizeNamespaceCode(namespaces[i].Code)] = namespaces[i].ID
 	}
 	for _, hit := range hits {
-		id, ok := idByCode[hit.namespaceCode]
+		id, ok := idByCode[normalizeNamespaceCode(hit.namespaceCode)]
 		if !ok {
-			continue // namespace 行已不存在（或快照里的 code 查不到）：定位不到 server 行，跳过
+			// 留痕而非静默跳过：命中失败意味着这台**运行中**的实例会被显示为 offline——
+			// 与本次修复要消灭的「口径假象」同型，只是方向相反（假阴性）。不记日志就无人能发现。
+			slog.Warn("运行态实例的 namespace 定位不到对应行，该实例将被判为离线",
+				"namespace", hit.namespaceCode, "serverId", hit.serverID)
+			continue
 		}
 		keys[onlineKey{namespaceID: id, serverID: hit.serverID}] = struct{}{}
 	}
 	return keys, nil
+}
+
+// normalizeNamespaceCode 归一 namespace code 用于跨源匹配（注册表上报值 ↔ DB code 列）。
+// 与 repository.AlertOrphanMatchKey 同口径：仅大小写与首尾空白差异不应导致匹配失败。
+func normalizeNamespaceCode(code string) string {
+	return strings.ToLower(strings.TrimSpace(code))
 }
 
 // buildServerView 组装单台 server 视图（纯内存，名称来自已批量取的映射）。
