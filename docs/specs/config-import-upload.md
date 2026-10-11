@@ -18,7 +18,10 @@ FR-14 文件树托管（通道B）已提供整文件 blob 托管：`file_object`
 - 控制面：
   - 新增 `file.import` 审计动作常量（落 VARCHAR，见 enums）。
   - `FileService.Import(params)`：在单事务内对每个文件做「存在则 publish 新版本、不存在则 create 首版」，复用既有 `appendRevision` 内部助手保持整文件覆盖语义；事务内写一条 `file.import` 审计；提交后对该组 scope 唤醒一次（`NotifyFileChange`）。早校验数量 / 大小 / path / 目标组。
-  - `handler.FileHandler.Import`：解析 multipart（`namespace` / `group` 字段 + 多个文件部件，文件部件的相对 path 取自表单字段 `paths`），交 service；handler 不碰 GORM。`MaxImportFiles` / `MaxImportTotalBytes` 为 handler 侧多文件聚合上限常量；单文件大小复用 service 的 `MaxFileContentBytes`。
+  - `handler.FileHandler.Import`：以 `r.MultipartReader()` **流式**解析 multipart（`namespace` / `group` / 可选 `comment` / `reason` 文本字段 + 多个文件部件，文件部件的相对 path 取自表单字段 `paths`，按提交顺序与 `files` 一一对齐），交 service；handler 不碰 GORM。单次导入的文件数 / 总字节上限复用 `service.MaxImportFiles` / `MaxImportTotalBytes`，单文件大小复用 service 的 `MaxFileContentBytes`。
+    - **不用 `r.ParseMultipartForm`**：标准库 `mime/multipart` 有硬编码的 `maxParts = 1000`（不可配置），而每个文件占 `files` + `paths` 两个部件，故实到 497～498 个文件即报 `multipart: message too large`，令 2000 的文件数声明永不达标（2026-10 修复，见 CHANGELOG 未发布·修复）。
+    - **流式下的上限自建**：文本部件限读 4KiB、文件部件限读「单文件上限 + 1 字节」、聚合字节达上限立即中断、超文件数上限的部件在读取其字节前即拒、部件总数与请求体总量另设护栏；全程不落临时文件（旧实现经 `ParseMultipartForm` 会落盘）。
+    - **错误可诊断**：文件数超限 `422 TOO_MANY_FILES` 的说明带实际上限数字；`paths` / `files` 数量不一致的 `400 INVALID_PARAM` 带两个数量；multipart 解析失败的 `400 INVALID_PARAM` 带脱敏后的底层原因（ADR-0057）。
   - 路由：`POST /admin/v1/files/import`（admin 鉴权）。
 - 分层：`router → handler（解析 multipart）→ service（事务批量 upsert + 审计 + 唤醒）→ repository`，单向依赖；handler 不碰 GORM / 内存结构。
 - 前端：`web/src/api/client.ts` 加 `importFiles()`（FormData，不强加 JSON Content-Type）；`ConfigsPage` 顶部加「导入到组」对话框：选环境 + 组、选本地目录 / 多文件（`webkitdirectory` / `multiple`），上传后提示成功并刷新文件列表。

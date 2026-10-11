@@ -5,6 +5,9 @@ package server_test
 import (
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
 
 // 集成测试用固定 64 位 hex sha256（仅测试值）。
@@ -25,6 +28,15 @@ func activateAgent(t *testing.T, ts *integrationTestServer, token, identityID, s
 		t.Fatalf("注册 %s 应 202 pending，实际 %d", serverID, code)
 	}
 	approveAgentIdentityForTest(t, ts, identityID, serverID)
+}
+
+// registerOnlineInstance 在集成测试服务器的运行态注册表登记一台在线实例。
+// online 的真源是运行态注册表（online / degraded），active 身份只代表已接入、不代表进程还活着。
+func registerOnlineInstance(t *testing.T, ts *integrationTestServer, namespaceCode, serverID string) {
+	t.Helper()
+	if _, err := ts.registry.Register(&runtime.Instance{Namespace: namespaceCode, ServerID: serverID, Role: "bukkit"}, time.Minute, time.Now().UTC()); err != nil {
+		t.Fatalf("登记 %s 在线实例失败: %v", serverID, err)
+	}
 }
 
 // assetManifestBody 构造一次清单上报请求体。
@@ -148,6 +160,8 @@ func TestV2AssetsCompareAndRescan(t *testing.T) {
 	activateAgent(t, ts, token, "aaaaaaaa-1111-4111-8111-111111111111", "s1")
 	activateAgent(t, ts, token, "bbbbbbbb-2222-4222-8222-222222222222", "s2")
 	activateAgent(t, ts, token, "cccccccc-3333-4333-8333-333333333333", "s3")
+	// s1 需在运行态注册表内在线，重扫才会给它建命令（ghost 从未接入，仍按离线）。
+	registerOnlineInstance(t, ts, "cmpns", "s1")
 
 	path := "plugins/A/config.yml"
 	report := func(identityID, serverID, sha string, size int64) {

@@ -14,6 +14,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
 
 // 上报模式（规格 §4.3）。
@@ -38,6 +39,7 @@ const (
 // 分层 handler → service → repository 单向依赖；多表写在事务内原子完成。本域对目标文件系统零写入（只读索引）。
 type AssetService struct {
 	db          *gorm.DB
+	registry    *runtime.Registry // 运行态注册表（在线真源）：重扫判定「目标服能否收到命令」只认它，未装配时一律按离线
 	repo        *repository.FileAssetRepository
 	scanRepo    *repository.FileAssetScanRepository
 	commandRepo *repository.AgentCommandRepository
@@ -47,12 +49,13 @@ type AssetService struct {
 	now         func() time.Time
 }
 
-// NewAssetService 构造服务。
-func NewAssetService(db *gorm.DB, repo *repository.FileAssetRepository, scanRepo *repository.FileAssetScanRepository,
-	commandRepo *repository.AgentCommandRepository, auditRepo *repository.AuditLogRepository) *AssetService {
+// NewAssetService 构造服务。registry 为进程内运行态注册表（在线真源），重扫的在线判定只认它。
+func NewAssetService(db *gorm.DB, registry *runtime.Registry, repo *repository.FileAssetRepository,
+	scanRepo *repository.FileAssetScanRepository, commandRepo *repository.AgentCommandRepository,
+	auditRepo *repository.AuditLogRepository) *AssetService {
 	now := func() time.Time { return time.Now().UTC() }
 	return &AssetService{
-		db: db, repo: repo, scanRepo: scanRepo, commandRepo: commandRepo, auditRepo: auditRepo,
+		db: db, registry: registry, repo: repo, scanRepo: scanRepo, commandRepo: commandRepo, auditRepo: auditRepo,
 		staging: newFullUploadStaging(fullUploadTTL, now), now: now,
 	}
 }
@@ -451,6 +454,7 @@ type assetRescanPayload struct {
 
 // Rescan 批量对目标服下发 asset-rescan 命令（规格 §5.2）：在线服建 pending 命令、离线服标记入响应不阻断整批；
 // 事务内建命令 + 记一条 asset.rescan 审计，提交成功后唤醒各在线 agent。
+// 「在线」取运行时口径（运行态注册表内 online / degraded）；身份 active 但进程已死不算在线——那种目标收不到命令。
 func (s *AssetService) Rescan(p RescanParams) (RescanResult, error) {
 	if p.NamespaceID == 0 || len(p.ServerIDs) == 0 || len(p.ServerIDs) > maxRescanServers {
 		return RescanResult{}, apperr.ErrInvalidParam
@@ -462,7 +466,7 @@ func (s *AssetService) Rescan(p RescanParams) (RescanResult, error) {
 	if err != nil {
 		return RescanResult{}, err
 	}
-	onlineKeys, err := loadOnlineServerKeys(s.db, p.ServerIDs)
+	onlineKeys, err := loadOnlineServerKeys(s.db, s.registry, p.ServerIDs)
 	if err != nil {
 		return RescanResult{}, err
 	}

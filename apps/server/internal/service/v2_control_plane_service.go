@@ -847,7 +847,7 @@ func (s *V2ControlPlaneService) UpdateServerDisplayName(p UpdateServerDisplayNam
 	}); err != nil {
 		return nil, err
 	}
-	views, err := enrichServers(s.db, []model.Server{server})
+	views, err := enrichServers(s.db, s.runtime, []model.Server{server})
 	if err != nil {
 		return nil, err
 	}
@@ -912,7 +912,7 @@ func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]ServerView, 
 	if err := q.Order("updated_at DESC").Offset(pageOffset(p.Page, p.PageSize)).Limit(pageSize(p.PageSize)).Find(&items).Error; err != nil {
 		return nil, 0, err
 	}
-	views, err := enrichServers(s.db, items)
+	views, err := enrichServers(s.db, s.runtime, items)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1034,12 +1034,14 @@ func targetLifecycle(operation string) string {
 	return model.ServerLifecycleActive
 }
 
+// serverOnline 判断某实例当前是否「运行时在线」：注册表内状态为 online 或 degraded（口径见 instanceUsable）。
+// namespace 为 namespace **code**（注册表分桶键），registry 未装配时一律 false。
 func (s *V2ControlPlaneService) serverOnline(namespace, serverID string) bool {
 	if s.runtime == nil {
 		return false
 	}
 	for _, inst := range s.runtime.List(runtime.Filter{Namespace: namespace}) {
-		if inst.ServerID == serverID && (inst.Status == runtime.StatusOnline || inst.Status == runtime.StatusDegraded) {
+		if inst.ServerID == serverID && instanceUsable(inst.Status) {
 			return true
 		}
 	}
@@ -2026,7 +2028,7 @@ func (s *V2ControlPlaneService) applySetServerDraining(p SetServerDrainingParams
 		}); err != nil {
 			return err
 		}
-		view, err = enrichSingleServer(tx, *server)
+		view, err = enrichSingleServer(tx, s.runtime, *server)
 		return err
 	})
 	if err != nil {
@@ -2087,7 +2089,7 @@ func (s *V2ControlPlaneService) applySetServerDefaultEntry(p SetServerDefaultEnt
 		}); err != nil {
 			return err
 		}
-		enriched, err := enrichSingleServer(tx, server)
+		enriched, err := enrichSingleServer(tx, s.runtime, server)
 		if err != nil {
 			return err
 		}
@@ -2107,9 +2109,9 @@ func clearOtherDefaultEntriesInZone(tx *gorm.DB, zoneID, excludeID uint) error {
 		Update("is_default_entry", false).Error
 }
 
-// enrichSingleServer 富化单台 server 为视图。
-func enrichSingleServer(db *gorm.DB, server model.Server) (*ServerView, error) {
-	views, err := enrichServers(db, []model.Server{server})
+// enrichSingleServer 富化单台 server 为视图。registry 为运行态注册表（在线真源，未装配时按离线处理）。
+func enrichSingleServer(db *gorm.DB, registry *runtime.Registry, server model.Server) (*ServerView, error) {
+	views, err := enrichServers(db, registry, []model.Server{server})
 	if err != nil {
 		return nil, err
 	}

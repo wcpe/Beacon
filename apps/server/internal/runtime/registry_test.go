@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -235,4 +237,105 @@ func TestStatusCountsEmpty(t *testing.T) {
 	if c := r.StatusCounts(); len(c) != 0 {
 		t.Fatalf("空注册表应返回空计数，实际 %+v", c)
 	}
+}
+
+// TestForEachVisitsLiveStatus 验证 ForEach：全表无漏、回调带回**实时** status、fn 返回 false 能提前终止。
+// 「带回实时 status」是判别点：若 ForEach 传了常量或错把别的字段当 status，这里比对 StatusCounts 那套
+// online/degraded/lost 分布会立刻对不上——证明遍历读的是活的运行态，而非占位或缓存值。
+func TestForEachVisitsLiveStatus(t *testing.T) {
+	r := NewRegistry()
+	_, _ = r.Register(sample("prod", "lobby-1", "10.0.0.1:1"), ttl, t0)
+	_, _ = r.Register(sample("prod", "lobby-2", "10.0.0.2:1"), ttl, t0)
+	_, _ = r.Register(sample("prod", "lobby-3", "10.0.0.3:1"), ttl, t0)
+	_, _ = r.Register(sample("dev", "lobby-4", "10.0.0.4:1"), ttl, t0)
+
+	now := t0.Add(50 * time.Second)
+	r.Heartbeat("prod", "lobby-1", now)                      // 年龄 0 → online
+	r.Heartbeat("prod", "lobby-2", now.Add(-20*time.Second)) // 年龄 20s（degradedAfter~ttl）→ degraded
+	r.Heartbeat("dev", "lobby-4", now)                       // 跨环境 online
+	// lobby-3 不续：年龄 50s（> ttl）→ lost
+	r.SweepExpired(now, degradedAfter, ttl, offlineGrace)
+
+	want := map[string]string{
+		"prod/lobby-1": StatusOnline,
+		"prod/lobby-2": StatusDegraded,
+		"prod/lobby-3": StatusLost,
+		"dev/lobby-4":  StatusOnline,
+	}
+	got := map[string]string{}
+	calls := 0
+	r.ForEach(func(ns, serverID, status string) bool {
+		calls++
+		got[ns+"/"+serverID] = status
+		return true
+	})
+	if calls != len(want) || len(got) != len(want) {
+		t.Fatalf("应遍历并命中全部 %d 个实例，实际 calls=%d got=%v", len(want), calls, got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("%s 应带回实时 status %s，实际 %s（全量 %v）", k, v, got[k], got)
+		}
+	}
+
+	// 提前终止：fn 返回 false 后只应再回调一次（chain 立即 break）。
+	terminated := 0
+	r.ForEach(func(_, _, _ string) bool {
+		terminated++
+		return false
+	})
+	if terminated != 1 {
+		t.Fatalf("fn 返回 false 应提前终止、只回调 1 次，实际 %d", terminated)
+	}
+}
+
+// TestForEachConcurrentNoRace 并发下 ForEach（读锁内遍历）与 Register/Heartbeat/SweepExpired（写锁）交叠不竞争；
+// 用 -race 跑本用例可暴露「遍历未持锁 / 回调逃逸指针」一类的数据竞争（ForEach 的正确性依据）。
+// 本用例无需断言：所有 goroutine 能正常退出即证明没有死锁与竞争。
+func TestForEachConcurrentNoRace(_ *testing.T) {
+	r := NewRegistry()
+	const n = 48
+	for i := 0; i < n; i++ {
+		_, _ = r.Register(sample("prod", fmt.Sprintf("lobby-%02d", i), fmt.Sprintf("10.0.0.%d:1", i+1)), ttl, t0)
+	}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	// 只读遍历方：并发全表遍历。
+	for g := 0; g < 6; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					r.ForEach(func(_, _, _ string) bool { return true })
+				}
+			}
+		}()
+	}
+	// 写方：并发续心跳并推进状态机，制造与遍历的锁交错。
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		now := t0
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				now = now.Add(time.Second)
+				for i := 0; i < n; i++ {
+					r.Heartbeat("prod", fmt.Sprintf("lobby-%02d", i), now)
+				}
+				r.SweepExpired(now, degradedAfter, ttl, offlineGrace)
+			}
+		}
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }

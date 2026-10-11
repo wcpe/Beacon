@@ -123,7 +123,7 @@ const (
 // AlertContextServer 是告警详情内嵌的「该服近期状态」（取健康既有真源，不复制存储）。
 type AlertContextServer struct {
 	ServerID string `json:"serverId"`
-	// Online 表示该服当前「非失联」（可达）；与 ServerView.Online（active 身份即在线）口径不同，勿直接互比。
+	// Online 表示该服当前「非失联」（可达）；与 ServerView.Online（运行态注册表内 online / degraded 才算在线）口径不同，勿直接互比。
 	Online      bool     `json:"online"`
 	Level       string   `json:"level"`
 	Score       int      `json:"score"`
@@ -154,7 +154,7 @@ func (s *AlertEventService) Context(id uint, scope ObservationScope) (*AlertCont
 	if e.ServerID != "" && s.healthQuery != nil {
 		if detail, herr := s.healthQuery.HealthDetailInScope(e.ServerID, scope); herr == nil {
 			// Online 口径：该服当前「非失联」（健康视图 reasons 不含 lost）。
-			// 注意与列表 ServerView.Online（存在 active 身份即在线）语义不同——此处表达「告警视角下该服是否可达」。
+			// 注意与列表 ServerView.Online（运行态注册表内 online / degraded 才算在线）语义不同——此处表达「告警视角下该服是否可达」。
 			res.Server = &AlertContextServer{
 				ServerID: e.ServerID, Online: !containsString(detail.Reasons, healthview.ReasonLost),
 				Level: detail.Level, Score: detail.Score, Schedulable: detail.Schedulable,

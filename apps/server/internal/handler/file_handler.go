@@ -2,7 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"strconv"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/redact"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -271,61 +275,61 @@ func (h *FileHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
-// multipart 解析驻留内存上限（超出落临时文件，由标准库管理）。
-// 单次导入的文件数 / 总字节上限复用 service.MaxImportFiles / service.MaxImportTotalBytes，
-// 单文件大小复用 service.MaxFileContentBytes（与 FR-39 反向抓取同一套上限）。
-const importParseMemoryBytes = 16 * 1024 * 1024
+// 导入表单字段名（FR-38，与前端提交口径一致）。
+const (
+	importFieldNamespace = "namespace"
+	importFieldGroup     = "group"
+	importFieldComment   = "comment"
+	importFieldReason    = "reason"
+	// paths 与 files 按提交顺序一一对应（第 i 个 paths 描述第 i 个 files）。
+	importFieldPaths = "paths"
+	importFieldFiles = "files"
+)
+
+const (
+	// importMaxParts 是单次导入请求允许的最大部件数：每个文件占 files + paths 两个 part，另留少量标量字段余量。
+	// 流式解析绕开了标准库 mime/multipart 的 maxParts = 1000（详见 parseImportForm），故必须自设部件数护栏：
+	// files 与 paths 各自的数量上限管不住未知部件的数量，不设即等于允许超大 body 的垃圾部件被逐个无界解析。
+	importMaxParts = 2*service.MaxImportFiles + importMaxExtraParts
+	// importMaxExtraParts 是 files / paths 之外允许的标量字段余量（namespace / group / comment / reason 等）。
+	importMaxExtraParts = 16
+	// importTextPartMaxBytes 是单个文本部件（namespace / group / comment / reason / paths）的字节上限。
+	// 流式解析下每个部件都直接读进内存，故必须有显式预算：相对 path 自身无长度上限（见 service.normalizePath），
+	// 4KiB 足以容纳任何正常路径与运维说明，同时堵死「单个超大文本部件打爆内存」这条路径。
+	importTextPartMaxBytes = 4 * 1024
+	// importBodyMaxBytes 是导入请求体的总字节上限：合法请求的净内容不超过「聚合字节上限 + 全部文本部件预算」，
+	// 故在两者之和上再留 1 MiB 余量给 multipart 边界与部件头，正常请求不会被误判为超大 body。
+	importBodyMaxBytes = service.MaxImportTotalBytes + importMaxParts*importTextPartMaxBytes + 1024*1024
+)
+
+// importForm 是导入表单（FR-38）的流式解析结果。
+type importForm struct {
+	Namespace string
+	Group     string
+	Comment   string
+	Reason    string
+	// Files 按 files 部件出现顺序排列，Path 由等长对齐的 paths 部件回填。
+	Files []service.ImportFile
+}
 
 // Import 处理 POST /admin/v1/files/import（FR-38）：把一份目录批量上传到某组（scope=group）。
 // 表单：namespace、group 文本字段 + 多个 files 部件；各文件相对 path 取自与 files 等长的 paths 文本字段（按提交顺序对齐）。
 // handler 只解析 multipart 并做数量 / 总量早校验，交 service 在事务内原子落地（path 安全与单文件大小由 service 校验）。
+// 单次导入的文件数 / 总字节上限复用 service.MaxImportFiles / service.MaxImportTotalBytes，单文件大小复用
+// service.MaxFileContentBytes（与 FR-39 反向抓取同一套上限）。
 func (h *FileHandler) Import(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(importParseMemoryBytes); err != nil {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
+	// 请求体总字节护栏：流式解析不再有标准库的落盘兜底，故先给整个 body 设上限（见 importBodyMaxBytes）。
+	r.Body = http.MaxBytesReader(w, r.Body, importBodyMaxBytes)
+	form, err := parseImportForm(r)
+	if err != nil {
+		render.WriteError(w, r, err)
 		return
-	}
-	defer func() { _ = r.MultipartForm.RemoveAll() }()
-
-	ns := r.FormValue("namespace")
-	group := r.FormValue("group")
-	comment := r.FormValue("comment")
-	reason := r.FormValue("reason")
-	fileHeaders := r.MultipartForm.File["files"]
-	paths := r.MultipartForm.Value["paths"]
-	if ns == "" || group == "" || len(fileHeaders) == 0 {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
-		return
-	}
-	// paths 必须与 files 等长且一一对应（防错位导致内容落到错误 path）
-	if len(paths) != len(fileHeaders) {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
-		return
-	}
-	if len(fileHeaders) > service.MaxImportFiles {
-		render.WriteError(w, r, apperr.ErrTooManyFiles)
-		return
-	}
-
-	files := make([]service.ImportFile, 0, len(fileHeaders))
-	var total int64
-	for i, fh := range fileHeaders {
-		content, err := readMultipartFile(fh)
-		if err != nil {
-			render.WriteError(w, r, apperr.ErrInvalidParam)
-			return
-		}
-		total += int64(len(content))
-		if total > service.MaxImportTotalBytes {
-			render.WriteError(w, r, apperr.ErrContentTooLarge)
-			return
-		}
-		files = append(files, service.ImportFile{Path: paths[i], Content: content})
 	}
 
 	ticket, err := h.svc.RequestImport(service.ImportFilesParams{
-		Namespace: ns, Group: group, Files: files,
-		Operator: auth.Operator(r.Context()), Comment: comment, ClientIP: clientIP(r),
-	}, reason, r.Header.Get("Idempotency-Key"), requestPrincipal(r))
+		Namespace: form.Namespace, Group: form.Group, Files: form.Files,
+		Operator: auth.Operator(r.Context()), Comment: form.Comment, ClientIP: clientIP(r),
+	}, form.Reason, r.Header.Get("Idempotency-Key"), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -333,25 +337,175 @@ func (h *FileHandler) Import(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
-// readMultipartFile 读取单个上传文件部件的整文件内容；超单文件上限即拒（防超大文件入库）。
-func readMultipartFile(fh *multipart.FileHeader) (string, error) {
-	if fh.Size > service.MaxFileContentBytes {
-		return "", apperr.ErrContentTooLarge
-	}
-	f, err := fh.Open()
+// parseImportForm 流式解析导入 multipart 请求，并做字段 / paths / files 的对齐与上限校验。
+//
+// 为什么不用 r.ParseMultipartForm：标准库 mime/multipart 内部有硬编码的 maxParts = 1000（不可配置），
+// 而每个导入文件占 files + paths 两个 part，故部件数一到「2 × 文件数 + 文本字段数 > 1000」即报
+// ErrMessageTooLarge——实到 497～498 个文件就撞墙（文本字段越多上限越低，1999 个文件的声明上限从不达标），
+// 且该失败被笼统归成「参数错误」。r.MultipartReader 逐部件流式读取，无此类部件数上限。
+//
+// 内存与落盘保护：流式模式下标准库的「内存阈值 + 落临时文件」兜底不再生效，改为逐层显式预算——
+//  1. 文本部件按 importTextPartMaxBytes 限读；
+//  2. 文件部件按 service.MaxFileContentBytes 限读（限读上限 + 1 字节，据此判定超限），
+//     超大部件只会被拒，不会整份驻留内存；
+//  3. 文件累计字节按 service.MaxImportTotalBytes 累积校验，超限立即中断读取；
+//  4. 第 service.MaxImportFiles + 1 个 files 部件在其字节被读取之前即拒；
+//  5. 部件总数按 importMaxParts 限（拦住未知部件无界解析），请求体总量另由 Import 的 MaxBytesReader 兜底。
+//
+// 故最坏内存驻留 ≈ 聚合字节上限 + 单个文件上限，且全程不落任何临时文件（无需 RemoveAll 清理）。
+func parseImportForm(r *http.Request) (*importForm, error) {
+	mr, err := r.MultipartReader()
 	if err != nil {
-		return "", err
+		return nil, errImportParseFailed(err)
 	}
-	defer func() { _ = f.Close() }()
-	// 限读到上限 +1 字节，借此兜住 Size 头不可信时的超限
-	data, err := io.ReadAll(io.LimitReader(f, service.MaxFileContentBytes+1))
+	form := &importForm{}
+	var paths []string
+	var total int64
+	var parts int
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, errImportParseFailed(err)
+		}
+		parts++
+		if parts > importMaxParts {
+			_ = part.Close()
+			return nil, errImportTooManyParts(importMaxParts)
+		}
+		err = readImportPart(part, form, &paths, &total)
+		// 读完即关：Close 会丢弃本部件剩余字节，避免残留缓冲与未释放的资源（无临时文件可清理）。
+		_ = part.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if form.Namespace == "" || form.Group == "" || len(form.Files) == 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	// paths 必须与 files 等长且一一对应（防错位导致内容落到错误 path）
+	if len(paths) != len(form.Files) {
+		return nil, errImportPathsMisaligned(len(form.Files), len(paths))
+	}
+	for i := range form.Files {
+		form.Files[i].Path = paths[i]
+	}
+	return form, nil
+}
+
+// readImportPart 按部件名分流读取单个 multipart 部件。
+// 未知部件整体跳过（下一次 NextPart 调用会丢弃其剩余字节），对表单扩展字段保持宽容且不占用内存预算。
+// 保守保留「跳过、不报错」的旧语义，避免破坏只发已知字段的现有前端；但打一条 WARN 留痕——旧版由标准库
+// 显式拒绝，流式方案下畸形 / 拼错字段名的提交不再报错，须让它在日志里可被看见（部件名带出便于定位）。
+func readImportPart(part *multipart.Part, form *importForm, paths *[]string, total *int64) error {
+	name := part.FormName()
+	switch name {
+	case importFieldNamespace, importFieldGroup, importFieldComment, importFieldReason, importFieldPaths:
+		value, err := readImportTextPart(part)
+		if err != nil {
+			return err
+		}
+		setImportTextField(name, form, paths, value)
+		return nil
+	case importFieldFiles:
+		return appendImportFile(part, form, total)
+	default:
+		slog.Warn("导入请求含未知 multipart 部件，已跳过（旧版由标准库显式拒绝，流式解析下改为记日志放行）", "部件名", name)
+		return nil
+	}
+}
+
+// setImportTextField 把已解析出的文本值按字段名写入表单；paths 按出现顺序追加，与 files 部件顺序对齐。
+func setImportTextField(name string, form *importForm, paths *[]string, value string) {
+	switch name {
+	case importFieldNamespace:
+		form.Namespace = value
+	case importFieldGroup:
+		form.Group = value
+	case importFieldComment:
+		form.Comment = value
+	case importFieldReason:
+		form.Reason = value
+	case importFieldPaths:
+		*paths = append(*paths, value)
+	}
+}
+
+// appendImportFile 读取一个 files 部件、校验后追加到表单。
+// 先判数量再读内容：文件数已到上限时，连超限那一个部件的字节都不读，直接拒。
+func appendImportFile(part *multipart.Part, form *importForm, total *int64) error {
+	if len(form.Files) >= service.MaxImportFiles {
+		return errImportTooManyFiles(len(form.Files) + 1)
+	}
+	content, err := readImportFilePart(part)
 	if err != nil {
-		return "", err
+		return err
+	}
+	*total += int64(len(content))
+	if *total > service.MaxImportTotalBytes {
+		return apperr.ErrContentTooLarge
+	}
+	form.Files = append(form.Files, service.ImportFile{Content: content})
+	return nil
+}
+
+// readImportTextPart 读取单个文本部件；超 importTextPartMaxBytes 即拒（防超大文本部件驻留内存）。
+func readImportTextPart(part *multipart.Part) (string, error) {
+	// 限读到上限 + 1 字节：既能读出「已超限」这一事实，又不会把超大部件整份读进内存
+	data, err := io.ReadAll(io.LimitReader(part, importTextPartMaxBytes+1))
+	if err != nil {
+		return "", errImportParseFailed(err)
+	}
+	if len(data) > importTextPartMaxBytes {
+		return "", apperr.New(apperr.ErrInvalidParam.Status, apperr.ErrInvalidParam.Code,
+			fmt.Sprintf("导入表单文本字段超出上限（单字段上限 %d 字节）", importTextPartMaxBytes))
+	}
+	return string(data), nil
+}
+
+// readImportFilePart 读取单个上传文件部件的整文件内容；超单文件上限即拒（防超大文件入库）。
+// 限读到上限 + 1 字节，借此兜住无 Content-Length 可依赖的超大部件：最坏只读 1 MiB + 1 字节即返回错误。
+func readImportFilePart(part *multipart.Part) (string, error) {
+	data, err := io.ReadAll(io.LimitReader(part, service.MaxFileContentBytes+1))
+	if err != nil {
+		return "", errImportParseFailed(err)
 	}
 	if len(data) > service.MaxFileContentBytes {
 		return "", apperr.ErrContentTooLarge
 	}
 	return string(data), nil
+}
+
+// errImportParseFailed 构造带底层原因的导入解析错误：沿用 INVALID_PARAM 码与 400 状态（对外契约不变），
+// 但把标准库给出的真实原因（非 multipart/form-data、boundary 缺失、请求体超上限、部件头损坏等）脱敏后带出去，
+// 避免调用方只看到笼统「参数错误」而无从定位（ADR-0057：错误必须看得见，不得静默笼统化）。
+func errImportParseFailed(cause error) error {
+	return apperr.New(apperr.ErrInvalidParam.Status, apperr.ErrInvalidParam.Code,
+		"导入请求解析失败（须为 multipart/form-data 且 boundary 合法）："+redact.DesensitizeErr(cause))
+}
+
+// errImportTooManyFiles 构造带实际上限的文件数超限错误：码与状态沿用 TOO_MANY_FILES / 422，
+// 但把上限数字带进说明——调用方据此才能判断「该拆批导入」，而不是误以为参数格式有误。
+func errImportTooManyFiles(count int) error {
+	return apperr.New(apperr.ErrTooManyFiles.Status, apperr.ErrTooManyFiles.Code,
+		fmt.Sprintf("单次导入文件数超出上限：上限 %d 个，本次第 %d 个文件已被拒，请拆分后分批导入",
+			service.MaxImportFiles, count))
+}
+
+// errImportTooManyParts 构造部件总数超限错误（对外仍是 INVALID_PARAM，说明里讲清部件数与文件数的关系）。
+func errImportTooManyParts(limit int) error {
+	return apperr.New(apperr.ErrInvalidParam.Status, apperr.ErrInvalidParam.Code,
+		fmt.Sprintf("导入请求部件数超出上限（上限 %d 个 part：每个文件占 files、paths 两个 part）；"+
+			"文件数上限为 %d 个", limit, service.MaxImportFiles))
+}
+
+// errImportPathsMisaligned 构造 paths 与 files 数量不一致的参数错误（带上两个数量便于直接定位错位提交）。
+func errImportPathsMisaligned(files, paths int) error {
+	return apperr.New(apperr.ErrInvalidParam.Status, apperr.ErrInvalidParam.Code,
+		fmt.Sprintf("paths 与 files 数量不一致：files %d 个，paths %d 个，两者须等长且按提交顺序一一对应",
+			files, paths))
 }
 
 // effectiveFileView 是有效文件树中某文件的合并结果 + 逐文件/逐键来源（admin 只读预览，FR-45）。
