@@ -212,7 +212,12 @@ func (s *SettingsService) Update(key, value, operator, clientIP string) error {
 	}
 	// 锁内 DB 访问守卫：开关值推入 lockguard 的原子标志，无需重启即热生效。
 	if key == SettingLockDBGuardEnabled {
-		lockguard.SetEnabled(value == "true")
+		// 用 parseBoolSetting 而非 `value == "true"`：本键不在 dangerousSettingKeys 中，
+		// 故它走的是**本条 Update 路径**（危险键才走 applyDangerousInTx 的 afterCommit）。
+		// 校验端 validateSettingValue 对 bool 用 strconv.ParseBool（接受 TRUE/1/t），
+		// 若此处只认字面量 "true"，提交 "TRUE" 会「校验通过、落库成功、设置页显示已开，
+		// 而守卫实际没开」——正是要消灭的静默失效。两处必须同口径。
+		lockguard.SetEnabled(parseBoolSetting(value))
 	}
 	slog.Info("运维设置已更新", "key", key, "operator", operator)
 	return nil
