@@ -1,6 +1,6 @@
 # 功能规格：交付回滚韧性（失败重试 · 目标级子集回滚 · 交付版本与回滚记录 · 回滚预检）
 
-> 状态：开发中　·　关联 PRD：FR-262、FR-270、FR-271、FR-255　·　分支：feature/fr-262-rollback-resilience
+> 状态：已交付@v1.5.0（实现、单测与真机验收均通过；回滚组 R1/R2/R4/R5/R6 全通过）　·　关联 PRD：FR-262、FR-270、FR-271、FR-255　·　分支：feature/fr-262-rollback-resilience
 > 决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)（危险操作统一审批）、[ADR-0071](../adr/0071-config-gray-effectuation-model.md)（配置灰度生效与版本不可变链）、[ADR-0057](../adr/0057-surface-desensitized-errors.md)（错误脱敏）
 > 承接：[v2-delivery-orchestration](v2-delivery-orchestration.md) §4.7（备份与整单回滚）、[delivery-mcp-tools](delivery-mcp-tools.md)
 
@@ -158,11 +158,11 @@
 
 ## 5. 任务拆分
 
-- [ ] FR-262r：`RequestRollback` / 审批执行适配器支持 `rolling_back` 重试；`advanceRollingBack` 穷尽分类 + 自愈补初态 + 显式收口
-- [ ] FR-270：`change_rollback_record(_target)` 模型与仓库；目标级回滚服务层与推进扫描；HTTP 端点与审批适配；MCP 扩参
-- [ ] FR-271：交付版本读模型与端点；回滚动作记录写入与查询；目标列表 / 服务器详情展示；回滚记录视图
-- [ ] FR-255r：回滚确认弹窗预检区块
-- [ ] 文档同步：PRD 状态、ARCHITECTURE（数据模型）、API、CHANGELOG
+- [x] FR-262r：`RequestRollback` / 审批执行适配器支持 `rolling_back` 重试；`advanceRollingBack` 穷尽分类 + 自愈补初态 + 显式收口
+- [x] FR-270：`change_rollback_record(_target)` 模型与仓库；目标级回滚服务层与推进扫描；HTTP 端点与审批适配；MCP 扩参
+- [x] FR-271：交付版本读模型与端点；回滚动作记录写入与查询；目标列表 / 服务器详情展示；回滚记录视图
+- [x] FR-255r：回滚确认弹窗预检区块
+- [x] 文档同步：PRD 状态、ARCHITECTURE（数据模型）、API、CHANGELOG
 
 ## 6. 验收标准
 
