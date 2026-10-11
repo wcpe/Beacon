@@ -291,7 +291,8 @@ func TestForEachVisitsLiveStatus(t *testing.T) {
 
 // TestForEachConcurrentNoRace 并发下 ForEach（读锁内遍历）与 Register/Heartbeat/SweepExpired（写锁）交叠不竞争；
 // 用 -race 跑本用例可暴露「遍历未持锁 / 回调逃逸指针」一类的数据竞争（ForEach 的正确性依据）。
-func TestForEachConcurrentNoRace(t *testing.T) {
+// 本用例无需断言：所有 goroutine 能正常退出即证明没有死锁与竞争。
+func TestForEachConcurrentNoRace(_ *testing.T) {
 	r := NewRegistry()
 	const n = 48
 	for i := 0; i < n; i++ {
