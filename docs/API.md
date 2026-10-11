@@ -266,7 +266,7 @@ agent 面：
 
 热库侧的读取失败（如 `RecentJobs` 查任务表出错）仍按统一错误体返回，不在此降级范围内。
 
-> 保留期等设置走运维设置域端点（`archive.*` 键已入 `/admin/v1/settings` 白名单，≥7 天守卫，**【已实现·FR-151】**）；冷查询参数 `includeArchived=true`（强制时间范围 ≤ `archive.cold-query-max-days` 默认 31、归档不可达 503、应用层归并去重保热侧）已挂各查询域端点 `/audits`、`/admin/v2/{metrics/series,sched-decisions,health/snapshots,connections,messages}`（§4.4 跨域契约，**【已实现·FR-152】**），均不在 `/archive/*` 下。归档到同实例独立 database `beacon_archive`（或独立 DSN）走双连接应用层搬运 + sha256 校验门（[ADR-0066](adr/0066-hot-cold-archive-dual-connection.md)）。前端页面接真（归档清理块 / 冷查询「包含归档」勾选 / 设置页归档策略）随后续版本。
+> 保留期等设置走运维设置域端点（`archive.*` 键已入 `/admin/v1/settings` 白名单，≥7 天守卫，**【已实现·FR-151】**）；冷查询参数 `includeArchived=true`（强制时间范围 ≤ `archive.cold-query-max-days` 默认 31、归档不可达 503、应用层归并去重保热侧；**归档侧读取按次绑定 30 分钟期限**——归档连接带秒级运行期预算，冷查询是无 LIMIT 的全区间读、必须豁免，否则「可能较慢」的承诺会被秒级掐断）已挂各查询域端点 `/audits`、`/admin/v2/{metrics/series,sched-decisions,health/snapshots,connections,messages}`（§4.4 跨域契约，**【已实现·FR-152】**），均不在 `/archive/*` 下。归档到同实例独立 database `beacon_archive`（或独立 DSN）走双连接应用层搬运 + sha256 校验门（[ADR-0066](adr/0066-hot-cold-archive-dual-connection.md)）。前端页面接真（归档清理块 / 冷查询「包含归档」勾选 / 设置页归档策略）随后续版本。
 
 ### 配置中心 V2（P7 · 0.27.x，真源 [v2-config-center.md](specs/v2-config-center.md) §5）
 

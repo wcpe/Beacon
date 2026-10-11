@@ -66,7 +66,7 @@ packages/
 | `server` | 子服 / BC 节点；kind 双挂归属（proxy→bc_cluster、backend→zone），含默认入口与排空标记；**归属只由控制面指派**（[ADR-0004](adr/0004-zone-authority-control-plane.md) 延续，agent 不声明 zone） | zone-authority §3.6 / §4 |
 | `agent_identity` | agent 首启身份与 `namespace + serverId` 的绑定；列形态锁在 zone-authority，状态机在身份域 | [v2-agent-identity.md](specs/v2-agent-identity.md) §4.3 |
 
-配置作用域链与之完全同构：`namespace → bc_cluster → region → zone → server` 五层低到高覆盖（[v2-config-center.md](specs/v2-config-center.md) §4.1）。其余各域实体（指标批 / 健康快照 / 调度决策、连接 / 消息、归档任务、配置文件 / 层版本、文件资产、变更单三层）由各自规格 §3 权威定义。
+配置作用域链与之完全同构：`namespace → bc_cluster → region → zone → server` 五层低到高覆盖（[v2-config-center.md](specs/v2-config-center.md) §4.1）。其余各域实体（指标批 / 健康快照 / 调度决策、连接 / 消息、归档任务、配置文件 / 层版本、文件资产、变更单三层与回滚动作记录两层 `change_rollback_record(_target)`）由各自规格 §3 权威定义。
 
 ## 4. 存储架构
 

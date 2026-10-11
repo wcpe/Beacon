@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"context"
 	"encoding/base64"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -81,7 +83,43 @@ func coldParseNumericID(s string) uint64 {
 
 // fetchColdSide 在给定表集合（单表即一元素、日表新→旧）上取至多 want 行，逐表短路凑满即停。
 // apply 须已叠加过滤 / 时间窗 / keyset 边界；order 为 "<时间列> DESC, <主键列> DESC"。
+// coldQueryArchiveTimeout 是冷查询在**归档侧**单次调用的期限。
+//
+// 为什么需要它（不可省）：归档连接自 store.OpenArchive 起带**运行期** call 预算（秒级，与主库
+// 同口径）——那对「取连接」「小查询」合适，但冷查询是**无 LIMIT 的全区间读**（逐日表扫描、
+// 单服行数上限 ≈ archive.cold-query-max-days × 桶数、多服倍增），秒级预算会把「慢查询」变成
+// 「不可用查询」，而 v2-hot-cold-archive §4.4 明确向前端承诺「本次查询包含归档库，可能较慢」。
+// 归档搬运早已按同一理由自绑长期限（service.archiveLongQueryTimeout），冷查询须对齐。
+//
+// 为什么绑在 repo 而非装配处：`WithContext` 绑的是**一次性** ctx——若在 main 装配期绑定，
+// 进程启动 N 分钟后该 ctx 永久过期，冷查询此后全部失败。期限必须**按次**创建，
+// 故在真正发起查询的这里派生（每次调用独立计时、随调用结束释放）。
+//
+// 为何不叫 archiveColdQueryTimeout：与 cmd 层可能出现的同名常量区分，避免误以为可全局共享一份。
+const coldQueryArchiveTimeout = 30 * time.Minute
+
+// withColdArchiveBudget 给冷查询的**归档侧**连接按次绑定 coldQueryArchiveTimeout。
+//
+// 为什么单独抽出来：有两个 repo（metric / health）的冷查询走的是「热冷共用同一取数函数」的形态
+// （queryRangeOn 同时服务热侧与归档侧），不能在函数内统一绑定——那会连热侧一起放宽（热查本就不该慢）。
+// 故在调用点只包归档侧连接。返回的 cancel 必须由调用方 defer。
+func withColdArchiveBudget(db *gorm.DB) (*gorm.DB, context.CancelFunc) {
+	if db == nil {
+		return nil, func() {}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), coldQueryArchiveTimeout)
+	return db.WithContext(ctx), cancel
+}
+
+// fetchColdSide 在归档连接上逐日表查询（冷查询的归档侧入口）。
+// 内部按次绑定 coldQueryArchiveTimeout —— 见该常量的说明（归档侧预算是秒级、此处需长期限）。
 func fetchColdSide[T any](db *gorm.DB, tables []string, order string, want int, apply func(*gorm.DB) *gorm.DB) ([]T, error) {
+	// 按次派生长期限 ctx：只作用于本次冷查询的归档侧，不污染热侧与其它调用。
+	if db != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), coldQueryArchiveTimeout)
+		defer cancel()
+		db = db.WithContext(ctx)
+	}
 	out := make([]T, 0, want)
 	for _, tbl := range tables {
 		if len(out) >= want {

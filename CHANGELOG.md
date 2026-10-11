@@ -70,8 +70,8 @@
 
 - **归档库连接的等待预算从未收紧，连接等待防护在第二条连接上等于不存在（回归，本次 review 发现）**：`store.OpenArchive` 复用 `newDialector`，而后者一律以装配期口径 `boot=true` 建池——拿到的是初始预算为 `bootstrapTimeout`（30 分钟）的包装池，且**没有任何自动收紧**。主库在 `store.Open` 里显式调 `SetRuntimeBudget` 收回运行期值，归档库漏了这一步，于是 30 分钟预算被带到运行期：归档连接上的每条语句与每次取连接都按 30 分钟等待——正是本批「把无限挂起变快速失败」要消灭的形态，在第二条连接上缺席。
   - **修复**：`OpenArchive` 在建连接后补 `SetRuntimeBudget(db.ConnPool, archiveDB.CallTimeoutMs, archiveDB.TxTimeoutMs)`，与主库同口径；订正原注释「池参数与连接等待防护都已在 newDialector 内设好（与主库同一口径）」——该表述在收紧缺失时是错的。
-  - **测试**：新增 `TestOpenArchiveRestoresRuntimeBudget`（断言归档连接的实际预算被收紧为用户值；移除修复即报「实际 30m0s——装配期口径未收回」）。
-  - 影响面：`/admin/v2/archive/overview` 的归档侧行数统计、归档连通性探测等全部走该连接。
+  - 影响面与配套修复：`/admin/v2/archive/overview` 的归档侧行数统计、归档连通性探测，以及**冷查询**（`includeArchived`）的归档侧读取。**冷查询必须配套**——它是无 LIMIT 的全区间读（逐日表扫描、多服倍增），此前因该路径预算停在装配期 30 分钟而「碰巧」不受影响；收紧后若不显式绑定长期限，就会把「慢查询」变成「不可用查询」，与 v2-hot-cold-archive §4.4 向前端承诺的「本次查询包含归档库，可能较慢」直接冲突。故同时按次绑定 `coldQueryArchiveTimeout`（30 分钟，与归档数据面 `archiveLongQueryTimeout` 同口径），绑定点在冷查询的归档侧入口（`fetchColdSide` 与两个 `QueryRangeCold`）——**按次派生而非装配期一次性绑定**：`WithContext` 绑的 ctx 过了期限即永久失效，装配期绑定会让冷查询在进程启动 N 分钟后全部失败。
+  - **测试**：新增 `TestOpenArchiveRestoresRuntimeBudget`（断言归档连接的实际预算被收紧为用户值；移除修复即报「实际 30m0s——装配期口径未收回」）与 `TestColdQueryBindsLongBudgetOnArchiveSide`（捕获归档侧查询的 ctx 期限，断言其为长期限而非秒级；移除绑定即报「未捕获到任何期限」）。
 
 - **「持锁做 DB」守卫的开关解析与校验端不同口径，提交 `TRUE` 会静默不生效（本次 review 发现）**：`debug.lock-db-guard-enabled` **不在** `dangerousSettingKeys` 中，故它走的是 `SettingsService.Update` 这条活路径；而校验端 `validateSettingValue` 对 bool 用 `strconv.ParseBool`（接受 `TRUE` / `1` / `t`），消费端却用 `value == "true"` 字面比较。提交 `TRUE` 会「校验通过、落库成功、设置页显示已开，而守卫实际没开」——正是要消灭的静默失效。此前只修了 `applyDangerousInTx` 的 afterCommit 分支（该键根本走不到），活路径遗漏。
   - **修复**：`Update` 与 afterCommit 两处统一改用 `parseBoolSetting`（与校验端同口径）。
