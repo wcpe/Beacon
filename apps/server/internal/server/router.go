@@ -62,15 +62,18 @@ type Handlers struct {
 	ReverseFetchRule  *handler.ReverseFetchIgnoreRuleHandler
 	Settings          *handler.SettingsHandler
 	ReversibleOp      *handler.ReversibleOperationHandler
-	Metrics           http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
+	Metrics           http.Handler        // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
+	HTTPMetrics       HTTPMetricsObserver // HTTP 层 RED 指标观察者（请求计数 + 时延直方图）；nil = no-op
 	Web               http.Handler
 }
 
 // NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂鉴权 + 只读拒写 + 写审计兜底）+ 内嵌前端（SPA 回退）。
-// 中间件自外向内：recover → traceId → 访问日志。admin 组内：鉴权（登录令牌 / API 密钥）→ 只读拒写裁决 → 写操作审计兜底（FR-72）。
+// 中间件自外向内：HTTP 指标 → recover → traceId → 访问日志。admin 组内：鉴权（登录令牌 / API 密钥）→ 只读拒写裁决 → 写操作审计兜底（FR-72）。
 func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys APIKeyVerifier, audit auditCreator) http.Handler {
 	r := chi.NewRouter()
-	r.Use(recoverMiddleware, traceMiddleware, accessLog)
+	// HTTP 指标必须排在 recoverMiddleware 的**外层**：recover 捕获 panic 后用它自己那层的 w 写 500，
+	// 只有外层包装器才看得到这次状态码写入，顺序反了会让 panic 产生的 500 静默漏计（详见 httpMetricsMiddleware 注释）。
+	r.Use(httpMetricsMiddleware(h.HTTPMetrics), recoverMiddleware, traceMiddleware, accessLog)
 	if h.MCPProtocol != nil {
 		r.Get("/.well-known/oauth-protected-resource/admin/v2/mcp", h.MCPProtocol.Metadata)
 		r.Get("/.well-known/oauth-authorization-server", h.MCPProtocol.AuthorizationServerMetadata)

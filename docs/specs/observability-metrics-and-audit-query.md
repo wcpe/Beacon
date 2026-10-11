@@ -54,7 +54,7 @@
 - [x] 文档同步：API、ARCHITECTURE、CHANGELOG
 
 ## 5. 验收标准
-- `GET /metrics` 返回 200 且文本含 `beacon_instances_registered`、`beacon_instances_status`、`beacon_config_publish_total`、`beacon_push_notify_total`。
+- `GET /metrics` 返回 200 且文本含 `beacon_instances_registered`、`beacon_instances_status`、`beacon_config_publish_total`、`beacon_push_notify_total`；并含 HTTP 层 RED 指标 `beacon_http_requests_total{method,route,status}` 与 `beacon_http_request_duration_seconds{method,route}`（同一 registry / 同一端点上的后续扩展：`route` 取 chi 路由模板、未匹配归一为 `unmatched`，见 [ADR-0089](../adr/0089-http-layer-red-metrics.md)）。
 - 注册一个实例后采集，`beacon_instances_registered` 对应 namespace/role 计数 +1；状态 gauge 反映 online。
 - `GET /admin/v1/audits?operator=alice` 仅返回 alice 的审计；与其它过滤可叠加。
 - 控制面 `go test ./...` 全绿；集成测试（带 DSN）审计 operator 过滤通过。

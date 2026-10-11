@@ -146,6 +146,129 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 - **Docker 网络**：沿用现有"agent 能直连 beacon 地址"的可达约束，无新增端口；SSE 走与 API 同一端口（默认 8848）。
 - **断流不影响判活**：健康 online/lost/offline 仍由独立心跳 + TTL 决定，SSE 抖动断流不会误判失联；agent 流断按本地快照继续、自动退避重连并对账（fail-static）。
 
+### 3.2 Prometheus 指标抓取
+
+控制面在业务同端口暴露 `GET /metrics`（Prometheus 文本格式，默认 `http://<控制面地址>:8848/metrics`）。该端点属**内网信任面、不挂鉴权**，因此只应在受信网络或反向代理的访问控制之内开放，**不要直接暴露到公网**；它给出的是聚合运行指标，不含配置内容与凭据。
+
+指标清单：
+
+| 指标 | 类型 | 标签 | 含义 |
+|---|---|---|---|
+| `beacon_instances_registered` | gauge | `namespace`、`role` | 当前注册实例数（抓取时读内存注册表现算，非埋点计数） |
+| `beacon_instances_status` | gauge | `status`（online / degraded / lost / offline） | 健康状态分布 |
+| `beacon_config_publish_total` | counter | — | 配置发布累计次数 |
+| `beacon_push_notify_total` | counter | — | 推送（长轮询唤醒）累计次数 |
+| `beacon_http_requests_total` | counter | `method`、`route`、`status` | HTTP 请求累计数（接口红字口径） |
+| `beacon_http_request_duration_seconds` | histogram | `method`、`route` | HTTP 请求耗时分布（单位秒），显式分桶 1ms → 60s |
+| `go_goroutines` | gauge | — | 当前 goroutine 数（持续增长常意味着泄漏） |
+| `process_resident_memory_bytes` | gauge | — | 控制面进程常驻内存 RSS（字节） |
+
+抓取配置示例（`prometheus.yml`；此处字段名按 Prometheus 上游约定书写，不受本项目配置文件命名规范约束）：
+
+```yaml
+scrape_configs:
+  # 控制面自带的运维指标端点：与业务同端口、无鉴权，只应指向内网地址
+  - job_name: beacon
+    metrics_path: /metrics
+    # 抓取间隔 15s 足够看接口延迟趋势；调小只会增加控制面自身的抓取流量
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["beacon.internal:8848"]
+```
+
+算分位数（按 route 过滤，示例取两个请求-响应型端点）：
+
+```promql
+# p95（5 分钟窗口）
+histogram_quantile(0.95,
+  sum by (le) (rate(beacon_http_request_duration_seconds_bucket{route="/admin/v1/system/status"}[5m])))
+
+# p99
+histogram_quantile(0.99,
+  sum by (le) (rate(beacon_http_request_duration_seconds_bucket{route="/admin/v2/zone-tree"}[5m])))
+```
+
+**读法提醒**（不按这些口径读，数字会误导）：
+
+- `route` 是**路由模板**（如 `/admin/v2/config-files/{id}`）而非真实请求路径——同一端点下不同 id 聚合成一条 series，正是为了不让时序数随业务数据膨胀。未命中任何路由的请求（404、单页应用回退）统一落在 `route="unmatched"`。
+- **鉴权失败 / 只读拒写**的请求，`route` 停在**组级通配模板**（`/admin/v2/*`、`/beacon/v1/agent/*` 一类）：组内中间件短路时路由尚未匹配完。看到这类 series 属正常表现，不是模板漂移。
+- **长轮询 / 流式端点的耗时是真时长**（`/beacon/v1/agent/config/effective`、`/files/manifest`、`/override-sets` 最长挂起 30s；`/beacon/v1/agent/stream` 与管理台 SSE 更长），它们会把整体分位数明显抬高——做接口 SLA 时**按 route 过滤掉这些端点**，只统计请求-响应型端点。
+- **抓取本身也算一次请求**：Prometheus 每次 scrape 都会记进 `beacon_http_requests_total{route="/metrics"}`，用该指标算业务 QPS 时要排除它。
+- 进程刚启动、还没有任何请求时，两个 HTTP 指标**不会出现在 `/metrics` 里**（产生第一个请求后才出现），不是采集失败。
+
+建议的最低告警规则：
+
+```yaml
+groups:
+  - name: beacon
+    rules:
+      # 控制面不可达
+      - alert: BeaconDown
+        expr: up{job="beacon"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "控制面 /metrics 抓取失败（进程不可达）" }
+      # 5xx 错误率抬头（按 route 分维）
+      - alert: BeaconHttpErrorRate
+        expr: sum by (route) (rate(beacon_http_requests_total{status=~"5.."}[5m])) / sum by (route) (rate(beacon_http_requests_total[5m])) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "控制面 5xx 错误率 >5%（route={{ $labels.route }}）" }
+      # p99 抬头（窗口取 1h 以免抖动；排除天然长时间挂起的端点）
+      - alert: BeaconHttpLatencyP99High
+        expr: histogram_quantile(0.99, sum by (le, route) (rate(beacon_http_request_duration_seconds_bucket{route!~"/beacon/v1/agent/(config/effective|files/manifest|override-sets|stream)"}[1h]))) > 2
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "控制面 p99 > 2s（route={{ $labels.route }}）" }
+      # goroutine 持续增长（疑似泄漏）：当前越过基线且 1 小时内翻倍，单点绝对阈值噪声大故取“基线+翻倍”口径
+      - alert: BeaconGoroutinesGrowing
+        expr: go_goroutines > 1000 and go_goroutines > 2 * go_goroutines offset 1h
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "goroutine 数持续增长（当前 {{ $value }}，疑似泄漏）" }
+      # RSS 持续增长（疑似内存泄漏）：当前越过 512MiB 基线且 6 小时内翻倍，offset 对比避免被单次抓取抖动误伤
+      - alert: BeaconRssGrowing
+        expr: process_resident_memory_bytes > 536870912 and process_resident_memory_bytes > 2 * process_resident_memory_bytes offset 6h
+        for: 30m
+        labels: { severity: warning }
+        annotations: { summary: "控制面 RSS 持续增长（6h 翻倍，当前 {{ $value }} 字节）" }
+```
+
+### 3.3 控制面压测入口（HTTP 延迟 / 吞吐基线）
+
+仓库内置一套端到端压测 harness：构建并自起**隔离控制面**（独立 SQLite 库与日志，都在 `.tmp/loadtest/` 下）→ 登录 → 注册一批虚拟 agent → 场景预检 → 分级并发压测 → soak → 出 Markdown + JSON 报告，不依赖 k6 / vegeta / wrk 等外部工具。**前置只需本机有 Go 工具链**（不需要 JDK、MC 服务端与 docker）。
+
+覆盖四类口径，报告分节给，**不要混着读**：
+
+| 类别 | 端点 / 指标 | 衡量什么 |
+|---|---|---|
+| 请求-响应（只读） | `/admin/v1/system/status`、`/admin/v1/topology`、`/admin/v2/servers`、`/admin/v2/zone-tree`、`/beacon/v1/agent/heartbeat`、`/metrics` | 并发 → RPS / 分位数 / 错误率 |
+| 请求-响应（v2 数据面） | `/beacon/v2/agent/metrics/report`（成功码 **202**）、`/schedule/candidates`、`/schedule/decide` | 生产请求量最大的一面（1000 服每 5s 一批 ≈ 200 req/s，是心跳的 2 倍）；需真实建 namespace 并审批身份成 active |
+| 挂起型 | 长轮询 `/beacon/v1/agent/config/effective`、SSE `/beacon/v1/agent/stream` | **不用 RPS**（一挂 30s 是设计如此）：看服务端观测到的并发挂起数、唤醒时延、连接是否稳 |
+| 背压 | `/beacon/v2/agent/connections/batch` | spec「上报 p99 仅含队列入队耗时、队列满 429」是否可达（触到 429 才算验证了背压路径） |
+
+**默认不压管理面写端点**：写操作逐条落审计，压出来的会是审计写入能力而非接口能力。确认要测写争用时设 `LOADTEST_ENABLE_WRITE_SCENARIOS=1`（会逐条落 `audit_log`，且用的是 `PUT /admin/v2/servers/{serverId}/tags`——admin 侧没有别的合适的幂等写端点）。
+
+```bash
+export E2E_ADMIN_PASS='<管理员口令>' E2E_AUTH_SECRET='<令牌签名密钥>'
+go test -tags "e2e loadtest" -timeout=40m -v -run '^TestLoad' ./apps/server/test/loadtest/
+```
+
+| 环境变量 | 默认 | 含义 |
+|---|---|---|
+| `LOADTEST_LEVELS` | `1,8,32,128` | 并发档位列表 |
+| `LOADTEST_LEVEL_DURATION` | `30s` | 每档时长 |
+| `LOADTEST_SOAK_CONCURRENCY` | `32` | soak 阶段并发（取中间档） |
+| `LOADTEST_SOAK_DURATION` | `5m` | soak 时长；看长时漂移建议拉到 30m 以上 |
+| `LOADTEST_AGENT_SERVERS` | `64` | 虚拟 agent 数量（心跳场景的轮转池） |
+| `LOADTEST_CP_LOG_LEVEL` | `WARN` | 控制面日志级别：压测期抑制逐请求访问日志，避免把 `.tmp` 写爆、也让磁盘 I/O 不混进结果（要完整访问日志时改 `INFO`） |
+| `LOADTEST_ENABLE_WRITE_SCENARIOS` | 空 | 置 `1` 才纳入写路径场景（默认不纳入，理由见上） |
+| `LOADTEST_INGEST_ROUNDS` / `_BATCH` / `_CONCURRENCY` | `200` / `200` / `16` | 上报通道背压探测规模；未触 429 不代表背压不存在，要触边界需继续加大 |
+
+冒烟可缩短档位与时长（`LOADTEST_LEVELS=1,4 LOADTEST_LEVEL_DURATION=5s LOADTEST_SOAK_DURATION=5s`）；跑完读 `.tmp/loadtest/` 下的报告，那是过程产物、不入库。压测结论与 §3.2 的 `beacon_http_request_duration_seconds` 同口径读（同样的路由模板口径、同样的「长轮询单列」原则）。Go 层热点另可用微基准量：`go test -run '^$' -bench=. ./apps/server/internal/merge/ ./apps/server/internal/service/`。
+
+**读报告前必须知道的两条局限**：① 数字受**宿主机负载**影响极大——同配置同代码，宿主机 load 15 时并发 32 可达 7066 RPS、load 36 时只有 4303 RPS，做对比要么固定宿主机负载，要么用「未改动端点漂移多少」当内部对照组；② 挂起探测的唤醒时延用的是 global 层新建配置项（走 notifier → Hub 唤醒该 namespace 全部 waiter），若唤醒语义落在窄 scope 上，唤醒条数会少于挂起数，以表格里的「唤醒返回」列为准。日表跨 UTC 00:00 的切换由 `go test ./apps/server/internal/store/ -run TestDailyTableRollover` 直接注入日期覆盖，不必等真午夜。
+
 ## 4. 数据库备份与恢复（关键）
 > 数据库是**配置权威库**——丢失会导致全集群配置不可恢复。务必定期备份，并在隔离环境演练恢复。
 

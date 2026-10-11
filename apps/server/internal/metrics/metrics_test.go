@@ -3,6 +3,7 @@ package metrics
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,95 @@ func TestCountersIncrement(t *testing.T) {
 	}
 }
 
+// TestRuntimeAndProcessCollectorsExposed 验证 Go 运行时与进程级 collector 已随空 registry 显式注册：
+// 既有 HELP / TYPE 行证明已注册，又有实际正样本值证明采集器真的在抓取时刻采到了数据（而非只注册没人采）。
+func TestRuntimeAndProcessCollectorsExposed(t *testing.T) {
+	m := New(runtime.NewRegistry())
+
+	body := scrape(t, m)
+	// 1) HELP / TYPE 行存在，证明 collector 已注册进独立 registry
+	for _, name := range []string{
+		"go_goroutines",
+		"go_memstats_alloc_bytes",
+		"process_resident_memory_bytes",
+	} {
+		if !strings.Contains(body, "# HELP "+name) {
+			t.Fatalf("/metrics 应含运行时/进程指标 %s 的 HELP 行，实际输出：\n%s", name, body)
+		}
+		if !strings.Contains(body, "# TYPE "+name) {
+			t.Fatalf("/metrics 应含运行时/进程指标 %s 的 TYPE 行，实际输出：\n%s", name, body)
+		}
+	}
+
+	// 2) 有实际样本值且 >0，证明采集器确实工作：这三个都是进程运行期必为正的 gauges
+	for _, name := range []string{
+		"go_goroutines",
+		"go_memstats_alloc_bytes",
+		"process_resident_memory_bytes",
+	} {
+		v, ok := sampleValue(body, name)
+		if !ok {
+			t.Fatalf("/metrics 应含指标 %s 的样本行，实际输出：\n%s", name, body)
+		}
+		if v <= 0 {
+			t.Fatalf("指标 %s 应有正样本值，实际 %v", name, v)
+		}
+	}
+}
+
+// TestObserveHTTPExposesREDMetrics 验证 HTTP 层 RED 指标：请求计数按方法 / 路由模板 / 状态码分维，
+// 时延直方图输出分桶与 _count / _sum 序列（Prometheus 据此算 p95 / p99）。
+func TestObserveHTTPExposesREDMetrics(t *testing.T) {
+	m := New(runtime.NewRegistry())
+	const route = "/admin/v2/config-files/{id}"
+	// 耗时取 0.25 / 0.5 这类可精确表示的浮点数，_sum 断言不被二进制浮点误差干扰
+	m.ObserveHTTP(http.MethodGet, route, http.StatusOK, 0.25)
+	m.ObserveHTTP(http.MethodGet, route, http.StatusOK, 0.5)
+	m.ObserveHTTP(http.MethodPost, route, http.StatusUnauthorized, 0.001)
+
+	body := scrape(t, m)
+	// 计数：同维度累加；不同状态码分属不同序列（元组与 Prometheus 文本输出顺序一致）
+	if !containsSample(body, `beacon_http_requests_total{method="GET",route="/admin/v2/config-files/{id}",status="200"} 2`) {
+		t.Fatalf("GET / 200 请求计数应为 2，实际：\n%s", body)
+	}
+	if !containsSample(body, `beacon_http_requests_total{method="POST",route="/admin/v2/config-files/{id}",status="401"} 1`) {
+		t.Fatalf("POST / 401 请求计数应为 1，实际：\n%s", body)
+	}
+	// 直方图聚合序列：_count = 观测次数、_sum = 耗时总和（rate 后供 histogram_quantile 使用）
+	if !containsSample(body, `beacon_http_request_duration_seconds_count{method="GET",route="/admin/v2/config-files/{id}"} 2`) {
+		t.Fatalf("GET 时延直方图 _count 应为 2，实际：\n%s", body)
+	}
+	if !containsSample(body, `beacon_http_request_duration_seconds_sum{method="GET",route="/admin/v2/config-files/{id}"} 0.75`) {
+		t.Fatalf("GET 时延直方图 _sum 应为 0.75，实际：\n%s", body)
+	}
+	// 分桶（累计上界）：0.25 落 le=0.25，0.5 落 le=0.5，两次观测都落 +Inf
+	if !containsSample(body, `beacon_http_request_duration_seconds_bucket{method="GET",route="/admin/v2/config-files/{id}",le="0.25"} 1`) {
+		t.Fatalf("le=0.25 桶应为 1，实际：\n%s", body)
+	}
+	if !containsSample(body, `beacon_http_request_duration_seconds_bucket{method="GET",route="/admin/v2/config-files/{id}",le="0.5"} 2`) {
+		t.Fatalf("le=0.5 桶应为 2，实际：\n%s", body)
+	}
+	if !containsSample(body, `beacon_http_request_duration_seconds_bucket{method="GET",route="/admin/v2/config-files/{id}",le="+Inf"} 2`) {
+		t.Fatalf("+Inf 桶应为 2，实际：\n%s", body)
+	}
+}
+
+// TestObserveHTTPSlowRequestBucket 验证 >10s 的长请求有专属分桶：分桶若止于 Prometheus 默认的 10s，
+// 30s 长轮询 / 流式传输的观测值会全部堆进 +Inf 桶，分位数被上界拉平、完全失真。
+func TestObserveHTTPSlowRequestBucket(t *testing.T) {
+	m := New(runtime.NewRegistry())
+	const route = "/beacon/v1/agent/stream"
+	m.ObserveHTTP(http.MethodGet, route, http.StatusOK, 35)
+
+	body := scrape(t, m)
+	if !containsSample(body, `beacon_http_request_duration_seconds_bucket{method="GET",route="/beacon/v1/agent/stream",le="30"} 0`) {
+		t.Fatalf("35s 观测不应落进 le=30 桶，实际：\n%s", body)
+	}
+	if !containsSample(body, `beacon_http_request_duration_seconds_bucket{method="GET",route="/beacon/v1/agent/stream",le="60"} 1`) {
+		t.Fatalf("35s 观测应落进 le=60 桶，实际：\n%s", body)
+	}
+}
+
 // scrape 抓取一次 /metrics 文本。
 func scrape(t *testing.T, m *Metrics) string {
 	t.Helper()
@@ -96,4 +186,25 @@ func containsSample(body, sample string) bool {
 		}
 	}
 	return false
+}
+
+// sampleValue 从抓取文本取出某**无标签**指标的样本值（如 "go_goroutines 5" → 5）。
+// 匹配前缀带尾随空格，故不会误中带后缀的同名指标（如 go_memstats_alloc_bytes_total），
+// 含 "{" / "}" 的带标签样本行也会被跳过。
+func sampleValue(body, name string) (float64, bool) {
+	prefix := name + " "
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(line, prefix)
+		if strings.ContainsAny(rest, "{}") {
+			continue
+		}
+		if v, err := strconv.ParseFloat(rest, 64); err == nil {
+			return v, true
+		}
+	}
+	return 0, false
 }

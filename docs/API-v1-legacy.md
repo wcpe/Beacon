@@ -733,7 +733,7 @@ data: {}
 |---|---|
 | `GET /metrics` | Prometheus 文本格式运行指标，免管理台鉴权（内网信任面，见 [ADR-0020](adr/0020-prometheus-metrics-observability.md)） |
 
-暴露指标：`beacon_instances_registered{namespace,role}`（注册实例数，gauge）、`beacon_instances_status{status}`（健康状态分布 online/degraded/lost/offline，gauge）、`beacon_config_publish_total`（配置发布累计，counter）、`beacon_push_notify_total`（推送/长轮询唤醒累计，counter）。注册/健康为 pull 模型，抓取时读内存注册表实时计数。
+暴露指标：`beacon_instances_registered{namespace,role}`（注册实例数，gauge）、`beacon_instances_status{status}`（健康状态分布 online/degraded/lost/offline，gauge）、`beacon_config_publish_total`（配置发布累计，counter）、`beacon_push_notify_total`（推送/长轮询唤醒累计，counter）、`beacon_http_requests_total{method,route,status}`（HTTP 请求累计，counter）、`beacon_http_request_duration_seconds{method,route}`（HTTP 请求耗时分布，histogram，单位秒，显式分桶 1ms→60s）。注册/健康为 pull 模型，抓取时读内存注册表实时计数。两个 HTTP 指标为**接口 RED 口径**：由全局中间件逐请求观测，`route` 取 **chi 路由模板**（如 `/admin/v2/config-files/{id}`）而非真实路径，未命中统一为 `unmatched`，鉴权 / 只读拒写被组内中间件短路时停在 `/admin/v2/*` 这类组级模板（见 [ADR-0089](adr/0089-http-layer-red-metrics.md)）。
 
 ---
 
