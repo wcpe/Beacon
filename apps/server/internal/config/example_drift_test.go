@@ -43,6 +43,9 @@ func TestExampleYAMLMatchesBuiltinDefaults(t *testing.T) {
 	def := Default()
 	// 每项写成显式断言而不是反射遍历：反射会把「样例新增了 Default 未覆盖的项」也算通过，
 	// 而这类新增恰恰是下一次漂移的入口。显式清单要求改这里的人一并想清楚默认值。
+	// 已知的有意例外：`agent-token` **不**纳入比对——样例值须与 agent 侧样例开箱匹配
+	// （见 config.go 的两个独立常量，注释说明该值面向 agent 而非控制面），故与内置默认不同是刻意的。
+
 	checks := []struct {
 		name        string
 		sampleValue any

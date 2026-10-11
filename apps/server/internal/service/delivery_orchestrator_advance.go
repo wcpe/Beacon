@@ -300,7 +300,13 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 		// 本轮的 rt 快照可能在 Pause 提交前装载，advanceRolling 看到的是过期的 rolling。
 		// 这里在**事务内**复核单主状态：读到非 rolling（已暂停 / 已终止 / 已在回滚）即整事务回滚，
 		// 本批一台都不下发。CAS 无法表达这个条件——它约束的是**批**内的目标，而「能不能下发」取决于**单**。
-		if order, e := repoTx.FindByID(rt.order.ID); e != nil {
+		//
+		// **必须用锁定读（FindByIDForUpdate）**（code review P1）：MySQL 默认 REPEATABLE READ 下，
+		// 普通 SELECT 是一致性读——首次读即固定快照、不与并发 UPDATE 定序。那会让本门形同虚设：
+		// T1 读到 rolling → T2 的 Pause 提交 → T1 仍按旧快照下发整批（运维表达「停」之后仍写盘）。
+		// 加行锁后两事务在**该单**上定序：Pause 先提交则本事务阻塞至其提交、随后读到 paused 而放弃；
+		// 本事务先取锁则 Pause 等它提交，其后 Pause 照常生效（下轮 tick 走 paused 分支）。
+		if order, e := repoTx.FindByIDForUpdate(rt.order.ID); e != nil {
 			return e
 		} else if order == nil || order.Status != model.ChangeOrderStatusRolling {
 			return errCASSkip

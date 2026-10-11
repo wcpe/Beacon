@@ -44,6 +44,8 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("连接数据库失败: %w", err)
 	}
+	// 装配期结束：把 dialector 探测期间放宽的预算收紧回运行期值（见 openPoolBoot 说明）。
+	SetRuntimeBudget(db.ConnPool, cfg.CallTimeoutMs, cfg.TxTimeoutMs)
 
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -323,14 +325,17 @@ func newDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	case "mysql":
 		// 保留 mysql dialector 的版本探测（Initialize 内 SELECT VERSION()）：它决定 DDL 生成策略
 		// （RENAME COLUMN / RETURNING / datetime 精度等），跳过会悄悄改变 AutoMigrate 行为。
-		conn, err := openPool(cfg.Driver, cfg.DSN, cfg)
+		// 装配期放宽预算（code review P1-1）：dialector.Initialize 会用
+		// `context.Background()` 探测 `SELECT VERSION()`，无期限 ⇒ 包装层会补运行期 call 预算（5s），
+		// 与「启动期放宽到 30 分钟」矛盾。这里先用 bootstrap 口径建层，Open 在 Initialize 后收紧。
+		conn, err := openPool(cfg.Driver, cfg.DSN, cfg, true)
 		if err != nil {
 			return nil, err
 		}
 		return mysql.New(mysql.Config{DSN: cfg.DSN, Conn: conn}), nil
 	case "sqlite":
 		dsn := applySQLiteTxLock(applySQLitePragmas(cfg.DSN))
-		conn, err := openPool(cfg.Driver, dsn, cfg)
+		conn, err := openPool(cfg.Driver, dsn, cfg, true) // 同 mysql 分支：装配期放宽
 		if err != nil {
 			return nil, err
 		}
@@ -344,7 +349,25 @@ func newDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 //
 // 池参数在这里设（而不是 gorm.Open 之后经 db.DB()）：此时池只由本函数持有，
 // 设完再交给 gorm 装配，不存在「漏设」窗口。
-func openPool(driver, dsn string, cfg config.DatabaseConfig) (gorm.ConnPool, error) {
+// openPool 打开原生池并包上连接等待防护。
+//
+// boot=true 时包装层的**初始**预算取 bootstrap 口径（装配期用，见 newBootTimeoutConnPool）；
+// 调用方必须在 gorm.Open 之后经 SetRuntimeBudget 收紧回运行期值。
+// 之所以要有 boot 参数而不是两个函数：两者只差包装层构造方式，留一个更不易出现
+// 「改了一处忘另一处」——此前正是这种双份结构让 P1-1（装配期预算过紧）得以潜伏。
+func openPool(driver, dsn string, cfg config.DatabaseConfig, boot bool) (gorm.ConnPool, error) {
+	sqlDB, err := openPoolRaw(driver, dsn, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if boot {
+		return newBootTimeoutConnPool(sqlDB, cfg.CallTimeoutMs, cfg.TxTimeoutMs), nil
+	}
+	return newTimeoutConnPool(sqlDB, cfg.CallTimeoutMs, cfg.TxTimeoutMs), nil
+}
+
+// openPoolRaw 打开原生连接池并按配置设好池参数（不做预算包装）。
+func openPoolRaw(driver, dsn string, cfg config.DatabaseConfig) (*sql.DB, error) {
 	sqlDB, err := sql.Open(sqlDriverName(driver), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库连接失败: %w", err)
@@ -352,7 +375,7 @@ func openPool(driver, dsn string, cfg config.DatabaseConfig) (gorm.ConnPool, err
 	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
 	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
 	sqlDB.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetimeSec) * time.Second)
-	return newTimeoutConnPool(sqlDB, cfg.CallTimeoutMs, cfg.TxTimeoutMs), nil
+	return sqlDB, nil
 }
 
 // sqlDriverName 把内部 driver 名映射为 database/sql 注册的驱动名。
@@ -411,7 +434,7 @@ func applySQLitePragmas(dsn string) string {
 // **busy_timeout 完全不生效**（SQLite 不会为「升级失败」重试，因为重试也无法让它看到更新的快照）。
 //
 // 实测（MaxOpenConns=4，8 并发各跑「先读后写」事务共 120 个）：
-//   - 默认 DEFERRED：失败 104/120，全部为 SQLITE_BUSY；
+//   - 默认 DEFERRED：失败约 100–107/120（单次抽样有波动），全部为 SQLITE_BUSY；
 //   - 加 _txlock=immediate：失败 0/120。
 //
 // 代价（也已实测）：immediate 让**每个**事务在 BEGIN 处即取写者位，故并发的只读事务不再互相并行——

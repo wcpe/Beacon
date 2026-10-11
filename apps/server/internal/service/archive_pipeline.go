@@ -37,10 +37,6 @@ type archiveItemRunner struct {
 	batchRows     int
 	batchInterval time.Duration
 	sampleSize    int
-	// longCtx 是数据面语句的期限上下文（见 archiveLongQueryTimeout）：hot / archive 两库都已绑定它，
-	// 使本域的长查询不被 store 的 call 预算误杀。**新增数据面语句请一律用 r.hot / r.archive**，
-	// 不要绕回未绑定的 *gorm.DB——那会重新落回 5s 预算里（P1-2 的成因）。
-	longCtx context.Context
 	// saveItem 持久化工作项当前状态（阶段 / 游标 / 行数 / 校验结果）。
 	saveItem func(*model.ArchiveJobItem) error
 	// cancelled 批次边界检查是否被请求取消（读任务当前状态）。
@@ -57,7 +53,6 @@ type archiveItemRunner struct {
 // runner 只是使用者；让调用方持有 cancel 才能保证任务收尾时必然释放计时器。
 func (r *archiveItemRunner) bindLongBudget(ctx context.Context) context.CancelFunc {
 	ctx, cancel := context.WithTimeout(ctx, archiveLongQueryTimeout)
-	r.longCtx = ctx
 	r.hot = r.hot.WithContext(ctx)
 	r.archive = r.archive.WithContext(ctx)
 	return cancel

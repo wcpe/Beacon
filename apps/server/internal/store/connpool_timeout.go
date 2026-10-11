@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -77,7 +78,32 @@ var ErrDBWaitTimeout = apperr.New(http.StatusServiceUnavailable, dbWaitTimeoutCo
 type timeoutConnPool struct {
 	inner *sql.DB
 	// call 是单条语句 / 取连接的预算；tx 是事务拿到连接后的寿命预算。
-	call, tx time.Duration
+	//
+	// 用原子载入而非普通字段：装配期（gorm.Open → dialector.Initialize 的版本探测，
+	// 见 setBootBudget）需要临时放宽，Initialize 完成后须立刻收紧回运行期值。
+	// 若用普通字段就要在装配后重建整个包装层并重挂 dialector，代价与风险都更大。
+	call, tx atomic.Int64
+}
+
+// setBudget 切换本包装层的预算（纳秒；0 表示不限制）。
+//
+// 语义用于装配期放宽：`Open` 先以 bootstrap 口径建层，待 dialector.Initialize
+// 的版本探测完成后再收紧到运行期值。为什么必须这样做（code review P1-1）：
+// 该探测跑在 `gorm.Open` 之前、且用 `context.Background()`（无期限），故包装层会补上
+// **运行期** call 预算（默认 5s）——与「启动期刻意放宽到 30 分钟」自相矛盾，
+// 慢启动的 MySQL（冷 DNS / 慢首包）会从「等一会儿能起来」变成「起不来」（fail-fast 退出）。
+func (p *timeoutConnPool) setBudget(call, tx time.Duration) {
+	p.call.Store(int64(call))
+	p.tx.Store(int64(tx))
+}
+
+// callBudget / txBudget 读当前预算（纳秒；0 表示不限制）。
+func (p *timeoutConnPool) callBudget() time.Duration {
+	return time.Duration(p.call.Load())
+}
+
+func (p *timeoutConnPool) txBudget() time.Duration {
+	return time.Duration(p.tx.Load())
 }
 
 // newTimeoutConnPool 构造包装层。
@@ -94,7 +120,33 @@ func newTimeoutConnPool(inner *sql.DB, callMs, txMs int) gorm.ConnPool {
 	if call <= 0 && tx <= 0 {
 		return inner
 	}
-	return &timeoutConnPool{inner: inner, call: call, tx: tx}
+	p := &timeoutConnPool{inner: inner}
+	p.setBudget(call, tx)
+	return p
+}
+
+// newBootTimeoutConnPool 与 newTimeoutConnPool 同形，但初始预算取 bootstrap 口径
+// （装配期用：放宽 dialector 的版本探测，见 setBudget 说明）。
+func newBootTimeoutConnPool(inner *sql.DB, callMs, txMs int) gorm.ConnPool {
+	call := resolveBudget(callMs, DefaultCallTimeoutMs)
+	tx := resolveBudget(txMs, DefaultTxTimeoutMs)
+	if call <= 0 && tx <= 0 {
+		return inner
+	}
+	p := &timeoutConnPool{inner: inner}
+	// 装配期放宽到 bootstrapTimeout（仍有界）；Initialize 完成后由 Open 收紧。
+	p.setBudget(bootstrapTimeout, bootstrapTimeout)
+	return p
+}
+
+// SetRuntimeBudget 把装配期放宽的预算收紧回运行期值（由 store.Open 在 Initialize 后调用）。
+// 对非 *timeoutConnPool 的池（预算显式关闭）为无操作。
+func SetRuntimeBudget(pool gorm.ConnPool, callMs, txMs int) {
+	tp, ok := pool.(*timeoutConnPool)
+	if !ok {
+		return
+	}
+	tp.setBudget(resolveBudget(callMs, DefaultCallTimeoutMs), resolveBudget(txMs, DefaultTxTimeoutMs))
 }
 
 // BoundedPinger 是**带预算**的数据库连通性探测能力，供运行期健康端点使用。
@@ -230,21 +282,21 @@ func wrapTimeout(op string, err error, ours bool) error {
 
 // PrepareContext 带预算执行预处理。
 func (p *timeoutConnPool) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
-	b := startBudget(ctx, p.call)
+	b := startBudget(ctx, p.callBudget())
 	stmt, err := p.inner.PrepareContext(b.ctx, query)
 	return stmt, wrapTimeout("prepare", err, b.ours())
 }
 
 // ExecContext 带预算执行写语句。
 func (p *timeoutConnPool) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	b := startBudget(ctx, p.call)
+	b := startBudget(ctx, p.callBudget())
 	res, err := p.inner.ExecContext(b.ctx, query, args...)
 	return res, wrapTimeout("exec", err, b.ours())
 }
 
 // QueryContext 带预算执行查询。
 func (p *timeoutConnPool) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	b := startBudget(ctx, p.call)
+	b := startBudget(ctx, p.callBudget())
 	rows, err := p.inner.QueryContext(b.ctx, query, args...)
 	return rows, wrapTimeout("query", err, b.ours())
 }
@@ -252,7 +304,7 @@ func (p *timeoutConnPool) QueryContext(ctx context.Context, query string, args .
 // QueryRowContext 带预算执行单行查询。
 // 注意 *sql.Row 的错误延迟到 Scan 才浮现，此处无法翻译；预算本身照常生效。
 func (p *timeoutConnPool) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	return p.inner.QueryRowContext(startBudget(ctx, p.call).ctx, query, args...)
+	return p.inner.QueryRowContext(startBudget(ctx, p.callBudget()).ctx, query, args...)
 }
 
 // BeginTx 实现 gorm.ConnPoolBeginner：两阶段取连接——先用短预算抢一条连接，
@@ -260,14 +312,53 @@ func (p *timeoutConnPool) QueryRowContext(ctx context.Context, query string, arg
 //
 // 为什么不用 db.BeginTx：它只有一个 ctx，无法同时表达两个预算——这正是 gorm 内建旋钮
 // （DefaultTransactionTimeout / DefaultContextTimeout）覆盖不全的根因。
+// beginHooks 是「事务即将开启」这一事件的观察者集合（由 lockguard 等诊断件经 RegisterBeginHook 注册）。
+//
+// 为什么用注册式而非直接 import lockguard：store 是基础设施层，不应反向依赖诊断件；
+// 更实际的是生产与测试对守卫的装配方式不同，注册式让两者各自决定，
+// store 只负责在正确的时刻把事件抛出来。
+var (
+	beginHooksMu sync.RWMutex
+	beginHooks   []func()
+)
+
+// RegisterBeginHook 注册一个「事务即将开启」的观察者，供 lockguard 在装配时调用。
+//
+// 调用时**尚未**发生任何 DB 往返，故实现可在其中做「此刻是否持锁」的判定。
+func RegisterBeginHook(hook func()) {
+	beginHooksMu.Lock()
+	beginHooks = append(beginHooks, hook)
+	beginHooksMu.Unlock()
+}
+
+// hookLockGuardBegin 通知全部观察者「事务即将开启」。
+func hookLockGuardBegin() {
+	beginHooksMu.RLock()
+	hooks := beginHooks
+	beginHooksMu.RUnlock()
+	for _, h := range hooks {
+		h()
+	}
+}
+
 func (p *timeoutConnPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
-	cb := startBudget(ctx, p.call)
+	// 锁内 DB 访问守卫的**事务入口钩子**（code review P1）。
+	//
+	// 为什么需要它：守卫的探针挂在 gorm 的六个处理器（create/query/update/delete/row/raw）上，
+	// 而 gorm **没有 begin 处理器**——`db.Transaction(...)` 直接调 ConnPool.BeginTx，不经任何回调。
+	// 于是「持锁 → 开事务 → 卡在取连接」这条路径探针看不到，而这**恰是 P0 事故的原始形态**
+	// （环的每一步都以开事务开始）。在此处补一次检查，把该路径纳入观测。
+	//
+	// 位置正确性：本行之前没有 DB 往返，检查的正是「此刻是否持锁」，与探针语义一致。
+	hookLockGuardBegin()
+
+	cb := startBudget(ctx, p.callBudget())
 	conn, err := p.inner.Conn(cb.ctx)
 	if err != nil {
 		// 池被占满时这里就是快速失败的落点（而不是无限等待）。
 		return nil, wrapTimeout("取连接", err, cb.ours())
 	}
-	tb := startBudget(ctx, p.tx)
+	tb := startBudget(ctx, p.txBudget())
 	tx, err := conn.BeginTx(tb.ctx, opts)
 	if err != nil {
 		// 开事务失败必须立刻归还连接，否则每次失败都泄一条（池很快枯竭、再也拿不到连接）。
@@ -298,7 +389,7 @@ func (p *timeoutConnPool) Ping() error { return p.inner.Ping() }
 // 预算取 call 而非 tx：探测只借一条连接做一次往返，语义与「单条语句」同类（等连接 + 一次执行），
 // 不与任何事务寿命绑定。调用方自带期限时由 startBudget 原样尊重（见其注释），不覆盖。
 func (p *timeoutConnPool) PingContext(ctx context.Context) error {
-	b := startBudget(ctx, p.call)
+	b := startBudget(ctx, p.callBudget())
 	err := p.inner.PingContext(b.ctx)
 	// 归属翻译：预算到点报可读的「等连接超时」，调用方自己的期限到期则原样透传。
 	return wrapTimeout("ping", err, b.ours())

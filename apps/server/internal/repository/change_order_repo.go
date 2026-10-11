@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
@@ -75,6 +76,30 @@ func (r *ChangeOrderRepository) Create(order *model.ChangeOrder) error {
 func (r *ChangeOrderRepository) FindByID(id uint) (*model.ChangeOrder, error) {
 	var order model.ChangeOrder
 	err := r.db.Where("id = ?", id).First(&order).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+// FindByIDForUpdate 是 FindByID 的**锁定读**版本，供需要与控制操作定序的判定使用（如
+// dispatchPending 的暂停门）。语义与 FindByID 相同，只多一个行级锁请求。
+//
+// 为什么需要：MySQL 默认隔离级别 REPEATABLE READ 下，事务内的普通 SELECT 是**一致性读**
+// （首次读即固定快照、不阻塞并发 UPDATE）。若「暂停后不得再下发新目标」的复核用一致性读，
+// 则 T1 读到 rolling 之后、T2 的 Pause 提交、T1 仍按旧快照继续下发——运维明确表达「停」
+// 之后仍写盘。加 FOR UPDATE 后两事务在行锁上定序：先到者赢，后到者读到新状态并放弃。
+//
+// 跨方言安全：SQLite 不支持行级锁，但 glebarez dialector 对 `clause.Locking` 是**静默忽略**
+// （见其 ClauseBuilders 的 "FOR" 分支），故 SQLite 侧语句合法；串行性由 `_txlock=immediate`
+// （BEGIN 即取写者位）保证，两者合起来覆盖两种部署形态。
+func (r *ChangeOrderRepository) FindByIDForUpdate(id uint) (*model.ChangeOrder, error) {
+	var order model.ChangeOrder
+	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", id).First(&order).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

@@ -80,7 +80,7 @@
 
 - **sqlite 默认连接池回退到 1 导致永久互等（纵深防御）**：生产 P0（2026-10-10 02:41:05）——sqlite + `max-open-conns: 1` 下，审批批准执行「持连接等内锁」与推进器 tick「持内锁等连接」反序获取两条资源，池内没有第三条连接可打破环，双方**永久互等、不可自愈，只能重启恢复**（现场审批行停在 `executing`、lease 过期 20+ 分钟无人回收，所有需 DB 的端点全部挂起，进程 37 线程全 `futex_wait`、WAL 零推进）。
   - **样例默认值收口**：`config.example.yml` 的 `max-open-conns` 由 1 改为 **4**、`max-idle-conns` 由 1 改为 **2**，与 `config.Default()` 既有值对齐。此前内置默认是 4 而样例是 1，而**样例才是首启释放为生产 `config.yml` 的模板**（`EnsureConfigFile`），即生产实际拿到的是 1——两者不一致本身即是缺陷。
-  - **必须配套 `_txlock=immediate`（本次实测的关键发现）**：只把池调大反而会把「永久挂起」变成「频繁写失败」。sqlite 默认 DEFERRED 事务在 BEGIN 时不取锁，第一条写语句才把读锁升级为写锁，而 **WAL 下该升级不可等待**——若另一事务已改过该页，升级立即返回 `SQLITE_BUSY(5)` / `BUSY_SNAPSHOT(517)`，`busy_timeout` 完全不生效。实测池=4、8 并发各 15 轮「事务内先读后写」共 120 个事务：**DEFERRED 失败 101/120，加 `_txlock=immediate` 后 0/120**。故 `store` 层现为 sqlite DSN 自动注入 `_txlock=immediate`（把竞争前移到 BEGIN 处等待；已显式指定 `_txlock` 的 DSN 尊重用户配置），与既有 WAL / `busy_timeout` 注入合成完整的多连接前提。
+  - **必须配套 `_txlock=immediate`（本次实测的关键发现）**：只把池调大反而会把「永久挂起」变成「频繁写失败」。sqlite 默认 DEFERRED 事务在 BEGIN 时不取锁，第一条写语句才把读锁升级为写锁，而 **WAL 下该升级不可等待**——若另一事务已改过该页，升级立即返回 `SQLITE_BUSY(5)` / `BUSY_SNAPSHOT(517)`，`busy_timeout` 完全不生效。实测池=4、8 并发各 15 轮「事务内先读后写」共 120 个事务：**DEFERRED 失败约 100–107/120（单次抽样有波动；四次复跑实测区间），加 `_txlock=immediate` 后 0/120（稳定）**。故 `store` 层现为 sqlite DSN 自动注入 `_txlock=immediate`（把竞争前移到 BEGIN 处等待；已显式指定 `_txlock` 的 DSN 尊重用户配置），与既有 WAL / `busy_timeout` 注入合成完整的多连接前提。
   - **明确不根治**：池被 N 个外层事务占满时，N 个参与者仍可闭合成环（实测池=2/4/8 全部永久互等）。给到 4 只是把「1 条即死」抬高成「需同时占满 4 条」，属**纵深防御**而非修复；环本身的根治在同批另两组（审批事务不持连接等锁、推进器 tick 不持锁等连接）。
   - **测试**：`applySQLiteTxLock` 注入与不覆盖语义逐例断言；新增并发回归用例「池=4 下『先读后写』事务零失败」——移除注入即变红（已反向验证：同一用例失败 28/40）。规格与完整实测数据见 [control-plane-db-pool-and-runtime-profiling](docs/specs/control-plane-db-pool-and-runtime-profiling.md)。
 

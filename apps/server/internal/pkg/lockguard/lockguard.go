@@ -31,6 +31,8 @@ import (
 	"sync/atomic"
 
 	"gorm.io/gorm"
+
+	"github.com/wcpe/Beacon/apps/server/internal/store"
 )
 
 // goid 返回当前 goroutine 的 id。
@@ -136,6 +138,10 @@ type Watcher struct {
 	onViolation atomic.Pointer[func(Violation)]
 	// site 记录首个违规调用点，便于指认回归位置。
 	site atomic.Value
+	// loggedSites 记录已上报过的调用点，避免同一站点刷屏。
+	// 为什么要节流：持锁期间连续 N 次 DB 访问会产生 N 次违规（判定按次），
+	// 实测持锁下 200 次访问 = 200 条 ERROR，会把日志淹掉、反而降低可观测性。
+	loggedSites sync.Map // map[string]struct{}
 }
 
 // Violation 描述一次「持锁做 DB 访问」。
@@ -148,17 +154,37 @@ type Violation struct {
 
 // attached 记录每个 *gorm.DB 上已挂的 Watcher，使多次 Attach 复用同一组探针。
 //
-// 为什么必须复用而非各挂一套：gorm 的 sortCallbacks 对**同名**回调只保留第一个
-// （callbacks.go 的 `getRIndex(sorted, c.name) == -1` 判据），第二位同名注册既会被
-// 记 WARN 又被静默吞掉。而本包的回调名是固定的六个（lockguard:query 等），
-// 生产装配恰好在同一个 *gorm.DB 上挂两份（交付编排器与归档服务，见 main.go），
-// 若各自 Register 则**第二份永不执行**，其 Watcher 的计数恒为 0——
-// 「两份守卫各自覆盖两个服务」这一说法会失真。
+// 为什么必须复用而非各挂一套：gorm 的 sortCallbacks 对**同名**回调只保留**末个**——
+// callbacks.go 的 `getRIndex` 从末尾往前扫（`for i := len(strs)-1; i >= 0; i--`），
+// 故后注册者覆盖先注册者，**先注册的那份**被记 WARN 并静默吞掉。而本包的回调名固定为
+// 六个（lockguard:query 等），生产装配恰好在同一个 *gorm.DB 上挂两份（交付编排器与
+// 归档服务，见 main.go），若各自 Register 则**先挂的那份永不执行**，其 Watcher 计数
+// 恒为 0——「两份守卫各自覆盖两个服务」这一说法会失真。
 //
 // 复用后语义更准确：探针是「观察这张连接上的任意 DB 访问是否发生在持锁期间」，
 // 与具体是谁挂的无关；多个 Watcher 共享探针、各自持有自己的 guards 与计数。
 // key 用 db 指针：同一实例共享、不同实例（夹具各建各的库）互不干扰。
 var attached sync.Map // map[*gorm.DB]*sharedProbe
+
+// registerBeginHookOnce 保证「事务开启」钩子只登记一次（进程级，与 db 实例无关）。
+var registerBeginHookOnce sync.Once
+
+// sharedProbes 是全部已登记的共享探针集，供 begin 钩子按快照遍历。
+// 与 attached 并存的原因：attached 以 db 为键做「是否已挂」判定，此处只需可遍历的集合，
+// 且须避免 sync.Map.Range 的栈帧污染违规定位（见 begin 钩子处注释）。
+var (
+	sharedProbesMu sync.Mutex
+	sharedProbes   []*sharedProbe
+)
+
+// snapshotSharedProbes 返回当前共享探针的快照（调用方持锁语义由各 sp 自行保证）。
+func snapshotSharedProbes() []*sharedProbe {
+	sharedProbesMu.Lock()
+	defer sharedProbesMu.Unlock()
+	out := make([]*sharedProbe, len(sharedProbes))
+	copy(out, sharedProbes)
+	return out
+}
 
 // sharedProbe 是一张 *gorm.DB 上共享的一组探针，持有全部待观测的 Watcher。
 type sharedProbe struct {
@@ -172,7 +198,11 @@ type sharedProbe struct {
 // 不同 *gorm.DB 各自独立。
 //
 // 返回值同时用作句柄：测试结束可不必显式关闭（进程内回调注册不影响后续用例的正确性，
-// 因为 enabled 默认关闭、且判定是按「是否真持锁」而非时序）。需要严格隔离时用 Close。
+// 因为 enabled 默认关闭、且判定是按「是否真持锁」而非时序）。
+//
+// 注意：本包**未提供** Close / Detach——探针一旦挂上即随进程存活（诊断件语义）。
+// 长期对同一 *gorm.DB 反复 Attach 会让共享集无界增长，故生产装配只在启动时各挂一次；
+// 测试用例因进程隔离而无需摘除。
 func Attach(db *gorm.DB, guards ...*Mutex) (*Watcher, error) {
 	w := &Watcher{guards: guards}
 
@@ -187,6 +217,11 @@ func Attach(db *gorm.DB, guards ...*Mutex) (*Watcher, error) {
 
 	sp := &sharedProbe{watchers: []*Watcher{w}}
 	actual, loaded := attached.LoadOrStore(db, sp)
+	if !loaded {
+		sharedProbesMu.Lock()
+		sharedProbes = append(sharedProbes, sp)
+		sharedProbesMu.Unlock()
+	}
 	if loaded {
 		// 并发下另一个调用先登记成功：并入它，不重复注册。
 		shared := actual.(*sharedProbe)
@@ -237,6 +272,26 @@ func Attach(db *gorm.DB, guards ...*Mutex) (*Watcher, error) {
 			return nil, fmt.Errorf("注册 %s 探针失败: %w", r.name, err)
 		}
 	}
+
+	// 补登记「事务开启」钩子（code review P1）：gorm 没有 begin 处理器，
+	// `db.Transaction(...)` 直接调 ConnPool.BeginTx、不经任何回调，故六个探针看不到
+	// 「持锁 → 开事务 → 卡在取连接」这条路径——而它恰是 P0 事故的原始形态。
+	// store 在取连接之前抛出该事件，这里让共享集内的全部 Watcher 各判一次。
+	// 重复 Attach 时 store 侧按 db 去重的语义不适用（钩子是进程级），故仅在首次登记。
+	registerBeginHookOnce.Do(func() {
+		store.RegisterBeginHook(func() {
+			// 用显式快照而非 sync.Map.Range：后者的方法帧会夹在调用栈中间，
+			// 使违规定位指到标准库（`sync.(*Map).Range`）而非业务调用点。
+			for _, sp := range snapshotSharedProbes() {
+				sp.mu.Lock()
+				watchers := sp.watchers
+				sp.mu.Unlock()
+				for _, watcher := range watchers {
+					watcher.check("begin")
+				}
+			}
+		})
+	})
 	return w, nil
 }
 
@@ -283,9 +338,20 @@ func (w *Watcher) check(processor string) {
 	if w.violations.Add(1) == 1 {
 		w.site.Store(callSite())
 	}
-	if fn := w.onViolation.Load(); fn != nil {
-		(*fn)(Violation{Site: w.Site(), Processor: processor})
+	fn := w.onViolation.Load()
+	if fn == nil {
+		return
 	}
+	// 每次违规都算出**本次**的站点（Violation.Site 用本次值而非首个）：
+	// 长窗口内首个站点会误导——真凶可能是后来出现的另一处。
+	site := callSite()
+	// 但**上报**按站点节流：同一站点只报一次。理由见 loggedSites 字段说明
+	// （持锁下 N 次 DB 访问会产生 N 次违规，逐条上报会把日志淹掉、反而降低可观测性）。
+	// violations 计数不受节流影响，如实反映违规次数。
+	if _, dup := w.loggedSites.LoadOrStore(site, struct{}{}); dup {
+		return
+	}
+	(*fn)(Violation{Site: site, Processor: processor})
 }
 
 // holdingAny 报告当前 goroutine 是否持有集合里的任一把锁。
@@ -318,7 +384,12 @@ func callSite() string {
 	}
 }
 
-// isInternalFrame 判该帧是否属于「无定位价值」的内部实现（本包探针 / gorm / 运行时）。
+// isInternalFrame 判该帧是否属于「无定位价值」的内部实现（本包探针 / gorm / 标准库内部）。
+//
+// 第三类需覆盖 `internal/sync`：`sync.Map.Range` 会把遍历闭包**压入同步原语的内部实现**
+// （`internal/sync.(*HashTrieMap).iter`）；若只按 `runtime.` 前缀过滤，违规定位会指到
+// Go 运行时源码（对排障毫无价值）。故按「文件位于 GOROOT/src/internal」判定，
+// 覆盖 `internal/sync` 及其同类内部包，同时保留用户代码与第三方库的帧。
 func isInternalFrame(f runtime.Frame) bool {
 	if strings.Contains(f.File, "/lockguard/lockguard.go") {
 		return true
@@ -326,7 +397,20 @@ func isInternalFrame(f runtime.Frame) bool {
 	if strings.Contains(f.File, "/gorm.io/gorm") {
 		return true
 	}
-	return strings.HasPrefix(f.Function, "runtime.")
+	// store 的 begin 钩子分发帧：它是**基础设施的转发点**（hookLockGuardBegin → 本包），
+	// 与 gorm 的回调分发同性质——真调用点在它之上，故跳过。
+	if strings.Contains(f.File, "/store/connpool_timeout.go") {
+		return true
+	}
+	if strings.HasPrefix(f.Function, "runtime.") {
+		return true
+	}
+	// 标准库内部实现：`GOROOT/src/internal/**` 与 `sync` 包的容器方法
+	// （`sync.Map.Range` 等会把调用方与闭包隔开，帧本身对定位无价值）。
+	if strings.Contains(f.File, "/src/internal/") {
+		return true
+	}
+	return strings.HasPrefix(f.Function, "sync.")
 }
 
 // LogViolation 是生产模式的默认处置：记 ERROR 日志、不 panic。

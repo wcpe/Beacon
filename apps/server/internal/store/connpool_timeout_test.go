@@ -388,11 +388,11 @@ func TestNewTimeoutConnPoolBudgetSemantics(t *testing.T) {
 		if !ok {
 			t.Fatalf("零值应取默认预算而非关闭防护，实际类型 %T", got)
 		}
-		if pool.call != time.Duration(DefaultCallTimeoutMs)*time.Millisecond {
-			t.Fatalf("call 预算应为默认 %dms，实际 %v", DefaultCallTimeoutMs, pool.call)
+		if pool.callBudget() != time.Duration(DefaultCallTimeoutMs)*time.Millisecond {
+			t.Fatalf("call 预算应为默认 %dms，实际 %v", DefaultCallTimeoutMs, pool.callBudget())
 		}
-		if pool.tx != time.Duration(DefaultTxTimeoutMs)*time.Millisecond {
-			t.Fatalf("tx 预算应为默认 %dms，实际 %v", DefaultTxTimeoutMs, pool.tx)
+		if pool.txBudget() != time.Duration(DefaultTxTimeoutMs)*time.Millisecond {
+			t.Fatalf("tx 预算应为默认 %dms，实际 %v", DefaultTxTimeoutMs, pool.txBudget())
 		}
 	})
 
@@ -402,8 +402,8 @@ func TestNewTimeoutConnPoolBudgetSemantics(t *testing.T) {
 		if !ok {
 			t.Fatalf("正值应启用防护，实际类型 %T", got)
 		}
-		if pool.call != 1234*time.Millisecond || pool.tx != 5678*time.Millisecond {
-			t.Fatalf("预算应原样采用，实际 call=%v tx=%v", pool.call, pool.tx)
+		if pool.callBudget() != 1234*time.Millisecond || pool.txBudget() != 5678*time.Millisecond {
+			t.Fatalf("预算应原样采用，实际 call=%v tx=%v", pool.callBudget(), pool.txBudget())
 		}
 	})
 
@@ -423,11 +423,11 @@ func TestNewTimeoutConnPoolBudgetSemantics(t *testing.T) {
 		if !ok {
 			t.Fatalf("只有一侧关闭时应仍启用防护，实际类型 %T", got)
 		}
-		if pool.call != 0 {
-			t.Fatalf("call 预算应已关闭（0），实际 %v", pool.call)
+		if pool.callBudget() != 0 {
+			t.Fatalf("call 预算应已关闭（0），实际 %v", pool.callBudget())
 		}
-		if pool.tx != time.Duration(DefaultTxTimeoutMs)*time.Millisecond {
-			t.Fatalf("tx 预算应仍取默认，实际 %v", pool.tx)
+		if pool.txBudget() != time.Duration(DefaultTxTimeoutMs)*time.Millisecond {
+			t.Fatalf("tx 预算应仍取默认，实际 %v", pool.txBudget())
 		}
 	})
 }
@@ -477,5 +477,38 @@ func TestWaitTimeoutErrorUnwrapsToAppErrorAndDeadline(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), dbWaitTimeoutMessage) {
 		t.Fatalf("文案应为可读中文原因，实际 %q", err.Error())
+	}
+}
+
+// TestOpenLiftsBudgetForBootstrapThenRestores 锁定「装配期放宽、Initialize 后收紧」这一两段语义。
+//
+// 回归背景（code review P1-1）：dialector.Initialize 会用 `context.Background()` 探测
+// `SELECT VERSION()`，无期限 ⇒ 包装层会补上**运行期** call 预算（默认 5s）。那与
+// 「启动期刻意放宽到 bootstrapTimeout(30min)」自相矛盾：慢启动的 MySQL（冷 DNS / 慢首包）
+// 会从「等一会儿能起来」变成「起不来」（store.Open 失败即 fail-fast 退出）。
+//
+// 判别力：把 Open 里的 SetRuntimeBudget 调用删掉 → 本用例报「运行期预算未收紧」；
+// 把 newDialector 的 boot=true 改成 false → 装配期又会退回 5s（由 P1-1 场景覆盖）。
+func TestOpenLiftsBudgetForBootstrapThenRestores(t *testing.T) {
+	cfg := config.DatabaseConfig{
+		Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "boot.db"),
+		MaxOpenConns: 1, MaxIdleConns: 1, ConnMaxLifetimeSec: 60,
+		CallTimeoutMs: 1234, TxTimeoutMs: 5678,
+	}
+	db, err := Open(cfg)
+	if err != nil {
+		t.Fatalf("Open 失败: %v", err)
+	}
+	t.Cleanup(func() { Close(db) })
+
+	tp, ok := db.ConnPool.(*timeoutConnPool)
+	if !ok {
+		t.Fatalf("装配后应为包装层，实际 %T", db.ConnPool)
+	}
+	if got := tp.callBudget(); got != 1234*time.Millisecond {
+		t.Errorf("运行期 call 预算应收紧为用户值 1234ms，实际 %v——装配期放宽未收回", got)
+	}
+	if got := tp.txBudget(); got != 5678*time.Millisecond {
+		t.Errorf("运行期 tx 预算应收紧为用户值 5678ms，实际 %v", got)
 	}
 }
