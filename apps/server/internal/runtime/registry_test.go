@@ -250,9 +250,9 @@ func TestForEachVisitsLiveStatus(t *testing.T) {
 	_, _ = r.Register(sample("dev", "lobby-4", "10.0.0.4:1"), ttl, t0)
 
 	now := t0.Add(50 * time.Second)
-	r.Heartbeat("prod", "lobby-1", now)                    // 年龄 0 → online
+	r.Heartbeat("prod", "lobby-1", now)                      // 年龄 0 → online
 	r.Heartbeat("prod", "lobby-2", now.Add(-20*time.Second)) // 年龄 20s（degradedAfter~ttl）→ degraded
-	r.Heartbeat("dev", "lobby-4", now)                     // 跨环境 online
+	r.Heartbeat("dev", "lobby-4", now)                       // 跨环境 online
 	// lobby-3 不续：年龄 50s（> ttl）→ lost
 	r.SweepExpired(now, degradedAfter, ttl, offlineGrace)
 
