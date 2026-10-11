@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -18,6 +19,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -401,5 +403,149 @@ func TestFileImportAllowsExactlyMaxFiles(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("%d 个文件（声明上限）应被受理，实际 %d：%s",
 			service.MaxImportFiles, rec.Code, rec.Body.String())
+	}
+}
+
+// importMalformedPathParts 构造只含一个文件的导入表单，其 path 取给定值（可为畸形）。
+// filename 与 path 是两回事：path 来自 paths 文本字段、filename 只是 multipart 文件名，故这里只让 path 畸形、
+// 文件内容保持合法，确保被拒的唯一原因是 service.normalizePath 对 path 的校验，而非别的。
+func importMalformedPathParts(path string) []importPart {
+	return append(importScalarParts(),
+		importPart{name: importFieldPaths, value: path},
+		importPart{name: importFieldFiles, filename: "evil.yml", value: "a: 1\n"},
+	)
+}
+
+// TestFileImportRejectsMalformedPathEndToEnd 端到端守护 path 安全（走完整 handler → 真 service 链路）：
+// 畸形 path（向上穿越 / 反斜杠 / 空串）必须被拒为 400 INVALID_PATH，且整批被拒时**不落任何 file_pending_change**。
+// 背景：旧版 r.ParseMultipartForm 在外层就拒绝畸形 Content-Disposition；改流式解析后这层外层兜底没了，
+// path 安全只剩 service.normalizePath 一层（RequestImport 提审前逐条校验）。本用例确认那层确实在链路上生效，
+// 并把「不落任何待审批变更」作为硬性质断言——这是安全性质（畸形 path 绝不能走到可执行阶段），强于某个具体错误码。
+func TestFileImportRejectsMalformedPathEndToEnd(t *testing.T) {
+	cases := []struct{ name, path string }{
+		{"路径穿越", "../evil.yml"},
+		{"反斜杠盘符", `C:\x\evil.yml`},
+		{"空 path", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, db := newFileImportHandler(t)
+			rec := doFileImport(t, h, importMalformedPathParts(c.path))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("畸形 path 应被拒为 400，实际 %d：%s", rec.Code, rec.Body.String())
+			}
+			if body := rec.Body.String(); !strings.Contains(body, "INVALID_PATH") {
+				t.Fatalf("错误码应为 INVALID_PATH，实际 %s", body)
+			}
+			// 关键安全性质：整批被拒时不得落任何待审批变更（断言「无落库」而非具体错误码）。
+			var changes []model.FilePendingChange
+			if err := db.Find(&changes).Error; err != nil {
+				t.Fatalf("查询待审批变更失败: %v", err)
+			}
+			if len(changes) != 0 {
+				t.Fatalf("畸形 path 被拒后不得落任何 file_pending_change，实际 %+v", changes)
+			}
+		})
+	}
+}
+
+// —— 护栏的判别性断言（专抓「护栏被回退」的回归，P1-4）——
+//
+// 为什么这两个护栏不能只在 handler 层用 body 级计数器判别：真实 h.Import 流程里，parseImportForm 在读/拒
+// 一个部件后会调用 part.Close()，而 multipart.Part.Close() 会把该部件的剩余内容从底层流 drain 掉（这是内存
+// 安全设计——LimitReader 只缓冲「上限+1」字节进内存，Close 把剩余流式丢弃却不入内存）。因此挂在 body reader
+// 上的计数器在 handler 层必被 Close 读满，无法区分「只读上限+1」与「读完整部件」。故此处下探一层，在
+// readImportFilePart / appendImportFile 上、且先于任何 Close 度量，才能干净地判别护栏是否仍在。
+
+// countReadReader 记录被 Read 到的总字节数（不关心内容，只度量读取量）。
+type countReadReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countReadReader) Read(p []byte) (int, error) {
+	m, err := c.r.Read(p)
+	c.n += int64(m)
+	return m, err
+}
+
+// zeroProbeReader 产生无限零字节流（真正写零，非只报长度——否则缓冲区残留脏数据可能提前命中 boundary）。
+type zeroProbeReader struct{}
+
+func (z *zeroProbeReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
+}
+
+// probeBoundary 是探测部件的 multipart 边界（与鉴权/业务无关，仅用于构造单部件 body）。
+const probeBoundary = "BeaconImportReadProbeBoundary"
+
+// sizedCountingPart 构造一个 files 部件，其内容由 size 字节经 count 计数 reader 流式提供，返回该 *multipart.Part
+// （尚未读取内容）。用 io.MultiReader 把计数 reader 直接作为部件内容：确保内容只在被读取时才流过计数器，
+// 不涉及生产者 io.Copy 的预读，也不触发 part.Close 的 drain。
+func sizedCountingPart(t *testing.T, count *countReadReader) *multipart.Part {
+	t.Helper()
+	header := "--" + probeBoundary + "\r\n" +
+		"Content-Disposition: form-data; name=\"" + importFieldFiles + "\"; filename=\"probe.bin\"\r\n\r\n"
+	tail := "\r\n--" + probeBoundary + "--\r\n"
+	body := io.MultiReader(strings.NewReader(header), count, strings.NewReader(tail))
+	part, err := multipart.NewReader(body, probeBoundary).NextPart()
+	if err != nil {
+		t.Fatalf("构造探测部件失败: %v", err)
+	}
+	return part
+}
+
+// maxContentBytesReadCeiling 是命中 LimitReader 护栏时底层流的允许读取上限。
+// guard 本身只从部件读「上限 + 1」字节；唯一超出的是 mime/multipart 读部件内容时其内部 bufio 的**固定**读
+// ahead（实测 4095 字节，与单个文件上限无关），故留 64KiB 余量吸收此类固定预读与 stdlib 版本差异。
+// 旧版若回退成无限制的 io.ReadAll(part)，会把整个 2MiB 部件全部读进内存，远超此上界。
+const maxContentBytesReadCeiling = service.MaxFileContentBytes + 1 + 64*1024
+
+// TestReadImportFilePartReadsOnlyCapPlusOne 是超大文件护栏的判别性断言（P1-4.1）：
+// 部件 2MiB（远超单文件上限 1MiB），readImportFilePart 应判 422 CONTENT_TOO_LARGE，且底层计数 reader
+// 只被读「上限 + 1」字节（外加 mime/multipart 的固定读 ahead），**远小于**整个 2MiB 部件——证明限读生效、
+// 超大部件不会整份驻留内存。
+// 判别力：guard 若被回退成无限制 io.ReadAll(part)，底层 reader 会被读满 2MiB，本断言失败；若整个函数被删
+// （回退到 ParseMultipartForm），本文件无法编译。专抓护栏回退，故先于任何 part.Close 度量。
+func TestReadImportFilePartReadsOnlyCapPlusOne(t *testing.T) {
+	const partSize = service.MaxFileContentBytes * 2
+	count := &countReadReader{r: io.LimitReader(&zeroProbeReader{}, partSize)}
+	part := sizedCountingPart(t, count)
+
+	if _, err := readImportFilePart(part); err != apperr.ErrContentTooLarge {
+		t.Fatalf("超大部件应返回 CONTENT_TOO_LARGE，实际 %v", err)
+	}
+	if count.n > maxContentBytesReadCeiling {
+		t.Fatalf("guard 应只读「上限+1」字节(+固定读 ahead)，实际读 %d 字节 > 上限 %d——等于没有限读，护栏疑似被回退",
+			count.n, maxContentBytesReadCeiling)
+	}
+	if count.n >= partSize {
+		t.Fatalf("不应读满整个 %d 字节部件，实际 %d——护栏疑似被回退成无限制 ReadAll", partSize, count.n)
+	}
+}
+
+// TestAppendImportFileRejectsOverCountBeforeReading 是文件数护栏的判别性断言（P1-4.2）：
+// form 已含 MaxImportFiles 个文件，第 MaxImportFiles+1 个文件内容较大（1MiB）且经计数 reader 提供；
+// appendImportFile 应在读其任何字节**之前**即拒（422 TOO_MANY_FILES），计数 reader 读取量恒为 0——证明
+// 数量校验严格先于内容读取。判别力：若顺序被调换成「先读后验」，计数 reader 读取量会 >0，本断言失败。
+// （handler 层「返回 422 且文案含上限数字」的既有断言见 TestFileImportRejectsOverLimitFiles。）
+func TestAppendImportFileRejectsOverCountBeforeReading(t *testing.T) {
+	const probeSize = 1 << 20 // 1MiB：一旦被读取，计数 reader 读取量必然 > 0
+	count := &countReadReader{r: io.LimitReader(&zeroProbeReader{}, probeSize)}
+	part := sizedCountingPart(t, count)
+
+	form := &importForm{Files: make([]service.ImportFile, service.MaxImportFiles)}
+	var total int64
+	err := appendImportFile(part, form, &total)
+	var ae *apperr.Error
+	if !errors.As(err, &ae) || ae.Code != apperr.ErrTooManyFiles.Code {
+		t.Fatalf("第 %d 个文件应被拒为 TOO_MANY_FILES，实际 %v", service.MaxImportFiles+1, err)
+	}
+	if count.n != 0 {
+		t.Fatalf("第 %d 个文件应在读取前即拒，计数 reader 读取量应为 0，实际 %d——数量校验疑似被排到了读取之后",
+			service.MaxImportFiles+1, count.n)
 	}
 }

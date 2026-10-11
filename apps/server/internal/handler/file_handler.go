@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"strconv"
@@ -396,6 +397,8 @@ func parseImportForm(r *http.Request) (*importForm, error) {
 
 // readImportPart 按部件名分流读取单个 multipart 部件。
 // 未知部件整体跳过（下一次 NextPart 调用会丢弃其剩余字节），对表单扩展字段保持宽容且不占用内存预算。
+// 保守保留「跳过、不报错」的旧语义，避免破坏只发已知字段的现有前端；但打一条 WARN 留痕——旧版由标准库
+// 显式拒绝，流式方案下畸形 / 拼错字段名的提交不再报错，须让它在日志里可被看见（部件名带出便于定位）。
 func readImportPart(part *multipart.Part, form *importForm, paths *[]string, total *int64) error {
 	name := part.FormName()
 	switch name {
@@ -409,6 +412,7 @@ func readImportPart(part *multipart.Part, form *importForm, paths *[]string, tot
 	case importFieldFiles:
 		return appendImportFile(part, form, total)
 	default:
+		slog.Warn("导入请求含未知 multipart 部件，已跳过（旧版由标准库显式拒绝，流式解析下改为记日志放行）", "部件名", name)
 		return nil
 	}
 }

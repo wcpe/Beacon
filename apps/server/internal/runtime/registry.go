@@ -266,6 +266,27 @@ func (r *Registry) List(f Filter) []*Instance {
 	return out
 }
 
+// ForEach 持读锁零拷贝全表遍历注册表：对每个实例以 (namespaceCode, serverID, status) 同步回调一次，
+// fn 返回 false 可提前终止遍历。与 List 的差别是不 clone 任何字段（连 Metadata / Backends 也不拷贝），
+// 适合只读汇聚类调用方（如批量判定「在线」），避免为几百条结果付出深拷贝整表的 O(总实例数) 代价。
+// 「哪些状态算命中」由调用方按 status 自行判断，runtime 包保持中立、不内置任何口径。
+//
+// 死锁约束（务必遵守）：本方法在 r.mu 读锁**持有期间**同步调用 fn，因此 fn 内部**绝不能**调用 Registry 的
+// 任何方法（Get / List / Heartbeat / Offline / StatusCounts / 甚至本方法自身）——RWMutex 不可重入，任何
+// 重入都会死锁。fn 内只应做纯内存写入（如聚合到局部 map / slice），也不得持有指向内部 *Instance 的指针到锁外，
+// 故本方法只向回调传 serverID / status 两个标量、不透出内部指针。
+func (r *Registry) ForEach(fn func(namespaceCode, serverID, status string) bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for ns, nsMap := range r.items {
+		for _, inst := range nsMap {
+			if !fn(ns, inst.ServerID, inst.Status) {
+				return
+			}
+		}
+	}
+}
+
 // CountByNamespace 返回某环境下当前内存中的实例条目数（供环境删除守卫，FR-53）。
 func (r *Registry) CountByNamespace(ns string) int {
 	r.mu.RLock()

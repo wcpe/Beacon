@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
@@ -173,12 +174,22 @@ func instanceUsable(status string) bool {
 // loadOnlineServerKeys 批量取「运行时在线」的 (namespaceId, serverId) 键集合。
 // 真源是进程内运行态注册表（instanceUsable：online / degraded），**不是** agent_identity.status——
 // 身份 active 只表示已接入，进程被杀后没有写点把它改回去，据此判在线会造成假阳性。
-// registry 未装配（nil）时一律按离线返回，与 serverOnline 的缺省行为一致。
-// 注意注册表内部按 namespace **code** 分桶，而 onlineKey 用 namespace **id**，故在此做 code ↔ id 换算；
-// 只对命中集合涉及的 namespace 查一次库（不做全表扫描，也不在循环内查库）。
+// registry 未装配（nil）时一律按离线返回，与 serverOnline 的缺省行为一致；此分支打一次 WARN 留痕，
+// 让「某装配点漏注入 registry 导致 online 恒为 false」这类静默降级可被搜到、可定位。
+//
+// 成本口径（诚实表述）：内存侧对注册表做一次**零拷贝全表遍历**（runtime.Registry.ForEach，不 clone 任何字段），
+// 只计 online / degraded 且落在待查 serverId 集合内的实例；DB 侧只对命中集合涉及的 namespace code 查一次
+// id 映射（Where code IN …，**不做全表扫描**、也不在循环内逐条查库）。即：全表遍历只发生在内存且零拷贝，
+// DB 仍是「按命中 code 定点一次查」。
 func loadOnlineServerKeys(db *gorm.DB, registry *runtime.Registry, serverIDs []string) (map[onlineKey]struct{}, error) {
 	keys := map[onlineKey]struct{}{}
-	if registry == nil || len(serverIDs) == 0 {
+	if registry == nil {
+		// 漏注入注册表 = 在线判据整体静默失效：不打断调用方（沿用 serverOnline 的「nil 即离线」缺省），
+		// 但必须留痕，便于搜 loadOnlineServerKeys 定位哪个 service 装配点忘了注入 runtime.Registry。
+		slog.Warn("loadOnlineServerKeys：运行态注册表未装配（registry 为 nil），online 将恒为 false，请检查该 service 装配点是否漏注入 runtime.Registry")
+		return keys, nil
+	}
+	if len(serverIDs) == 0 {
 		return keys, nil
 	}
 	wanted := make(map[string]struct{}, len(serverIDs))
@@ -190,24 +201,26 @@ func loadOnlineServerKeys(db *gorm.DB, registry *runtime.Registry, serverIDs []s
 	if len(wanted) == 0 {
 		return keys, nil
 	}
-	// 取一次全量快照（不按 namespace 过滤，避免 code/id 口径混淆）：只留可用状态且落在待查 serverId 集合内的实例。
+	// 零拷贝全表遍历（不按 namespace 过滤，避免 code/id 口径混淆）：只留可用状态且落在待查 serverId 集合内的实例。
 	// 命中实例自带所属 namespace code，因此同名 serverId 落在别的 namespace 时不会误判本 namespace 在线。
+	// 死锁约束：ForEach 在注册表读锁内同步回调，故回调内仅做局部 map/slice 写入，绝不二次访问 registry（会重入死锁）。
 	type codeKey struct {
 		namespaceCode string
 		serverID      string
 	}
 	hits := make([]codeKey, 0, len(wanted))
 	codes := map[string]struct{}{}
-	for _, inst := range registry.List(runtime.Filter{}) {
-		if inst == nil || !instanceUsable(inst.Status) {
-			continue
+	registry.ForEach(func(ns, serverID, status string) bool {
+		if !instanceUsable(status) {
+			return true // 可用状态判据（online/degraded）集中在 service 层，runtime 保持中立
 		}
-		if _, ok := wanted[inst.ServerID]; !ok {
-			continue
+		if _, ok := wanted[serverID]; !ok {
+			return true
 		}
-		hits = append(hits, codeKey{namespaceCode: inst.Namespace, serverID: inst.ServerID})
-		codes[inst.Namespace] = struct{}{}
-	}
+		hits = append(hits, codeKey{namespaceCode: ns, serverID: serverID})
+		codes[ns] = struct{}{}
+		return true
+	})
 	if len(hits) == 0 {
 		return keys, nil
 	}
