@@ -58,11 +58,19 @@ func OpenArchive(main config.DatabaseConfig, arc config.ArchiveConfig) (*gorm.DB
 	if err != nil {
 		return nil, info, fmt.Errorf("连接归档库失败: %w", err)
 	}
+	// 装配期结束：把 newDialector 探测期间放宽的预算收紧回运行期值——与主库 store.Open 同一必要性。
+	//
+	// 为什么必须补这一步（此前遗漏，回归）：newDialector 一律以 boot=true 调 openPool，拿到的是
+	// newBootTimeoutConnPool（初始预算 = bootstrapTimeout，30 分钟）且**没有任何自动收紧**。
+	// 主库在 store.Open 里显式收紧，归档库若漏掉就会把 30 分钟预算带到运行期——连接等待防护
+	// 在第二条连接上等于不存在，正是本批要消灭的「无限挂起」形态。
+	SetRuntimeBudget(db.ConnPool, archiveDB.CallTimeoutMs, archiveDB.TxTimeoutMs)
+
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, info, fmt.Errorf("获取归档库底层连接池失败: %w", err)
 	}
-	// 池参数与连接等待防护都已在 newDialector → openPool 内设好（与主库同一口径）。
+	// 池参数与连接等待防护由 newDialector → openPool 设好后，再由上一行收紧到运行期口径。
 	// 这里只做连通性检查：归档库不可达时上层降级而非退出（ADR-0066 决策 4）。
 	if err := sqlDB.Ping(); err != nil {
 		return nil, info, fmt.Errorf("归档库 Ping 失败: %w", err)

@@ -714,6 +714,13 @@ func run() error {
 	// 冷查询双连接注入（FR-152，见 ADR-0066 决策 5）：把 P6a 的归档连接注入 6 个查询 repo，
 	// includeArchived 时对热 / 冷两连接同构查询后应用层归并。archiveDB 可能为 nil（不可达降级）——
 	// repo 侧 HasArchive 判空，冷查询前上层返 503，绝不静默只返回热库结果（fail-static 不阻断热查询）。
+	//
+	// 注意：这里注入的是**带运行期预算**（秒级）的连接，对「取连接」「小查询」合适，但不能直接用于
+	// 冷查询——冷查询是无 LIMIT 的全区间读，秒级预算会把它变成「不可用」，而 v2-hot-cold-archive §4.4
+	// 承诺「可能较慢」。故冷查询的归档侧由 repository 层**按次**绑定长期限
+	// （repository.withColdArchiveBudget，见 cold_query.go 的 coldQueryArchiveTimeout）。
+	// **不要**改成本处一次性绑定：`WithContext` 绑的 ctx 过期即永久失效，会让冷查询在进程启动
+	// N 分钟后全部失败。
 	auditRepo.SetArchiveDB(archiveDB)
 	metricSampleV2Repo.SetArchiveDB(archiveDB)
 	healthSnapshotRepo.SetArchiveDB(archiveDB)

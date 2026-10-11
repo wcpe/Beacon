@@ -106,7 +106,9 @@ func (r *MetricSampleV2Repository) QueryRangeCold(serverIDs []string, fromMs, to
 	if err != nil {
 		return nil, err
 	}
-	arc, err := r.queryRangeOn(r.archiveDB, serverIDs, fromMs, toMs)
+	arcDB, cancelArc := withColdArchiveBudget(r.archiveDB)
+	defer cancelArc()
+	arc, err := r.queryRangeOn(arcDB, serverIDs, fromMs, toMs)
 	if err != nil {
 		return nil, err
 	}

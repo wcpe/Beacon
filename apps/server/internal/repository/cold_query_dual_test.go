@@ -287,3 +287,53 @@ func TestMetricSeriesColdUnionDedup(t *testing.T) {
 		}
 	}
 }
+
+// TestColdQueryBindsLongBudgetOnArchiveSide 守护：冷查询在归档侧必须按次绑定长期限。
+//
+// 回归背景（code review）：归档连接自 store.OpenArchive 起带**运行期** call 预算（秒级，与主库同口径），
+// 而冷查询是**无 LIMIT 的全区间读**（逐日表扫描、多服倍增）。此前该路径因预算停在装配期 30 分钟而
+// 「碰巧」不受影响；收紧预算后若不显式绑定，秒级预算会把「慢查询」变成「不可用查询」，
+// 而 v2-hot-cold-archive §4.4 明确向前端承诺「本次查询包含归档库，可能较慢」。
+//
+// 判别力：去掉 withColdArchiveBudget（或改回不绑定）→ 本用例观测到的 ctx 期限不再是长期限。
+func TestColdQueryBindsLongBudgetOnArchiveSide(t *testing.T) {
+	hotDB := openRepoSQLite(t, "cold_budget_hot")
+	arcDB := openRepoSQLite(t, "cold_budget_arc")
+
+	// 在归档连接上挂回调，捕获本次查询实际使用的 ctx 期限。
+	var gotDeadline time.Duration
+	var captured bool
+	if err := arcDB.Callback().Query().Before("gorm:query").Register("test:capture_deadline",
+		func(tx *gorm.DB) {
+			if dl, ok := tx.Statement.Context.Deadline(); ok {
+				gotDeadline = time.Until(dl)
+				captured = true
+			}
+		}); err != nil {
+		t.Fatalf("挂回调失败: %v", err)
+	}
+
+	repo := NewHealthSnapshotRepository(hotDB)
+	repo.SetArchiveDB(arcDB)
+
+	base := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC).UnixMilli()
+	// 归档侧造一行，确保查询真的走到归档连接的回调。
+	arcRepo := NewHealthSnapshotRepository(arcDB)
+	if _, err := arcRepo.FlushDaily([]model.HealthSnapshot{
+		{ServerID: "s1", TsMs: base + 100, NamespaceID: 1},
+	}); err != nil {
+		t.Fatalf("造归档数据失败: %v", err)
+	}
+
+	if _, err := repo.QueryRangeCold("s1", base, base+1000); err != nil {
+		t.Fatalf("冷查询失败: %v", err)
+	}
+	if !captured {
+		t.Fatal("未捕获到归档侧查询的 ctx 期限——冷查询未在归档侧绑定任何期限")
+	}
+	// 期限应接近 coldQueryArchiveTimeout（长期限），而不是秒级运行期预算。
+	if gotDeadline < coldQueryArchiveTimeout/2 {
+		t.Fatalf("归档侧期限应接近 %v（长期限），实际仅 %v——秒级预算未豁免，冷查询会被掐断",
+			coldQueryArchiveTimeout, gotDeadline)
+	}
+}

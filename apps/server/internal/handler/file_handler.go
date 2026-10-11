@@ -397,8 +397,9 @@ func parseImportForm(r *http.Request) (*importForm, error) {
 
 // readImportPart 按部件名分流读取单个 multipart 部件。
 // 未知部件整体跳过（下一次 NextPart 调用会丢弃其剩余字节），对表单扩展字段保持宽容且不占用内存预算。
-// 保守保留「跳过、不报错」的旧语义，避免破坏只发已知字段的现有前端；但打一条 WARN 留痕——旧版由标准库
-// 显式拒绝，流式方案下畸形 / 拼错字段名的提交不再报错，须让它在日志里可被看见（部件名带出便于定位）。
+// 为什么打 WARN：旧实现只取 Value["paths"] / File["files"]，未知部件被标准库收进 Value 后**静默忽略**；
+// 流式方案下同样跳过，但「字段名拼错」这类提交会表现为「文件数为 0」的笼统参数错误、难以定位，
+// 故把部件名打进日志，让拼写问题可被发现。
 func readImportPart(part *multipart.Part, form *importForm, paths *[]string, total *int64) error {
 	name := part.FormName()
 	switch name {
@@ -412,7 +413,7 @@ func readImportPart(part *multipart.Part, form *importForm, paths *[]string, tot
 	case importFieldFiles:
 		return appendImportFile(part, form, total)
 	default:
-		slog.Warn("导入请求含未知 multipart 部件，已跳过（旧版由标准库显式拒绝，流式解析下改为记日志放行）", "部件名", name)
+		slog.Warn("导入请求含未知 multipart 部件，已跳过（可能是字段名拼写错误）", "部件名", name)
 		return nil
 	}
 }
@@ -479,11 +480,15 @@ func readImportFilePart(part *multipart.Part) (string, error) {
 }
 
 // errImportParseFailed 构造带底层原因的导入解析错误：沿用 INVALID_PARAM 码与 400 状态（对外契约不变），
-// 但把标准库给出的真实原因（非 multipart/form-data、boundary 缺失、请求体超上限、部件头损坏等）脱敏后带出去，
-// 避免调用方只看到笼统「参数错误」而无从定位（ADR-0057：错误必须看得见，不得静默笼统化）。
+// 但把标准库给出的真实原因脱敏后带出去，避免调用方只看到笼统「参数错误」而无从定位（ADR-0057）。
+//
+// 为什么不写死「须为 multipart/form-data 且 boundary 合法」这类前缀：本函数还被**请求体超上限**
+// （MaxBytesReader 的 MaxBytesError，见 Import 的 body 护栏）复用，那种情况格式完全正确、
+// 只是太大。写死单一原因会让运维把「文件太大」读成「格式不对」，与 ADR-0057「不得笼统化」相抵。
+// 故只用中性前缀，把判定交给后面的底层原因。
 func errImportParseFailed(cause error) error {
 	return apperr.New(apperr.ErrInvalidParam.Status, apperr.ErrInvalidParam.Code,
-		"导入请求解析失败（须为 multipart/form-data 且 boundary 合法）："+redact.DesensitizeErr(cause))
+		"导入请求解析失败："+redact.DesensitizeErr(cause))
 }
 
 // errImportTooManyFiles 构造带实际上限的文件数超限错误：码与状态沿用 TOO_MANY_FILES / 422，

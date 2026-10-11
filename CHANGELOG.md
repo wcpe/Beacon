@@ -68,6 +68,21 @@
 
 ### 修复
 
+- **归档库连接的等待预算从未收紧，连接等待防护在第二条连接上等于不存在（回归，本次 review 发现）**：`store.OpenArchive` 复用 `newDialector`，而后者一律以装配期口径 `boot=true` 建池——拿到的是初始预算为 `bootstrapTimeout`（30 分钟）的包装池，且**没有任何自动收紧**。主库在 `store.Open` 里显式调 `SetRuntimeBudget` 收回运行期值，归档库漏了这一步，于是 30 分钟预算被带到运行期：归档连接上的每条语句与每次取连接都按 30 分钟等待——正是本批「把无限挂起变快速失败」要消灭的形态，在第二条连接上缺席。
+  - **修复**：`OpenArchive` 在建连接后补 `SetRuntimeBudget(db.ConnPool, archiveDB.CallTimeoutMs, archiveDB.TxTimeoutMs)`，与主库同口径；订正原注释「池参数与连接等待防护都已在 newDialector 内设好（与主库同一口径）」——该表述在收紧缺失时是错的。
+  - 影响面与配套修复：`/admin/v2/archive/overview` 的归档侧行数统计、归档连通性探测，以及**冷查询**（`includeArchived`）的归档侧读取。**冷查询必须配套**——它是无 LIMIT 的全区间读（逐日表扫描、多服倍增），此前因该路径预算停在装配期 30 分钟而「碰巧」不受影响；收紧后若不显式绑定长期限，就会把「慢查询」变成「不可用查询」，与 v2-hot-cold-archive §4.4 向前端承诺的「本次查询包含归档库，可能较慢」直接冲突。故同时按次绑定 `coldQueryArchiveTimeout`（30 分钟，与归档数据面 `archiveLongQueryTimeout` 同口径），绑定点在冷查询的归档侧入口（`fetchColdSide` 与两个 `QueryRangeCold`）——**按次派生而非装配期一次性绑定**：`WithContext` 绑的 ctx 过了期限即永久失效，装配期绑定会让冷查询在进程启动 N 分钟后全部失败。
+  - **测试**：新增 `TestOpenArchiveRestoresRuntimeBudget`（断言归档连接的实际预算被收紧为用户值；移除修复即报「实际 30m0s——装配期口径未收回」）与 `TestColdQueryBindsLongBudgetOnArchiveSide`（捕获归档侧查询的 ctx 期限，断言其为长期限而非秒级；移除绑定即报「未捕获到任何期限」）。
+
+- **「持锁做 DB」守卫的开关解析与校验端不同口径，提交 `TRUE` 会静默不生效（本次 review 发现）**：`debug.lock-db-guard-enabled` **不在** `dangerousSettingKeys` 中，故它走的是 `SettingsService.Update` 这条活路径；而校验端 `validateSettingValue` 对 bool 用 `strconv.ParseBool`（接受 `TRUE` / `1` / `t`），消费端却用 `value == "true"` 字面比较。提交 `TRUE` 会「校验通过、落库成功、设置页显示已开，而守卫实际没开」——正是要消灭的静默失效。此前只修了 `applyDangerousInTx` 的 afterCommit 分支（该键根本走不到），活路径遗漏。
+  - **修复**：`Update` 与 afterCommit 两处统一改用 `parseBoolSetting`（与校验端同口径）。
+  - **测试**：新增 `TestUpdateLockDBGuardAcceptsParseBoolForms`，覆盖 `ParseBool` 接受的全部真值/假值写法；改回字面比较即报「提交 \"TRUE\" 后守卫应开启……热改静默失效」。
+
+- **`online` 字段曾是「身份占位」而非真实在线状态，会给出假阳性（运维脚本会误判已死进程为在线）**：`GET /admin/v2/servers` 等端点暴露的 `online` 字段原判据是 `agent_identity.status = active`（身份表），而身份表在**进程被杀后没有写点把它改回去**——实测把服务进程停掉数分钟后该字段仍为 `true`，运维据此得出「还活着」。同服务内的 `serverOnline` 本就使用运行态注册表口径，列表路径却另用占位口径，两处口径漂移是根因。
+  - **改为运行时口径**：抽 `instanceUsable`（`online` 或 `degraded` 均算在线）作单一判据，供 `/admin/v2/servers` 列表、单台详情、生命周期影响预览三处共用；`loadOnlineServerKeys` 重写为读运行态注册表，并按 `AlertOrphanMatchKey` 同范式归一 namespace code（大小写/空白差异不再导致漏配）。装配点漏注入注册表会打 WARN 留痕，不再静默把全部实例判为离线（`AssetService` 同步改为构造注入）。
+  - **性能**：为批量读取注册表新增 `runtime.Registry.ForEach`（持读锁零拷贝遍历，只透出标量），替代原先每次调用都深拷贝整个注册表的 `List(Filter{})`——列表分页端点不再为几百条结果付 O(总实例数) 的拷贝代价。
+  - **测试**：五态矩阵用例（注册表 online / degraded / lost / 身份 active 但注册表无条目 / 仅别的 namespace 在线）+ 跨视图口径一致性用例；把实现换回旧身份口径时四条连挂，确认判据有效。
+  - 规格：[v2-zone-authority](docs/specs/v2-zone-authority.md)（在线/健康真源）+ [API.md](docs/API.md)。
+
 - **批量导入文件的真实容量被标准库卡在约 498，多文件上传必然失败且只回笼统「参数错误」（生产压测 S3 用例）**：`POST /admin/v1/files/import` 声明单次最多 2000 个文件（`service.MaxImportFiles`），但 handler 走 `r.ParseMultipartForm`，而 Go 标准库 `mime/multipart` 内部有硬编码的 `maxParts = 1000`（不可配置），每个导入文件占 `files` + `paths` 两个部件，故部件数一到 `2 × 文件数 + 文本字段数 > 1000` 即报 `multipart: message too large`——实到 **497～498 个文件**（文本字段越多上限越低；实测 3 个文本字段时 498 通过 / 499 失败，6 个时 498 即失败）。`len(fileHeaders) > service.MaxImportFiles` 那道检查因此**永远是死代码**，声明的 2000 从未可达。失败又被笼统归成 `400 INVALID_PARAM`「参数错误」，运维无从得知真实原因（既不知道是文件太多，也不知道该拆批）。
   - **改为流式解析**：`handler.FileHandler.Import` 改用 `r.MultipartReader()` 逐部件读取（不再调 `ParseMultipartForm`，也不再依赖 `r.MultipartForm`），按部件名分流 `namespace` / `group` / `comment` / `reason` / `paths` 文本字段与 `files` 文件部件，**2000 的文件数声明真正可达**。既有语义逐条保持不变：`paths` 与 `files` 必须等长且按提交顺序对齐（第 i 个 `paths` ↔ 第 i 个 `files`，与前端交错提交还是先全 `paths` 后全 `files` 无关）、单文件 `MaxFileContentBytes`、聚合 `MaxImportTotalBytes`、path 安全与目标组校验仍由 service 兜底。
   - **错误可诊断（ADR-0057）**：文件数超限改为 `422 TOO_MANY_FILES` 且说明**带上实际上限数字**（不再与解析失败混为一谈）；`paths` 与 `files` 数量不一致的 `400 INVALID_PARAM` 带上两个数量；multipart 解析失败（非 `multipart/form-data`、boundary 缺失、请求体超上限、部件头损坏等）保留 `400 INVALID_PARAM` 但**带上脱敏后的底层原因**，不再只有笼统「参数错误」。

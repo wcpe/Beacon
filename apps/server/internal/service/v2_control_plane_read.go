@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -178,9 +179,12 @@ func instanceUsable(status string) bool {
 // 让「某装配点漏注入 registry 导致 online 恒为 false」这类静默降级可被搜到、可定位。
 //
 // 成本口径（诚实表述）：内存侧对注册表做一次**零拷贝全表遍历**（runtime.Registry.ForEach，不 clone 任何字段），
-// 只计 online / degraded 且落在待查 serverId 集合内的实例；DB 侧只对命中集合涉及的 namespace code 查一次
-// id 映射（Where code IN …，**不做全表扫描**、也不在循环内逐条查库）。即：全表遍历只发生在内存且零拷贝，
-// DB 仍是「按命中 code 定点一次查」。
+// 只计 online / degraded 且落在待查 serverId 集合内的实例；DB 侧做一次 `SELECT id, code`——**是全表读**
+// （namespace 是部署级配置表，行数量级为环境数，代价可忽略），再按**归一后**的 code 建映射。
+//
+// 为什么 DB 侧是全表而非按命中 code 收窄（`WHERE code IN …`）：归一后的小写 code 与库中原始大小写未必
+// 相等（sqlite 字符串比较大小写敏感，`IN ('prod')` 匹配不到 `code='PROD'`），收窄会重新引入漏配；
+// 全表读换来「不依赖 DB 排序规则、两种方言行为一致」。这与本仓既有的 AlertOrphanMatchKey 取向一致。
 func loadOnlineServerKeys(db *gorm.DB, registry *runtime.Registry, serverIDs []string) (map[onlineKey]struct{}, error) {
 	keys := map[onlineKey]struct{}{}
 	if registry == nil {
@@ -209,7 +213,6 @@ func loadOnlineServerKeys(db *gorm.DB, registry *runtime.Registry, serverIDs []s
 		serverID      string
 	}
 	hits := make([]codeKey, 0, len(wanted))
-	codes := map[string]struct{}{}
 	registry.ForEach(func(ns, serverID, status string) bool {
 		if !instanceUsable(status) {
 			return true // 可用状态判据（online/degraded）集中在 service 层，runtime 保持中立
@@ -218,28 +221,73 @@ func loadOnlineServerKeys(db *gorm.DB, registry *runtime.Registry, serverIDs []s
 			return true
 		}
 		hits = append(hits, codeKey{namespaceCode: ns, serverID: serverID})
-		codes[ns] = struct{}{}
 		return true
 	})
 	if len(hits) == 0 {
 		return keys, nil
 	}
+	// 按**归一后**的 code 建表（ToLower + TrimSpace，与 repository.AlertOrphanMatchKey 同范式）。
+	//
+	// 为什么要归一：注册表分桶键来自 agent 上报的原始字符串（instance_service 直接写 p.Namespace，
+	// 上游 ensureServerActiveForNamespace 对不存在的 namespace 返回 nil、不校验也不改写），
+	// 而这里要与 DB 的 code 列做 join。两侧仅大小写/空白不同即匹配不上——且 sqlite 的字符串
+	// 比较默认**大小写敏感**，故归一必须同时作用于查询入参与建表两端。该形态在本仓已有先例
+	// 并被定性为「安全红线被绕过」级（AlertOrphanMatchKey）。
+	//
+	// 为什么不在 SQL 侧用 `WHERE code IN (...)` 收窄：归一后的小写 code 与库中原始大小写未必
+	// 相等（sqlite 下 `IN ('prod')` 匹配不到 `code='PROD'`），收窄会重新引入同一漏配；而
+	// namespace 表极小（部署级配置表），全取一次并归一建表的代价可忽略，换来的是
+	// 「不依赖 DB 排序规则、两种方言行为一致」。
 	var namespaces []model.Namespace
-	if err := db.Select("id", "code").Where("code IN ?", stringKeys(codes)).Find(&namespaces).Error; err != nil {
+	if err := db.Select("id", "code").Find(&namespaces).Error; err != nil {
 		return nil, err
 	}
 	idByCode := make(map[string]uint, len(namespaces))
+	idSeenCode := make(map[string]string, len(namespaces)) // 归一键 → 首个占用它的原始 code（供碰撞时说清是哪两个）
 	for i := range namespaces {
-		idByCode[namespaces[i].Code] = namespaces[i].ID
+		key := normalizeNamespaceCode(namespaces[i].Code)
+		prevID, dup := idByCode[key]
+		if !dup {
+			idByCode[key] = namespaces[i].ID
+			idSeenCode[key] = namespaces[i].Code
+			continue
+		}
+		if prevID == namespaces[i].ID {
+			continue // 同一行（不应发生，防御性）
+		}
+		// 归一后碰撞：DB 里同时存在仅大小写/空白不同的 code（sqlite 的 BINARY 排序规则下
+		// uniqueIndex 允许这种共存，MySQL 默认 ci 排序规则才会挡下）。此时归一键无法唯一
+		// 定位 namespace——继续建表会让「后写覆盖先写」，把某个环境实例的在线状态算到另一个
+		// 环境上（跨环境串号）。故**删除该歧义键**并留痕：宁可两边都不点亮，也不点亮错的。
+		delete(idByCode, key)
+		slog.Warn("存在仅大小写/空白不同的 namespace code，归一后无法区分，相关实例将不被判为在线",
+			"原始codeA", idSeenCode[key], "原始codeB", namespaces[i].Code, "归一键", key)
 	}
 	for _, hit := range hits {
-		id, ok := idByCode[hit.namespaceCode]
+		id, ok := idByCode[normalizeNamespaceCode(hit.namespaceCode)]
 		if !ok {
-			continue // namespace 行已不存在（或快照里的 code 查不到）：定位不到 server 行，跳过
+			// 留痕而非静默跳过：命中失败意味着这台**运行中**的实例会被显示为 offline——
+			// 与本次修复要消灭的「口径假象」同型，只是方向相反（假阴性）。不记日志就无人能发现。
+			slog.Warn("运行态实例的 namespace 定位不到对应行，该实例将被判为离线",
+				"namespace", hit.namespaceCode, "serverId", hit.serverID)
+			continue
 		}
 		keys[onlineKey{namespaceID: id, serverID: hit.serverID}] = struct{}{}
 	}
 	return keys, nil
+}
+
+// normalizeNamespaceCode 归一 namespace code 用于跨源匹配（注册表上报值 ↔ DB code 列）。
+// 归一规则（ToLower + TrimSpace）取自 repository.AlertOrphanMatchKey 的同一取向：仅大小写与首尾空白
+// 差异不应导致匹配失败。
+//
+// 与 AlertOrphanMatchKey 的**有意差异**（勿误以为可互换）：
+//   - AlertOrphanMatchKey 同时归一 ServerID，本函数**只**归一 namespace——serverId 在本函数的两个
+//     来源（注册表 ServerID 与 server 行的 server_id 列）本就同源同形，无需归一；
+//   - 二者归一对象不同（一个是「告警归属键」、一个是「namespace code」），故未强行合并为一份实现。
+//     若将来收敛为单一函数，须先确认两侧的归一字段集合一致。
+func normalizeNamespaceCode(code string) string {
+	return strings.ToLower(strings.TrimSpace(code))
 }
 
 // buildServerView 组装单台 server 视图（纯内存，名称来自已批量取的映射）。

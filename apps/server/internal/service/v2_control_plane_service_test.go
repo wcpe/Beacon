@@ -1565,3 +1565,49 @@ func TestOnlineSemanticsAgreeAcrossViews(t *testing.T) {
 	}
 	assertOnline(false, "注册表内条目已移除")
 }
+
+// TestListServersOnlineMatchesNamespaceCodeCaseInsensitively 守护：注册表上报的 namespace code
+// 与 DB 的 code 列仅大小写/空白不同时，实例仍必须被点亮为在线。
+//
+// 回归背景（code review P1）：注册表分桶键来自 agent 上报的原始字符串（instance_service 直接写
+// p.Namespace，上游 ensureServerActiveForNamespace 对不存在的 namespace 返回 nil、不校验也不改写），
+// 而 code→id 换算要拿它与 DB 的 code 列做 join。此前用原值逐字节匹配，两侧仅大小写不同即落空，
+// 结果是**运行中的实例被显示为 offline**（假阴性——与本次修复要消灭的假阳性同型，方向相反）。
+//
+// 判别力：把 normalizeNamespaceCode 换回恒等（或不归一）→ 本用例立刻报「应在线，实际 false」。
+func TestListServersOnlineMatchesNamespaceCodeCaseInsensitively(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "code-case", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("建 namespace 失败: %v", err)
+	}
+	if err := db.Create(&model.Server{NamespaceID: ns.ID, ServerID: "case-1", Kind: model.ServerKindBackend}).Error; err != nil {
+		t.Fatalf("seed server 失败: %v", err)
+	}
+	if err := db.Create(&model.AgentIdentity{
+		IdentityID: "a0060000-0000-4000-8000-000000000001", NamespaceID: ns.ID,
+		ServerID: "case-1", Status: model.AgentIdentityStatusActive,
+	}).Error; err != nil {
+		t.Fatalf("seed identity 失败: %v", err)
+	}
+
+	// 用**大写变形**注册：DB 里是 ns.Code（规范小写），注册表拿到的却可能是 agent 自报的大写。
+	reg := runtime.NewRegistry()
+	if _, err := reg.Register(&runtime.Instance{
+		Namespace: strings.ToUpper(ns.Code), ServerID: "case-1", Role: "bukkit",
+	}, 30*time.Second, time.Now().UTC()); err != nil {
+		t.Fatalf("注册失败: %v", err)
+	}
+	svc.SetRuntimeRegistry(reg)
+
+	views, _, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, PageSize: 20})
+	if err != nil {
+		t.Fatalf("列出视图失败: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("应列出 1 台，实际 %d", len(views))
+	}
+	if !views[0].Online {
+		t.Fatalf("大小写不一致的 namespace code 仍须点亮在线（已按 AlertOrphanMatchKey 同范式归一），实际 online=false")
+	}
+}

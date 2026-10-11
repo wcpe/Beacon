@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/config"
 )
@@ -90,5 +91,39 @@ func TestOpenArchiveExternalSqlite(t *testing.T) {
 	defer Close(db)
 	if info.Mode != ArchiveModeExternal {
 		t.Fatalf("mode 应为 external，实际 %s", info.Mode)
+	}
+}
+
+// TestOpenArchiveRestoresRuntimeBudget 守护：归档连接必须与主库同口径地收紧运行期预算。
+//
+// 回归背景（code review P0）：newDialector 一律以 boot=true 调 openPool，拿到的是
+// newBootTimeoutConnPool（初始预算 = bootstrapTimeout，30 分钟），且**没有**任何自动收紧。
+// 主库在 store.Open 里显式调 SetRuntimeBudget 收回；归档库一度漏掉这一步，于是 30 分钟预算
+// 被带到运行期——归档连接上的每条语句与每次取连接都按 30 分钟等待，「连接等待防护」在第二条
+// 连接上等于不存在，正是本批要消灭的「无限挂起」形态。
+//
+// 判别力：删掉 OpenArchive 里的 SetRuntimeBudget 调用 → 本用例报「归档库预算未收紧」。
+func TestOpenArchiveRestoresRuntimeBudget(t *testing.T) {
+	dir := t.TempDir()
+	mainCfg := config.DatabaseConfig{
+		Driver: "sqlite", DSN: filepath.Join(dir, "beacon.db"),
+		MaxOpenConns: 1, MaxIdleConns: 1, ConnMaxLifetimeSec: 60,
+		CallTimeoutMs: 1234, TxTimeoutMs: 5678,
+	}
+	db, _, err := OpenArchive(mainCfg, config.ArchiveConfig{DSN: "", Database: "beacon_archive"})
+	if err != nil {
+		t.Fatalf("归档连接失败: %v", err)
+	}
+	defer Close(db)
+
+	tp, ok := db.ConnPool.(*timeoutConnPool)
+	if !ok {
+		t.Fatalf("归档连接应为包装层，实际 %T", db.ConnPool)
+	}
+	if got := tp.callBudget(); got != 1234*time.Millisecond {
+		t.Errorf("归档库 call 预算应收紧为用户值 1234ms，实际 %v——装配期 30 分钟口径未收回", got)
+	}
+	if got := tp.txBudget(); got != 5678*time.Millisecond {
+		t.Errorf("归档库 tx 预算应收紧为用户值 5678ms，实际 %v", got)
 	}
 }

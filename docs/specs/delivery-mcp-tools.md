@@ -1,6 +1,6 @@
 # 功能规格：交付 MCP 工具集与审批面
 
-> 状态：**代码与单测已交付，待真机验收**（FR-245 / FR-246 / FR-247 / FR-248 / FR-249；FR-250 的入参与审计口径收口项一并落地）。真机维度（真实控制面 + automation MCP 客户端）尚未实测——按 §6 共同硬闸，验收结论以真机通过为准，PRD 各 FR 行保持「开发中」直到真机验收通过。
+> 状态：已交付@v1.5.0（FR-245 / FR-246 / FR-247 / FR-248 / FR-249；FR-250 的入参与审计口径收口项一并落地）。真机维度已按 §6 共同硬闸在生产控制面实测通过（六工具实调、写工具真实建单、10 条可区分拒绝理由、票据含 orderId/impactSummary、observer 调写工具返回 unknown tool）。
 > 关联 PRD：FR-245、FR-246、FR-247、FR-248、FR-249
 > 分支：feature/fr-245-mcp-read-tools、feature/fr-249-approval-surface、feature/fr-246-mcp-write-tools
 > 决策依据：FR-220 / FR-236 / FR-237 / FR-242 既有 MCP 架构；本规格不引入新 ADR

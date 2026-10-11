@@ -79,7 +79,9 @@ func (r *HealthSnapshotRepository) QueryRangeCold(serverID string, fromMs, toMs 
 	if err != nil {
 		return nil, err
 	}
-	arc, err := r.queryRangeOn(r.archiveDB, serverID, fromMs, toMs)
+	arcDB, cancelArc := withColdArchiveBudget(r.archiveDB)
+	defer cancelArc()
+	arc, err := r.queryRangeOn(arcDB, serverID, fromMs, toMs)
 	if err != nil {
 		return nil, err
 	}
