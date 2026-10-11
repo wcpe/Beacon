@@ -66,6 +66,31 @@
   - **两路可追溯且互指**：动作记录与领域审计在**同一事务**内写入，审计 detail 带 `kind` / `serverIds` / `configRolledBack` / `recordId`，`/audits?orderId=` 与 `GET .../rollback-records` 都能定位到另一次，不会出现「有记录没审计」或反之。
   - **测试**：交付版本回退语义（两台交付 → 回滚一台 → 该台无记录、另一台不受影响）、动作记录字段与逐台结果随终态更新、审计 detail 三键断言、web 侧记录列表渲染（含「配置未回退」与「配置版本已回退」两态区分）。
 
+- **控制面 HTTP 层 RED 指标（扩展 `/metrics`，见 [ADR-0089](docs/adr/0089-http-layer-red-metrics.md)）**：`/metrics` 此前只有注册 / 健康 gauge 与发布 / 推送 counter——运维看得到「有多少实例在线」，看不到「接口有多慢、错多少」：既算不出 p95 / p99，也没法对延迟设告警，接口在报错这件事在指标上完全没有出口。现于**同一独立 registry、同一端点**（不新增端口、不改鉴权）新增接口维度的 RED 指标，由全局中间件逐请求观测。
+  - **两个指标**：`beacon_http_requests_total{method,route,status}`（counter）与 `beacon_http_request_duration_seconds{method,route}`（histogram，单位秒）。
+  - **显式分桶 1ms → 60s**（`0.001 / 0.005 / 0.01 / 0.025 / 0.05 / 0.1 / 0.25 / 0.5 / 1 / 2.5 / 5 / 10 / 30 / 60`）：控制面有最长 30s 的长轮询与更长的流式传输，沿用默认分桶（止于 10s）会把它们全堆进 `+Inf`，`histogram_quantile` 算出的分位数被上界拉平、完全失真。
+  - **`route` 取 chi 路由模板而非真实路径**（如 `/admin/v2/config-files/{id}`），未命中（404 / 405 / SPA 回退）归一成固定值 `unmatched`——真实路径含 id / serverId / sha256 等高基数字段，按路径分维会瞬间打爆时序数。**鉴权 / 只读拒写短路**的请求 route 停在 `/admin/v2/*`、`/beacon/v1/agent/*` 这类**组级模板**（组内中间件短路时路由尚未匹配完），基数十仍有界，看板多出这类 series 属正常表现、不是模板漂移。
+  - **中间件顺序是硬约束**：`httpMetricsMiddleware → recoverMiddleware → traceMiddleware → accessLog`。recover 捕获 panic 后用它自己那层的 `w` 写 500，只有位于它外层的包装器才看得到这次状态码写入；顺序反了会让 panic 产生的 500 **静默漏计**（指标平平稳稳、服务实际在 500）。有单测锁定该顺序，含「SPA 回退 panic 也记为 500」的用例。
+  - **装配沿用 ADR-0020 的窄接口可选注入**：server 包只依赖 `HTTPMetricsObserver`（不 import metrics 包，保持分层单向），未注入即 no-op。
+  - **运维读法**（Prometheus 抓取配置、p95/p99 PromQL、告警规则，以及「抓取自身也会被记进 `route="/metrics"`」「首个请求前 vec 指标不输出」「长轮询耗时须单列」几条坑位）：见 [OPERATIONS](docs/OPERATIONS.md) §3.2。
+
+- **控制面压测基建：Go 微基准 + 端到端 HTTP 压测 harness**：控制面的延迟与吞吐此前没有可复现的量测入口——「慢」只能靠体感，热点改动（配置合并、健康计算）也没有基线可比。本次补两条可复现入口，供后续性能回归与容量判断引用；两者产出都落 `.tmp/`，不入库。
+  - **Go 微基准**：`apps/server/internal/merge/bench_test.go` 覆盖深合并（10 / 100 / 1000 键 + 5 层深嵌套）、按 dataId 合并（yaml / json / properties × 规模，含有损与无损两条）、单段与整体 md5；`apps/server/internal/service/health_calc_bench_test.go` 覆盖健康因子计算与健康流水线。
+  - **端到端 harness**（`apps/server/test/loadtest/`，build tag `e2e && loadtest`）：自起**隔离控制面**（独立 SQLite 库 + 动态端口，日志与库同在 `.tmp/loadtest/`）→ 登录 → 注册一批虚拟 agent → 场景预检 → 分级并发压测 → soak → 出 Markdown + JSON 报告，不依赖 k6 / vegeta / wrk 等外部工具。场景覆盖内存读（`/admin/v1/system/status`、`/admin/v1/topology`）、DB 读（`/admin/v2/servers`、`/admin/v2/zone-tree`）、agent 心跳（`/beacon/v1/agent/heartbeat`）与指标抓取（`/metrics`）。
+  - **刻意不压管理面写端点**：写操作逐条落审计，压出来的会是审计写入能力而非接口能力——结论会误导容量判断，故不进场景。
+  - **默认压低控制面访问日志**（`LOADTEST_CP_LOG_LEVEL=WARN`）：百万级请求的逐请求 INFO 日志会把 `.tmp` 写爆，也让磁盘 I/O 混进时延数字；需要完整访问日志时显式改 `INFO`。
+  - **运行方式与环境变量**（`LOADTEST_LEVELS` / `LOADTEST_LEVEL_DURATION` / `LOADTEST_SOAK_CONCURRENCY` / `LOADTEST_SOAK_DURATION` / `LOADTEST_AGENT_SERVERS` / `LOADTEST_CP_LOG_LEVEL`，含冒烟跑法）：见 [OPERATIONS](docs/OPERATIONS.md) §3.3。
+  - **v2 agent 数据面场景（第二批补）**：`/beacon/v2/agent/metrics/report`（成功码 **202**，不是 200）、`/schedule/candidates`、`/schedule/decide`。这是生产请求量最大的一面（1000 服每 5s 一批上报 ≈ 200 req/s，是心跳的 2 倍），此前零覆盖。引导需真实建 namespace → 注册 proxy 身份 → 审批成 active，缺一步上报即 403 `agent_not_confirmed`。鉴权为 `X-Beacon-Token` + `X-Beacon-Identity` + `X-Beacon-Boot` 三头，且 `samples` ≤ 120（超限 400）。
+  - **挂起型端点单独探测（第二批补）**：长轮询 `/beacon/v1/agent/config/effective` 与 SSE `/beacon/v1/agent/stream` 不用 RPS 口径（一挂 30s 是设计如此），改测三件事——服务端观测到的并发挂起数、变更发出到连接返回的**唤醒时延**、以及连接是否稳。分区是因为把挂起记录混进 worker 池会把 p99 拉到几十秒，彻底搅乱分位数。实测：长轮询唤醒时延 p95 约 22ms；一条 SSE 连接在服务端对应 **4 个 waiter**（config/file/topology/command 四个 Hub，32 条连接 → 服务端峰值 128）。
+  - **上报通道背压探测（第二批补）**：专门验证 spec「连接/消息上报 p99 仅含队列入队耗时、队列满 429」这句从未被验证过的声明。200 请求 × 200 事件批量 × 并发 16 实测全部 202、未触 429/503——说明入队通道与落库速率仍有余量；但**这不是「背压不存在」的证据**（4096 有界队列需更大批量 / 更高并发才可能触及）。探测函数支持调参复现。
+  - **写路径场景默认关闭**（`LOADTEST_ENABLE_WRITE_SCENARIOS=1` 才纳入）：调查发现 admin 侧并无合适的幂等写端点——`POST /admin/v1/configs` 同 dataId 会 409（create-once，不落审计），`PUT /admin/v1/configs/{id}` 走审批且要求 at-rest cipher 启用（未配即 403）。故写场景改用 `PUT /admin/v2/servers/{serverId}/tags`（FR-227 直执 + 无条件强审计）。默认不纳入的理由不变：写操作逐条落审计，压出来的是审计写入能力。
+  - **写路径实测暴露一个此前无人注意的问题**：`POST /beacon/v1/agent/data-plane/attach` 是**全场最慢端点**——并发 32 下 p50 78.34ms / p95 157.40ms / p99 232.70ms / max 697.10ms，比任何读端点慢一个量级；且**把并发降到 8 时长尾仍在 p99 236.78ms**，说明这不是「并发太高导致排队」而是写事务 + 审计在 sqlite 单写者下的锁等待。DB 连接池平均等待从读路径的 2.30ms 涨到 5.5ms，同档吞吐从数千 RPS 塌到 1420 RPS。直接影响容量判断：**1000 台服批量重注册（如整集群重启后）会成为控制面最重的压力**，而该路径此前既无 SLA 也无优化。
+  - **吞吐的宿主机口径**：同代码同配置下宿主机 load 15 / 40 核时并发 32 实测 9918 RPS、整体 p95 8.11ms，load 36 / 40 核时同档仅 4303 RPS、p95 20.20ms——**相差 2.3 倍且全部来自争抢 CPU**。故 PRD §5 的时延门槛已显式标注「对应宿主机未饱和状态」，做性能对比必须固定或至少记录该口径，否则会把环境差异误判成系统退化。
+
+- **控制面 `/metrics` 补 Go 运行时与进程级指标**：`prometheus.NewRegistry()` 建的是**空 registry**，client_golang 不会自动挂默认 collector，必须显式注册——此前 `/metrics` 只有业务指标，`go_goroutines` / `go_memstats_*` / `process_resident_memory_bytes` / `process_cpu_seconds_total` 一个都没有，**goroutine 泄漏、堆增长、GC 停顿、RSS/CPU 增长在 Prometheus 里完全看不见**，「稳定性」监控最核心的一块是瞎的（做压测时只能外部 `pidstat` / `/proc/VmHWM` 取数，正是缺口的症状）。现用 `collectors.NewGoCollector()` + `collectors.NewProcessCollector()`（v1.24.1 起根包的 `prometheus.NewGoCollector` / `NewProcessCollector` 均已标记 Deprecated，用新包否则 `staticcheck` SA1019）注册进同一独立 registry，实测新增 `go_*` / `process_* 共 40 条 series。`ProcessCollectorOpts.ReportErrors` 保持 false：进程指标属附带观测，单次采集失败应被忽略而非拖垮整次抓取。
+
+- **日表跨日切换与 UTC 归属测试**：全仓按 **UTC 日期**切日表（避免时区导致的跨日归属歧义），但跨 UTC 00:00 的切换窗口此前无任何测试，而压测也等不到真午夜（下一次在 17 小时后）。现用 `EnsureDailyTable(db, model, day)` 这个现成接缝**注入日期**直接驱动切换，覆盖四条：跨日写入不串表 / 可切回补写、并发跨日写入（8 协程 × 3 日）无锁无丢行、本地与 UTC 不同日的时刻仍按 UTC 拼后缀、日表缓存键按 `(db, table)` 隔离。四条全绿（含 `-race`）；未发现 `EnsureDailyTable` / `DailyTableName` 的真实缺陷。**局限**：内存测试库的池是 `MaxOpenConns=1`，「无 `database is locked`」是结构性保证，多连接写锁竞争需另开专用池配置才能覆盖。
+
 ### 修复
 
 - **归档库连接的等待预算从未收紧，连接等待防护在第二条连接上等于不存在（回归，本次 review 发现）**：`store.OpenArchive` 复用 `newDialector`，而后者一律以装配期口径 `boot=true` 建池——拿到的是初始预算为 `bootstrapTimeout`（30 分钟）的包装池，且**没有任何自动收紧**。主库在 `store.Open` 里显式调 `SetRuntimeBudget` 收回运行期值，归档库漏了这一步，于是 30 分钟预算被带到运行期：归档连接上的每条语句与每次取连接都按 30 分钟等待——正是本批「把无限挂起变快速失败」要消灭的形态，在第二条连接上缺席。
@@ -99,6 +124,13 @@
   - **修复②——审批批准执行不再持连接等锁**：`applyStartApprovedInTx` 移除 `s.mu`。它是全包**唯一**持锁的 `*InTx` 变体，其余五个（`applyResumeInTx` / `applyRollbackInTx` / `applyRollbackTargetsInTx` / `persistConfirmInTx` / `applyFinishRollbackInTx`）本就不持——去掉后反而**统一了口径**。不削弱互斥的三重依据：状态迁移由 `UpdateStatusCAS(approved→rolling)` 定序；审批执行在进程内串行（单个 worker goroutine）；本函数不读写 `s.mu` 保护的任何内存（`observeByOrder` / `stallByOrder` 各由独立叶子锁保护，启动路径零引用）。**FR-259 的「两步同事务」语义不变**。
   - **测试**：新增两个复现用例（生产同款 sqlite + `MaxOpenConns=1`，驱动**真审批 worker + 真推进器**）——`TestAdvanceTickMustNotHoldMutexWhileWaitingForConnection` 与 `TestApprovalExecutionDeadlocksWithAdvanceTickOnSingleConnection`：修复前稳定失败（前者断言「tick 在等连接期间仍持 mu，db_in_use=1」；后者 10.6s 死锁超时并检出三方长停），修复后 **0.7s 通过**；另加单连接池下「审批执行期间不持 mu 等连接」的锁不变量用例。**既有测试集为何漏掉**：测试库是 MySQL + `MaxOpenConns: 2`（`testsupport/db.go`），驱动不同且多一条连接可破环——**结构性地无法触发本环**，故这些用例是首次覆盖该路径。
   - **规格**：[control-plane-db-pool-and-runtime-profiling](docs/specs/control-plane-db-pool-and-runtime-profiling.md)。
+
+- **心跳热路径每请求少付 4 次 DB 取连接（`6 → 2`）**：`ensureServerActiveForNamespace` 原先按 `code` 查出 namespace 行之后，又经 `ensureServerActive` → `ensureNamespaceRuntimeActiveByID` 把它**按主键重读一遍**，且这两段各带一次 `HasTable`。`Migrator().HasTable` 并不是读内存，而是真发一条 `SELECT count(*) FROM sqlite_master ...`；而基础表只在启动期 `AutoMigrate` 后就不再变动（仓库无运行期 DropTable）。压测实测：DB 连接池约 69% 的语句到达时池已占满必须排队，该路径贡献了近一半的连接压力。
+  - **两处改动**：① 拆出 `ensureServerRowActive`（只判 server 行存在且 active，环境资格由调用方保证），按 code 已读出 namespace 的调用方直接复用那一行、不再按主键重读；② 新增 `baseTableExists` 缓存基础表存在性。
+  - **缓存键必须是（数据库句柄, 表名）而非表名**：只按表名会让「某库还没有该表」的答案污染其它库的判定，运行资格闸一旦被误判为「表不存在」就会**静默放行**归档 namespace——这比慢查询危险得多。开发中正是先按表名写、被既有测试抓红后才补上句柄维度。
+  - **事务与日表不进缓存**：`*sql.Tx` 句柄每笔事务唯一，按它缓存会无界增长；日表（conn_detail / message / metric_sample_v2 等）的 `HasTable` 语义正是「缺表即跳过」，缓存会把「目前还没有」永远钉死。作用域写进 helper 注释，改调用点前必读。
+  - **实测收益**（并发 32、混合负载）：心跳 `p50 10.79 → 4.03ms`、`p95 19.60 → 9.45ms`、`p99 25.39 → 13.07ms`；同期**未改动的端点只漂移 +7~22%（宿主机负载本身在变）**，可作内部对照组——说明降幅不是环境差异。DB 连接池每请求等待次数由 2.25 降至 1.22。
+  - **测试**：按 SQL 语句计数守护「每请求 ≤ 2 条」，并已双向验证有牙齿（拆掉行复用记 3 条、去掉缓存读取记 4 条，均报红）；另有跨库缓存隔离、归档 namespace 仍被拒、事务内不缓存三条用例。
 
 - **sqlite 默认连接池回退到 1 导致永久互等（纵深防御）**：生产 P0（2026-10-10 02:41:05）——sqlite + `max-open-conns: 1` 下，审批批准执行「持连接等内锁」与推进器 tick「持内锁等连接」反序获取两条资源，池内没有第三条连接可打破环，双方**永久互等、不可自愈，只能重启恢复**（现场审批行停在 `executing`、lease 过期 20+ 分钟无人回收，所有需 DB 的端点全部挂起，进程 37 线程全 `futex_wait`、WAL 零推进）。
   - **样例默认值收口**：`config.example.yml` 的 `max-open-conns` 由 1 改为 **4**、`max-idle-conns` 由 1 改为 **2**，与 `config.Default()` 既有值对齐。此前内置默认是 4 而样例是 1，而**样例才是首启释放为生产 `config.yml` 的模板**（`EnsureConfigFile`），即生产实际拿到的是 1——两者不一致本身即是缺陷。
