@@ -68,6 +68,13 @@
 
 ### 修复
 
+- **批量导入文件的真实容量被标准库卡在约 498，多文件上传必然失败且只回笼统「参数错误」（生产压测 S3 用例）**：`POST /admin/v1/files/import` 声明单次最多 2000 个文件（`service.MaxImportFiles`），但 handler 走 `r.ParseMultipartForm`，而 Go 标准库 `mime/multipart` 内部有硬编码的 `maxParts = 1000`（不可配置），每个导入文件占 `files` + `paths` 两个部件，故部件数一到 `2 × 文件数 + 文本字段数 > 1000` 即报 `multipart: message too large`——实到 **497～498 个文件**（文本字段越多上限越低；实测 3 个文本字段时 498 通过 / 499 失败，6 个时 498 即失败）。`len(fileHeaders) > service.MaxImportFiles` 那道检查因此**永远是死代码**，声明的 2000 从未可达。失败又被笼统归成 `400 INVALID_PARAM`「参数错误」，运维无从得知真实原因（既不知道是文件太多，也不知道该拆批）。
+  - **改为流式解析**：`handler.FileHandler.Import` 改用 `r.MultipartReader()` 逐部件读取（不再调 `ParseMultipartForm`，也不再依赖 `r.MultipartForm`），按部件名分流 `namespace` / `group` / `comment` / `reason` / `paths` 文本字段与 `files` 文件部件，**2000 的文件数声明真正可达**。既有语义逐条保持不变：`paths` 与 `files` 必须等长且按提交顺序对齐（第 i 个 `paths` ↔ 第 i 个 `files`，与前端交错提交还是先全 `paths` 后全 `files` 无关）、单文件 `MaxFileContentBytes`、聚合 `MaxImportTotalBytes`、path 安全与目标组校验仍由 service 兜底。
+  - **错误可诊断（ADR-0057）**：文件数超限改为 `422 TOO_MANY_FILES` 且说明**带上实际上限数字**（不再与解析失败混为一谈）；`paths` 与 `files` 数量不一致的 `400 INVALID_PARAM` 带上两个数量；multipart 解析失败（非 `multipart/form-data`、boundary 缺失、请求体超上限、部件头损坏等）保留 `400 INVALID_PARAM` 但**带上脱敏后的底层原因**，不再只有笼统「参数错误」。
+  - **内存与落盘保护自建**（流式模式下标准库的「内存阈值 + 落临时文件」兜底不再生效）：文本部件限读 4KiB；文件部件限读「单文件上限 + 1 字节」，超大部件只读 1MiB + 1 字节即拒；聚合字节达 `MaxImportTotalBytes` 立即中断；第 `MaxImportFiles + 1` 个 `files` 部件在其字节被读取**之前**即拒；部件总数限 `2 × 2000 + 16`（堵住未知部件的无界解析）；请求体总量另设上限兜底。最坏内存驻留 ≈ 聚合上限 + 单文件上限，且**全程不落任何临时文件**（旧实现经 `ParseMultipartForm` 会无限落盘）。
+  - **测试**：新增 8 个 handler 用例——600 个文件（1203 个部件，旧实现必失败）受理、恰好 `MaxImportFiles`（2000）受理、2001 个文件被拒且错误含上限数字、`paths`/`files` 错位被拒、单个超大文件部件 / 单个超大文本部件 / 聚合字节超限 / 非 multipart 请求被安全拒绝、部件总数超限被拒，另加白盒用例锁定两种提交布局下的顺序对齐（内容落错 path 会静默污染文件树）。
+  - 规格：[config-import-upload](docs/specs/config-import-upload.md)。
+
 - **根治：单连接池下「审批批准」与「推进器 tick」反序获取两资源互等（生产 P0，2026-10-10）**：生产环境（sqlite）于 02:41:05 走完「建单 → 提审 → 批准」后，**所有需访问 DB 的 HTTP 端点永久挂起** 25 分钟（`healthz` / `metrics` 等不查库端点始终 200，掩盖了故障范围），靠重启恢复。**玩家不受影响**——Agent 持本地快照 fail-static，11 台生产服照常服务。本条与上条（连接池纵深防御）的关系：上条只抬高成环门槛，**本条才是消除环本身**。
   - **根因（两资源反序获取）**：① 审批批准执行**持连接 → 等编排锁**（`approval_worker.go` 的 `db.Transaction` 取走唯一连接 → `applyStartApprovedInTx` 请求 `s.mu`）；② 推进器 tick **持编排锁 → 等连接**（`advanceActiveOrders` 先取 `s.mu`，随后整轮 `ListActiveOrders` / `loadOrderRuntime` / `advanceOrder` / `refreshBlobReferences` 全是 DB 访问）。池内仅一条连接时无第三方可破环。
   - **为何不可自愈**：审批租约回收（`claimNext`）自身也要 DB 连接，连接被环占住 ⇒ 租约永不回收、worker 永不重试。与现场「`lease_until` 过期 20+ 分钟仍停 `executing`、`created_at == updated_at`（从未推进）」完全吻合。
