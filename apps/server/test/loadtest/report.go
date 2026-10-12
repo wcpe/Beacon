@@ -47,32 +47,32 @@ type soakReport struct {
 // suspendedReport 是长轮询 / SSE 挂起探测的结果（口径与 RPS 型压测完全不同，故单独一节）。
 // 挂起端点衡量三件事：能同时挂多少、挂得稳不稳、变更多久能推下去——没有「越快越好」。
 type suspendedReport struct {
-	Kind              string       `json:"kind"` // 长轮询 or SSE
-	URL               string       `json:"url"`
-	Held              int          `json:"held"`
-	Connected         int          `json:"connected"`
-	CompletedByWake   int          `json:"completedByWake"`
-	CompletedByTimeout int         `json:"completedByTimeout"`
-	Errors            int          `json:"errors"`
-	ErrorKinds        map[string]int `json:"errorKinds,omitempty"`
-	HoldLatencyMs     latencyStats `json:"holdLatencyMs"`
-	WakeLatencyMs     latencyStats `json:"wakeLatencyMs"`
-	SuspendedObserved int          `json:"suspendedObserved"`
-	Notes             []string     `json:"notes,omitempty"`
+	Kind               string         `json:"kind"` // 长轮询 or SSE
+	URL                string         `json:"url"`
+	Held               int            `json:"held"`
+	Connected          int            `json:"connected"`
+	CompletedByWake    int            `json:"completedByWake"`
+	CompletedByTimeout int            `json:"completedByTimeout"`
+	Errors             int            `json:"errors"`
+	ErrorKinds         map[string]int `json:"errorKinds,omitempty"`
+	HoldLatencyMs      latencyStats   `json:"holdLatencyMs"`
+	WakeLatencyMs      latencyStats   `json:"wakeLatencyMs"`
+	SuspendedObserved  int            `json:"suspendedObserved"`
+	Notes              []string       `json:"notes,omitempty"`
 }
 
 // ingestProbeReport 是 v2 上报通道背压探测的结果：回答 spec 里
 // 「连接/消息上报接口 p99 响应仅含队列入队耗时（队列满 429）」这句话是否可达。
 type ingestProbeReport struct {
-	URL             string         `json:"url"`
-	Requests        int            `json:"requests"`
-	BatchSize       int            `json:"batchSize"`
-	Concurrency     int            `json:"concurrency"`
-	StatusCounts    map[int]int    `json:"statusCounts"`
-	SawBackpressure bool           `json:"sawBackpressure"` // 见到 429 = 有界队列真的会拒
-	SawUnavailable  bool           `json:"sawUnavailable"`  // 见到 503 = 等 DB 连接超时被触发
-	DurationMs      int64          `json:"durationMs"`
-	Error           string         `json:"error,omitempty"`
+	URL             string      `json:"url"`
+	Requests        int         `json:"requests"`
+	BatchSize       int         `json:"batchSize"`
+	Concurrency     int         `json:"concurrency"`
+	StatusCounts    map[int]int `json:"statusCounts"`
+	SawBackpressure bool        `json:"sawBackpressure"` // 见到 429 = 有界队列真的会拒
+	SawUnavailable  bool        `json:"sawUnavailable"`  // 见到 503 = 等 DB 连接超时被触发
+	DurationMs      int64       `json:"durationMs"`
+	Error           string      `json:"error,omitempty"`
 }
 
 // report 是一次完整压测（分级 + soak）的产物。

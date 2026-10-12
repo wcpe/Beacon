@@ -461,8 +461,24 @@ func removeStaleDB(t *testing.T, dir string) {
 // registerVirtualAgents 经 v1 数据面挂载端点注册一批虚拟 serverId（心跳场景的前置）。
 // 这一步会为每个 serverId 写一条 instance.register 审计（控制面既有行为，无法旁路），
 // 故只做一次性前置、不进压测循环——否则测出来的就是审计写入能力而非接口能力。
+//
+// 并发度由 LOADTEST_REGISTER_CONCURRENCY 控制，**缺失或为 1 时走原来的纯串行路径、行为逐字不变**：
+// 注册每台要过 4~5 次 DB 往返并在 4 连接的 sqlite 池上排队，串行注册 1000 台的前置耗时会拖垮整轮压测，
+// 故规模压测需要提高在途请求数；而既有烟雾用例依赖串行语义，不能被默认值改掉。
 func registerVirtualAgents(t *testing.T, client *http.Client, baseURL string, count int) []string {
 	t.Helper()
+	if concurrency := registerConcurrencyFromEnv(); concurrency > 1 {
+		t.Logf("按 LOADTEST_REGISTER_CONCURRENCY=%d 走有界并发注册（%d 台）", concurrency, count)
+		// PID 传 0：本函数被既有烟雾用例共用，拿不到控制面 PID 也不该为此改签名；
+		// 需要注册阶段资源口径的规模用例直接调 registerVirtualAgentsConcurrent 并传入真实 PID。
+		outcome := registerVirtualAgentsConcurrent(t, client, baseURL, count, concurrency, 0, 0)
+		if len(outcome.Failures) > 0 {
+			t.Fatalf("并发注册 %d 台中有 %d 台失败：%s", count, len(outcome.Failures), strings.Join(outcome.Failures, "；"))
+		}
+		t.Logf("并发注册完成：%d 台，耗时 %dms（%.1f 台/秒）",
+			outcome.Succeeded, outcome.ElapsedMs, outcome.RPS)
+		return outcome.IDs
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
 	defer cancel()
 	ids := make([]string, 0, count)

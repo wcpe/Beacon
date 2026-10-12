@@ -29,6 +29,9 @@ type ControlPlaneConfig struct {
 	// 额外环境变量（可选）：在固定注入项之上叠加，用于按 e2e 需要覆盖控制面行为，
 	// 如 metrics 用例设 BEACON_METRIC_SAMPLE_INTERVAL_SEC 调小采样间隔。默认 nil 不影响既有调用。
 	ExtraEnv map[string]string
+	// 启动参数（可选）：控制面 CLI 参数，如 {"-config", "/path/to/alt.yml"}。
+	// 用于「同一二进制、不同启动配置」的对照实验（如连接池上限 A/B），默认 nil 行为不变。
+	Args []string
 }
 
 type controlPlaneState uint8
@@ -93,7 +96,7 @@ func StartControlPlane(cfg ControlPlaneConfig) (*ControlPlane, error) {
 		env = append(env, k+"="+v)
 	}
 
-	cmd, outFile, errFile, err := spawn(cfg.RepoRoot, cfg.BinPath, nil, env, outLog, errLog)
+	cmd, outFile, errFile, err := spawn(cfg.RepoRoot, cfg.BinPath, cfg.Args, env, outLog, errLog)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +138,18 @@ func (c *ControlPlane) LogPaths() (string, string) {
 		return "", ""
 	}
 	return c.stdoutPath, c.stderrPath
+}
+
+// PID 返回控制面进程的 PID（未启动或已回收返回 0）。
+//
+// 由进程句柄直接取，而不是「按二进制路径在 /proc 里找」：后者在**同一二进制起了多个实例**时
+// （如 A/B 对照实验同时常驻两个控制面）会命中错误的那一个，于是资源口径整体错位——
+// 这比没有数据更危险，因为错位的数字看起来完全正常。
+func (c *ControlPlane) PID() int {
+	if c == nil || c.cmd == nil || c.cmd.Process == nil {
+		return 0
+	}
+	return c.cmd.Process.Pid
 }
 
 // CheckEarlyExit 在控制面未进入主动收尾却已退出时返回带日志路径的诊断。
