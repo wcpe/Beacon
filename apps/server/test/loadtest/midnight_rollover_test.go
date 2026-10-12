@@ -235,7 +235,7 @@ func listMetricDailyTables(t *testing.T, db *gorm.DB) []string {
 //
 // 这是本用例最强的判据，且**不依赖日界是否落在观测窗口内**——任何串表（写错表、按本地日期拼表名、
 // 跨日分流错误）都会在这里被逐行抓出，冒烟模式下同样有判别力。
-func assertEveryRowInOwnDayTable(t *testing.T, db *gorm.DB) (checked int) {
+func assertEveryRowInOwnDayTable(t *testing.T, db *gorm.DB) (checked int, violations []string) {
 	t.Helper()
 	for _, table := range listMetricDailyTables(t, db) {
 		wantDay := dailyTableDay(table)
@@ -245,18 +245,20 @@ func assertEveryRowInOwnDayTable(t *testing.T, db *gorm.DB) (checked int) {
 		}
 		var rows []row
 		if err := db.Table(table).Select("server_id, bucket_start_ms").Find(&rows).Error; err != nil {
-			t.Fatalf("读日表 %s 失败：%v", table, err)
+			violations = append(violations, fmt.Sprintf("读日表 %s 失败：%v", table, err))
+			continue
 		}
 		for _, r := range rows {
 			gotDay := utcDayOfMs(r.BucketStartMs)
 			if gotDay != wantDay {
-				t.Fatalf("串表：日表 %s（应只含 UTC 日 %s 的行）含 bucket=%d 的行，该行属于 UTC 日 %s（serverId=%s）",
-					table, wantDay, r.BucketStartMs, gotDay, r.ServerID)
+				violations = append(violations, fmt.Sprintf(
+					"串表：日表 %s（应只含 UTC 日 %s 的行）含 bucket=%d 的行，该行属于 UTC 日 %s（serverId=%s）",
+					table, wantDay, r.BucketStartMs, gotDay, r.ServerID))
 			}
 			checked++
 		}
 	}
-	return checked
+	return checked, violations
 }
 
 // midnightRunOutcome 汇总一次真实跨午夜运行的全部证据。
@@ -278,6 +280,65 @@ type midnightRunOutcome struct {
 	TableAfterAt time.Time // 首次观测到跨日日表存在的时刻（零值=未观测到）
 	RowsChecked  int
 	Tables       []dailyTableStat
+	// Violations 是全部不变量违规项（空=全部通过）。先收集、写进报告、再统一报红，
+	// 使失败时也有完整可复核的上下文。
+	Violations []string
+}
+
+// collectViolations 收集全部不变量违规项（**只收集、不中止**）。
+//
+// 为什么不直接 t.Fatalf：本函数的结果要进报告，而报告必须能在断言失败时也落盘——
+// 失败场景正是最需要证据的时候。跨午夜 19 小时的运行换来一句「串表」而无上下文是不可接受的，
+// 故由调用方先写报告、再统一报红。
+func collectViolations(t *testing.T, db *gorm.DB, out *midnightRunOutcome, crossing bool,
+	boundaryMs int64, realMidnight bool, target time.Time, denseStart time.Time, afterTable string) []string {
+	t.Helper()
+	var violations []string
+
+	// 第 1 层：通用不变量（逐行归属），两种模式都断言。
+	rowsChecked, rowViolations := assertEveryRowInOwnDayTable(t, db)
+	out.RowsChecked = rowsChecked
+	violations = append(violations, rowViolations...)
+	if rowsChecked == 0 {
+		violations = append(violations, "库中没有任何日表行：上报虽返回 202，但异步入库未落盘，本轮证据无效")
+	}
+	if len(out.ReportErrors) > 0 {
+		violations = append(violations, fmt.Sprintf("本轮有 %d 次上报未获 202（前 3 条）：%v",
+			len(out.ReportErrors), firstN(out.ReportErrors, 3)))
+	}
+
+	// 第 2 层：跨日不变量（仅当窗口真含日界；否则如实标注跳过，不伪装通过）。
+	if !crossing {
+		t.Logf("密集窗口内无 UTC 日界，跨日不变量按设计跳过；本轮仅证明通用不变量（%d 行归属正确）", out.RowsChecked)
+		return violations
+	}
+
+	beforeStat := scanDailyTableStat(t, db, store.DailyTableName(metricSampleBaseTable, denseStart))
+	afterStat := scanDailyTableStat(t, db, afterTable)
+	if !beforeStat.Exists {
+		violations = append(violations, fmt.Sprintf(
+			"跨日前日表 %s 不存在：等待期 / 密集期前半的上报未落盘", beforeStat.Table))
+	}
+	if !afterStat.Exists {
+		violations = append(violations, fmt.Sprintf(
+			"跨日后日表 %s 不存在：真实跨越 UTC 00:00 后未按新日期建表", afterStat.Table))
+	}
+	if beforeStat.Exists && beforeStat.Max >= boundaryMs {
+		violations = append(violations, fmt.Sprintf(
+			"跨日前日表 %s 含日界之后的行（max bucket=%d ≥ 日界 %d）——跨日写入串表",
+			beforeStat.Table, beforeStat.Max, boundaryMs))
+	}
+	if afterStat.Exists && afterStat.Min < boundaryMs {
+		violations = append(violations, fmt.Sprintf(
+			"跨日后日表 %s 含日界之前的行（min bucket=%d < 日界 %d）——跨日写入串表",
+			afterStat.Table, afterStat.Min, boundaryMs))
+	}
+	if realMidnight && out.TableAfterAt.IsZero() {
+		violations = append(violations, fmt.Sprintf(
+			"未观测到跨日日表 %s 出现（午夜=%s）——须确认建表时点",
+			afterTable, target.Format(time.RFC3339)))
+	}
+	return violations
 }
 
 // renderMidnightReport 把一次运行的证据渲染成 Markdown。
@@ -327,6 +388,17 @@ func renderMidnightReport(o midnightRunOutcome, realMidnight bool) string {
 		fmt.Fprintf(&b, "\n## 上报异常（%d 条，前 5）\n\n", len(o.ReportErrors))
 		for _, e := range firstN(o.ReportErrors, 5) {
 			fmt.Fprintf(&b, "- %s\n", e)
+		}
+	}
+
+	// 不变量判定必须进报告：失败场景正是最需要证据的时候。
+	fmt.Fprintf(&b, "\n## 不变量判定\n\n")
+	if len(o.Violations) == 0 {
+		fmt.Fprintf(&b, "- 全部通过：逐行归属 %d 行、跨日边界（若窗口含日界）均无违规\n", o.RowsChecked)
+	} else {
+		fmt.Fprintf(&b, "- **发现 %d 项违规**：\n\n", len(o.Violations))
+		for _, v := range o.Violations {
+			fmt.Fprintf(&b, "  - %s\n", v)
 		}
 	}
 	fmt.Fprintf(&b, "\n## 口径说明\n\n")
@@ -493,41 +565,10 @@ func TestMidnightRolloverRealClock(t *testing.T) {
 	}
 
 	// —— 判定 ——
-	// 第 1 层：通用不变量（逐行归属），两种模式都断言。
-	out.RowsChecked = assertEveryRowInOwnDayTable(t, probeDB)
-	if out.RowsChecked == 0 {
-		t.Fatal("库中没有任何日表行：上报虽返回 202，但异步入库未落盘，本轮证据无效")
-	}
-	if len(out.ReportErrors) > 0 {
-		t.Fatalf("本轮有 %d 次上报未获 202（前 3 条）：%v", len(out.ReportErrors), firstN(out.ReportErrors, 3))
-	}
-
-	// 第 2 层：跨日不变量（仅当窗口真含日界）。
-	if crossing {
-		beforeStat := scanDailyTableStat(t, probeDB, store.DailyTableName(metricSampleBaseTable, denseStart))
-		afterStat := scanDailyTableStat(t, probeDB, afterTable)
-		if !beforeStat.Exists {
-			t.Fatalf("跨日前日表 %s 不存在：等待期 / 密集期前半的上报未落盘", beforeStat.Table)
-		}
-		if !afterStat.Exists {
-			t.Fatalf("跨日后日表 %s 不存在：真实跨越 UTC 00:00 后未按新日期建表", afterStat.Table)
-		}
-		if beforeStat.Max >= boundaryMs {
-			t.Fatalf("跨日前日表 %s 含日界之后的行（max bucket=%d ≥ 日界 %d）——跨日写入串表",
-				beforeStat.Table, beforeStat.Max, boundaryMs)
-		}
-		if afterStat.Min < boundaryMs {
-			t.Fatalf("跨日后日表 %s 含日界之前的行（min bucket=%d < 日界 %d）——跨日写入串表",
-				afterStat.Table, afterStat.Min, boundaryMs)
-		}
-		if realMidnight && out.TableAfterAt.IsZero() {
-			t.Fatalf("未观测到跨日日表 %s 出现（午夜=%s）——须确认建表时点",
-				afterTable, target.Format(time.RFC3339))
-		}
-	} else {
-		t.Logf("密集窗口内无 UTC 日界，跨日不变量按设计跳过；本轮仅证明通用不变量（%d 行归属正确）", out.RowsChecked)
-	}
-
+	// 关键顺序：**先把证据写进报告、再报红**（collectViolations 只收集不中止）。
+	// 失败场景正是最需要证据的时候，若让 t.Fatalf 先中止，跨午夜 19 小时换来的一句
+	// 「串表」就没有任何可复核的上下文。
+	out.Violations = collectViolations(t, probeDB, &out, crossing, boundaryMs, realMidnight, target, denseStart, afterTable)
 	report := renderMidnightReport(out, realMidnight)
 	reportPath := filepath.Join(workDir, "midnight-rollover-"+started.Format("20060102-150405")+".md")
 	if err := os.WriteFile(reportPath, []byte(report), 0o644); err != nil {
@@ -535,6 +576,12 @@ func TestMidnightRolloverRealClock(t *testing.T) {
 	}
 	t.Logf("\n%s", report)
 	t.Logf("报告已落盘：%s", reportPath)
+
+	// 报告落盘之后才报红：跨午夜 19 小时的运行，失败时必须留下可复核的完整证据。
+	if len(out.Violations) > 0 {
+		t.Fatalf("跨午夜不变量有 %d 项违规（完整证据见报告 %s）：%v",
+			len(out.Violations), reportPath, firstN(out.Violations, 3))
+	}
 }
 
 // 编译期引用：本文件独立运行（-run '^TestMidnightRolloverRealClock'），
