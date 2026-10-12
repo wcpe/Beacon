@@ -278,7 +278,9 @@ go test -tags "e2e loadtest" -timeout=40m -v -run '^TestLoad' ./apps/server/test
 
 **规模怎么读**：1000 台规模下控制面**次线性**（无系统性拐点）——心跳与 v2 上报在 15.6 倍规模下保持率 **95%**，内存注册表扛得住；退化集中在 `GET /admin/v1/topology`，它**随实例数线性变贵**（实测 2.15µs/实例，64 台 p50 0.33ms / 8.9KB → 1000 台 2.35ms / 142KB）。**抬高 `max-open-conns` 不是吞吐的解法**：同二进制同规模 A/B（4 → 32）心跳 RPS 比值仅 **1.05x**，且池 32 时仍有 26.7 万次池等待——**池排队是现象不是根因**。容量数字与适用边界见 [PRD](PRD.md) §5「规模容量」。
 
-**慢客户端怎么读**：`httpx.StallWriter` 的「单次写 30s stall 上限」当前**未生效**（`statusWriter` 缺 `Unwrap()` 令 `SetWriteDeadline` 返回 `feature not supported` 且错误被丢弃，见 [PRD](PRD.md) §5 与 CHANGELOG「修复」节的记录）。在此之前，慢客户端可长期占住下载端点的 goroutine 与 FD；blob 下载另有 `delivery.download-concurrency`（默认 64）兜住并发，**file-sync 下载端点既无生效的 stall 上限也无并发上限**，风险最高。
+**慢客户端怎么读**：`httpx.StallWriter` 提供「单次写 30s stall 上限」——持续在写不受限，仅当客户端彻底卡住（30s 内一次写都完不成）才中断连接。它依赖 `http.ResponseController.SetWriteDeadline` 沿 ResponseWriter 包装链下钻，故**中间件链上任何包装器都必须实现 `Unwrap() http.ResponseWriter`**，否则 deadline 设不上、防线静默失效（2026-10-12 实测发现并修复了 `statusWriter` 的这个缺口，见 CHANGELOG「修复」节；`stall.go` 现已在不支持时记 WARN，便于再次暴露）。覆盖三处下载端点：delivery blob、file-sync、embedweb；blob 下载另有 `delivery.download-concurrency`（默认 64）兜住并发，**file-sync 下载端点只有 stall 这一道防线**。
+
+**慢客户端探测怎么读**：判据取**服务端访问日志里该请求的耗时**，不要取客户端侧「是否读到 EOF/RST」——服务端在阻塞前已把约 16MiB 写进内核收发缓冲（`tcp_wmem`/`tcp_rmem` 上限各 16MiB），客户端要先排空才能读到 EOF/RST，而探测刻意只读 1 字节（否则会给服务端持续「腾地方」使 Write 永不阻塞满窗口）。两者叠加会让客户端侧在大 blob 下**结构性**观测不到中断，把「保护已生效」误判成「未生效」。修复后实测 8/8 条下载耗时 30011~30015ms（正是 30s 窗口）。
 
 **读报告前必须知道的两条局限**：① 数字受**宿主机负载**影响极大——同配置同代码，宿主机 load 15 时并发 32 可达 7066 RPS、load 36 时只有 4303 RPS，做对比要么固定宿主机负载，要么用「未改动端点漂移多少」当内部对照组；② 挂起探测的唤醒时延用的是 global 层新建配置项（走 notifier → Hub 唤醒该 namespace 全部 waiter），若唤醒语义落在窄 scope 上，唤醒条数会少于挂起数，以表格里的「唤醒返回」列为准。
 
