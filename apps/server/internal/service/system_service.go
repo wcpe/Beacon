@@ -167,7 +167,7 @@ func (s *SystemService) Status() SystemStatus {
 		StartedAt:       s.startedAt,
 		UptimeSeconds:   int64(now.Sub(s.startedAt).Seconds()),
 		DB:              dbStatus,
-		OnlineInstances: len(s.registry.List(rt.Filter{Status: rt.StatusOnline})),
+		OnlineInstances: s.onlineInstanceCount(),
 		SamplerEnabled:  s.samplerEnabled != nil && s.samplerEnabled(),
 		Runtime: RuntimeStats{
 			Goroutines: runtime.NumGoroutine(),
@@ -177,6 +177,19 @@ func (s *SystemService) Status() SystemStatus {
 		CPUAvailable: cpuAvailable,
 		CPUPercent:   cpuPercent,
 	}
+}
+
+// onlineInstanceCount 取在线实例数（只计数，不深拷贝注册表）。
+//
+// 此前用 len(registry.List(Filter{Status: online}))：为了拿一个计数就把每个命中实例深拷贝一份
+// （Metadata map 与 Backends 切片），且持写偏好的 RWMutex。1000 台规模下实测该端点 p50
+// 0.44 → 0.75ms，无谓开销随规模线性增长。
+// StatusCounts 持读锁一次遍历、只累加计数（同文件已注明「不深拷贝、不做 DB IO」），正是此处所需。
+func (s *SystemService) onlineInstanceCount() int {
+	if s.registry == nil {
+		return 0
+	}
+	return s.registry.StatusCounts()[rt.StatusOnline]
 }
 
 // roundCPUPercent 把 gopsutil 原始进程占比规整为展示值：钳到 [0,100] 并四舍五入到 1 位小数。
