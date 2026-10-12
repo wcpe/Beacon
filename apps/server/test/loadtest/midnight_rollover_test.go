@@ -334,9 +334,10 @@ func collectViolations(t *testing.T, db *gorm.DB, out *midnightRunOutcome, cross
 			afterStat.Table, afterStat.Min, boundaryMs))
 	}
 	if realMidnight && out.TableAfterAt.IsZero() {
+		// 同时带上上报失败数与跨日后日表实况，避免把「上报失败」误读成「建表时点异常」。
 		violations = append(violations, fmt.Sprintf(
-			"未观测到跨日日表 %s 出现（午夜=%s）——须确认建表时点",
-			afterTable, target.Format(time.RFC3339)))
+			"未观测到跨日日表 %s 出现（午夜=%s；本轮上报失败 %d 次，请先排除上报失败再判建表时点）",
+			afterTable, target.Format(time.RFC3339), len(out.ReportErrors)))
 	}
 	return violations
 }
@@ -504,7 +505,21 @@ func TestMidnightRolloverRealClock(t *testing.T) {
 	var lastBucket int64
 	afterTable := store.DailyTableName(metricSampleBaseTable, time.UnixMilli(boundaryMs).UTC())
 
-	// reportOne 发一行上报并登记结果；dense 阶段顺带核对跨日日表是否已出现。
+	// observeAfterTable 独立探测跨日日表是否已出现（与上报结果**解耦**）。
+	//
+	// 为什么不放在 reportOne 里顺手检查：那条路径在上报失败时会提前 return，
+	// 于是「上报失败」会被记成「未观测到跨日日表」——归因指向错误方向。
+	// 而午夜恰好是 DB 最忙的时刻（WAL 切换 + 新表 DDL），上报失败概率高于平时，
+	// 正是最需要正确归因的时候。故独立探测，并在报告里同时带上上报失败数。
+	observeAfterTable := func() {
+		if out.TableAfterAt.IsZero() && probeDB.Migrator().HasTable(afterTable) {
+			out.TableAfterAt = time.Now().UTC()
+			t.Logf("首次观测到日表 %s 存在：%s（本轮上报失败 %d 次）",
+				afterTable, out.TableAfterAt.Format(time.RFC3339), len(out.ReportErrors))
+		}
+	}
+
+	// reportOne 发一行上报并登记结果。上报失败只记录、不中止（失败归集到 violations 统一报红）。
 	reportOne := func(dense bool, at time.Time) {
 		bucket := at.UnixMilli() / 5000 * 5000
 		if bucket <= lastBucket {
@@ -523,10 +538,6 @@ func TestMidnightRolloverRealClock(t *testing.T) {
 		}
 		if dense {
 			out.DenseReports++
-			if out.TableAfterAt.IsZero() && probeDB.Migrator().HasTable(afterTable) {
-				out.TableAfterAt = time.Now().UTC()
-				t.Logf("首次观测到日表 %s 存在：%s", afterTable, out.TableAfterAt.Format(time.RFC3339))
-			}
 		} else {
 			out.IdleReports++
 		}
@@ -547,6 +558,7 @@ func TestMidnightRolloverRealClock(t *testing.T) {
 	}
 
 	// 密集窗口：覆盖日界前后，每 denseEvery 一行。
+	// 建表探测（observeAfterTable）独立于上报结果，且仅在日界之后开始探（之前不可能有该表）。
 	t.Logf("进入密集窗口：%s ~ %s（每 %s 一行）",
 		denseStart.Format(time.RFC3339), denseEnd.Format(time.RFC3339), denseEvery)
 	for {
@@ -555,8 +567,13 @@ func TestMidnightRolloverRealClock(t *testing.T) {
 			break
 		}
 		reportOne(true, now)
+		if crossing && !now.Before(time.UnixMilli(boundaryMs).UTC()) {
+			observeAfterTable()
+		}
 		time.Sleep(denseEvery)
 	}
+	// 收尾再探一次：日表可能在最后一次循环与收尾落盘之间才建出来。
+	observeAfterTable()
 
 	time.Sleep(midnightFlushSettle)
 	out.Finished = time.Now().UTC()
