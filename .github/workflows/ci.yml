@@ -52,6 +52,14 @@ jobs:
         run: go build ./...
       - name: 运行单元测试
         run: go test ./...
+      # 压测 / E2E 用例带 `e2e && loadtest` 构建标签，默认构建与测试都**不编译**它们——
+      # 实测在这类文件里注入类型错误后，`go build ./...` 与 `go test ./...` 均毫无反应，
+      # 即它们可以编译不过而被合并。此处只做「能否编译」的门禁（不执行：真跑需 19h / 大内存 /
+      # 真实链接，属本地手动工具），把「改坏没人拦」这个口子堵上。
+      - name: 编译检查（e2e / loadtest 构建标签）
+        run: |
+          go vet -tags e2e ./...
+          go vet -tags "e2e loadtest" ./...
       - name: 运行 golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
