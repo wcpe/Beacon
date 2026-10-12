@@ -3,6 +3,12 @@
 // 规模容量压测的观测底座：宿主机 / 控制面进程 / 压测端进程的资源采样、有界并发注册、
 // /metrics 直方图解析与分位数计算。
 //
+// **本文件不含测试用例**（无 Test/Benchmark），是纯 helper 库——带 `_test.go` 后缀与
+// `e2e && loadtest` tag 只为跟同目录用例一起编译。其中纯计算部分（直方图分位数 / 做差、
+// 判定函数）的单测在 `scale_probe_quantile_test.go` 与 `scale_verdict_test.go`。
+//
+// 平台前提：本目录用例依赖 `/proc`（loadavg、进程 status、net/tcp），**仅 Linux 可运行**。
+//
 // 为什么单独成文件、不复用 loadtest_test.go 里的既有观测：
 //  1. 规模压测的最大风险是「把环境差异误判成系统退化」——上一轮实测同一档位在不同宿主机负载下
 //     差了 2.3 倍（load 15/40 核 → 9918 RPS；load 36 → 4303 RPS）。因此每次测量必须把宿主机口径
