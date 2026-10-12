@@ -183,6 +183,33 @@ func TestTopologyScalingProbe(t *testing.T) {
 			t.Logf("端点 %s：每多一个子服，p50 增加约 %.2f 微秒", row.Name, row.PerInstanceUs)
 		}
 	}
+
+	// 兜底断言：归因结论必须建立在「两个规模都测到了各端点」之上。
+	// 否则缺数据时上面的表格只会少几行、用例照样绿，而「topology 随规模线性变贵」
+	// 这个结论（已写进 PRD §5 待优化项）就成了无据之言。
+	assertTopologyProbeCovered(t, rows)
+}
+
+// assertTopologyProbeCovered 断言两个规模都测到了全部端点的实测样本。
+//
+// 不断言每实例成本的具体数值（受宿主机负载影响）；只挡「缺数据被当成结论」这一类假绿。
+func assertTopologyProbeCovered(t *testing.T, rows []topologyProbeRow) {
+	t.Helper()
+	for _, scale := range []int{topologyProbeSmall, topologyProbeLarge} {
+		n := 0
+		for _, row := range rows {
+			if row.Scale != scale {
+				continue
+			}
+			n++
+			if row.Count == 0 {
+				t.Fatalf("规模 %d 的端点 %s 零请求——该行数字不是测出来的", scale, row.Name)
+			}
+		}
+		if n == 0 {
+			t.Fatalf("规模 %d 一个端点都没测到——归因结论无数据支撑（请确认 LOADTEST_TOPOLOGY_* 规模设置）", scale)
+		}
+	}
 }
 
 // findProbeRow 在结果里找指定规模 + 端点的行。

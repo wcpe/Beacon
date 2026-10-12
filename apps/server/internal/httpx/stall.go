@@ -13,6 +13,14 @@ import (
 // 取 30s 平衡内网大文件下载与慢客户端兜底——远大于正常单次写耗时，正常传输不会误杀。
 const DefaultWriteStall = 30 * time.Second
 
+// stallWarnOnce 保证「底层不支持写截止时间」的 WARN 全进程只记一次。
+//
+// 必须是**包级**而非 StallWriter 的字段：StallWriter 由各 handler 按请求新建
+// （delivery_stream / file_sync / embedweb 三处都是 `defer sw.Release()` 的每请求实例），
+// 放字段里只能压掉同一请求内的重复写，跨请求仍会每请求一条——高 QPS 下会刷爆日志，
+// 比原先的静默更糟。
+var stallWarnOnce sync.Once
+
 // StallWriter 包装 http.ResponseWriter，每次 Write 前重置写截止时间，
 // 防止慢客户端长期占住写不释放 goroutine（FD 耗尽 / 服务器卡住）。
 //
@@ -29,8 +37,6 @@ type StallWriter struct {
 	http.ResponseWriter
 	rc    *http.ResponseController
 	stall time.Duration
-	// warnOnce 保证「底层不支持写截止时间」的 WARN 每实例只记一次（每次 Write 都会触达该检查）。
-	warnOnce sync.Once
 }
 
 // NewStallWriter 构造防慢写的 ResponseWriter 包装。stall<=0 时取默认值。
@@ -48,23 +54,17 @@ func NewStallWriter(w http.ResponseWriter, stall time.Duration) *StallWriter {
 // Write 在每次写前重置写截止时间，单次写超过 stall 即返回错误中断传输。
 //
 // 若底层 ResponseWriter 不支持设置写截止时间（返回 http.ErrNotSupported），
-// 本包装器无法提供 stall 保护，会**记一次 WARN**——这类失效必须可见：
+// 本包装器无法提供 stall 保护，会**全进程记一次 WARN**——这类失效必须可见：
 // 此前这里是 `_ = ...` 静默丢弃，导致中间件链上的包装器漏实现 Unwrap() 时
 // 防线整体失效而无人察觉（详见 server/statusWriter.Unwrap 的注释）。
-// 只记一次：每个连接都会走到这里，逐次记录会刷爆日志。
 func (s *StallWriter) Write(p []byte) (int, error) {
 	if err := s.rc.SetWriteDeadline(time.Now().Add(s.stall)); err != nil {
-		s.warnUnsupportedOnce(err)
+		stallWarnOnce.Do(func() {
+			slog.Warn("底层 ResponseWriter 不支持写截止时间，慢客户端保护未生效",
+				"错误", err, "提示", "检查中间件链上的包装器是否实现了 Unwrap() http.ResponseWriter")
+		})
 	}
 	return s.ResponseWriter.Write(p)
-}
-
-// warnUnsupportedOnce 在底层不支持写截止时间时记录一次 WARN（sync.Once 保证每实例一次）。
-func (s *StallWriter) warnUnsupportedOnce(err error) {
-	s.warnOnce.Do(func() {
-		slog.Warn("底层 ResponseWriter 不支持写截止时间，慢客户端保护未生效",
-			"错误", err, "提示", "检查中间件链上的包装器是否实现了 Unwrap() http.ResponseWriter")
-	})
 }
 
 // Flush 透传底层 Flusher（ServeContent / SSE 等可能调用）。

@@ -172,6 +172,39 @@ func TestControlPlanePoolCeiling(t *testing.T) {
 	for _, line := range poolABVerdict(sides, samples, concurrency, rounds) {
 		t.Log(line)
 	}
+
+	// 兜底断言：A/B 结论必须建立在「两组各自都测到了完整轮次」之上。
+	// 否则任一组测量失败时，poolABVerdict 会把「缺数据」算成「无差异」，
+	// 得出方向完全相反的结论（「池不是瓶颈」），而用例照样绿。
+	assertPoolABCovered(t, sides, samples, rounds)
+}
+
+// assertPoolABCovered 断言 A/B 两组都完成了预期轮次、且每条样本都带实测样本与生效的池配置。
+//
+// 不断言 RPS 数值（受宿主机负载影响，写死阈值会误报）；只挡「数据缺失被当成无差异」这一类假绿。
+func assertPoolABCovered(t *testing.T, sides []*poolABSide, samples []poolABSample, rounds int) {
+	t.Helper()
+	for _, side := range sides {
+		got := 0
+		for _, s := range samples {
+			if s.OpenConns != side.OpenConns {
+				continue
+			}
+			got++
+			if s.RPS <= 0 {
+				t.Fatalf("池=%d 的样本 RPS=%.1f（第 %d 轮）——该轮未测到有效吞吐",
+					side.OpenConns, s.RPS, s.Round)
+			}
+			// 池上限必须真的生效，否则两组其实是同一配置，结论反向。
+			if s.ObservedMaxOpen != side.OpenConns {
+				t.Fatalf("池=%d 的控制面自报上限为 %d——配置未生效，本组结论不可信",
+					side.OpenConns, s.ObservedMaxOpen)
+			}
+		}
+		if got == 0 {
+			t.Fatalf("池=%d 一组没有任何样本——A/B 对照缺一侧，结论无意义", side.OpenConns)
+		}
+	}
 }
 
 // startPoolABSide 起一个常驻控制面、注册虚拟 agent、构造两组负载集。

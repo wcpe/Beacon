@@ -162,6 +162,14 @@ type blobRangeRow struct {
 	IfRangeNote string `json:"ifRangeNote"`
 }
 
+// archiveDBNameFor 由主库文件名派生该用例独占的归档库名（如 beacon-blob.db → beacon-blob-archive）。
+//
+// 为什么要派生：sqlite 下归档库默认名固定为 beacon_archive、且与主库同目录，
+// 而 .tmp/loadtest/ 是多个用例共享的工作目录——不派生就会撞库（见调用点注释）。
+func archiveDBNameFor(mainDBName string) string {
+	return strings.TrimSuffix(mainDBName, ".db") + "-archive"
+}
+
 // blobEnv 是本用例的共享装配结果。
 type blobEnv struct {
 	cp          *harness.ControlPlane
@@ -280,7 +288,14 @@ func blobSetup(t *testing.T, adminPass, authSecret string, cfg blobSetupConfig) 
 		DBDriver: "sqlite", DBDSN: filepath.Join(workDir, cfg.DBName),
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: cfg.LogPrefix,
-		ExtraEnv:  map[string]string{"BEACON_LOG_LEVEL": cfg.LogLevel},
+		ExtraEnv: map[string]string{
+			"BEACON_LOG_LEVEL": cfg.LogLevel,
+			// 归档库默认名为 beacon_archive 且落在**与主库同目录**（这里是多用例共享的
+			// .tmp/loadtest/），而各用例的主库名互不相同。不显式派生的话，两个用例并行时
+			// 会撞同一个归档库文件（建表 / 迁移互相干扰，表现为难以复现的偶发失败）。
+			// 故按主库名派生，保证每个用例独占自己的归档库。
+			"BEACON_ARCHIVE_DATABASE": archiveDBNameFor(cfg.DBName),
+		},
 	}, controlPlaneStartAttempts)
 	harness.CleanupControlPlane(t, cp)
 	_, stderrPath := cp.LogPaths()

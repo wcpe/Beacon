@@ -206,6 +206,46 @@ func TestControlPlaneScaleComparison(t *testing.T) {
 	}
 	t.Logf("规模压测报告（Markdown）：%s", mdPath)
 	t.Logf("规模压测报告（JSON）：%s", jsonPath)
+
+	// 报告类用例必须有兜底断言，否则「测量全失败 → 报告是空表」也会绿：
+	// 本用例的结论被写进 PRD §5 的容量口径，一份空报告比没有报告更危险
+	// （它看起来像一份成功的测量结果）。这与 slow_client 曾经的失败模式同型。
+	assertScaleReportCovered(t, *rep, len(cfg.Sizes))
+}
+
+// assertScaleReportCovered 断言报告真的覆盖了每个规模与每个档位、且每个档位都测到了请求。
+//
+// 只断言「结构完整 + 有实测样本」，不断言具体数值：数值受宿主机负载影响（见 PRD 的宿主机口径），
+// 写死阈值会在不同机器上误报。这里要挡的是「报告是空的却当成通过」这一类假绿。
+func assertScaleReportCovered(t *testing.T, rep scaleReport, wantSizes int) {
+	t.Helper()
+	if len(rep.Runs) != wantSizes {
+		t.Fatalf("报告应覆盖 %d 个规模，实际 %d 个——有规模的测量整段缺失（报告不可信）",
+			wantSizes, len(rep.Runs))
+	}
+	for _, run := range rep.Runs {
+		if len(run.Points) == 0 {
+			t.Fatalf("规模 %d 一个档位都没测到——该规模的报告是空表", run.Scale)
+		}
+		if run.Registration.Succeeded != run.Scale {
+			t.Fatalf("规模 %d 注册应成功 %d 台，实际 %d 台（注册失败会让后续测量全部失真）",
+				run.Scale, run.Scale, run.Registration.Succeeded)
+		}
+		measured := 0
+		for _, p := range run.Points {
+			if p.Result == nil {
+				continue
+			}
+			if p.Result.TotalRequests == 0 {
+				t.Fatalf("规模 %d 的档位 %s（并发 %d）零请求——该档位的数字无意义",
+					run.Scale, p.Label, p.Concurrent)
+			}
+			measured++
+		}
+		if measured == 0 {
+			t.Fatalf("规模 %d 没有任何档位带实测样本——报告里的数字不是测出来的", run.Scale)
+		}
+	}
 }
 
 // runScaleOnce 在独立控制面进程 + 全新库上完成一个规模的注册与全部档位测量。
