@@ -107,6 +107,12 @@ jobs:
         with:
           version: v2.14.0
           args: ./...
+      # 与 ci.yml 同步：带 `e2e && loadtest` 标签的代码默认构建不编译（见 ci.yml 内注释），
+      # 需显式加标签做编译门禁，否则这类文件可编译不过而被合并。
+      - name: 编译检查（e2e / loadtest 构建标签）
+        run: |
+          go vet -tags e2e ./...
+          go vet -tags "e2e loadtest" ./...
       - name: 全量真实 MySQL 集成测试
         run: |
           go test -tags=integration -p 1 \
