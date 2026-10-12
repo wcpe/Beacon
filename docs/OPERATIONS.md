@@ -245,7 +245,9 @@ groups:
 | 请求-响应（只读） | `/admin/v1/system/status`、`/admin/v1/topology`、`/admin/v2/servers`、`/admin/v2/zone-tree`、`/beacon/v1/agent/heartbeat`、`/metrics` | 并发 → RPS / 分位数 / 错误率 |
 | 请求-响应（v2 数据面） | `/beacon/v2/agent/metrics/report`（成功码 **202**）、`/schedule/candidates`、`/schedule/decide` | 生产请求量最大的一面（1000 服每 5s 一批 ≈ 200 req/s，是心跳的 2 倍）；需真实建 namespace 并审批身份成 active |
 | 挂起型 | 长轮询 `/beacon/v1/agent/config/effective`、SSE `/beacon/v1/agent/stream` | **不用 RPS**（一挂 30s 是设计如此）：看服务端观测到的并发挂起数、唤醒时延、连接是否稳 |
-| 背压 | `/beacon/v2/agent/connections/batch` | spec「上报 p99 仅含队列入队耗时、队列满 429」是否可达（触到 429 才算验证了背压路径） |
+| 背压 | `/beacon/v2/agent/connections/batch`、交付 blob 上传 / 下载 | 429 是否真的可达（触到 429 才算验证了背压路径） |
+| 规模 | 同上，配合 `LOADTEST_AGENT_SERVERS` / `LOADTEST_REGISTER_CONCURRENCY` | 实例数增长时哪些端点退化、瓶颈在控制面还是在宿主机 |
+| 大文件 / 鉴权 / 慢客户端 | 交付 blob 下载、`/admin/v1/auth/login`、慢读客户端 | 流式性（RSS 是否随文件增长）、各鉴权路径的每请求成本、慢客户端是否占死 goroutine |
 
 **默认不压管理面写端点**：写操作逐条落审计，压出来的会是审计写入能力而非接口能力。确认要测写争用时设 `LOADTEST_ENABLE_WRITE_SCENARIOS=1`（会逐条落 `audit_log`，且用的是 `PUT /admin/v2/servers/{serverId}/tags`——admin 侧没有别的合适的幂等写端点）。
 
@@ -260,14 +262,33 @@ go test -tags "e2e loadtest" -timeout=40m -v -run '^TestLoad' ./apps/server/test
 | `LOADTEST_LEVEL_DURATION` | `30s` | 每档时长 |
 | `LOADTEST_SOAK_CONCURRENCY` | `32` | soak 阶段并发（取中间档） |
 | `LOADTEST_SOAK_DURATION` | `5m` | soak 时长；看长时漂移建议拉到 30m 以上 |
-| `LOADTEST_AGENT_SERVERS` | `64` | 虚拟 agent 数量（心跳场景的轮转池） |
+| `LOADTEST_AGENT_SERVERS` | `64` | 虚拟 agent 数量（心跳场景的轮转池）；规模压测设 `1000` 或更高 |
+| `LOADTEST_REGISTER_CONCURRENCY` | 空（=串行） | 虚拟 agent 注册并发度；**缺失或 `1` 时走原串行路径、行为逐字不变**。1000 台串行注册需 20~30s，设 16 后约 1.8s |
 | `LOADTEST_CP_LOG_LEVEL` | `WARN` | 控制面日志级别：压测期抑制逐请求访问日志，避免把 `.tmp` 写爆、也让磁盘 I/O 不混进结果（要完整访问日志时改 `INFO`） |
 | `LOADTEST_ENABLE_WRITE_SCENARIOS` | 空 | 置 `1` 才纳入写路径场景（默认不纳入，理由见上） |
-| `LOADTEST_INGEST_ROUNDS` / `_BATCH` / `_CONCURRENCY` | `200` / `200` / `16` | 上报通道背压探测规模；未触 429 不代表背压不存在，要触边界需继续加大 |
+| `LOADTEST_INGEST_ROUNDS` / `_BATCH` / `_CONCURRENCY` | `200` / `200` / `16` | 上报通道背压探测规模；**默认值触不到 429**，理由见下「队列按批计」 |
 
 冒烟可缩短档位与时长（`LOADTEST_LEVELS=1,4 LOADTEST_LEVEL_DURATION=5s LOADTEST_SOAK_DURATION=5s`）；跑完读 `.tmp/loadtest/` 下的报告，那是过程产物、不入库。压测结论与 §3.2 的 `beacon_http_request_duration_seconds` 同口径读（同样的路由模板口径、同样的「长轮询单列」原则）。Go 层热点另可用微基准量：`go test -run '^$' -bench=. ./apps/server/internal/merge/ ./apps/server/internal/service/`。
 
-**读报告前必须知道的两条局限**：① 数字受**宿主机负载**影响极大——同配置同代码，宿主机 load 15 时并发 32 可达 7066 RPS、load 36 时只有 4303 RPS，做对比要么固定宿主机负载，要么用「未改动端点漂移多少」当内部对照组；② 挂起探测的唤醒时延用的是 global 层新建配置项（走 notifier → Hub 唤醒该 namespace 全部 waiter），若唤醒语义落在窄 scope 上，唤醒条数会少于挂起数，以表格里的「唤醒返回」列为准。日表跨 UTC 00:00 的切换由 `go test ./apps/server/internal/store/ -run TestDailyTableRollover` 直接注入日期覆盖，不必等真午夜。
+**背压（429）怎么读**：控制面共 4 处返回 429，四类全部可达。最容易**确定性复现**的是交付数据面并发上限——热改 `delivery.upload-concurrency=1`（或 `download-concurrency=1`）后，一个请求占住额度、第二个即回 429，归还后立即恢复。上报队列则**极易误判**：
+
+- **队列按「批」计槽位，不按行**。`AsyncDailyWriter` 的 4096 有界队列，一个请求无论带 1 条还是 500 条事件都只占 **1 个槽位**。故「200 请求 × 200 事件」对队列的压力是 **4.9%** 而非 977%——差 200 倍。实测要填满需 **4000+ 个请求（约 200 万条事件）**，第 4339~4554 个请求首次回 429（略高于裸容量是因为 worker 一直在消费）。**没触到 429 不等于背压不存在。**
+- **队列深度没有指标暴露**：429 出现前运维从指标上看不到积压（只有「多次重试仍失败而丢弃」的计数）。容量本身是有界 channel，补一条 `len(queue)` gauge 成本极低。
+- 四类 429 的完整触发与恢复证据、以及单元级 / 真实链路两种证据的区分，见 `.tmp/loadtest/backpressure-429-report.md`（过程产物）。
+
+**规模怎么读**：1000 台规模下控制面**次线性**（无系统性拐点）——心跳与 v2 上报在 15.6 倍规模下保持率 **95%**，内存注册表扛得住；退化集中在 `GET /admin/v1/topology`，它**随实例数线性变贵**（实测 2.15µs/实例，64 台 p50 0.33ms / 8.9KB → 1000 台 2.35ms / 142KB）。**抬高 `max-open-conns` 不是吞吐的解法**：同二进制同规模 A/B（4 → 32）心跳 RPS 比值仅 **1.05x**，且池 32 时仍有 26.7 万次池等待——**池排队是现象不是根因**。容量数字与适用边界见 [PRD](PRD.md) §5「规模容量」。
+
+**慢客户端怎么读**：`httpx.StallWriter` 的「单次写 30s stall 上限」当前**未生效**（`statusWriter` 缺 `Unwrap()` 令 `SetWriteDeadline` 返回 `feature not supported` 且错误被丢弃，见 [PRD](PRD.md) §5 与 CHANGELOG「修复」节的记录）。在此之前，慢客户端可长期占住下载端点的 goroutine 与 FD；blob 下载另有 `delivery.download-concurrency`（默认 64）兜住并发，**file-sync 下载端点既无生效的 stall 上限也无并发上限**，风险最高。
+
+**读报告前必须知道的两条局限**：① 数字受**宿主机负载**影响极大——同配置同代码，宿主机 load 15 时并发 32 可达 7066 RPS、load 36 时只有 4303 RPS，做对比要么固定宿主机负载，要么用「未改动端点漂移多少」当内部对照组；② 挂起探测的唤醒时延用的是 global 层新建配置项（走 notifier → Hub 唤醒该 namespace 全部 waiter），若唤醒语义落在窄 scope 上，唤醒条数会少于挂起数，以表格里的「唤醒返回」列为准。
+
+**日表跨 UTC 00:00 的切换有两种覆盖，不可互替**：注入日期（`go test ./apps/server/internal/store/ -run TestDailyTableRollover`）覆盖「day 参数换了机制仍对」，秒级完成；**真实午夜**长跑覆盖「墙上时钟真的走到那一刻时生产写入路径仍对」，须真等——
+
+```bash
+go test -tags "e2e loadtest" -timeout=26h -v -run '^TestMidnightRolloverRealClock$' ./apps/server/test/loadtest/
+```
+
+耗时 ≈ 距下一个 UTC 00:00 的时长 + 前后各 3 分钟（最长约 24 小时），报告落 `.tmp/loadtest/midnight-rollover-*.md`。`MIDNIGHT_TARGET` 注入仅供冒烟，正式运行**必须留空**（注入模式下报告会显式标注、不产出真实午夜证据）。**为什么必须真等**：已实测 `LD_PRELOAD` 时钟垫片对本项目二进制无效——Go 经 vDSO / raw syscall 取时间、绕过 libc 的 `clock_gettime`，无法伪造进程时钟。多连接下的写锁竞争另由 `go test -race ./apps/server/internal/store/ -run TestDailyTableRolloverMultiConn` 覆盖（真实文件库 + 池 > 1，含「池确实多连接」的前置断言）。
 
 ## 4. 数据库备份与恢复（关键）
 > 数据库是**配置权威库**——丢失会导致全集群配置不可恢复。务必定期备份，并在隔离环境演练恢复。
