@@ -96,3 +96,55 @@ type recordingMetricsObserver struct {
 }
 
 func (o *recordingMetricsObserver) ObserveHTTP(_, _ string, _ int, _ float64) { o.calls++ }
+
+// flushRecorder 记录 Flush 调用次数，并实现 http.Flusher（形态对齐真实 *http.response）。
+type flushRecorder struct {
+	header  http.Header
+	flushes int
+}
+
+func (f *flushRecorder) Header() http.Header {
+	if f.header == nil {
+		f.header = http.Header{}
+	}
+	return f.header
+}
+func (f *flushRecorder) Write(p []byte) (int, error) { return len(p), nil }
+func (f *flushRecorder) WriteHeader(int)             {}
+func (f *flushRecorder) Flush()                      { f.flushes++ }
+
+// TestFlushSurvivesDoubleStatusWriter 锁定 Flush 能穿透「指标中间件 + 访问日志」双层包装。
+//
+// 为什么值得专门守：statusWriter 内嵌的是 http.ResponseWriter **接口**，不含 Flush，
+// 故它必须显式透传，否则 handler 的 `w.(http.Flusher)` 断言失败、SSE 端点直接 500
+// ——这是历史上真实发生过的事故（见 middleware.go 的 Flush 注释）。而生产链上是**两层**
+// statusWriter 串联（httpMetricsMiddleware 与 accessLog 各包一层），比单层更容易被改坏。
+//
+// 同时覆盖两条路径：handler 的直接类型断言（`w.(http.Flusher)`，三处 handler 在用），
+// 与标准库的 http.ResponseController（依赖 Unwrap，见上一条用例）。
+func TestFlushSurvivesDoubleStatusWriter(t *testing.T) {
+	rec := &flushRecorder{}
+	var assertedOK bool
+	var ctrlErr error
+
+	chain := httpMetricsMiddleware(&recordingMetricsObserver{})(accessLog(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			if f, ok := w.(http.Flusher); ok {
+				assertedOK = true
+				f.Flush()
+			}
+			ctrlErr = http.NewResponseController(w).Flush()
+		})))
+
+	chain.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/beacon/v1/agent/stream", nil))
+
+	if !assertedOK {
+		t.Fatal("handler 的 w.(http.Flusher) 断言失败——SSE 端点在中间件链后会 500（历史事故）")
+	}
+	if ctrlErr != nil {
+		t.Fatalf("ResponseController.Flush 应成功（依赖 Unwrap），实际：%v", ctrlErr)
+	}
+	if rec.flushes != 2 {
+		t.Fatalf("底层 Flush 应被调用 2 次（直接断言 1 次 + ResponseController 1 次），实际 %d 次", rec.flushes)
+	}
+}

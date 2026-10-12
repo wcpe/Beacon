@@ -4,6 +4,8 @@
 // 对照端点，量三件事：慢客户端能否拖垮服务、StallWriter 是否真的在 30s 后中断、无保护端点是否会被
 // 永久占住 goroutine。另外测长轮询 / SSE（它们刻意不设全局 WriteTimeout）。
 //
+// **平台前提：依赖 `/proc`（进程 status 与 net/tcp 采样），仅 Linux 可运行。**
+//
 // 保护面分布（grep 确认，非猜测）：
 //   - 有 StallWriter：internal/handler/delivery_stream_handler.go:98（交付 blob 下载）、
 //     internal/handler/file_sync_handler.go:310（多级灰度文件同步下载）、
