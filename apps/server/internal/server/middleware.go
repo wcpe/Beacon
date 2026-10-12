@@ -215,6 +215,21 @@ func (w *statusWriter) Flush() {
 	}
 }
 
+// Unwrap 暴露被包装的 ResponseWriter，供 http.ResponseController 沿包装链逐层下钻。
+//
+// 缺了它，`http.NewResponseController(w)` 在本层就断了：`SetWriteDeadline` /
+// `SetReadDeadline` / `Hijack` / `Flush` 等一律返回 `http.ErrNotSupported`
+// （错误文案 "feature not supported"）。这不是理论风险——httpx.StallWriter 正是靠
+// SetWriteDeadline 实现「单次写 30s stall 上限」的慢客户端保护，而它此前把该错误
+// 静默丢弃，于是防线从未真正建立（实测慢客户端挂满 75s 无一被中断）。
+//
+// 与上面 Flush 的关系：Flush 是「显式透传某个具体能力」，Unwrap 是「让标准库
+// 自己能找到底层 writer」——两者不可互替，且能力集合随 Go 版本增长（如
+// SetReadDeadline / Hijack / EnableFullDuplex），逐个透传必然漏，Unwrap 才是正解。
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // accessLog 输出中文访问日志。
 func accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -49,6 +49,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -112,6 +113,9 @@ type slowEnv struct {
 	adminToken string
 	pid        int
 	hostPort   string
+	// logPath 是控制面 stderr 日志路径。中断判定以服务端访问日志为准（原因见
+	// slowServerBlobDurations 的注释：大 blob 下客户端侧读不到 EOF/RST）。
+	logPath string
 }
 
 // slowSnapshot 是一次控制面进程状态快照。
@@ -162,8 +166,12 @@ type slowStallResult struct {
 	// DumpPath 是保持期内抓下的 goroutine 转储路径（StallWriter 失效时的现场）。
 	DumpPath string `json:"dumpPath"`
 	// WriteBlocked 是转储里卡在 net/http 响应写路径的 goroutine 数——StallWriter 失效的直接证据。
-	WriteBlocked int    `json:"writeBlocked"`
-	Note         string `json:"note"`
+	WriteBlocked int `json:"writeBlocked"`
+	// ServerDurationsMs 是服务端访问日志里该 sha 各次下载请求的耗时（毫秒）。
+	// 本探测的**主判据**：耗时 ≈ stall 窗口即证明写截止时间真的掐断了 handler。
+	// 客户端侧的 Broken/Survivors 在大 blob 下不可靠（原因见 slowServerBlobDurations）。
+	ServerDurationsMs []float64 `json:"serverDurationsMs"`
+	Note              string    `json:"note"`
 }
 
 // slowPlainResult 是「无保护端点慢客户端」的实测结果。
@@ -230,6 +238,19 @@ func TestSlowClientRealChain(t *testing.T) {
 	suspendedRes := slowProbeSuspended(t, env, hold)
 
 	slowReport(t, stallRes, plainRes, suspendedRes)
+
+	// 硬断言 StallWriter 真的在期望窗口内中断了慢客户端。
+	//
+	// 为什么必须硬断言（而不是只打印结论）：这条判据正是本轮缺陷的探测器——修复前
+	// statusWriter 缺 Unwrap() 令 SetWriteDeadline 静默失效，8/8 条慢连接挂满 75s
+	// 无一被中断。而当时本用例只把「未生效」写进报告、不做断言，于是**缺陷存在时它照样绿**，
+	// 这也正是该缺陷能潜伏至今的原因。结论类用例若不硬断言，就只是一份没人读的报表。
+	if !stallRes.StallDetected {
+		t.Fatalf("StallWriter 未在期望窗口（%s，容差 +%s）内中断全部慢客户端：%s\n"+
+			"这通常意味着中间件链上的 ResponseWriter 包装器未实现 Unwrap() http.ResponseWriter，"+
+			"令 http.ResponseController.SetWriteDeadline 返回 feature not supported",
+			slowStallWindow, slowStallTolerance, stallRes.Note)
+	}
 }
 
 // ---- 前置装配 ----
@@ -265,7 +286,9 @@ func slowSetup(t *testing.T, adminPass, authSecret string, blobMiB int) *slowEnv
 	if !strings.Contains(hostPort, ":") {
 		hostPort += ":80"
 	}
-	return &slowEnv{blob: env, baseURL: env.baseURL, adminToken: env.adminToken, pid: env.pid, hostPort: hostPort}
+	_, logPath := env.cp.LogPaths()
+	return &slowEnv{blob: env, baseURL: env.baseURL, adminToken: env.adminToken, pid: env.pid,
+		hostPort: hostPort, logPath: logPath}
 }
 
 // ---- 探测 1：blob 下载端点（有 StallWriter）----
@@ -334,6 +357,10 @@ func slowProbeStallWriter(t *testing.T, env *slowEnv, blobMiB, clients int, hold
 	res.GoroutinesPeak, res.FDsPeak = peakGoroutines, peakFDs
 	res.WriteBlocked = writeBlocked
 
+	// 服务端侧中断证据：访问日志里该 sha 的下载请求耗时。
+	// 这是本探测的主判据（客户端侧在大 blob 下读不到 EOF/RST，原因见 slowServerBlobDurations）。
+	res.ServerDurationsMs = slowServerBlobDurations(t, env.logPath, sha)
+
 	// 收尾：统计各连接状态。
 	breaks := make([]float64, 0, clients)
 	var totalBytes int64
@@ -372,28 +399,47 @@ func slowProbeStallWriter(t *testing.T, env *slowEnv, blobMiB, clients int, hold
 	after := slowTakeSnapshot(t, env, "blob 慢客户端·收尾后")
 	res.GoroutinesAfter, res.FDsAfter = after.Goroutines, after.OpenFDs
 
-	// 核心判据：全部连接都被中断，且最早中断时刻落在 [30s, 30s+容差] 内。
-	res.StallDetected = res.Survivors == 0 && res.Broken == clients &&
-		res.FirstBreakMs >= float64(slowStallWindow.Milliseconds()) &&
-		res.FirstBreakMs <= float64(slowStallWindow.Milliseconds()+slowStallTolerance.Milliseconds())
+	// 核心判据：以**服务端访问日志**为准——每条下载请求都在 [stall, stall+容差] 内返回。
+	//
+	// 为什么不用客户端侧的 Survivors/Broken：服务端在阻塞前已把约 16 MiB 写进内核收发缓冲，
+	// 客户端要先排空这 16 MiB 才可能读到 EOF/RST，而探测刻意只读 1 字节（否则会给服务端
+	// 持续「腾地方」使 Write 永不阻塞满窗口）。两者叠加使客户端侧在大 blob 下**结构性地**
+	// 观测不到中断——用它判据会把「保护已生效」误判成「未生效」。
+	// 服务端日志没有这个局限：accessLog 在 handler 返回后记录真实耗时，是 ground truth。
+	window := float64(slowStallWindow.Milliseconds())
+	tolerance := float64(slowStallTolerance.Milliseconds())
+	res.StallDetected = len(res.ServerDurationsMs) == clients
+	if res.StallDetected {
+		for _, ms := range res.ServerDurationsMs {
+			if ms < window || ms > window+tolerance {
+				res.StallDetected = false
+				break
+			}
+		}
+	}
 	res.DumpPath = dumpPath
 	switch {
-	case res.Survivors > 0:
-		res.Note = fmt.Sprintf("StallWriter 未生效：%d/%d 条连接在 %s 后仍未被中断（期望全部在 %s 后中断）；"+
-			"goroutine 转储证实 %d 个 goroutine 卡在 net/http 响应写路径（转储：%s）",
-			res.Survivors, clients, hold, slowStallWindow, res.WriteBlocked, res.DumpPath)
-	case res.FirstBreakMs < float64(slowStallWindow.Milliseconds()):
-		res.Note = fmt.Sprintf("中断时刻 %.0fms 早于期望窗口 %s（StallWriter 窗口可能被调小）",
-			res.FirstBreakMs, slowStallWindow)
-	case res.FirstBreakMs > float64(slowStallWindow.Milliseconds()+slowStallTolerance.Milliseconds()):
-		res.Note = fmt.Sprintf("中断时刻 %.0fms 显著晚于期望窗口 %s+%s",
-			res.FirstBreakMs, slowStallWindow, slowStallTolerance)
+	case len(res.ServerDurationsMs) == 0:
+		res.Note = fmt.Sprintf("服务端日志里没有该 sha 的下载请求记录（日志：%s）——无法判定中断，请确认控制面日志级别为 INFO", env.logPath)
+	case len(res.ServerDurationsMs) < clients:
+		res.Note = fmt.Sprintf("服务端只记录到 %d/%d 条下载请求（期望 %d 条）——handler 可能仍未返回",
+			len(res.ServerDurationsMs), clients, clients)
+	case !res.StallDetected:
+		res.Note = fmt.Sprintf("服务端下载耗时不落在期望窗口 [%s, %s+%s]：实测 %v",
+			slowStallWindow, slowStallWindow, slowStallTolerance, res.ServerDurationsMs)
 	default:
-		res.Note = fmt.Sprintf("StallWriter 在期望窗口内中断了全部 %d 条连接（最早 %.0fms）", clients, res.FirstBreakMs)
+		res.Note = fmt.Sprintf("StallWriter 在期望窗口内掐断了全部 %d 条慢客户端下载（服务端耗时 %.0f~%.0fms，期望窗口 %s）",
+			clients, minFloat(res.ServerDurationsMs), maxFloat(res.ServerDurationsMs), slowStallWindow)
 	}
-	t.Logf("blob 慢客户端结果：中断 %d/%d，最早 %.0fms，中位 %.0fms，最晚 %.0fms；"+
-		"goroutines %.0f→%.0f→%.0f，fds %d→%d→%d",
-		res.Broken, clients, res.FirstBreakMs, res.MedianBreakMs, res.LastBreakMs,
+	// 客户端侧观测仅作诊断（大 blob 下结构性读不到中断，不代表保护未生效）。
+	if res.Survivors > 0 {
+		res.Note += fmt.Sprintf("；客户端侧 %d/%d 条在 %s 内未读到 EOF/RST（大 blob 下已写入内核缓冲的数据远超读取量，属预期）",
+			res.Survivors, clients, hold)
+	}
+	t.Logf("blob 慢客户端结果（服务端日志判据）：记录到 %d/%d 条下载，耗时 %v；"+
+		"客户端侧中断 %d/%d；goroutines %.0f→%.0f→%.0f，fds %d→%d→%d",
+		len(res.ServerDurationsMs), clients, res.ServerDurationsMs,
+		res.Broken, clients,
 		res.GoroutinesBefore, res.GoroutinesPeak, res.GoroutinesAfter,
 		res.FDsBefore, res.FDsPeak, res.FDsAfter)
 	return res
@@ -836,6 +882,84 @@ func slowReadResponseHeader(reader *bufio.Reader, out *slowConn) error {
 // 等于给服务端持续「腾地方」，它的 Write 永远不会阻塞满 30s —— 实测表现为 8 条连接 0 中断。
 // 每次只读 1 字节则释放的窗口可忽略（服务端一次 Write 是 32KiB，1 字节不够它完成），
 // 而连接真被服务端放弃时 Read 会立刻返回 EOF / 错误，仍能精确捕获中断时刻。
+// minFloat / maxFloat 取浮点切片的最小 / 最大值（仅用于报告展示，空切片返回 0）。
+func minFloat(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	out := xs[0]
+	for _, x := range xs[1:] {
+		if x < out {
+			out = x
+		}
+	}
+	return out
+}
+
+func maxFloat(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	out := xs[0]
+	for _, x := range xs[1:] {
+		if x > out {
+			out = x
+		}
+	}
+	return out
+}
+
+// slowServerBlobDurations 从控制面访问日志中读出该 sha 的 blob 下载请求耗时（毫秒）。
+//
+// 为什么用服务端日志而不是客户端读：本探测里服务端在阻塞前已把约 16 MiB 写进内核收发缓冲
+// （tcp_wmem/tcp_rmem 上限各 16 MiB），客户端若要靠 Read 读到 EOF/RST，必须先排空这 16 MiB——
+// 而探测刻意只读 1 字节以免给服务端「腾地方」，于是 75s 内读不到几百字节，**客户端侧永远观测不到中断**。
+// 这是探针在 64 MiB 体量下的固有局限，不是服务端没放弃。
+//
+// 访问日志是服务端自己的记录：accessLog 在 handler 返回后写一条带「耗时」的日志，
+// 故「耗时 ≈ stall 窗口」即直接证明写截止时间真的掐断了 handler。
+func slowServerBlobDurations(t *testing.T, logPath, sha string) []float64 {
+	t.Helper()
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Logf("读控制面日志失败（%s）：%v", logPath, err)
+		return nil
+	}
+	var out []float64
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.Contains(line, "方法=GET") || !strings.Contains(line, "blobs/"+sha) {
+			continue
+		}
+		// 形如：… 耗时=30.011938728s …
+		i := strings.Index(line, "耗时=")
+		if i < 0 {
+			continue
+		}
+		rest := line[i+len("耗时="):]
+		if j := strings.IndexAny(rest, " \t"); j >= 0 {
+			rest = rest[:j]
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(rest))
+		if err != nil {
+			continue
+		}
+		out = append(out, float64(d.Microseconds())/1000.0)
+	}
+	return out
+}
+
+// slowPollBroken 探测每条连接是否已被服务端放弃。
+//
+// 判据是**读**（1 字节）：服务端中止连接时可能是 FIN（客户端进 CLOSE_WAIT）也可能是 RST
+// （socket 直接从 /proc 消失、Read 返回 ECONNRESET），Read 对两者都能立刻报错，是唯一通用判据。
+//
+// 只读 1 字节的原因：每次轮询若把服务端刚写进内核缓冲的数据抽走，等于持续给它「腾地方」，
+// 它的 Write 永远不会阻塞满 stall 窗口——那样测出的「没中断」是探针自己造成的假象
+// （首版用 32KiB 缓冲，实测 8 条连接 0 中断）。
+//
+// 局限（已在 slowServerBlobDurations 说明）：大 blob 下服务端已写入内核缓冲的数据远超
+// 客户端读取量，客户端侧可能整段保持期都读不到 EOF/RST，故中断判定以服务端日志为准，
+// 本函数作为辅助信号。
 func slowPollBroken(conns []*slowConn) {
 	var buf [1]byte
 	for _, c := range conns {
@@ -852,12 +976,73 @@ func slowPollBroken(conns []*slowConn) {
 			continue
 		}
 		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			// 读超时＝服务端仍在写或仍在阻塞（未放弃），继续观测。
 			continue
 		}
-		// 非超时错误（EOF / 连接重置）：服务端已放弃这条连接。
+		// 非超时错误（EOF / RST / 连接重置）：服务端已放弃这条连接。
 		c.broken = true
 		c.brokenAt = time.Now()
 	}
+}
+
+// serverClosed 是辅助判据：内核层面已收到对端 FIN（CLOSE_WAIT 等）。
+// 用于区分「服务端发了 FIN」与「服务端发了 RST」，供报告诊断。
+func (c *slowConn) serverClosed() bool {
+	tc, ok := c.conn.(*net.TCPConn)
+	if !ok {
+		return false
+	}
+	la, ok := tc.LocalAddr().(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	ra, ok := tc.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	return slowProcNetHasClosedState(la.Port, ra.Port)
+}
+
+// slowProcNetHasClosedState 在 /proc/net/tcp[6] 中查找该四元组，判断对端是否已发 FIN。
+// 状态码：08=CLOSE_WAIT（收到 FIN）、0B=CLOSING、09=LAST_ACK、06=TIME_WAIT、07=CLOSE。
+func slowProcNetHasClosedState(localPort, remotePort int) bool {
+	closedStates := map[string]struct{}{
+		"08": {}, "0B": {}, "09": {}, "06": {}, "07": {},
+	}
+	for _, path := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			fields := strings.Fields(sc.Text())
+			if len(fields) < 4 || fields[0] == "sl" {
+				continue
+			}
+			if slowPortOfHexAddr(fields[1]) == localPort && slowPortOfHexAddr(fields[2]) == remotePort {
+				state := strings.ToUpper(fields[3])
+				_, hit := closedStates[state]
+				_ = f.Close()
+				return hit
+			}
+		}
+		_ = f.Close()
+	}
+	return false
+}
+
+// slowPortOfHexAddr 从 /proc/net/tcp 的 "0100007F:1F90" 形式地址中取端口。
+func slowPortOfHexAddr(s string) int {
+	i := strings.LastIndex(s, ":")
+	if i < 0 {
+		return -1
+	}
+	p, err := strconv.ParseInt(s[i+1:], 16, 32)
+	if err != nil {
+		return -1
+	}
+	return int(p)
 }
 
 // slowAllBroken 判断是否全部连接都已被服务端放弃。
