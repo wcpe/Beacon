@@ -61,7 +61,7 @@ func seedEquivalenceRegistry(t *testing.T, reg *runtime.Registry) {
 		inst := &runtime.Instance{
 			Namespace: ns, ServerID: id, Role: role,
 			ResolvedGroup: "g1", ResolvedZone: "z1",
-			Address: "127.0.0.1:20000",
+			Address:  "127.0.0.1:20000",
 			Metadata: map[string]string{"k": "v"},
 		}
 		if _, err := reg.Register(inst, time.Minute, now); err != nil {

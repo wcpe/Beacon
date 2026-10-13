@@ -276,7 +276,7 @@ go test -tags "e2e loadtest" -timeout=40m -v -run '^TestLoad' ./apps/server/test
 - **队列深度没有指标暴露**：429 出现前运维从指标上看不到积压（只有「多次重试仍失败而丢弃」的计数）。容量本身是有界 channel，补一条 `len(queue)` gauge 成本极低。
 - 四类 429 的完整触发与恢复证据、以及单元级 / 真实链路两种证据的区分，见 `.tmp/loadtest/backpressure-429-report.md`（过程产物）。
 
-**规模怎么读**：1000 台规模下控制面**次线性**（无系统性拐点）——心跳与 v2 上报在 15.6 倍规模下保持率 **95%**，内存注册表扛得住；退化集中在 `GET /admin/v1/topology`，它**随实例数线性变贵**（实测 2.15µs/实例，64 台 p50 0.33ms / 8.9KB → 1000 台 2.35ms / 142KB）。**抬高 `max-open-conns` 不是吞吐的解法**：同二进制同规模 A/B（4 → 32）心跳 RPS 比值仅 **1.05x**，且池 32 时仍有 26.7 万次池等待——**池排队是现象不是根因**。容量数字与适用边界见 [PRD](PRD.md) §5「规模容量」。
+**规模怎么读**：1000 台规模下控制面**次线性**（无系统性拐点）——心跳与 v2 上报在 15.6 倍规模下保持率 **95%**，内存注册表扛得住；退化集中在 `GET /admin/v1/topology`，它**随实例数线性变贵**（实测 2.15µs/实例，64 台 p50 0.33ms / 8.9KB → 1000 台 2.35ms / 142KB）。**抬高 `max-open-conns` 不是吞吐的解法**：同二进制同规模 A/B（4 → 32）心跳 RPS 比值仅 **1.05x**，且池 32 时仍有 26.7 万次池等待——**池排队是现象不是根因**。容量数字与适用边界见内部文档 `PRD.md` §5「规模容量」（该文档不进文档站，故此处不写成链接）。
 
 **慢客户端怎么读**：`httpx.StallWriter` 提供「单次写 30s stall 上限」——持续在写不受限，仅当客户端彻底卡住（30s 内一次写都完不成）才中断连接。它依赖 `http.ResponseController.SetWriteDeadline` 沿 ResponseWriter 包装链下钻，故**中间件链上任何包装器都必须实现 `Unwrap() http.ResponseWriter`**，否则 deadline 设不上、防线静默失效（2026-10-12 实测发现并修复了 `statusWriter` 的这个缺口，见 CHANGELOG「修复」节；`stall.go` 现已在不支持时记 WARN，便于再次暴露）。覆盖三处下载端点：delivery blob、file-sync、embedweb；blob 下载另有 `delivery.download-concurrency`（默认 64）兜住并发，**file-sync 下载端点只有 stall 这一道防线**。
 
