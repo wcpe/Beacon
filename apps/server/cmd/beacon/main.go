@@ -811,21 +811,8 @@ func run() error {
 		IdleTimeout: 120 * time.Second,
 	}
 
-	// 抓取端点独立监听（见 ADR-0090）：与业务主端口分离，使暴露面可单独收敛。
-	// 默认 127.0.0.1:8849 = 仅本机可达；listen-addr 置空即完全不启动该端点。
-	// 刻意不挂在主路由上：主端口默认全网卡绑定且承载管理台与 agent 数据面，
-	// 挂在其上等于「主端口可达即可匿名读到组织拓扑与容量画像」，无法单独收紧。
-	var metricsSrv *http.Server
-	if addr := strings.TrimSpace(cfg.MetricsEndpoint.ListenAddr); addr != "" {
-		metricsSrv = &http.Server{
-			Addr:              addr,
-			Handler:           metricsSet.EndpointHandler(cfg.MetricsEndpoint.BearerToken),
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			// 抓取是短请求（返回一次文本快照即结束），无长连接与 SSE，故可安全设 IdleTimeout。
-			IdleTimeout: 120 * time.Second,
-		}
-	}
+	// 抓取端点独立监听（见 ADR-0090）。构造细节见 newMetricsServer。
+	metricsSrv := newMetricsServer(cfg.MetricsEndpoint, metricsSet)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -834,9 +821,7 @@ func run() error {
 	// SSE / 长轮询等长连接据 r.Context() 即时退出、连接随之 drain，Shutdown 不必干等到 35s 超时（"关不掉"观感）。
 	srv.BaseContext = func(net.Listener) context.Context { return ctx }
 	// 抓取端点同样挂关停 ctx：关停时在途抓取即时取消，不必等 Shutdown 超时。
-	if metricsSrv != nil {
-		metricsSrv.BaseContext = func(net.Listener) context.Context { return ctx }
-	}
+	setBaseContext(ctx, metricsSrv)
 	// 异步在线更新下载挂到关停信号 ctx（fix-b）：Ctrl+C / 关停时取消进行中的下载，下载不再脱离进程生命周期。
 	updateAPIService.SetBaseContext(ctx)
 
@@ -899,17 +884,8 @@ func run() error {
 			errCh <- err
 		}
 	}()
-	// 抓取端点监听（见 ADR-0090）。绑定失败必须与主服务同等对待、进 errCh 终止进程：
-	// 静默降级会让「以为在抓、实际没在抓」持续到有人发现看板没数据，比直接启动失败更难排查。
-	if metricsSrv != nil {
-		go func() {
-			slog.Info("抓取端点已就绪", "地址", metricsSrv.Addr,
-				"鉴权", cfg.MetricsEndpoint.BearerToken != "")
-			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				errCh <- fmt.Errorf("抓取端点监听失败（地址 %s）: %w", metricsSrv.Addr, err)
-			}
-		}()
-	}
+	// 抓取端点监听（见 ADR-0090）：与主服务同时起，错误一并进 errCh。详见 serveMetricsEndpoint。
+	serveMetricsEndpoint(metricsSrv, cfg.MetricsEndpoint.BearerToken != "", errCh)
 
 	select {
 	case <-ctx.Done():
@@ -973,6 +949,49 @@ func shutdownAll(ctx context.Context, srv, metricsSrv *http.Server) error {
 		firstErr = err
 	}
 	return firstErr
+}
+
+// newMetricsServer 按配置构造抓取端点的独立监听器；listen-addr 为空时返回 nil（表示不启动该端点）。
+//
+// 为什么抓取端点要与业务主端口分离：主端口默认 `:8848` 是全网卡绑定且承载管理台与 agent 数据面，
+// 挂在其上等于「主端口可达即可匿名读到组织拓扑与容量画像」，且无法单独收敛。独立监听后
+// 默认只绑回环，暴露面收敛成一个可单独收紧的地址（见 ADR-0090）。
+func newMetricsServer(cfg config.MetricsEndpointConfig, m *metrics.Metrics) *http.Server {
+	addr := strings.TrimSpace(cfg.ListenAddr)
+	if addr == "" {
+		return nil
+	}
+	return &http.Server{
+		Addr:              addr,
+		Handler:           m.EndpointHandler(cfg.BearerToken),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// 抓取是短请求（返回一次文本快照即结束），无长连接与 SSE，故可安全设 IdleTimeout。
+		IdleTimeout: 120 * time.Second,
+	}
+}
+
+// setBaseContext 给监听器挂关停信号 ctx（nil 监听器直接跳过）。
+func setBaseContext(ctx context.Context, srv *http.Server) {
+	if srv != nil {
+		srv.BaseContext = func(net.Listener) context.Context { return ctx }
+	}
+}
+
+// serveMetricsEndpoint 异步拉起抓取端点监听（nil 即不启动）。
+//
+// 绑定失败必须与主服务同等对待、进 errCh 终止进程：静默降级会让「以为在抓、实际没在抓」
+// 持续到有人发现看板没数据，比直接启动失败更难排查。
+func serveMetricsEndpoint(srv *http.Server, authEnabled bool, errCh chan<- error) {
+	if srv == nil {
+		return
+	}
+	go func() {
+		slog.Info("抓取端点已就绪", "地址", srv.Addr, "鉴权", authEnabled)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("抓取端点监听失败（地址 %s）: %w", srv.Addr, err)
+		}
+	}()
 }
 
 // openArchiveConn 建立归档库连接（FR-151，见 ADR-0066）：不可达时 WARN + 返回 nil 连接，
