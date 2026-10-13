@@ -206,6 +206,8 @@ metrics-endpoint:
 | `beacon_self_commands` | gauge | `status`（pending / fetched / ready / done / failed / expired） | 命令队列深度。**429 背压出现之前唯一的积压信号** |
 | `beacon_self_metric_write_discarded_total` | counter | — | 指标异步写入累计丢弃行数（多次重试仍失败）。**非零即代表数据已丢失**，最该告警的一类 |
 | `beacon_self_commands_snapshot_timestamp_seconds` | gauge | — | 命令队列计数缓存最后一次成功刷新的 Unix 秒（0 = 从未成功） |
+| `beacon_self_write_queue_depth` | gauge | `route`（metric_sample / health_snapshot / conn_event / message_trace / sched_decision / mcp_invocation） | 异步日表写入通道各路由的当前队列深度。**429 背压出现前唯一的预警信号**——此前运维只能在数据已被丢弃后才知道出过问题 |
+| `beacon_self_write_queue_capacity` | gauge | — | 各路由队列容量（当前 4096）。与 depth 相除即水位占比 |
 
 > **命令队列深度是 15 秒级的缓存值，不是抓取时现查**：它源自一次数据库 `GROUP BY`，而抓取端点默认无鉴权且不限流——若在抓取时查库，等于让任何能访问该端口的人按任意频率驱动数据库查询。故该值由后台每 15s 刷新一次；其余自身健康指标（连接池 / 长轮询 / 丢弃计数）都是进程内读取，抓取时现取。
 >
@@ -354,6 +356,14 @@ groups:
         for: 5m
         labels: { severity: warning }
         annotations: { summary: "控制面自身健康采集已陈旧 {{ $value | printf \"%.0f\" }} 秒（后台刷新可能已停）" }
+      # 上报写入队列积压：429 背压出现**之前**唯一的预警信号。
+      # 水位取 50%（容量 4096 即 2048）：留一半余量给突发，避免刚好卡在 429 边缘才报。
+      # 用 max by (route) 逐路由判：某一路由积压不该被其他路由的空闲掩盖。
+      - alert: BeaconWriteQueueBacklog
+        expr: max by (route) (beacon_self_write_queue_depth) / beacon_self_write_queue_capacity > 0.5
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "控制面写入队列积压（route={{ $labels.route }} 水位 {{ $value | printf \"%.0f%%\" }}），可能即将触发 429 背压" }
 ```
 
 ### 3.3 控制面压测入口（HTTP 延迟 / 吞吐基线）
@@ -395,7 +405,7 @@ go test -tags "e2e loadtest" -timeout=40m -v -run '^TestLoad' ./apps/server/test
 **背压（429）怎么读**：控制面共 4 处返回 429，四类全部可达。最容易**确定性复现**的是交付数据面并发上限——热改 `delivery.upload-concurrency=1`（或 `download-concurrency=1`）后，一个请求占住额度、第二个即回 429，归还后立即恢复。上报队列则**极易误判**：
 
 - **队列按「批」计槽位，不按行**。`AsyncDailyWriter` 的 4096 有界队列，一个请求无论带 1 条还是 500 条事件都只占 **1 个槽位**。故「200 请求 × 200 事件」对队列的压力是 **4.9%** 而非 977%——差 200 倍。实测要填满需 **4000+ 个请求（约 200 万条事件）**，第 4339~4554 个请求首次回 429（略高于裸容量是因为 worker 一直在消费）。**没触到 429 不等于背压不存在。**
-- **上报写入队列的深度没有指标暴露**：429 出现前运维从指标上看不到积压（只有「多次重试仍失败而丢弃」的计数）。容量本身是有界 channel，补一条 `len(queue)` gauge 成本极低。注意别与 `beacon_self_commands` 混淆——那一条是**命令队列**（控制面下发给 agent 的命令），与本处讨论的**指标上报写入队列**是两个不同的队列，后者目前仍无深度指标。
+- **上报写入队列的深度已有指标**（`beacon_self_write_queue_depth{route}`，见 §3.2 指标表）：429 出现前即可看到积压水位，不必再等「多次重试仍失败而丢弃」的计数（那时数据已经丢了）。注意别与 `beacon_self_commands` 混淆——那一条是**命令队列**（控制面下发给 agent 的命令），与本处的**指标上报写入队列**是两个不同的队列。
 - 四类 429 的完整触发与恢复证据、以及单元级 / 真实链路两种证据的区分，见 `.tmp/loadtest/backpressure-429-report.md`（过程产物）。
 
 **规模怎么读**：1000 台规模下控制面**次线性**（无系统性拐点）——心跳与 v2 上报在 15.6 倍规模下保持率 **95%**，内存注册表扛得住；退化集中在 `GET /admin/v1/topology`，它**随实例数线性变贵**（实测 2.15µs/实例，64 台 p50 0.33ms / 8.9KB → 1000 台 2.35ms / 142KB）。**抬高 `max-open-conns` 不是吞吐的解法**：同二进制同规模 A/B（4 → 32）心跳 RPS 比值仅 **1.05x**，且池 32 时仍有 26.7 万次池等待——**池排队是现象不是根因**。容量数字与适用边界见内部文档 `PRD.md` §5「规模容量」（该文档不进文档站，故此处不写成链接）。

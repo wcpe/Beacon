@@ -177,3 +177,65 @@ func TestWriterFlushSuccessNoDiscard(t *testing.T) {
 		t.Fatalf("应 flush 5 行，实际 %d", got)
 	}
 }
+
+// TestWriterQueueDepths 校验队列深度按路由如实上报，且能反映真实的积压水位。
+//
+// 为什么单锁这条：队列深度是 429 背压出现**之前**唯一的预警信号（此前运维只能在数据
+// 已被丢弃后才知道出过问题）。若它读数失真（恒 0 / 漏报某路由 / 把容量当深度），
+// 告警就永远不会触发，等于这个指标白加。
+func TestWriterQueueDepths(t *testing.T) {
+	w := NewAsyncDailyWriter()
+	// 不启动 worker：入队后不会消费，深度可稳定观察。
+	RegisterFlusher(w, RouteKindMetricSample, (&fakeDailyFlusher{}).FlushDaily)
+	RegisterFlusher(w, RouteKindHealthSnapshot, (&fakeDailyFlusher{}).FlushDaily)
+
+	// 初始应全为 0（而不是缺键）——缺键会让看板上的 series 不存在，无法区分"空"与"没采到"。
+	depths := w.QueueDepths()
+	if len(depths) != 2 {
+		t.Fatalf("应上报全部已注册路由（2 个），实际 %d 个：%v", len(depths), depths)
+	}
+	for route, d := range depths {
+		if d != 0 {
+			t.Fatalf("路由 %s 初始深度应为 0，实际 %d", route, d)
+		}
+	}
+
+	// 往一个路由压 3 批，另一个不压：验证按路由分别计数、不串扰。
+	for i := 0; i < 3; i++ {
+		if !EnqueueRows(w, RouteKindMetricSample, []model.MetricSampleV2{{ServerID: "s1"}}) {
+			t.Fatalf("第 %d 次入队应成功", i+1)
+		}
+	}
+	depths = w.QueueDepths()
+	if depths[RouteKindMetricSample] != 3 {
+		t.Fatalf("指标路由深度应为 3，实际 %d", depths[RouteKindMetricSample])
+	}
+	if depths[RouteKindHealthSnapshot] != 0 {
+		t.Fatalf("未入队的路由深度应保持 0，实际 %d（路由间不应串扰）", depths[RouteKindHealthSnapshot])
+	}
+
+	// 容量：应等于工程参数，且与深度分离（把容量误当深度会让水位恒 100%）。
+	if got := w.QueueCapacity(); got != w.queueCapacity {
+		t.Fatalf("容量应为 %d，实际 %d", w.queueCapacity, got)
+	}
+	if w.QueueDepths()[RouteKindMetricSample] == w.QueueCapacity() {
+		t.Fatal("深度不应等于容量（两者混淆会让水位判据恒满）")
+	}
+}
+
+// TestWriterQueueDepthsUnregisteredRoute 校验未注册路由不出现在深度上报里。
+//
+// 语义：上报的是「实际存在的队列」。若为未注册路由凭空补 0，看板上会多出永不消费的
+// 假 series，反而掩盖真实的路由清单。
+func TestWriterQueueDepthsUnregisteredRoute(t *testing.T) {
+	w := NewAsyncDailyWriter()
+	RegisterFlusher(w, RouteKindMetricSample, (&fakeDailyFlusher{}).FlushDaily)
+
+	depths := w.QueueDepths()
+	if _, ok := depths["no_such_route"]; ok {
+		t.Fatalf("未注册路由不应出现在深度上报里：%v", depths)
+	}
+	if len(depths) != 1 {
+		t.Fatalf("应只上报 1 个已注册路由，实际 %v", depths)
+	}
+}

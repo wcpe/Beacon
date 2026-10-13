@@ -376,7 +376,10 @@ type serverMetrics struct {
 	SelfMetricWriteDiscarded int64
 	SelfCommandPending       int64
 	SelfCommandSnapshotUnix  float64
-	Error                    string
+	// 写入队列深度（按路由）：429 背压出现前唯一的预警信号。
+	SelfWriteQueueDepth    map[string]int64
+	SelfWriteQueueCapacity int64
+	Error                  string
 }
 
 // routeHistogramQuantile 返回指定路由的服务端直方图分位数（毫秒）。样本不足返回 0。
@@ -508,12 +511,14 @@ func fetchServerMetrics(ctx context.Context, client *http.Client, metricsBase st
 		rssMetric        = "process_resident_memory_bytes"
 		cpuMetric        = "process_cpu_seconds_total"
 		// 控制面自身健康（ADR-0091）：这些是本次压测要验证的新指标。
-		selfWaitCountMetric = "beacon_self_db_pool_wait_total"
-		selfWaitDurMetric   = "beacon_self_db_pool_wait_duration_seconds_total"
-		selfInUseMetric     = "beacon_self_db_pool_connections"
-		selfDiscardedMetric = "beacon_self_metric_write_discarded_total"
-		selfCommandsMetric  = "beacon_self_commands"
-		selfCmdSnapMetric   = "beacon_self_commands_snapshot_timestamp_seconds"
+		selfWaitCountMetric  = "beacon_self_db_pool_wait_total"
+		selfWaitDurMetric    = "beacon_self_db_pool_wait_duration_seconds_total"
+		selfInUseMetric      = "beacon_self_db_pool_connections"
+		selfDiscardedMetric  = "beacon_self_metric_write_discarded_total"
+		selfCommandsMetric   = "beacon_self_commands"
+		selfCmdSnapMetric    = "beacon_self_commands_snapshot_timestamp_seconds"
+		selfQueueDepthMetric = "beacon_self_write_queue_depth"
+		selfQueueCapMetric   = "beacon_self_write_queue_capacity"
 	)
 	// buckets 先按路由收集 (上界 → 累积值)，最后统一排序，避免依赖 /metrics 的输出顺序。
 	buckets := map[string]map[float64]int64{}
@@ -553,6 +558,13 @@ func fetchServerMetrics(ctx context.Context, client *http.Client, metricsBase st
 			}
 		case selfCmdSnapMetric:
 			out.SelfCommandSnapshotUnix = value
+		case selfQueueDepthMetric:
+			if out.SelfWriteQueueDepth == nil {
+				out.SelfWriteQueueDepth = map[string]int64{}
+			}
+			out.SelfWriteQueueDepth[labelValue(labels, "route")] = int64(value)
+		case selfQueueCapMetric:
+			out.SelfWriteQueueCapacity = int64(value)
 		case durationMetric + "_bucket":
 			route := labelValue(labels, "route")
 			upper, err := strconv.ParseFloat(labelValue(labels, "le"), 64)

@@ -31,6 +31,8 @@
 | `beacon_self_commands` | gauge | `status` | 命令队列深度 |
 | `beacon_self_metric_write_discarded_total` | counter | — | 指标异步写入累计丢弃行数 |
 | `beacon_self_commands_snapshot_timestamp_seconds` | gauge | — | 命令队列缓存最后一次成功刷新的 Unix 秒 |
+| `beacon_self_write_queue_depth` | gauge | `route` | 异步日表写入通道各路由的队列深度（429 背压出现前的预警信号） |
+| `beacon_self_write_queue_capacity` | gauge | — | 各路由队列容量，与 depth 相除得水位占比 |
 
 **核心约束：抓取路径不触达 DB。**
 
@@ -40,6 +42,8 @@
 
 1. **内存类字段抓取时现读**：连接池统计（`sql.DBStats`，标准库自带锁）、长轮询挂起数（Hub 内部加锁）、丢弃计数（原子读）。这些进程内立即可得，现读比缓存更准（不会滞后一个刷新周期）。
 2. **DB 类字段后台周期刷新**：命令队列深度由 `commandCountRefresher` 每 15s 采集一次写入指标缓存，抓取只读缓存。15s 与 Prometheus 默认抓取间隔同量级，既不加重 DB 负担，又足以在积压发展成 429 之前被看到。
+
+**写入队列深度同样属「内存类」**：它读的是有界 channel 的 `len()`（O(1)、并发安全），故抓取时现读、无需缓存。这一条补掉了 OPERATIONS 记录已久的缺口——此前「429 背压出现**之前**运维从指标上看不到积压」，只能等「多次重试仍失败而丢弃」的计数，而那时数据已经丢了。容量一并作为独立指标输出，使水位占比可直接计算而无需在告警表达式里硬编码容量。
 
 管理台 `/system/observability` 的行为不变，仍走 `Snapshot()`（允许实时查库，它是低频人工访问页面）。
 

@@ -31,6 +31,12 @@ type SelfHealth struct {
 
 	// MetricWriteDiscarded 指标异步写入累计丢弃行数（FR-144）：多次重试仍失败被丢弃的行。
 	MetricWriteDiscarded int64
+
+	// WriteQueueDepth 异步日表写入通道各路由的当前队列深度（按路由种类）。
+	// 这是 429 背压**出现之前**唯一的预警信号——此前运维只能在数据已被丢弃后才知道出过问题。
+	WriteQueueDepth map[string]int
+	// WriteQueueCapacity 各路由队列容量（各路由一致），供计算水位占比。
+	WriteQueueCapacity int
 }
 
 // SelfHealthCollector 把控制面自身健康暴露为 Prometheus 指标。
@@ -162,6 +168,17 @@ var (
 			"`time() - 本值` 即数据陈旧度，用于区分「队列真的空了」与「采集失败导致值不更新」",
 		nil, nil,
 	)
+	selfWriteQueueDepthDesc = prometheus.NewDesc(
+		"beacon_self_write_queue_depth",
+		"控制面异步日表写入通道各路由的当前队列深度（按 route 维度）。"+
+			"接近容量即说明消费跟不上生产，是 429 背压出现前的预警信号",
+		[]string{"route"}, nil,
+	)
+	selfWriteQueueCapacityDesc = prometheus.NewDesc(
+		"beacon_self_write_queue_capacity",
+		"控制面异步日表写入通道各路由的队列容量（各路由一致）。与 depth 相除即水位占比",
+		nil, nil,
+	)
 )
 
 // Describe 输出本 collector 的全部指标描述。
@@ -173,6 +190,8 @@ func (c *SelfHealthCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- selfCommandDesc
 	ch <- selfMetricDiscardedDesc
 	ch <- selfCmdSnapshotDesc
+	ch <- selfWriteQueueDepthDesc
+	ch <- selfWriteQueueCapacityDesc
 }
 
 // Collect 输出自身健康指标。注意：**本方法不查库**（见类型注释）。
@@ -216,6 +235,15 @@ func (c *SelfHealthCollector) Collect(ch chan<- prometheus.Metric) {
 
 	ch <- prometheus.MustNewConstMetric(selfMetricDiscardedDesc, prometheus.CounterValue, float64(s.MetricWriteDiscarded))
 	ch <- prometheus.MustNewConstMetric(selfCmdSnapshotDesc, prometheus.GaugeValue, snapshotUnix)
+
+	// 写入队列：逐路由输出深度，并输出容量（便于算水位占比）。
+	// 未注册任何路由时两者都不输出（容量为 0 时输出 0 无意义、且会误导成"队列已满"）。
+	if s.WriteQueueCapacity > 0 {
+		for route, depth := range s.WriteQueueDepth {
+			ch <- prometheus.MustNewConstMetric(selfWriteQueueDepthDesc, prometheus.GaugeValue, float64(depth), route)
+		}
+		ch <- prometheus.MustNewConstMetric(selfWriteQueueCapacityDesc, prometheus.GaugeValue, float64(s.WriteQueueCapacity))
+	}
 }
 
 // commandStatuses 是命令生命周期的已知状态（与 model.CommandStatus* 常量同源）。

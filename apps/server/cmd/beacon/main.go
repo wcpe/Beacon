@@ -547,6 +547,10 @@ func run() error {
 			LongpollTopology:     snap.Longpoll.Topology,
 			LongpollCommand:      snap.Longpoll.Command,
 			MetricWriteDiscarded: snap.MetricWriteDiscarded,
+			// 写入队列深度：429 背压出现前唯一的预警信号（此前只能等数据被丢弃才知道出过问题）。
+			// 读的是有界 channel 的 len()，O(1) 且并发安全。
+			WriteQueueDepth:    asyncDailyWriter.QueueDepths(),
+			WriteQueueCapacity: asyncDailyWriter.QueueCapacity(),
 		}
 	})
 	commandCountRefresher := service.NewCommandCountRefresher(commandRepo, metricsSet)

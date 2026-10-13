@@ -84,13 +84,53 @@ func TestSelfHealthUnknownCommandStatusSurfaced(t *testing.T) {
 	}
 }
 
+// TestSelfHealthWriteQueueExposed 验证写入队列深度与容量被输出（见 ADR-0091 补充）。
+//
+// 为什么锁这条：队列深度是 429 背压出现**之前**唯一的预警信号。此前该缺口已在
+// OPERATIONS 记录（「429 出现前运维从指标上看不到积压」），本用例确保它真的被暴露。
+func TestSelfHealthWriteQueueExposed(t *testing.T) {
+	m := selfHealthFixture(t, SelfHealth{
+		WriteQueueDepth:    map[string]int{"metric_sample": 1234, "health_snapshot": 0},
+		WriteQueueCapacity: 4096,
+	})
+
+	body := scrape(t, m)
+	for _, want := range []string{
+		`beacon_self_write_queue_depth{route="metric_sample"} 1234`,
+		// 深度为 0 的路由也要输出：否则「队列空」与「没采到」在看板上无法区分。
+		`beacon_self_write_queue_depth{route="health_snapshot"} 0`,
+		`beacon_self_write_queue_capacity 4096`,
+	} {
+		if !containsSample(body, want) {
+			t.Fatalf("应含样本 %s，实际：\n%s", want, body)
+		}
+	}
+}
+
+// TestSelfHealthWriteQueueOmittedWhenNoRoutes 验证未注册路由时不输出队列指标。
+//
+// 容量为 0 意味着还没有任何路由注册（装配早期）。此时输出 depth=0 会误导成
+// 「队列是空的、很健康」，而事实是「根本还没装配」——两者含义完全不同。
+func TestSelfHealthWriteQueueOmittedWhenNoRoutes(t *testing.T) {
+	m := selfHealthFixture(t, SelfHealth{WriteQueueCapacity: 0, WriteQueueDepth: map[string]int{}})
+
+	body := scrape(t, m)
+	if strings.Contains(body, "beacon_self_write_queue_capacity") {
+		t.Fatalf("未注册路由时不应输出队列容量（会被误读成队列空而非未装配）：\n%s", body)
+	}
+}
+
 // TestSelfHealthMetricNamesStable 锁定自身健康的指标名清单。
 //
 // 为什么单独锁名字：这些名字会出现在运维文档、告警规则与看板里，改名会让它们**静默失效**
 // （PromQL 查不到序列只会返回空，不报错）。本用例把名字钉住，改名必须同步改这里，
 // 从而强制改动者一并去想文档与告警规则。
 func TestSelfHealthMetricNamesStable(t *testing.T) {
-	m := selfHealthFixture(t, SelfHealth{})
+	// fixture 须把所有指标都激活（含写入队列），否则该指标名不会出现在输出里、断言会误判为改名。
+	m := selfHealthFixture(t, SelfHealth{
+		WriteQueueDepth:    map[string]int{"metric_sample": 1},
+		WriteQueueCapacity: 4096,
+	})
 	m.SetCommandStatusSnapshot(map[string]int{"pending": 1}, 1700000000)
 
 	body := scrape(t, m)
@@ -102,6 +142,8 @@ func TestSelfHealthMetricNamesStable(t *testing.T) {
 		"beacon_self_commands",
 		"beacon_self_metric_write_discarded_total",
 		"beacon_self_commands_snapshot_timestamp_seconds",
+		"beacon_self_write_queue_depth",
+		"beacon_self_write_queue_capacity",
 	} {
 		if !strings.Contains(body, "# TYPE "+name+" ") {
 			t.Fatalf("指标名 %s 应出现在抓取输出中（改名会静默打断既有看板与告警）", name)

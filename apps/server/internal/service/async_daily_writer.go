@@ -139,6 +139,36 @@ func (w *AsyncDailyWriter) Discarded() int64 {
 	return atomic.LoadInt64(&w.discarded)
 }
 
+// QueueDepths 返回各路由当前队列深度（按路由种类；未注册的路由不出现在结果里）。
+//
+// 为什么需要它（OPERATIONS 早已记录该缺口）：429 背压出现**之前**，运维从指标上看不到任何积压
+// 迹象——只有「多次重试仍失败而丢弃」的计数，而那时数据已经丢了。队列深度是唯一能在 429 之前
+// 预警的信号。容量本身是有界 channel，`len(queue)` 是 O(1) 读取，成本可忽略。
+//
+// 并发安全：读 w.mu 只取路由表快照，随后逐个读 len()——len(chan) 本身是并发安全的原子读，
+// 故无需长期持锁，也不会与 worker 的消费竞争。
+func (w *AsyncDailyWriter) QueueDepths() map[string]int {
+	w.mu.RLock()
+	routes := make([]*writerRoute, 0, len(w.routes))
+	for _, rt := range w.routes {
+		routes = append(routes, rt)
+	}
+	w.mu.RUnlock()
+
+	out := make(map[string]int, len(routes))
+	for _, rt := range routes {
+		out[rt.kind] = len(rt.queue)
+	}
+	return out
+}
+
+// QueueCapacity 返回队列容量（各路由一致，取工程参数；供指标侧计算水位占比与容量上限）。
+func (w *AsyncDailyWriter) QueueCapacity() int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.queueCapacity
+}
+
 // Start 为全部已注册路由各启动 workers 个写入协程，随 ctx 取消优雅退出。
 // 须在全部 RegisterFlusher 完成后调用一次（main 装配尾声）。
 func (w *AsyncDailyWriter) Start(ctx context.Context) {

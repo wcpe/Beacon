@@ -828,10 +828,15 @@ func summarizeMetrics(body string) string {
 	const (
 		requestMetric  = "beacon_http_requests_total"
 		durationMetric = "beacon_http_request_duration_seconds_count"
+		// 写入队列深度（ADR-0091）：429 背压出现前唯一的预警信号，故在每次观测里一并汇报。
+		queueDepthMetric = "beacon_self_write_queue_depth"
+		queueCapMetric   = "beacon_self_write_queue_capacity"
 	)
 	byRoute := make(map[string]int)
 	total := 0
 	durationSamples := 0
+	queueDepth := make(map[string]int)
+	queueCapacity := 0
 	for line := range strings.SplitSeq(body, "\n") {
 		name, labels, value, ok := parseSample(line)
 		if !ok {
@@ -843,13 +848,32 @@ func summarizeMetrics(body string) string {
 			total += value
 		case durationMetric:
 			durationSamples += value
+		case queueDepthMetric:
+			queueDepth[labelValue(labels, "route")] = value
+		case queueCapMetric:
+			queueCapacity = value
 		}
 	}
 	if total == 0 {
 		return "未发现 beacon_http_requests_total 样本"
 	}
-	return fmt.Sprintf("HTTP 请求累计=%d（时延直方图样本=%d）；主要路由：%s",
+	out := fmt.Sprintf("HTTP 请求累计=%d（时延直方图样本=%d）；主要路由：%s",
 		total, durationSamples, topRoutes(byRoute, 4))
+	// 队列深度：只在有积压时点名，避免每次观测都刷一串 0；容量一并给出便于判水位。
+	if queueCapacity > 0 {
+		busy := make(map[string]int)
+		for route, d := range queueDepth {
+			if d > 0 {
+				busy[route] = d
+			}
+		}
+		if len(busy) > 0 {
+			out += fmt.Sprintf("；写入队列积压（容量 %d）：%s", queueCapacity, topRoutes(busy, 4))
+		} else {
+			out += fmt.Sprintf("；写入队列无积压（容量 %d）", queueCapacity)
+		}
+	}
+	return out
 }
 
 // parseSample 解析一行 Prometheus 样本 `name{labels} value`；注释 / 空行 / 格式不符返回 false。
