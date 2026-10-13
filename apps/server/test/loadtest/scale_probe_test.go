@@ -368,7 +368,15 @@ type serverMetrics struct {
 	CPUSeconds     float64
 	RouteCount     map[string]int64
 	RouteHistogram map[string][]bucketPoint
-	Error          string
+	// 控制面自身健康（beacon_self_*，见 ADR-0091）：从抓取端点直读，用于验证
+	// 「自身健康指标确实反映了负载」以及为告警阈值提供实测依据。
+	SelfDBPoolWaitCount      int64
+	SelfDBPoolWaitSeconds    float64
+	SelfDBPoolInUse          int64
+	SelfMetricWriteDiscarded int64
+	SelfCommandPending       int64
+	SelfCommandSnapshotUnix  float64
+	Error                    string
 }
 
 // routeHistogramQuantile 返回指定路由的服务端直方图分位数（毫秒）。样本不足返回 0。
@@ -499,6 +507,13 @@ func fetchServerMetrics(ctx context.Context, client *http.Client, metricsBase st
 		gcCountMetric    = "go_gc_duration_seconds_count"
 		rssMetric        = "process_resident_memory_bytes"
 		cpuMetric        = "process_cpu_seconds_total"
+		// 控制面自身健康（ADR-0091）：这些是本次压测要验证的新指标。
+		selfWaitCountMetric = "beacon_self_db_pool_wait_total"
+		selfWaitDurMetric   = "beacon_self_db_pool_wait_duration_seconds_total"
+		selfInUseMetric     = "beacon_self_db_pool_connections"
+		selfDiscardedMetric = "beacon_self_metric_write_discarded_total"
+		selfCommandsMetric  = "beacon_self_commands"
+		selfCmdSnapMetric   = "beacon_self_commands_snapshot_timestamp_seconds"
 	)
 	// buckets 先按路由收集 (上界 → 累积值)，最后统一排序，避免依赖 /metrics 的输出顺序。
 	buckets := map[string]map[float64]int64{}
@@ -520,6 +535,24 @@ func fetchServerMetrics(ctx context.Context, client *http.Client, metricsBase st
 			out.RSSBytes = value
 		case cpuMetric:
 			out.CPUSeconds = value
+		case selfWaitCountMetric:
+			out.SelfDBPoolWaitCount = int64(value)
+		case selfWaitDurMetric:
+			out.SelfDBPoolWaitSeconds = value
+		case selfInUseMetric:
+			// 带 state 标签，只取 in_use 一条（池实际被占用的连接数）。
+			if labelValue(labels, "state") == "in_use" {
+				out.SelfDBPoolInUse = int64(value)
+			}
+		case selfDiscardedMetric:
+			out.SelfMetricWriteDiscarded = int64(value)
+		case selfCommandsMetric:
+			// 队列积压 = pending + fetched（尚未终结的命令），与告警规则同口径。
+			if s := labelValue(labels, "status"); s == "pending" || s == "fetched" {
+				out.SelfCommandPending += int64(value)
+			}
+		case selfCmdSnapMetric:
+			out.SelfCommandSnapshotUnix = value
 		case durationMetric + "_bucket":
 			route := labelValue(labels, "route")
 			upper, err := strconv.ParseFloat(labelValue(labels, "le"), 64)

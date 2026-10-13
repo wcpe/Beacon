@@ -484,6 +484,11 @@ func measureScalePoint(
 		point.PoolWait.WaitCount, point.PoolWait.WaitDurationMs, point.PoolWait.MaxOpen,
 		point.PoolWait.InUseAfter, point.PoolWait.RegistryTotal, point.Goroutines,
 		point.GCCountDelta, point.GCPerSec)
+	// 自身健康指标（ADR-0091）的实测值：与上行「内部证据」同源（都取自控制面进程），
+	// 但走的是抓取端点上的 beacon_self_*，用于确认这些指标在真实负载下确实反映运行态。
+	t.Logf("  自身健康（beacon_self_*）：池等待累计 %d 次 / %.1fs；池 in_use %d；命令积压 %d；写入丢弃 %d",
+		metrics.SelfDBPoolWaitCount, metrics.SelfDBPoolWaitSeconds, metrics.SelfDBPoolInUse,
+		metrics.SelfCommandPending, metrics.SelfMetricWriteDiscarded)
 	t.Logf("  服务端直方图（%s）：p95 %.2fms p99 %.2fms（样本 %d）",
 		point.ServerRoute, point.ServerP95Ms, point.ServerP99Ms, point.ServerSamples)
 	return point

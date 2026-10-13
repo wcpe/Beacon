@@ -306,14 +306,23 @@ groups:
         labels: { severity: warning }
         annotations: { summary: "控制面 RSS 持续增长（6h 翻倍，当前 {{ $value }} 字节）" }
       # 连接池等待在增长：池正在枯竭，是「所有需 DB 端点挂起」那类事故的直接前兆。
-      # 用 rate 而非绝对值：WaitCount 是累计 counter，单调递增，绝对值必然非零故无意义。
+      #
+      # 判据取「平均每次等待的时长」而非「等待次数」——这是 60 服规模实测（2026-10-14）校准的结论：
+      # 等待**次数**在正常负载下就达 1 万~2 万次/秒（11 个档位横跨 51~20207 次/秒，跨 3 个数量级），
+      # 任何固定阈值都会持续误报或完全漏报；而**平均等待时长**稳定在 0.00025~0.0099 秒/次，
+      # 且与 p99 时延正相关（最慢档位 p99 89ms 对应最大均值 9.9ms），故以它为判据。
+      # 阈值 50ms 取值依据：实测正常上界约 10ms，留 5 倍余量；越过它意味着单次等待已显著拖慢请求。
       - alert: BeaconDBPoolWaiting
-        expr: rate(beacon_self_db_pool_wait_total[5m]) > 1
+        expr: rate(beacon_self_db_pool_wait_duration_seconds_total[5m]) / rate(beacon_self_db_pool_wait_total[5m]) > 0.05
         for: 10m
         labels: { severity: critical }
-        annotations: { summary: "控制面数据库连接池持续等待（{{ $value | printf \"%.2f\" }} 次/秒），池可能即将枯竭" }
+        annotations: { summary: "控制面数据库连接池等待偏长（平均每次等待 {{ $value | printf \"%.3f\" }} 秒），池可能即将枯竭" }
       # 命令队列积压：429 背压出现之前唯一的信号（此前运维在指标上看不到任何积压）。
-      # 阈值 100 是保守起点，按自身规模与 agent 拉取间隔调整。
+      #
+      # 阈值 100 是**未经实测校准的保守起点**，按自身规模与 agent 拉取间隔调整。
+      # 未校准的原因：命令由**运维主动操作**产生（文件浏览 / 强制重同步 / 取日志 / 拓印确认），
+      # 不随常规 agent 流量增长，故 60 服规模压测里该值恒为 0——压测覆盖不到这条路径。
+      # 调参方向：先观察正常运维节奏下的峰值，取其数倍作为阈值；持续超过即说明 agent 拉取跟不上。
       - alert: BeaconCommandQueueBacklog
         expr: sum(beacon_self_commands{status=~"pending|fetched"}) > 100
         for: 10m
