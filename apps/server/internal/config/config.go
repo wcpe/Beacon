@@ -26,6 +26,9 @@ type Config struct {
 	Alert AlertConfig `yaml:"alert"`
 	// 负载指标采样相关参数（采样落库 + 保留期清理，FR-32）
 	Metric MetricConfig `yaml:"metric"`
+	// Prometheus 抓取端点（独立监听，见 ADR-0090）。与上方 Metric 采样段是两个正交概念：
+	// Metric 管「控制面主动采样落库」（写 DB），本段管「控制面把运行指标暴露出去给人抓」（只读 HTTP）。
+	MetricsEndpoint MetricsEndpointConfig `yaml:"metrics-endpoint"`
 	// 长轮询相关参数
 	Longpoll LongpollConfig `yaml:"longpoll"`
 	// git 单向导出镜像（备份 / 灾备 / 外部可见，FR-47）
@@ -167,6 +170,24 @@ type WebhookConfig struct {
 	TimeoutMs int `yaml:"timeout-ms"`
 }
 
+// MetricsEndpointConfig 是 Prometheus 抓取端点的独立监听配置（见 ADR-0090）。
+//
+// 与 MetricConfig（采样落库，FR-32）是**两个正交概念**：本段只管「控制面把已有运行指标
+// 暴露成一个只读 HTTP 端点供监控系统抓取」，不涉及任何写库行为。
+//
+// 为什么独立端口而非复用主端口：主端口默认 `:8848` 是全网卡绑定且承载管理台与 agent 数据面，
+// 抓取端点挂在上面等于「只要主端口可达就能匿名读到组织拓扑与容量画像」。独立监听把暴露面
+// 收敛成一个可单独收敛的地址——默认只绑回环，外部天然不可达。
+type MetricsEndpointConfig struct {
+	// 抓取端点监听地址。默认 127.0.0.1:8849（仅本机回环，外部不可达）；这同时给出更宽的端口区间以避免与主端口冲突。
+	// 置空字符串 "" 表示不启动该端点（显式关闭，此时主端口也不再提供 /metrics）。
+	// 改为内网 IP（如 10.0.0.5:8849）或 ":8849"（所有网卡）即可让外部抓取——后者等于对外暴露，须自备网络层保护。
+	ListenAddr string `yaml:"listen-addr"`
+	// 抓取凭据：标准 Authorization: Bearer <token> 校验。默认空 = 不鉴权（依赖监听地址本身的收敛）。
+	// 敏感项，仅从 env BEACON_METRICS_ENDPOINT_BEARER_TOKEN 注入，禁写入库 yaml。
+	BearerToken string `yaml:"-"`
+}
+
 // MetricConfig 是负载指标采样配置（FR-32，见 ADR-0023）。
 // 控制面按间隔对在线实例采样落 metric_sample 形成历史趋势，并按保留期滚动清理过期样本。
 type MetricConfig struct {
@@ -272,7 +293,10 @@ func Default() Config {
 			SampleIntervalSec: 30,  // 默认 30s 采样，约 50 服规模下单表 + 保留期清理足够
 			RetentionHours:    168, // 默认保留 7 天（168h）
 		},
-		Longpoll: LongpollConfig{MaxHoldMs: 30000},
+		// 抓取端点默认只绑回环：非回环默认值会让「按文档说内网信任」的部署在不知情时对外暴露。
+		// 凭据留空 = 不鉴权（收敛靠监听地址）；需要鉴权时经 env 注入（见 ADR-0090）。
+		MetricsEndpoint: MetricsEndpointConfig{ListenAddr: "127.0.0.1:8849"},
+		Longpoll:        LongpollConfig{MaxHoldMs: 30000},
 		GitExport: GitExportConfig{
 			// 默认关闭：属可选增强，开启需运维显式配置仓路径 / 远程
 			Enabled:      false,

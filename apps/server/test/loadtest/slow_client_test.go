@@ -110,11 +110,14 @@ const (
 
 // slowEnv 是本用例的共享装配结果。
 type slowEnv struct {
-	blob       *blobEnv
-	baseURL    string
-	adminToken string
-	pid        int
-	hostPort   string
+	blob     *blobEnv
+	baseURL  string
+	pid      int
+	hostPort string
+	// metricsBase 是抓取端点基址（独立监听，见 ADR-0090）。
+	// goroutine 数只能从它取（见 slowTakeSnapshot 的注释），主端口上已不再提供 /metrics。
+	metricsBase string
+	adminToken  string
 	// logPath 是控制面 stderr 日志路径。中断判定以服务端访问日志为准（原因见
 	// slowServerBlobDurations 的注释：大 blob 下客户端侧读不到 EOF/RST）。
 	logPath string
@@ -290,7 +293,7 @@ func slowSetup(t *testing.T, adminPass, authSecret string, blobMiB int) *slowEnv
 	}
 	_, logPath := env.cp.LogPaths()
 	return &slowEnv{blob: env, baseURL: env.baseURL, adminToken: env.adminToken, pid: env.pid,
-		hostPort: hostPort, logPath: logPath}
+		hostPort: hostPort, logPath: logPath, metricsBase: env.metricsBase}
 }
 
 // ---- 探测 1：blob 下载端点（有 StallWriter）----
@@ -1071,7 +1074,7 @@ func slowAllBroken(conns []*slowConn) bool {
 func slowTakeSnapshot(t *testing.T, env *slowEnv, phase string) slowSnapshot {
 	t.Helper()
 	snap := slowSnapshot{Phase: phase, AtMs: time.Now().UnixMilli()}
-	snap.Goroutines = slowGoroutines(t, env.baseURL)
+	snap.Goroutines = slowGoroutines(t, env.metricsBase)
 	if env.pid > 0 {
 		snap.RSSKiB = readProcStats(env.pid).RSSKiB
 		snap.OpenFDs = slowOpenFDs(env.pid)
@@ -1080,11 +1083,12 @@ func slowTakeSnapshot(t *testing.T, env *slowEnv, phase string) slowSnapshot {
 }
 
 // slowGoroutines 抓一次 /metrics 的 go_goroutines（读失败返回 0）。
-func slowGoroutines(t *testing.T, baseURL string) float64 {
+// metricsBase 是抓取端点基址（独立监听，见 ADR-0090）：主端口上已不再提供 /metrics。
+func slowGoroutines(t *testing.T, metricsBase string) float64 {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), slowProbeTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/metrics", nil)
+	req, err := newMetricsRequest(ctx, metricsBase)
 	if err != nil {
 		return 0
 	}

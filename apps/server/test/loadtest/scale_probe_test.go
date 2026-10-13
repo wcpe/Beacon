@@ -470,9 +470,11 @@ func histogramDelta(before, after []bucketPoint) []bucketPoint {
 }
 
 // fetchServerMetrics 抓一次 /metrics 并解析出规模压测关心的量（尽力而为）。
-func fetchServerMetrics(ctx context.Context, client *http.Client, baseURL string) serverMetrics {
+// metricsBase 是抓取端点基址（独立监听，见 ADR-0090），**不是**控制面主端口地址：
+// 主端口上已不再提供 /metrics，传错会得到 404 并把全部服务端口径静默读成 0。
+func fetchServerMetrics(ctx context.Context, client *http.Client, metricsBase string) serverMetrics {
 	out := serverMetrics{RouteCount: map[string]int64{}, RouteHistogram: map[string][]bucketPoint{}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/metrics", nil)
+	req, err := newMetricsRequest(ctx, metricsBase)
 	if err != nil {
 		out.Error = err.Error()
 		return out

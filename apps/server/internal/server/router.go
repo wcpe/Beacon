@@ -62,7 +62,6 @@ type Handlers struct {
 	ReverseFetchRule  *handler.ReverseFetchIgnoreRuleHandler
 	Settings          *handler.SettingsHandler
 	ReversibleOp      *handler.ReversibleOperationHandler
-	Metrics           http.Handler        // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	HTTPMetrics       HTTPMetricsObserver // HTTP 层 RED 指标观察者（请求计数 + 时延直方图）；nil = no-op
 	Web               http.Handler
 }
@@ -137,10 +136,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/file-sync/{taskId}/targets/result", h.FileSync.TargetResult)
 	})
 
-	// 运维指标：Prometheus 文本格式，与 agent 端点同属内网信任面，不挂管理台鉴权（见 ADR-0020）
-	if h.Metrics != nil {
-		r.Method(http.MethodGet, "/metrics", h.Metrics)
-	}
+	// 运维指标（Prometheus 文本格式）**不在此处挂载**：它已迁到独立监听端口（默认 127.0.0.1:8849），
+	// 见 ADR-0090 与 cmd/beacon/main.go 的 metricsSrv。原先挂在本路由上的做法让抓取端点随主端口
+	// （默认全网卡 `:8848`）一起暴露，且无法单独收敛——迁移后本端口不再提供 /metrics。
 
 	if h.V2 != nil {
 		// v2 agent 侧：namespace token 在注册 handler 内按库中哈希校验，未确认身份仅开放 register / registration。

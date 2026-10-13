@@ -148,7 +148,39 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 
 ### 3.2 Prometheus 指标抓取
 
-控制面在业务同端口暴露 `GET /metrics`（Prometheus 文本格式，默认 `http://<控制面地址>:8848/metrics`）。该端点属**内网信任面、不挂鉴权**，因此只应在受信网络或反向代理的访问控制之内开放，**不要直接暴露到公网**；它给出的是聚合运行指标，不含配置内容与凭据。
+控制面在**独立监听端口**上暴露 `GET /metrics`（Prometheus 文本格式，默认 `http://127.0.0.1:8849/metrics`），由 `config.yml` 顶层配置段 `metrics-endpoint` 控制（决策见 [ADR-0090](adr/0090-metrics-endpoint-dedicated-listener.md)）。
+
+**默认只绑本机回环、默认安全**：`metrics-endpoint.listen-addr` 出厂值为 `127.0.0.1:8849`，只在本机回环上监听，**外部与公网默认抓不到**。这替代了此前的「业务同端口暴露」——主端口（默认 `:8848`）默认绑所有网卡且承载管理台与 agent 数据面，抓取挂在上面等于「主端口可达即能匿名读到组织拓扑与容量画像」；迁到独立监听后，暴露面收敛成一个可单独收敛的地址，**不显式放开就等于没暴露**。它给出的仍是聚合运行指标，不含配置内容与凭据。
+
+**两处行为变化（升级时必读）**：
+
+- **主端口 `:8848` 不再提供 `/metrics`**：既有抓取配置必须把地址改到抓取端点，否则抓取直接失败（主端口上该路径不再存在）。
+- **抓取不再被自记**：抓取端点不经过主路由的全局中间件链，Prometheus 每次 scrape **不会**再记进 `beacon_http_requests_total`（此前那条 `route="/metrics"` 的自记 series 随迁移消失，读法见下方「读法提醒」）。
+
+**放开到内网 / 公网**：改 `config.yml` 的 `metrics-endpoint.listen-addr`，或用环境变量 `BEACON_METRICS_ENDPOINT_LISTEN_ADDR` 覆盖（env 优先），改后重启生效：
+
+```yaml
+# config.yml（启动 / 安全项，改后须重启）
+metrics-endpoint:
+  # 默认 127.0.0.1:8849（仅本机回环）。改为内网地址，让内网 Prometheus 能抓：
+  listen-addr: "10.0.0.5:8849"
+  # 或绑所有网卡（含公网口）——此时**等于对外暴露**，须自备网络层 / 反代保护：
+  # listen-addr: ":8849"
+  # 置空字符串 = 不启动该端点（显式关闭；此时主端口也不提供 /metrics）：
+  # listen-addr: ""
+```
+
+> **须写成 `host:port`**：只写 IP（`10.0.0.5`）或只写端口号（`8849`，**没有冒号**）都会被配置校验拒绝并给出可读原因——**带冒号的 `:8849` 是合法的**（表示所有网卡，见上方注释）。`listen-addr` **不能与 `http-addr` 相同**（相同即等于把抓取端点又挂回业务面，且后监听者必然 bind 失败），同样在校验期直接拒绝。
+>
+> **风险只在「显式放开」这一步**：默认值（回环）本身是安全的，运维无需额外动作；但一旦把 `listen-addr` 改成 `:8849`（所有网卡）或某个公网可达的 IP，**就等于把这个端点对外暴露了**——此时必须确保有网络层或反向代理保护（防火墙只放行监控网段、反代加访问控制或鉴权），**不要让它直接裸奔在公网**。
+>
+> **容器形态另需端口映射**：容器内的回环 `127.0.0.1` 与宿主机回环不是同一个网络命名空间，默认值下**宿主机或外部 Prometheus 抓不到容器内的 8849**。要在容器形态下抓取，需同时做两件事：把 `listen-addr` 改成容器内可达的地址（`:8849`）并把 8849 映射出来（如 compose 的 `ports: ["127.0.0.1:8849:8849"]`——映射到宿主回环即可保持「只有本机能抓」）。
+>
+> **抓取端点 bind 失败 = 控制面启动失败**：不静默降级（「以为在抓、实际没在抓」会一直持续到有人发现看板没数据，比直接失败更难排查）。启动日志里出现抓取端点的 bind 错误时，先查端口占用与 `listen-addr` 是否与 `http-addr` 撞车。
+
+**加鉴权（可选，默认关闭）**：把环境变量 `BEACON_METRICS_ENDPOINT_BEARER_TOKEN` 设为一段强随机串即启用——端点此后校验标准 `Authorization: Bearer <token>` 头（方案名大小写不敏感），**缺失或不匹配一律回 `401`**（不返回 `WWW-Authenticate`，不向外透露期望的凭据方案）。该值**只从环境变量读、不写入 `config.yml` 也不入 DB 设置 store**（沿用 `git-export.remote-token` 的既有敏感项范式，避免凭据随配置文件扩散与入库）；留空 = 不鉴权，此时安全性完全取决于监听地址收敛到哪一层（回环最紧、内网次之、`:8849` 最松）。端点**不额外做限流**，保护手段就是「监听地址 + 可选 Bearer」这两层。
+
+> **监听在非回环地址且未设凭据时，控制面启动会记一条 WARN**（不阻断启动）——内网可信域部署是正当场景，但运维应明确知道：任何可达该地址者都能匿名读取运行指标。
 
 指标清单：
 
@@ -167,14 +199,37 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 
 ```yaml
 scrape_configs:
-  # 控制面自带的运维指标端点：与业务同端口、无鉴权，只应指向内网地址
+  # 控制面自带的运维指标端点：独立监听端口，不再与业务同端口（主端口 :8848 上没有 /metrics）
   - job_name: beacon
     metrics_path: /metrics
     # 抓取间隔 15s 足够看接口延迟趋势；调小只会增加控制面自身的抓取流量
     scrape_interval: 15s
     static_configs:
-      - targets: ["beacon.internal:8848"]
+      # 独立监听地址的端口是 8849（不是业务端口 8848）。
+      # 监听默认绑回环，故 Prometheus 必须与控制面同机（或改用下面的内网地址写法）。
+      - targets: ["127.0.0.1:8849"]
+      # 若已把 listen-addr 放开到内网地址，换成（两行二选一，不要同时留）：
+      # - targets: ["beacon.internal:8849"]
 ```
+
+启用 Bearer 鉴权后，同一 job 追加 `authorization`（Prometheus 原生字段，无需自造头）：
+
+```yaml
+scrape_configs:
+  - job_name: beacon
+    metrics_path: /metrics
+    scrape_interval: 15s
+    # 与 BEACON_METRICS_ENDPOINT_BEARER_TOKEN 取同一串；端点按标准 Authorization: Bearer <token> 校验
+    authorization:
+      type: Bearer
+      credentials: "<与 BEACON_METRICS_ENDPOINT_BEARER_TOKEN 一致的强随机串>"
+      # 不想把明文写在 prometheus.yml 里时，改用凭据文件（二者取其一，同时给会报错）：
+      # credentials_file: "/etc/prometheus/beacon-metrics-token"
+    static_configs:
+      - targets: ["127.0.0.1:8849"]
+```
+
+> 未启用鉴权时**不要写** `authorization` 段（端点会忽略多余头，但配置里留着空 Token 容易误以为鉴权已开）。token 轮换要同时改控制面 env 与 Prometheus 侧配置并各自重启，中间会有一段抓取 401 的窗口。
 
 算分位数（按 route 过滤，示例取两个请求-响应型端点）：
 
@@ -193,7 +248,7 @@ histogram_quantile(0.99,
 - `route` 是**路由模板**（如 `/admin/v2/config-files/{id}`）而非真实请求路径——同一端点下不同 id 聚合成一条 series，正是为了不让时序数随业务数据膨胀。未命中任何路由的请求（404、单页应用回退）统一落在 `route="unmatched"`。
 - **鉴权失败 / 只读拒写**的请求，`route` 停在**组级通配模板**（`/admin/v2/*`、`/beacon/v1/agent/*` 一类）：组内中间件短路时路由尚未匹配完。看到这类 series 属正常表现，不是模板漂移。
 - **长轮询 / 流式端点的耗时是真时长**（`/beacon/v1/agent/config/effective`、`/files/manifest`、`/override-sets` 最长挂起 30s；`/beacon/v1/agent/stream` 与管理台 SSE 更长），它们会把整体分位数明显抬高——做接口 SLA 时**按 route 过滤掉这些端点**，只统计请求-响应型端点。
-- **抓取本身也算一次请求**：Prometheus 每次 scrape 都会记进 `beacon_http_requests_total{route="/metrics"}`，用该指标算业务 QPS 时要排除它。
+- **抓取本身不再算一次请求**：抓取端点迁到独立监听后不经过主路由的全局中间件链，Prometheus 每次 scrape **不会**记进 `beacon_http_requests_total`（迁移前会自记一条 `route="/metrics"`，该 series 随迁移消失且不再产生）。因此：算业务 QPS 时**无需再排除抓取**；反过来，看到历史数据里存在 `route="/metrics"` 的 series 属迁移前的旧数据，**不要把它的中断读成业务流量骤降**（新旧同图上会发现该 series 归零）。
 - 进程刚启动、还没有任何请求时，两个 HTTP 指标**不会出现在 `/metrics` 里**（产生第一个请求后才出现），不是采集失败。
 
 建议的最低告警规则：
@@ -207,7 +262,9 @@ groups:
         expr: up{job="beacon"} == 0
         for: 2m
         labels: { severity: critical }
-        annotations: { summary: "控制面 /metrics 抓取失败（进程不可达）" }
+        # 抓取端点是独立监听：本告警既可能是进程挂了，也可能是抓取地址错（仍在抓 :8848）、
+        # listen-addr 被改小 / 置空、或 Bearer token 不匹配——**先看它再下「控制面挂了」的结论**
+        annotations: { summary: "控制面 /metrics 抓取失败（进程不可达，或抓取地址 / 监听地址 / Bearer 凭据不匹配）" }
       # 5xx 错误率抬头（按 route 分维）
       - alert: BeaconHttpErrorRate
         expr: sum by (route) (rate(beacon_http_requests_total{status=~"5.."}[5m])) / sum by (route) (rate(beacon_http_requests_total[5m])) > 0.05
@@ -242,7 +299,7 @@ groups:
 
 | 类别 | 端点 / 指标 | 衡量什么 |
 |---|---|---|
-| 请求-响应（只读） | `/admin/v1/system/status`、`/admin/v1/topology`、`/admin/v2/servers`、`/admin/v2/zone-tree`、`/beacon/v1/agent/heartbeat`、`/metrics` | 并发 → RPS / 分位数 / 错误率 |
+| 请求-响应（只读） | `/admin/v1/system/status`、`/admin/v1/topology`、`/admin/v2/servers`、`/admin/v2/zone-tree`、`/beacon/v1/agent/heartbeat`、`/metrics`（**独立监听**，harness 需按其地址抓，见 §3.2） | 并发 → RPS / 分位数 / 错误率 |
 | 请求-响应（v2 数据面） | `/beacon/v2/agent/metrics/report`（成功码 **202**）、`/schedule/candidates`、`/schedule/decide` | 生产请求量最大的一面（1000 服每 5s 一批 ≈ 200 req/s，是心跳的 2 倍）；需真实建 namespace 并审批身份成 active |
 | 挂起型 | 长轮询 `/beacon/v1/agent/config/effective`、SSE `/beacon/v1/agent/stream` | **不用 RPS**（一挂 30s 是设计如此）：看服务端观测到的并发挂起数、唤醒时延、连接是否稳 |
 | 背压 | `/beacon/v2/agent/connections/batch`、交付 blob 上传 / 下载 | 429 是否真的可达（触到 429 才算验证了背压路径） |

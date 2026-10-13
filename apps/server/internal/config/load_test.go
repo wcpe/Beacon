@@ -209,3 +209,134 @@ func TestValidateRejectsBadAlertOrphanTimeout(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultMetricsEndpointBindsLoopbackOnly 锁定抓取端点的默认监听地址只绑回环（见 ADR-0090）。
+//
+// 为什么这条是安全底线：抓取端点默认必须**外部不可达**。若默认值被改成 `:8849` / `0.0.0.0:8849`
+// （例如有人图方便省掉跨机抓取时的一行配置），所有按默认部署的实例会立刻把组织拓扑与容量画像
+// 匿名对外开放——而文档里写着"内网信任面"，部署者不会察觉。
+func TestDefaultMetricsEndpointBindsLoopbackOnly(t *testing.T) {
+	cfg := Default()
+	if cfg.MetricsEndpoint.ListenAddr != "127.0.0.1:8849" {
+		t.Fatalf("抓取端点默认监听地址应为 127.0.0.1:8849（仅回环），实际 %q", cfg.MetricsEndpoint.ListenAddr)
+	}
+	if !isLoopbackListenAddr(cfg.MetricsEndpoint.ListenAddr) {
+		t.Fatalf("默认监听地址必须被判定为回环，实际 %q", cfg.MetricsEndpoint.ListenAddr)
+	}
+	// 凭据默认留空 = 不鉴权；收敛依赖上方的回环地址。两者是配套的，不能只改一个。
+	if cfg.MetricsEndpoint.BearerToken != "" {
+		t.Fatalf("抓取凭据默认应为空（不鉴权），实际 %q", cfg.MetricsEndpoint.BearerToken)
+	}
+}
+
+// TestMetricsEndpointEnvOverride 验证监听地址与凭据均可经环境变量注入（凭据不入库 yaml）。
+func TestMetricsEndpointEnvOverride(t *testing.T) {
+	setAuthEnv(t)
+	t.Setenv("BEACON_METRICS_ENDPOINT_LISTEN_ADDR", "10.0.0.5:9999")
+	t.Setenv("BEACON_METRICS_ENDPOINT_BEARER_TOKEN", "tok-123")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+	if cfg.MetricsEndpoint.ListenAddr != "10.0.0.5:9999" {
+		t.Errorf("监听地址应被 env 覆盖，实际 %q", cfg.MetricsEndpoint.ListenAddr)
+	}
+	if cfg.MetricsEndpoint.BearerToken != "tok-123" {
+		t.Errorf("凭据应被 env 注入，实际 %q", cfg.MetricsEndpoint.BearerToken)
+	}
+}
+
+// TestMetricsEndpointEnvCanDisable 验证显式置空可关闭抓取端点。
+//
+// 必须用 LookupEnv 而非 Getenv 才能区分「未设」与「显式置空」：否则
+// `BEACON_METRICS_ENDPOINT_LISTEN_ADDR=""` 会被当成未设、回落到默认回环地址，
+// 运维"关掉端点"的意图静默失效——端点仍在监听。
+func TestMetricsEndpointEnvCanDisable(t *testing.T) {
+	setAuthEnv(t)
+	t.Setenv("BEACON_METRICS_ENDPOINT_LISTEN_ADDR", "")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("置空关闭端点时仍应加载成功: %v", err)
+	}
+	if cfg.MetricsEndpoint.ListenAddr != "" {
+		t.Fatalf("显式置空应关闭端点，实际却仍为 %q（Getenv 无法区分未设与置空）", cfg.MetricsEndpoint.ListenAddr)
+	}
+}
+
+// TestValidateRejectsBadMetricsEndpointAddr 非法监听地址应被拒（fail-fast，且原因可读）。
+func TestValidateRejectsBadMetricsEndpointAddr(t *testing.T) {
+	base := Default()
+	base.Auth.Password = "p"
+	base.Auth.Secret = "s"
+
+	// 缺端口：裸 IP 会被 net.Listen 拒，但那时已到启动后期，应提前到校验期。
+	cfg := base
+	cfg.MetricsEndpoint.ListenAddr = "127.0.0.1"
+	if err := cfg.validate(); err == nil {
+		t.Fatal("缺端口的监听地址应被拒，却通过了")
+	}
+
+	// 与主端口相同：后监听者必然 bind 失败，且等于把抓取端点又挂回业务面。
+	cfg = base
+	cfg.HTTPAddr = ":8848"
+	cfg.MetricsEndpoint.ListenAddr = ":8848"
+	if err := cfg.validate(); err == nil {
+		t.Fatal("监听地址与 http-addr 相同应被拒，却通过了")
+	}
+
+	// 置空是合法语义（不启动端点），不得被当成配置错误。
+	cfg = base
+	cfg.MetricsEndpoint.ListenAddr = ""
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("置空应表示不启动端点、属合法配置，却报错: %v", err)
+	}
+}
+
+// TestMetricsEndpointNonLoopbackWithoutTokenAllowed 非回环且无凭据仍应放行（只告警不阻断）。
+//
+// 该组合有正当场景（内网可信域部署），且"网段是否可信"取决于防火墙，不是控制面能判定的。
+// 校验层只负责让运维明确知道风险，不替他做部署决策。
+func TestMetricsEndpointNonLoopbackWithoutTokenAllowed(t *testing.T) {
+	cfg := Default()
+	cfg.Auth.Password = "p"
+	cfg.Auth.Secret = "s"
+	cfg.MetricsEndpoint.ListenAddr = "10.0.0.5:8849"
+	cfg.MetricsEndpoint.BearerToken = ""
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("非回环无凭据应放行（仅告警），却报错: %v", err)
+	}
+}
+
+// TestIsLoopbackListenAddr 覆盖各种监听写法的回环判定。
+//
+// 漏判方向不对称，必须逐条锁死：把「其实已对外」误判成回环，会让告警静默失效（比不判定更糟）；
+// 把回环误判成对外，只是多一条无害的 WARN。故未知写法一律保守视为非回环。
+func TestIsLoopbackListenAddr(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:8849", true},
+		{"localhost:8849", true},
+		{"[::1]:8849", true},
+		{"LOCALHOST:8849", true},    // 大小写不敏感
+		{"127.0.0.1:1", true},       // 端口无关
+		{":8849", false},            // 所有网卡（Go 里省略 host 即全部接口）
+		{"0.0.0.0:8849", false},     // 所有网卡（显式）
+		{"[::]:8849", false},        // 所有网卡（IPv6 通配）
+		{"10.0.0.5:8849", false},    // 内网地址
+		{"192.168.1.7:8849", false}, // 内网地址
+		{"example.com:8849", false}, // 域名
+		{"", false},                 // 非法（保守）
+		{"garbage", false},          // 非法（保守）
+	}
+	for _, tc := range tests {
+		t.Run(tc.addr, func(t *testing.T) {
+			if got := isLoopbackListenAddr(tc.addr); got != tc.want {
+				t.Fatalf("isLoopbackListenAddr(%q) 应为 %v，实际 %v", tc.addr, tc.want, got)
+			}
+		})
+	}
+}

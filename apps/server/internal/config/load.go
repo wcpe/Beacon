@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -86,6 +88,15 @@ func applyEnv(cfg *Config) {
 			cfg.Metric.RetentionHours = n
 		}
 	}
+	// Prometheus 抓取端点（见 ADR-0090）：监听地址可 env 覆盖；凭据为敏感项，仅从 env 注入、不入库 yaml。
+	// 注意这里区分「未设」与「显式置空」：只有环境变量**存在**时才覆盖，故用 LookupEnv 而非 Getenv——
+	// 否则运维无法用空值把端点关掉（`BEACON_..._LISTEN_ADDR=""` 会被当未设而保留默认回环地址）。
+	if v, ok := os.LookupEnv("BEACON_METRICS_ENDPOINT_LISTEN_ADDR"); ok {
+		cfg.MetricsEndpoint.ListenAddr = v
+	}
+	if v := os.Getenv("BEACON_METRICS_ENDPOINT_BEARER_TOKEN"); v != "" {
+		cfg.MetricsEndpoint.BearerToken = v
+	}
 	// git 单向导出（FR-47）：开关布尔显式解析，仓路径 / 远程地址 / 分支字符串覆盖；
 	// 远程凭据为敏感项，仅从 env 注入、不入库 yaml（rule #14）
 	if v := os.Getenv("BEACON_GIT_EXPORT_ENABLED"); v != "" {
@@ -134,6 +145,53 @@ func (c Config) validateMCP() error {
 	}
 	return nil
 }
+
+// validateMetricsEndpoint 校验抓取端点监听地址（见 ADR-0090）。
+//
+// 拆为独立方法，避免 validate 内嵌套过深触发 nestif 门禁。
+// 空值合法：语义是「不启动该端点」（显式关闭），不是配置错误。
+func (c Config) validateMetricsEndpoint() error {
+	addr := strings.TrimSpace(c.MetricsEndpoint.ListenAddr)
+	if addr == "" {
+		return nil // 显式关闭
+	}
+	// 必须含端口：裸 IP 或裸主机名会被 net.Listen 拒（`listen tcp: address 10.0.0.5: missing port`），
+	// 但那是在启动后期才报，此处提前到配置校验期、并给出可读原因。
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("配置校验失败: metrics-endpoint.listen-addr 须为 host:port 形式（如 127.0.0.1:8849、:8849），实际 %q：%w", addr, err)
+	}
+	// 与主端口冲突检查：两者若相同，后监听者必然 bind 失败，而失败发生在启动后期、
+	// 表现为一个难定位的 "address already in use"。且语义上也危险——那等于把抓取端点
+	// 又挂回了业务主端口（正是本次改动要消除的形态），故直接拒绝而非静默接受。
+	if addr == strings.TrimSpace(c.HTTPAddr) {
+		return fmt.Errorf("配置校验失败: metrics-endpoint.listen-addr 不能与 http-addr 相同（均为 %q）——抓取端点须独立监听，与业务主端口重合等于又把它暴露在业务面上", addr)
+	}
+	// 未设凭据却在非回环地址上监听 = 把组织拓扑与容量画像匿名对外开放。
+	// 不禁止这种配置（确有内网可信域部署的正当场景），但必须让运维明确知道。
+	if c.MetricsEndpoint.BearerToken == "" && !isLoopbackListenAddr(addr) {
+		slog.Warn("抓取端点监听在非回环地址且未配置凭据，任何可达该地址者都能匿名读取运行指标",
+			"监听地址", addr, "建议", "配置 BEACON_METRICS_ENDPOINT_BEARER_TOKEN，或用反向代理限制来源网段")
+	}
+	return nil
+}
+
+// isLoopbackListenAddr 判断监听地址是否只绑定回环（含「只写了端口」与「显式回环」两种写法）。
+//
+// 为什么要覆盖多种写法：`:8849`（所有网卡）、`0.0.0.0:8849`、`[::]:8849` 都不是回环，而
+// `127.0.0.1:8849`、`localhost:8849`、`[::1]:8849` 是。漏判会把「其实已对外」误报成安全，
+// 比不判断更糟——故此处按 host 部分白名单判定，未知写法一律视为非回环（保守）。
+func isLoopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
+	}
+}
 func (c Config) validate() error {
 	if strings.TrimSpace(c.HTTPAddr) == "" {
 		return fmt.Errorf("配置校验失败: 监听地址 http-addr 不能为空")
@@ -175,6 +233,9 @@ func (c Config) validate() error {
 		return fmt.Errorf("配置校验失败: alert.orphan-timeout-hours 须为正（单位：小时），实际 %d", c.Alert.OrphanTimeoutHours)
 	}
 	if err := c.validateMCP(); err != nil {
+		return err
+	}
+	if err := c.validateMetricsEndpoint(); err != nil {
 		return err
 	}
 	// 连接等待预算须小于事务寿命预算（见 store 的连接等待防护）：

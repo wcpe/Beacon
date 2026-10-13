@@ -261,13 +261,17 @@ func runScaleOnce(t *testing.T, cfg scaleConfig, workDir string, size int) scale
 	removeStaleDBFile(t, dbPath)
 
 	t.Logf("起控制面（库 %s）", dbPath)
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: cfg.ControlPlaneBin, RepoRoot: cfg.RepoRoot,
 		DBDriver: "sqlite", DBDSN: dbPath,
 		AdminPassword: cfg.AdminPass, AuthSecret: cfg.AuthSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: fmt.Sprintf("%s-%d", scaleLogPrefix, size),
 		ExtraEnv:  map[string]string{"BEACON_LOG_LEVEL": defaultCPLogLevel},
-	}, controlPlaneStartAttempts)
+	}
+	// 抓取端点独立监听（ADR-0090）：由 startControlPlane 逐次分配空闲端口。
+	// 逐规模起停控制面时若沿用默认 127.0.0.1:8849，第二个规模会 bind 失败而**直接启动失败**
+	// （bind 失败 = 启动失败，见 ADR-0090）。
+	cp, baseURL, metricsBase := startControlPlaneWithMetrics(t, cpCfg, controlPlaneStartAttempts)
 	// 注意：不在每个规模结束时立刻 CleanupControlPlane，而是在本函数返回前显式 StopE，
 	// 以保证 1000 台规模起第二个进程时第一个已完全退出（两个控制面同时跑会互相抢 CPU，
 	// 把「规模差异」和「两个进程并发争抢」混在一起）。
@@ -339,6 +343,7 @@ func runScaleOnce(t *testing.T, cfg scaleConfig, workDir string, size int) scale
 	scenarioCfg := scenarioConfig{
 		BaseURL: baseURL, AdminToken: token,
 		BootstrapToken: bootstrapToken, Namespace: agentNamespace, ServerIDs: serverIDs,
+		MetricsBase: metricsBase,
 	}
 	full := buildScenarioSet(scenarioCfg)
 
@@ -398,7 +403,7 @@ func runScaleOnce(t *testing.T, cfg scaleConfig, workDir string, size int) scale
 			continue
 		}
 		for _, concurrent := range plan.levels {
-			point := measureScalePoint(t, cfg, cp, client, cpPID, plan.set, plan.name, concurrent, size, baseURL, token)
+			point := measureScalePoint(t, cfg, cp, client, cpPID, plan.set, plan.name, concurrent, size, baseURL, metricsBase, token)
 			run.Points = append(run.Points, point)
 		}
 	}
@@ -413,7 +418,7 @@ func runScaleOnce(t *testing.T, cfg scaleConfig, workDir string, size int) scale
 // 顺序：抓池快照 → 起采样器 → 跑档位 → 停采样器 → 抓池快照与 /metrics → 组装。
 func measureScalePoint(
 	t *testing.T, cfg scaleConfig, cp *harness.ControlPlane, client *http.Client, cpPID int,
-	set *scenarioSet, family string, concurrent, size int, baseURL, token string,
+	set *scenarioSet, family string, concurrent, size int, baseURL, metricsBase, token string,
 ) scalePoint {
 	t.Helper()
 	label := fmt.Sprintf("规模 %d / %s / 并发 %d / %s", size, family, concurrent, cfg.LevelDuration)
@@ -425,7 +430,7 @@ func measureScalePoint(
 		t.Logf("档位前抓自观测快照失败（本档池增量将标记为不可用）：%v", beforeErr)
 	}
 	// /metrics 也取前后两次：GC 次数是进程累计计数器，只有增量能说明「这一档的 GC 压力」。
-	metricsBefore := fetchServerMetrics(ctx, client, baseURL)
+	metricsBefore := fetchServerMetrics(ctx, client, metricsBase)
 
 	sampler := startResourceSampler(map[string]int{"控制面": cpPID, "压测端": os.Getpid()}, scaleSamplingPeriod)
 	res, runErr := runLoad(ctx, &driverConfig{
@@ -453,7 +458,7 @@ func measureScalePoint(
 	}
 	point.PoolWait = subtractPool(poolBefore, poolAfter, beforeErr == nil && afterErr == nil)
 
-	metrics := fetchServerMetrics(ctx, client, baseURL)
+	metrics := fetchServerMetrics(ctx, client, metricsBase)
 	if metrics.Error != "" {
 		t.Logf("抓 /metrics 失败（不阻断）：%s", metrics.Error)
 	}

@@ -51,12 +51,15 @@ func TestV2WriteScenarioSmoke(t *testing.T) {
 		t.Fatalf("构建控制面失败：%v", err)
 	}
 	t.Log("== 起控制面（独立 sqlite + 动态端口）==")
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	// 抓取端点独立监听（ADR-0090）：startControlPlane 会分配一个空闲抓取端口，
+	// 避免沿用默认 8849 与并行/相邻用例撞端口（bind 失败 = 控制面启动失败）。
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: bin, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: filepath.Join(workDir, "beacon-loadtest-v2smoke.db"),
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: "beacon-v2smoke",
-	}, controlPlaneStartAttempts)
+	}
+	cp, baseURL := startControlPlane(t, cpCfg, controlPlaneStartAttempts)
 	harness.CleanupControlPlane(t, cp)
 
 	token, err := harness.Login(baseURL, adminUser, adminPass, cp)

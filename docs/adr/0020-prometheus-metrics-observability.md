@@ -1,6 +1,6 @@
 # ADR-0020：控制面用标准 Prometheus client 暴露运行指标
 
-**状态**：已接受
+**状态**：已被 [ADR-0090](0090-metrics-endpoint-dedicated-listener.md) 部分取代——被取代的是决策段中「**与业务同端口**暴露」与「**不挂鉴权**」两条（抓取端点改为独立监听、默认只绑回环，并新增可选 Bearer 鉴权）；**予以承继**的是决策段的其余各条：独立 `*prometheus.Registry`（不挂全局 default）、pull 模型（自定义 Collector 抓取时现算、不在运行态写路径埋点）、service 层经窄接口可选注入计数器，以及指标清单本身。本 ADR 正文保持原样（ADR 不可变，决策变更由新 ADR 载明）。
 
 ## 背景
 

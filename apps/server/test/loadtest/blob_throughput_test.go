@@ -189,6 +189,9 @@ type blobEnv struct {
 	shas        []string
 	// pid 是控制面进程 PID（用于 RSS 采样；定位失败为 0）。
 	pid int
+	// metricsBase 是抓取端点基址（独立监听，见 ADR-0090）：抓 goroutine 数等进程级读数从这里取，
+	// 主端口上已不再提供 /metrics。
+	metricsBase string
 }
 
 // blobSetupConfig 是链路装配的隔离参数（多个用例必须取不同值，保证可并行运行互不覆盖）。
@@ -283,7 +286,7 @@ func blobSetup(t *testing.T, adminPass, authSecret string, cfg blobSetupConfig) 
 	}
 	t.Cleanup(func() { _ = os.Remove(binPath) })
 
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: binPath, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: filepath.Join(workDir, cfg.DBName),
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
@@ -296,10 +299,11 @@ func blobSetup(t *testing.T, adminPass, authSecret string, cfg blobSetupConfig) 
 			// 故按主库名派生，保证每个用例独占自己的归档库。
 			"BEACON_ARCHIVE_DATABASE": archiveDBNameFor(cfg.DBName),
 		},
-	}, controlPlaneStartAttempts)
+	}
+	cp, baseURL, metricsBase := startControlPlaneWithMetrics(t, cpCfg, controlPlaneStartAttempts)
 	harness.CleanupControlPlane(t, cp)
 	_, stderrPath := cp.LogPaths()
-	t.Logf("控制面已就绪：%s（stderr：%s）", baseURL, stderrPath)
+	t.Logf("控制面已就绪：%s（stderr：%s）；抓取端点：%s/metrics", baseURL, stderrPath, metricsBase)
 
 	adminToken, err := harness.Login(baseURL, adminUser, adminPass, cp)
 	if err != nil {
@@ -316,6 +320,7 @@ func blobSetup(t *testing.T, adminPass, authSecret string, cfg blobSetupConfig) 
 		cp: cp, baseURL: baseURL, adminToken: adminToken,
 		repoRoot: repoRoot, dbPath: dbPath, db: db,
 		pid: findProcessPIDByCmdline(binPath), sourceID: cfg.SourceID,
+		metricsBase: metricsBase,
 	}
 	// blob 根 .beacon/delivery 是共享目录，故按 sha 精确清理（注册在最前 → LIFO 最后执行）。
 	t.Cleanup(func() { blobRemoveBlobFiles(t, repoRoot, env.shas) })

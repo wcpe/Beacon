@@ -62,8 +62,13 @@ package-lock.json
 /config.yaml
 /beacon.db
 
-# 首启运行时生成的控制面配置（embed 源为 config.example.yml），不入库
-/config.yml
+# 首启运行时生成的控制面配置（embed 源为 config.example.yml），不入库。
+# 注意模式用 `**/` 而非仅根目录 `/`：控制面在「当前工作目录」释放该文件，
+# 而从 apps/server 或任意子目录启动时会在那里生成一份**含随机口令与签名密钥**的副本；
+# 只挡根目录会让这些副本成为可被 `git add` 的未跟踪文件（实测发生过）。
+**/config.yml
+**/config.yaml
+**/beacon.db
 /.playwright-cli/
 node_modules
 **/node_modules

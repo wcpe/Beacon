@@ -18,6 +18,15 @@ services:
     environment:
       # 监听地址（API 与管理台 UI 同端口）
       BEACON_HTTP_ADDR: ${BEACON_HTTP_ADDR:-:8848}
+      # Prometheus 抓取端点监听地址（独立端口，见 docs/adr/0090）。
+      # 默认沿用回环 127.0.0.1:8849：**容器内的回环与宿主机回环不是同一个网络**，
+      # 故默认值下宿主与外部 Prometheus 都抓不到，只能进容器内（docker exec）抓——这与"默认不对外暴露"一致。
+      # 要让宿主机 / 外部抓取，须同时做两件事（二者缺一不可）：
+      #   1) 把本项改成容器内所有网卡可达的 ":8849"（或在 .env 里覆盖 BEACON_METRICS_ENDPOINT_LISTEN_ADDR=:8849）；
+      #   2) 解开下方 ports 里那行 8849 映射。
+      BEACON_METRICS_ENDPOINT_LISTEN_ADDR: ${BEACON_METRICS_ENDPOINT_LISTEN_ADDR:-127.0.0.1:8849}
+      # 抓取端点凭据（敏感项，走 .env 注入）：非空即要求 Authorization: Bearer <token>，留空 = 不鉴权
+      BEACON_METRICS_ENDPOINT_BEARER_TOKEN: ${BEACON_METRICS_ENDPOINT_BEARER_TOKEN:-}
       # agent 端共享 token，仅防误连
       BEACON_BOOTSTRAP_TOKEN: ${BEACON_BOOTSTRAP_TOKEN:-beacon-bootstrap-token}
       # 真机默认 sqlite；数据文件落可写 /data 卷
@@ -26,6 +35,12 @@ services:
     ports:
       # 宿主端口 → 容器 8848（API 与管理台）
       - "${BEACON_PUBLISH_PORT:-8848}:8848"
+      # 宿主端口 → 容器 8849（Prometheus 抓取端点，独立监听）。
+      # 默认注释掉：不映射即"抓取端点不对容器外暴露"。
+      # 要放开时解开本行，**并同时**把上面 BEACON_METRICS_ENDPOINT_LISTEN_ADDR 改成 ":8849"：
+      # 只映射不改监听地址，容器里仍绑在容器回环上，宿主机照样抓不到（表现为连接被拒）。
+      # 宿主侧写 127.0.0.1:8849 才能保持"只有本机能抓"；写成 8849:8849 等于对所有宿主网卡暴露，须自备防火墙/反代保护。
+      # - "127.0.0.1:8849:8849"
     volumes:
       # 持久化 config.yml、sqlite 与本地状态
       - beacon-data:/data

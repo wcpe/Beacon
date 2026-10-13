@@ -116,6 +116,9 @@ type bp429Env struct {
 	ident      bp429Identity
 	contents   [][]byte
 	shas       []string
+	// metricsBase 是抓取端点基址（独立监听，见 ADR-0090）：429 的 RED 时序证据从这里取，
+	// 主端口上已不再提供 /metrics。
+	metricsBase string
 }
 
 // bp429Outcome 是占位 / 后台请求 goroutine 的收尾结果（err 非空表示请求层失败）。
@@ -191,7 +194,7 @@ func TestBackpressure429DeliveryUploadBusyRealChain(t *testing.T) {
 	}
 
 	// —— 第 5 步：RED 指标里留下 429 时序（旁证：429 经真实 HTTP 栈返回，而非仅响应体文案）——
-	bp429AssertREDSeries(t, bp429ScrapeMetrics(t, env.baseURL), http.MethodPut, http.StatusTooManyRequests)
+	bp429AssertREDSeries(t, bp429ScrapeMetrics(t, env.metricsBase), http.MethodPut, http.StatusTooManyRequests)
 
 	t.Log("== 429 背压边界 e2e（上传）结论 ==")
 	t.Log("1) delivery_upload_busy 429 在真实生产链路（真实进程 / 真实鉴权 / 真实归属校验 / 真实限流）上确定性触发；")
@@ -258,7 +261,7 @@ func TestBackpressure429DeliveryDownloadBusyRealChain(t *testing.T) {
 	t.Logf("【恢复证据·下载】额度归还后同 sha 的 Range 请求立即恢复成功，且另一 blob 的 %d 字节可完整读回", len(small))
 
 	// —— 第 5 步：RED 指标里留下 429 时序 ——
-	bp429AssertREDSeries(t, bp429ScrapeMetrics(t, env.baseURL), http.MethodGet, http.StatusTooManyRequests)
+	bp429AssertREDSeries(t, bp429ScrapeMetrics(t, env.metricsBase), http.MethodGet, http.StatusTooManyRequests)
 
 	t.Log("== 429 背压边界 e2e（下载）结论 ==")
 	t.Log("1) delivery_download_busy 429 在真实生产链路（真实进程 / 真实鉴权 / 真实归属校验 / 真实慢客户端）上确定性触发；")
@@ -298,17 +301,18 @@ func bp429Setup(t *testing.T, cfg bp429EnvConfig, contents [][]byte) *bp429Env {
 
 	t.Log("== 起控制面（独立 sqlite + 动态端口）==")
 	dbPath := filepath.Join(workDir, cfg.DBName)
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: binPath, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: dbPath,
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: cfg.LogPrefix,
 		// 保留访问日志（默认 WARN 会压掉）：429 在控制面日志里留痕是证据链的一环。
 		ExtraEnv: map[string]string{"BEACON_LOG_LEVEL": "INFO"},
-	}, controlPlaneStartAttempts)
+	}
+	cp, baseURL, metricsBase := startControlPlaneWithMetrics(t, cpCfg, controlPlaneStartAttempts)
 	harness.CleanupControlPlane(t, cp)
 	stdoutPath, stderrPath := cp.LogPaths()
-	t.Logf("控制面已就绪：%s（日志：%s / %s）", baseURL, stdoutPath, stderrPath)
+	t.Logf("控制面已就绪：%s（日志：%s / %s）；抓取端点：%s/metrics", baseURL, stdoutPath, stderrPath, metricsBase)
 
 	adminToken, err := harness.Login(baseURL, adminUser, adminPass, cp)
 	if err != nil {
@@ -331,6 +335,7 @@ func bp429Setup(t *testing.T, cfg bp429EnvConfig, contents [][]byte) *bp429Env {
 	env := &bp429Env{
 		cp: cp, baseURL: baseURL, adminToken: adminToken, stderrPath: stderrPath,
 		db: db, namespace: nsCode, ident: ident, contents: contents,
+		metricsBase: metricsBase,
 	}
 	files := make([]bp429SeedFile, 0, len(contents))
 	for i := range contents {
@@ -769,11 +774,16 @@ func bp429BlobRowCount(t *testing.T, db *gorm.DB, sha string) int64 {
 	return count
 }
 
-// bp429ScrapeMetrics 抓一次 /metrics（Prometheus 文本，内网信任面不挂管理台鉴权）。
-func bp429ScrapeMetrics(t *testing.T, baseURL string) string {
+// bp429ScrapeMetrics 抓一次 /metrics（Prometheus 文本）。抓取端点已迁到独立监听（ADR-0090），
+// 故打的是 metricsBase 而不是控制面主端口；配了凭据时由共享 helper 带上 Authorization 头。
+func bp429ScrapeMetrics(t *testing.T, metricsBase string) string {
 	t.Helper()
 	client := &http.Client{Timeout: bp429RequestTimeout}
-	resp, err := client.Get(baseURL + "/metrics")
+	req, err := newMetricsRequest(t.Context(), metricsBase)
+	if err != nil {
+		t.Fatalf("构造 /metrics 抓取请求失败：%v", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("抓取 /metrics 失败：%v", err)
 	}

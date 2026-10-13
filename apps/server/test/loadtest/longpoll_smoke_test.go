@@ -53,13 +53,17 @@ func TestSuspendedProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("构建控制面失败：%v", err)
 	}
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	// 抓取端点独立监听（ADR-0090）：startControlPlane 会为本进程分配一个空闲抓取端口——
+	// 本用例并不抓指标，但若不分配，就会沿用默认 127.0.0.1:8849，
+	// 与并行/相邻运行的其它用例撞端口，而 bind 失败 = 控制面启动失败。
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: bin, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: filepath.Join(workDir, sqliteDBName),
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: logPrefix,
 		ExtraEnv:  map[string]string{"BEACON_LOG_LEVEL": defaultCPLogLevel},
-	}, controlPlaneStartAttempts)
+	}
+	cp, baseURL := startControlPlane(t, cpCfg, controlPlaneStartAttempts)
 	harness.CleanupControlPlane(t, cp)
 	t.Logf("控制面已就绪：%s", baseURL)
 
@@ -123,13 +127,17 @@ func TestSSEProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("构建控制面失败：%v", err)
 	}
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	// 抓取端点独立监听（ADR-0090）：startControlPlane 会为本进程分配一个空闲抓取端口——
+	// 本用例并不抓指标，但若不分配，就会沿用默认 127.0.0.1:8849，
+	// 与并行/相邻运行的其它用例撞端口，而 bind 失败 = 控制面启动失败。
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: bin, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: filepath.Join(workDir, sqliteDBName),
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: logPrefix,
 		ExtraEnv:  map[string]string{"BEACON_LOG_LEVEL": defaultCPLogLevel},
-	}, controlPlaneStartAttempts)
+	}
+	cp, baseURL := startControlPlane(t, cpCfg, controlPlaneStartAttempts)
 	harness.CleanupControlPlane(t, cp)
 	t.Logf("控制面已就绪：%s", baseURL)
 

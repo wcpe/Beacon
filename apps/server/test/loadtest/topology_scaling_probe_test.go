@@ -86,13 +86,14 @@ func TestTopologyScalingProbe(t *testing.T) {
 		t.Fatalf("构建控制面失败：%v", err)
 	}
 
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: bin, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: dbPath,
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: "beacon-topoprobe",
 		ExtraEnv:  map[string]string{"BEACON_LOG_LEVEL": defaultCPLogLevel},
-	}, controlPlaneStartAttempts)
+	}
+	cp, baseURL, metricsBase := startControlPlaneWithMetrics(t, cpCfg, controlPlaneStartAttempts)
 	defer func() {
 		if err := cp.StopE(); err != nil {
 			t.Errorf("停止控制面失败：%v", err)
@@ -124,6 +125,7 @@ func TestTopologyScalingProbe(t *testing.T) {
 		scenarioCfg := scenarioConfig{
 			BaseURL: baseURL, AdminToken: token,
 			BootstrapToken: bootstrapToken, Namespace: agentNamespace, ServerIDs: serverIDs,
+			MetricsBase: metricsBase,
 		}
 		full := buildScenarioSet(scenarioCfg)
 		// 逐个端点单独压（并发 1）：只有隔离成单端点，成本差异才不会被混合负载平均掉。

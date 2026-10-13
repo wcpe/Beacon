@@ -163,6 +163,10 @@ type authEnv struct {
 	identityID  string
 	bootID      string
 	pid         int
+	// metricsBase 是抓取端点基址（独立监听，见 ADR-0090）。
+	// 「无鉴权基线」路径打的是它而不是主端口：基线要把「网络 + 路由 + 序列化」的固定成本
+	// 从鉴权成本里减掉，而主端口上已不再有 /metrics。
+	metricsBase string
 }
 
 // TestAuthStormRealChain 是鉴权风暴主入口。
@@ -215,14 +219,15 @@ func authSetup(t *testing.T, adminPass, authSecret string) *authEnv {
 	}
 	t.Cleanup(func() { _ = os.Remove(binPath) })
 
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: binPath, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: filepath.Join(workDir, authDBName),
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: authLogPrefix,
 		// WARN：鉴权风暴会产生海量 401，INFO 级访问日志会把 .tmp 写爆并让磁盘 I/O 混进时延。
 		ExtraEnv: map[string]string{"BEACON_LOG_LEVEL": "WARN"},
-	}, controlPlaneStartAttempts)
+	}
+	cp, baseURL, metricsBase := startControlPlaneWithMetrics(t, cpCfg, controlPlaneStartAttempts)
 	harness.CleanupControlPlane(t, cp)
 	_, stderrPath := cp.LogPaths()
 	t.Logf("控制面已就绪：%s（stderr：%s）", baseURL, stderrPath)
@@ -252,6 +257,7 @@ func authSetup(t *testing.T, adminPass, authSecret string) *authEnv {
 		cp: cp, baseURL: baseURL, adminToken: adminToken, adminPass: adminPass,
 		repoRoot: repoRoot, accessToken: accessToken,
 		identityID: identityID, bootID: bootID, pid: pid,
+		metricsBase: metricsBase,
 	}
 }
 
@@ -303,10 +309,11 @@ func authBuildPaths(t *testing.T, env *authEnv) []authPath {
 			SourceRef:  "internal/server/middleware.go:47 → internal/service/v2_control_plane_service.go:321（AuthenticateAgentReport）",
 		},
 		{
-			Name: "GET /metrics（无鉴权基线）", Method: http.MethodGet, URL: base + "/metrics",
+			Name: "GET /metrics（抓取端点基线）", Method: http.MethodGet, URL: scrapeMetricsURL(env.metricsBase),
+			Headers:    headersToMap(metricsAuthHeaders()),
 			WantStatus: http.StatusOK,
-			CostModel:  "无鉴权（内网信任面，ADR-0020）；用于把「网络 + 路由 + 序列化」的固定成本从鉴权成本里减掉",
-			SourceRef:  "internal/server/router.go:142",
+			CostModel:  "无鉴权（抓取端点，见 ADR-0090；未配凭据时不校验 Authorization）；用于把「网络 + 路由 + 序列化」的固定成本从鉴权成本里减掉",
+			SourceRef:  "apps/server/internal/metrics/endpoint.go（EndpointHandler）",
 		},
 	}
 }

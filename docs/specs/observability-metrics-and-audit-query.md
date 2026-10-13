@@ -26,7 +26,7 @@
 - `GET /admin/v1/audits` 新增 `operator` 过滤参数，与既有 `namespace/action/targetType/targetRef/from/to` 过滤、分页、时间倒序并存。
 
 - 范围内：上述两点。
-- 不做（范围外）：Grafana 面板/告警规则、指标持久化、链路追踪（Tracing）、`/metrics` 鉴权（内网信任，与现有运行约定一致）。
+- 不做（范围外）：Grafana 面板/告警规则、指标持久化、链路追踪（Tracing）、`/metrics` 鉴权（内网信任，与当时运行约定一致）。**后两项中的「鉴权」已被后续规格推翻**：抓取端点现为独立监听 + 可选 Bearer 鉴权（[ADR-0090](../adr/0090-metrics-endpoint-dedicated-listener.md)），见 §6。
 
 ## 3. 设计（怎么做）
 
@@ -34,7 +34,7 @@
 - 持私有 `*prometheus.Registry`（独立注册表，不污染全局 default），集中注册全部 collector。
 - 注册/健康 gauge 用自定义 `prometheus.Collector`，`Collect` 时读取 `runtime.Registry` 快照即时计数（无写路径耦合）。
 - `config_publish_total`、`push_notify_total` 为 counter，由 `metrics.Metrics` 暴露自增方法。
-- `Handler()` 返回 `promhttp.HandlerFor(reg, ...)`，由 router 挂到 `/metrics`（agent/admin 两套之外的运维端点，不挂鉴权中间件）。
+- `Handler()` 返回 `promhttp.HandlerFor(reg, ...)`，**不再由 router 挂到主端口**（原设计为 router 根路径上的运维端点、不挂鉴权中间件；该挂法已由 [ADR-0090](../adr/0090-metrics-endpoint-dedicated-listener.md) 取代）。现由 `EndpointHandler(bearerToken)` 包一层可选 Bearer 鉴权，挂到**独立监听**的 `http.Server` 上（默认 `127.0.0.1:8849`）。
 
 ### 3.2 计数解耦
 - service 层不直接依赖 metrics 具体类型：在 service 包定义窄接口（发布计数器 / 推送计数器），`*metrics.Metrics` 实现之，启动时可选注入（未注入即 no-op，保持单测无依赖）。
@@ -54,11 +54,11 @@
 - [x] 文档同步：API、ARCHITECTURE、CHANGELOG
 
 ## 5. 验收标准
-- `GET /metrics` 返回 200 且文本含 `beacon_instances_registered`、`beacon_instances_status`、`beacon_config_publish_total`、`beacon_push_notify_total`；并含 HTTP 层 RED 指标 `beacon_http_requests_total{method,route,status}` 与 `beacon_http_request_duration_seconds{method,route}`（同一 registry / 同一端点上的后续扩展：`route` 取 chi 路由模板、未匹配归一为 `unmatched`，见 [ADR-0089](../adr/0089-http-layer-red-metrics.md)）。
+- `GET /metrics` 返回 200 且文本含 `beacon_instances_registered`、`beacon_instances_status`、`beacon_config_publish_total`、`beacon_push_notify_total`；并含 HTTP 层 RED 指标 `beacon_http_requests_total{method,route,status}` 与 `beacon_http_request_duration_seconds{method,route}`（同一 registry / 同一端点上的后续扩展：`route` 取 chi 路由模板、未匹配归一为 `unmatched`，见 [ADR-0089](../adr/0089-http-layer-red-metrics.md)）。**注**：该端点已迁到独立监听（默认 `127.0.0.1:8849`，不再是业务主端口），验收时须抓**抓取端点地址**；指标内容与路径 `/metrics` 均未变。
 - 注册一个实例后采集，`beacon_instances_registered` 对应 namespace/role 计数 +1；状态 gauge 反映 online。
 - `GET /admin/v1/audits?operator=alice` 仅返回 alice 的审计；与其它过滤可叠加。
 - 控制面 `go test ./...` 全绿；集成测试（带 DSN）审计 operator 过滤通过。
 
 ## 6. 风险 / 待定
 - 新增第三方依赖 `prometheus/client_golang`（FR-30 明确要求「标准 prometheus client」）。
-- /metrics 不鉴权：与 agent 端点同属内网信任面，若后续要求鉴权再走新 ADR。
+- ~~/metrics 不鉴权：与 agent 端点同属内网信任面，若后续要求鉴权再走新 ADR。~~ **已了结**：该后续要求已出现，由 [ADR-0090](../adr/0090-metrics-endpoint-dedicated-listener.md) 落定——抓取端点改**独立监听**（默认仅回环 `127.0.0.1:8849`）并新增**可选 Bearer 鉴权**，同时取代 [ADR-0020](../adr/0020-prometheus-metrics-observability.md) 的「同端口」与「不挂鉴权」两条约定。本规格 §2.1 的 `/metrics` 暴露与 §3.1 的 `Handler()` 产物仍然有效，变的只是挂载位置与访问控制（端点路径与指标清单未变）。

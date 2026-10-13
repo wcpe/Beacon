@@ -77,13 +77,16 @@ func TestDailyTableRoutedByRowTimestamp(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	// 抓取端点独立监听（ADR-0090）：startControlPlane 会分配一个空闲抓取端口，
+	// 避免沿用默认 8849 与并行/相邻用例撞端口（bind 失败 = 控制面启动失败）。
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: binPath, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: dbPath,
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: "beacon-routets",
 		ExtraEnv:  map[string]string{"BEACON_LOG_LEVEL": envOr("LOADTEST_CP_LOG_LEVEL", defaultCPLogLevel)},
-	}, controlPlaneStartAttempts)
+	}
+	cp, baseURL := startControlPlane(t, cpCfg, controlPlaneStartAttempts)
 	harness.CleanupControlPlane(t, cp)
 
 	token, err := harness.Login(baseURL, adminUser, adminPass, cp)

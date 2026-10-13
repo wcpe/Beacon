@@ -23,7 +23,7 @@
 | [0017](0017-traffic-scheduling-decision-vs-execution.md) | 流量调度：控制面给决策 / 数据面做执行，drain 落 DB、canary 划范围外 | 已接受 |
 | [0018](0018-config-encryption-at-rest.md) | 敏感配置 at-rest 加密：AES-256-GCM、密钥走 env、密文落 TEXT 可移植 | 已被 [0081](0081-local-persistent-encryption-key-files.md) 取代 |
 | [0019](0019-health-alert-channel-abstraction.md) | 健康告警通道做成可扩展抽象（站内信 + webhook） | 已接受（**「告警不落库」一条被 [0041](0041-alert-event-persistence.md) 取代**） |
-| [0020](0020-prometheus-metrics-observability.md) | 控制面用标准 Prometheus client 暴露运行指标（/metrics） | 已接受 |
+| [0020](0020-prometheus-metrics-observability.md) | 控制面用标准 Prometheus client 暴露运行指标（/metrics） | 已被 [0090](0090-metrics-endpoint-dedicated-listener.md) **部分取代**（同端口暴露、不挂鉴权两条；独立 registry / pull 模型 / 指标清单等承继） |
 | [0021](0021-config-gray-cohort-version-selection.md) | 配置灰度：按显式 serverId 名单（cohort）在版本选择层叠加，promote/abort 收口 | 已接受 |
 | [0022](0022-agent-roster-read-api.md) | agent-api 暴露玩家位置名册只读查询（扩展 ADR-0016 决策 5） | 已接受 |
 | [0023](0023-control-plane-observability-dashboard.md) | 控制面自带可观测看板（指标 + 历史趋势），时序落 MySQL metric_sample | 已接受 |
@@ -92,7 +92,8 @@
 | [0086](0086-agent-self-declaration-narrow-write-surface.md) | agent 对业务插件开放「节点自声明」的窄写入面（只读边界内：容量 + 自定义键值标签） | 已接受（决策）；实现并入 FR-243 待排期。**决策 4 中「控制面只存不判 / 不进入调度决策」一条被 [0087](0087-scheduling-admission-scope-over-self-declared-labels.md) 取代**（其余决策仍有效）。增强 FR-227 / FR-228，不取代任何 ADR |
 | [0087](0087-scheduling-admission-scope-over-self-declared-labels.md) | 调度准入作用域读取节点自声明标签（取代 ADR-0086 决策 4 的「不进入调度决策」一条） | 已接受（决策）；实现并入 FR-244 待排期。增强 FR-243 / FR-227，不取代其他 ADR |
 | [0088](0088-restart-activation-single-receipt-and-shutdown-capability.md) | restart 生效的单次回执收敛与关服能力探测（取代 ADR-0070 决策 2 的回执顺序描述） | 已接受（决策）；实现并入 FR-266。增强 FR-171 / FR-266，不取代其他 ADR |
-| [0089](0089-http-layer-red-metrics.md) | 控制面 HTTP 层 RED 指标（路由模板分维的请求计数与时延直方图，扩展现有 /metrics） | 已接受；扩展 ADR-0020（同端口 / 独立 registry / 不挂鉴权三条约定沿用，不改其正文与状态），不取代任何 ADR |
+| [0089](0089-http-layer-red-metrics.md) | 控制面 HTTP 层 RED 指标（路由模板分维的请求计数与时延直方图，扩展现有 /metrics） | 已接受；扩展 ADR-0020（独立 registry 沿用，不改其正文），不取代任何 ADR。**前言中当时沿用的「同端口 / 不挂鉴权」两条已被 [0090](0090-metrics-endpoint-dedicated-listener.md) 取代**（其余决策仍有效） |
+| [0090](0090-metrics-endpoint-dedicated-listener.md) | Prometheus 抓取端点独立监听（默认仅回环）并支持可选 Bearer 鉴权 | 已接受；**部分取代 [0020](0020-prometheus-metrics-observability.md)**（同端口暴露、不挂鉴权两条；独立 registry / pull 模型 / 指标清单等其余决策承继） |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

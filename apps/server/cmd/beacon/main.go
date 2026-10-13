@@ -796,7 +796,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2Roster: v2RosterHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, MCPInvocation: mcpInvocationHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), HTTPMetrics: metricsSet, Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, MCPInvocation: mcpInvocationHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, HTTPMetrics: metricsSet, Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{
@@ -811,12 +811,32 @@ func run() error {
 		IdleTimeout: 120 * time.Second,
 	}
 
+	// 抓取端点独立监听（见 ADR-0090）：与业务主端口分离，使暴露面可单独收敛。
+	// 默认 127.0.0.1:8849 = 仅本机可达；listen-addr 置空即完全不启动该端点。
+	// 刻意不挂在主路由上：主端口默认全网卡绑定且承载管理台与 agent 数据面，
+	// 挂在其上等于「主端口可达即可匿名读到组织拓扑与容量画像」，无法单独收紧。
+	var metricsSrv *http.Server
+	if addr := strings.TrimSpace(cfg.MetricsEndpoint.ListenAddr); addr != "" {
+		metricsSrv = &http.Server{
+			Addr:              addr,
+			Handler:           metricsSet.EndpointHandler(cfg.MetricsEndpoint.BearerToken),
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			// 抓取是短请求（返回一次文本快照即结束），无长连接与 SSE，故可安全设 IdleTimeout。
+			IdleTimeout: 120 * time.Second,
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// 关停信号 ctx 作所有请求的根 context（fix-b）：Ctrl+C / SIGTERM 时取消所有在途请求——
 	// SSE / 长轮询等长连接据 r.Context() 即时退出、连接随之 drain，Shutdown 不必干等到 35s 超时（"关不掉"观感）。
 	srv.BaseContext = func(net.Listener) context.Context { return ctx }
+	// 抓取端点同样挂关停 ctx：关停时在途抓取即时取消，不必等 Shutdown 超时。
+	if metricsSrv != nil {
+		metricsSrv.BaseContext = func(net.Listener) context.Context { return ctx }
+	}
 	// 异步在线更新下载挂到关停信号 ctx（fix-b）：Ctrl+C / 关停时取消进行中的下载，下载不再脱离进程生命周期。
 	updateAPIService.SetBaseContext(ctx)
 
@@ -868,13 +888,28 @@ func run() error {
 	// P9 M3：交付灰度编排推进器（FR-166，spec §4.1）：启动先按库内状态恢复 rolling / paused 单，再 ticker + 回执唤醒双驱动推进。
 	go deliveryOrchestrator.Run(ctx)
 
-	errCh := make(chan error, 1)
+	// 容量 2 而非 1：有两个监听器（业务主服务 + 抓取端点）各自可能上报错误。
+	// 容量 1 时若两者同时失败，第二个发送方会阻塞在 channel 上——进程仍会因读到首个错误而
+	// 正常退出（不会挂死），但那一条错误被静默丢弃，而这恰恰是最需要同时看到两条信息的场景
+	// （例如同一次端口冲突让两个监听器都起不来）。多一个缓冲位即消除该丢弃。
+	errCh := make(chan error, 2)
 	go func() {
 		slog.Info("HTTP 服务已就绪", "地址", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
+	// 抓取端点监听（见 ADR-0090）。绑定失败必须与主服务同等对待、进 errCh 终止进程：
+	// 静默降级会让「以为在抓、实际没在抓」持续到有人发现看板没数据，比直接启动失败更难排查。
+	if metricsSrv != nil {
+		go func() {
+			slog.Info("抓取端点已就绪", "地址", metricsSrv.Addr,
+				"鉴权", cfg.MetricsEndpoint.BearerToken != "")
+			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("抓取端点监听失败（地址 %s）: %w", metricsSrv.Addr, err)
+			}
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -886,14 +921,14 @@ func run() error {
 		// 给关停一个上限：略大于长轮询上限，到点强制结束
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		return shutdownAll(shutdownCtx, srv, metricsSrv)
 	case <-updateRestartCh:
 		// 更新已落位 pending，优雅关停释放端口后自替换二进制并重启（FR-119，见 ADR-0053）：
 		// rename 让位三步换二进制 + spawn 新进程，本进程随后退出（exit 0）；换失败就地回退、重启旧版兜底。
 		slog.Info("更新已就绪，优雅关停后自替换二进制并重启")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
+		if err := shutdownAll(shutdownCtx, srv, metricsSrv); err != nil {
 			return err
 		}
 		if selfErr != nil {
@@ -905,7 +940,7 @@ func run() error {
 		slog.Info("手动回滚已触发，优雅关停后回退到上一版本并重启")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
+		if err := shutdownAll(shutdownCtx, srv, metricsSrv); err != nil {
 			return err
 		}
 		if selfErr != nil {
@@ -915,6 +950,29 @@ func run() error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// shutdownAll 依次优雅关停主服务与抓取端点（见 ADR-0090），返回首个错误。
+//
+// 为什么抓取端点也必须关停、不能随进程退出：
+//   - 自更新 / 回滚分支（SwapAndRespawn / RollbackAndRespawn）会 spawn 新进程接手，新进程要重新绑定
+//     同一抓取端口；本进程若不先释放，新进程 bind 失败——表现为"更新后抓取端点起不来"。
+//   - 关停信号分支下，进程退出虽会由 OS 回收端口，但先关停可让在途抓取收到明确结束而非被硬断。
+//
+// 先关 metricsSrv：它只有短请求（返回一次文本快照即结束），几乎瞬间完成，不会占用共享的超时预算；
+// 而主服务可能还在等 30s 长轮询 drain，放在后面关才能拿到完整的剩余预算。
+// 两者都关停后仍返回首个错误（主服务失败更值得上报），保证调用方行为与改动前一致。
+func shutdownAll(ctx context.Context, srv, metricsSrv *http.Server) error {
+	var firstErr error
+	if metricsSrv != nil {
+		if err := metricsSrv.Shutdown(ctx); err != nil {
+			firstErr = err
+		}
+	}
+	if err := srv.Shutdown(ctx); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }
 
 // openArchiveConn 建立归档库连接（FR-151，见 ADR-0066）：不可达时 WARN + 返回 nil 连接，

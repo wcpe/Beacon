@@ -2,6 +2,21 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 未发布
+
+### 安全
+
+- **Prometheus 抓取端点独立监听、默认只绑回环，并新增可选 Bearer 鉴权（[ADR-0090](docs/adr/0090-metrics-endpoint-dedicated-listener.md)，部分取代 [ADR-0020](docs/adr/0020-prometheus-metrics-observability.md) 的「同端口」与「不挂鉴权」）**：`/metrics` 此前挂在业务主端口上，而主端口默认是 `:8848`——Go 网络约定里 `:8848` 表示**绑定所有网卡**（非 `127.0.0.1`），`docker-compose.yml` 的端口映射同样未写宿主 IP。于是「内网信任面、不挂鉴权」这一文档前提与部署默认值之间存在落差：**只要主端口可达，无需任何凭据即可读到 `beacon_instances_registered{namespace,role}` 与 `beacon_instances_status{status}`**，也就是组织拓扑与容量画像（不含凭据，但正是侦察时先要的东西）；且它与承载管理台、agent 数据面、SSE 长连接的主端口共用监听地址，想收敛抓取就只能连带影响业务面。现改为**独立监听**，让暴露面可单独收敛。
+  - **默认安全**：新增顶层配置段 `metrics-endpoint`，`listen-addr` 默认 `127.0.0.1:8849`（仅本机回环），**外部与公网默认抓不到**——放开与否成为运维的显式选择，而不再由默认值替他决定。改为内网 IP（如 `10.0.0.5:8849`）或 `:8849` 即可让外部抓取，亦可用 env `BEACON_METRICS_ENDPOINT_LISTEN_ADDR` 覆盖；置空字符串表示显式关闭该端点。写入 `host:port` 之外的形态、或让 `listen-addr` 与 `http-addr` 相同（相同即等于把抓取端点又挂回业务面，且后监听者必然 bind 失败），均在配置校验期直接拒绝并给出可读原因。
+  - **可选鉴权**：新增 `bearer-token`，校验标准 `Authorization: Bearer <token>`（方案名大小写不敏感、恒定时间比较），缺失或不匹配一律 `401` 且不回 `WWW-Authenticate`（不透露期望的凭据方案）。该值属敏感项，**仅从 env `BEACON_METRICS_ENDPOINT_BEARER_TOKEN` 注入、不写入 `config.yml` 也不入 DB 设置 store**（沿用 `git-export.remote-token` 的既有范式）；**默认空 = 不鉴权**，因为默认监听已是回环，强制鉴权只会破坏同机抓取的开箱即用。监听在**非回环地址且未设凭据**时记一条 WARN（不阻断启动——内网可信域部署是正当场景，但要让运维明确知道任何可达该地址者都能匿名读取）。本批**不加限流**：限流属独立关注点，抓取端点独立后该职责可由网络层或反代承担。
+  - **端点路径与指标清单零变化**：仍是 `GET /metrics`，仍是原来的独立 registry 与同一份指标（含 [ADR-0089](docs/adr/0089-http-layer-red-metrics.md) 的 HTTP 层 RED 指标），Prometheus 侧只需改地址、无需改指标名与查询。抓取端点绑定失败按**启动失败**处理（进 `errCh` 终止进程）：不静默降级，「以为在抓、实际没在抓」会一直持续到有人发现看板没数据，比直接失败更难排查。
+
+### 变更
+
+- **破坏性变更：主端口不再提供 `/metrics`，既有抓取配置必须改地址**：主端口（默认 `:8848`）上的 `/metrics` 已移除（`server.Handlers.Metrics` 字段随之删除），Prometheus 的 `static_configs.targets` 须从 `beacon.internal:8848` 改为抓取端点——同机抓取用 `127.0.0.1:8849`，跨机需先把 `metrics-endpoint.listen-addr` 放开到内网地址再指过去；容器形态还须把 8849 映射出来（容器内回环与宿主回环不是同一个网络命名空间，只改 `listen-addr` 不映射依旧抓不到）。降级前未做此改动，`up{job="beacon"}` 会立即归零——控制面本身没挂，是抓取地址变了。
+- **抓取不再被自记进 `beacon_http_requests_total`**：抓取端点不再经过主路由的全局中间件链，Prometheus 每次 scrape **不会**再产生 `route="/metrics"` 的自记 series（[ADR-0089](docs/adr/0089-http-layer-red-metrics.md) 后果节曾专门提醒「算业务 QPS 时要剔除它」）。这是行为变化而**非缺陷**——抓取流量本就不是业务流量；算业务 QPS 的旧口径可相应简化，但**不要把该 series 归零误读成业务流量骤降**。运维细节（抓取配置、Bearer 的 `authorization:` 片段、告警读法调整）见 [OPERATIONS](docs/OPERATIONS.md) §3.2。
+- **ADR 状态同步（正文均未改动）**：[ADR-0020](docs/adr/0020-prometheus-metrics-observability.md) 标注被 ADR-0090 部分取代——仅「同端口」与「不挂鉴权」两条失效，独立 registry、pull 模型、不在运行态写路径埋点、指标清单与窄接口注入计数器的解耦方式全部承继；[ADR-0089](docs/adr/0089-http-layer-red-metrics.md) 的状态前言补注指向 ADR-0090，其 RED 指标、显式分桶、路由模板口径与中间件顺序等决策不受影响。
+
 ## 1.5.0（2026-10-12）
 
 ### 新增

@@ -1,8 +1,8 @@
 # ADR-0089：控制面 HTTP 层 RED 指标（路由模板分维的请求计数与时延直方图）
 
-**状态**：已接受
+**状态**：已接受；扩展 [ADR-0020](0020-prometheus-metrics-observability.md)（独立 registry 约定沿用，不改其正文）。**前言的「同端口 / 不挂鉴权」两条后被 [ADR-0090](0090-metrics-endpoint-dedicated-listener.md) 取代**（抓取端点改独立监听、默认回环，并可选用 Bearer 鉴权）——本 ADR 的全部决策（两个 RED 指标、显式分桶、`route` 取路由模板、中间件顺序、窄接口注入）仍然有效且不受影响。
 
-> 本 ADR **扩展 [ADR-0020](0020-prometheus-metrics-observability.md)、不取代其任何决策**：同端口、独立 registry、不挂鉴权三条约定全部沿用，只在同一 `GET /metrics` 上新增一类此前完全没有的指标（HTTP 请求维度）。ADR-0020 的正文与状态保持不变。
+> 本 ADR **扩展 [ADR-0020](0020-prometheus-metrics-observability.md)、不取代其任何决策**：独立 registry 一条沿用；**「同端口」与「不挂鉴权」两条当时沿用的约定，后由 [ADR-0090](0090-metrics-endpoint-dedicated-listener.md) 取代**（抓取端点在本次 RED 指标落地之后迁到独立监听端口、默认只绑回环，并新增可选 Bearer 鉴权）——那只改变抓取端点的挂载位置与访问控制，不改本 ADR 新增的指标与统计口径。ADR-0020 的正文保持不变（其状态由 ADR-0090 更新）。
 
 ## 背景
 

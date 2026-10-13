@@ -141,16 +141,19 @@ func TestLoadHTTPControlPlane(t *testing.T) {
 	}
 
 	t.Log("== 起控制面（独立 sqlite + 动态端口）==")
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: bin, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: filepath.Join(workDir, sqliteDBName),
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
 		LogPrefix: logPrefix,
 		ExtraEnv:  map[string]string{"BEACON_LOG_LEVEL": cpLogLevel},
-	}, controlPlaneStartAttempts)
+	}
+	// 抓取端点独立监听（ADR-0090）：由本用例分配空闲端口，主端口上不再有 /metrics。
+	cp, baseURL, metricsBase := startControlPlaneWithMetrics(t, cpCfg, controlPlaneStartAttempts)
 	harness.CleanupControlPlane(t, cp)
 	stdoutPath, stderrPath := cp.LogPaths()
 	t.Logf("控制面已就绪：%s（日志：%s / %s）", baseURL, stdoutPath, stderrPath)
+	t.Logf("抓取端点：%s/metrics", metricsBase)
 
 	token, err := harness.Login(baseURL, adminUser, adminPass, cp)
 	if err != nil {
@@ -167,6 +170,7 @@ func TestLoadHTTPControlPlane(t *testing.T) {
 	scenarioCfg := scenarioConfig{
 		BaseURL: baseURL, AdminToken: token,
 		BootstrapToken: bootstrapToken, Namespace: agentNamespace, ServerIDs: serverIDs,
+		MetricsBase: metricsBase,
 	}
 	scenarios := buildScenarioSet(scenarioCfg)
 
@@ -183,7 +187,7 @@ func TestLoadHTTPControlPlane(t *testing.T) {
 	}
 	probeScenarios(t, client, scenarios)
 
-	observations := observe(t, client, baseURL, token, "基线")
+	observations := observe(t, client, metricsBase, baseURL, token, "基线")
 
 	results := make([]*loadResult, 0, len(levels))
 	for _, concurrent := range levels {
@@ -201,7 +205,7 @@ func TestLoadHTTPControlPlane(t *testing.T) {
 		results = append(results, res)
 		t.Logf("档位完成：%s 请求 %d，成功 %d，失败 %d，RPS %.1f，p95 %.2fms",
 			label, res.TotalRequests, res.Success, res.Failed, res.RPS, res.Latency.P95Ms)
-		observations = append(observations, observe(t, client, baseURL, token, label)...)
+		observations = append(observations, observe(t, client, metricsBase, baseURL, token, label)...)
 	}
 
 	soakLabel := fmt.Sprintf("soak 并发 %d / %s", soakConcurrent, soakDuration)
@@ -215,7 +219,7 @@ func TestLoadHTTPControlPlane(t *testing.T) {
 		t.Fatalf("soak 失败：%v", err)
 	}
 	requireMeasured(t, soakResult)
-	observations = append(observations, observe(t, client, baseURL, token, "soak 结束")...)
+	observations = append(observations, observe(t, client, metricsBase, baseURL, token, "soak 结束")...)
 
 	// —— 挂起型端点探测与上报背压探测（口径与 RPS 型压测不同，单独成节）——
 	suspended := runSuspendedProbes(t, baseURL, bootstrapToken, token, serverIDs, soakConcurrent)
@@ -410,24 +414,51 @@ func newLoadClient(maxConcurrent int) *http.Client {
 // startControlPlane 用动态端口起控制面并返回进程与地址。
 // harness 的 HTTPAddrFromURL 只做「地址 → bind 串」转换、没有冲突兜底，压测与既有 e2e 用例并存时
 // 固定端口容易撞车；而「探空闲端口 → 关闭监听 → 进程 bind」之间存在微小竞态，故失败时换端口重试。
+//
+// 本函数**总是**为控制面分配一个空闲的抓取端点端口（见 assignMetricsEndpoint），
+// 故调用方无需（也无法）忘记这件事：抓取端点若沿用固定的默认 8849，第二个控制面进程必然起不来。
+// 需要拿到抓取端点基址去抓指标的用例请改用 startControlPlaneWithMetrics。
 func startControlPlane(t *testing.T, cfg harness.ControlPlaneConfig, attempts int) (*harness.ControlPlane, string) {
+	t.Helper()
+	cp, baseURL, _ := startControlPlaneWithMetrics(t, cfg, attempts)
+	return cp, baseURL
+}
+
+// startControlPlaneWithMetrics 在 startControlPlane 之上额外返回抓取端点基址（形如 http://127.0.0.1:49152）。
+//
+// 为什么抓取端点端口要在**每次重试时**重新探测：`metrics-endpoint` 落地后，「控制面起不来」多了一个
+// 成因——抓取端点 bind 失败会与主服务同等对待、直接终止进程（ADR-0090）。若只在循环外探一次，
+// 该端口一旦撞车，三次重试会拿着同一个已占用的地址反复失败，而报出来的错误看起来像主端口的问题；
+// 两者都放进循环后，每次重试拿到的都是全新的两个端口，语义与原有的主端口重试一致。
+func startControlPlaneWithMetrics(
+	t *testing.T, cfg harness.ControlPlaneConfig, attempts int,
+) (*harness.ControlPlane, string, string) {
 	t.Helper()
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		cfg.BaseURL = freeBaseURL(t)
+		metricsBase := assignMetricsEndpoint(t, &cfg)
 		cp, err := harness.StartControlPlane(cfg)
 		if err == nil {
-			return cp, cfg.BaseURL
+			return cp, cfg.BaseURL, metricsBase
 		}
 		lastErr = err
-		t.Logf("第 %d 次起控制面失败（端口 %s），换端口重试：%v", attempt, cfg.BaseURL, err)
+		t.Logf("第 %d 次起控制面失败（主端口 %s，抓取端点 %s），换端口重试：%v",
+			attempt, cfg.BaseURL, metricsBase, err)
 	}
 	t.Fatalf("起控制面失败（已重试 %d 次）：%v", attempts, lastErr)
-	return nil, ""
+	return nil, "", ""
 }
 
 // freeBaseURL 探一个本机空闲端口并返回对应的控制面地址（关闭监听后交还给进程 bind）。
 func freeBaseURL(t *testing.T) string {
+	t.Helper()
+	return "http://127.0.0.1:" + strconv.Itoa(freePort(t))
+}
+
+// freePort 探一个本机空闲端口并返回端口号（关闭监听后交还给进程 bind）。
+// 与 freeBaseURL 共用同一套探测逻辑，只是返回裸端口——抓取端点要的是 host:port 形式的监听地址。
+func freePort(t *testing.T) int {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -441,7 +472,71 @@ func freeBaseURL(t *testing.T) string {
 	if err := listener.Close(); err != nil {
 		t.Fatalf("释放探测端口失败：%v", err)
 	}
-	return "http://127.0.0.1:" + strconv.Itoa(addr.Port)
+	return addr.Port
+}
+
+// ---- 抓取端点（独立监听，见 docs/adr/0090）----
+
+// metricsEndpointEnvKey 抓取端点监听地址的环境变量名（控制面侧配置见 config.example.yml 的 metrics-endpoint 段）。
+const metricsEndpointEnvKey = "BEACON_METRICS_ENDPOINT_LISTEN_ADDR"
+
+// metricsTokenEnvKey 抓取端点凭据的环境变量名；为空即不鉴权。
+const metricsTokenEnvKey = "BEACON_METRICS_ENDPOINT_BEARER_TOKEN"
+
+// assignMetricsEndpoint 为即将启动的控制面分配一个**本机空闲端口**，把监听地址写进 cfg.ExtraEnv，
+// 并返回抓取端点的基址（形如 http://127.0.0.1:49152）。
+//
+// 为什么必须显式分配、不能沿用控制面的默认值：`metrics-endpoint.listen-addr` 出厂默认是固定的
+// `127.0.0.1:8849`，而本包多个用例会**并行/先后**起多个控制面进程（如连接池 A/B 对照同时常驻两个、
+// 规模压测逐规模起停），固定端口会让第二个进程 bind 失败。按 ADR-0090 的决策，抓取端点绑定失败
+// 与主服务同等对待、直接让进程退出——那时表现为「控制面起不来」，而不是「抓不到指标」，
+// 排查成本高得多。故这里与 BaseURL 同口径：探空闲端口 → 交给控制面 bind。
+//
+// 为什么只设 env、不写配置文件：harness.StartControlPlane 已经把 BEACON_HTTP_ADDR 等固定注入项
+// 走 env 通道（见 controlplane.go），ExtraEnv 会叠加在其上；沿同一通道不需要新增配置模板，
+// 也避免各用例的配置文件相互覆盖。
+//
+// 注意必须用 ExtraEnv 而非 os.Setenv：多个控制面实例共存时（A/B 对照）各自需要**不同**的端口，
+// 进程级环境变量只能有一个值，用它会让两组都绑到同一端口。
+// 另：harness 的 env 拼接是 `append(os.Environ(), 固定项..., ExtraEnv...)`，同 key 后者在后、
+// 子进程取最后一项，故 ExtraEnv 能正确覆盖父进程可能已导出的同名变量（已实测确认）。
+func assignMetricsEndpoint(t *testing.T, cfg *harness.ControlPlaneConfig) string {
+	t.Helper()
+	addr := "127.0.0.1:" + strconv.Itoa(freePort(t))
+	if cfg.ExtraEnv == nil {
+		cfg.ExtraEnv = map[string]string{}
+	}
+	cfg.ExtraEnv[metricsEndpointEnvKey] = addr
+	return "http://" + addr
+}
+
+// metricsToken 返回本次压测用的抓取端点凭据（读环境变量，缺省为空 = 不鉴权）。
+//
+// 为什么带上 token 而不是让用例一律不鉴权：控制面侧凭据只能经 env 注入、不能写配置文件
+// （敏感项规则，见 .claude/rules/config-files.md §5），故 harness 若完全不透传它，
+// 开启鉴权的部署形态在压测里就永远抓不到指标——而抓取抓不到会让所有旁路观测退化成空值。
+// 这里读的是**压测进程自己**的环境变量，由跑压测的人决定是否开启；为空即保持原样（不带该头）。
+func metricsToken() string {
+	return strings.TrimSpace(os.Getenv(metricsTokenEnvKey))
+}
+
+// newMetricsRequest 构造一次抓取请求：GET <metricsBase>/metrics，并在配置了凭据时带上
+// 标准 `Authorization: Bearer <token>` 头（端点按该头校验，见 internal/metrics/endpoint.go）。
+//
+// 为什么集中成一个 helper：本包有 6 处独立的抓取点（场景项 / 鉴权基线 / 旁路观测 / 429 证据 /
+// 规模分位 / 慢客户端 goroutine 数）。逐处手写既会漏掉鉴权头，也会在下一次端点约定变化时漏改；
+// 集中一处后「抓取怎么发」只有一个答案。token 为空时**不设该头**——设成空 Bearer 会被
+// 启用鉴权的端点判为不匹配（401），与「未配置凭据」的语义不符。
+func newMetricsRequest(ctx context.Context, metricsBase string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(metricsBase, "/")+"/metrics", nil)
+	if err != nil {
+		return nil, err
+	}
+	if token := metricsToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req, nil
 }
 
 // removeStaleDB 清掉上一轮遗留的 sqlite 文件（含 WAL / SHM 与同目录归档库），保证每轮从干净库开始。
@@ -620,20 +715,21 @@ type observabilitySnapshot struct {
 
 // observe 采集一次旁路观测：/metrics 摘要 + 自观测快照。
 // 尽力而为：任一失败只记进观测列表，不影响压测主流程。
-func observe(t *testing.T, client *http.Client, baseURL, token, phase string) []observation {
+func observe(t *testing.T, client *http.Client, metricsBase, baseURL, token, phase string) []observation {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), observationTimeout)
 	defer cancel()
 	observations := make([]observation, 0, 2)
-	observations = append(observations, fetchMetricsSummary(ctx, client, baseURL, phase))
+	observations = append(observations, fetchMetricsSummary(ctx, client, metricsBase, phase))
 	observations = append(observations, fetchObservability(ctx, client, baseURL, token, phase))
 	return observations
 }
 
 // fetchMetricsSummary 抓一次 /metrics 并汇总 HTTP RED 指标。
-func fetchMetricsSummary(ctx context.Context, client *http.Client, baseURL, phase string) observation {
+// metricsBase 是抓取端点基址（独立监听，见 ADR-0090），不是控制面主端口地址。
+func fetchMetricsSummary(ctx context.Context, client *http.Client, metricsBase, phase string) observation {
 	obs := newObservation(phase, "GET /metrics")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/metrics", nil)
+	req, err := newMetricsRequest(ctx, metricsBase)
 	if err != nil {
 		obs.Error = err.Error()
 		return obs

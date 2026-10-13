@@ -68,12 +68,17 @@ type poolABSide struct {
 	Config    string
 	CP        *harness.ControlPlane
 	BaseURL   string
-	PID       int
-	Client    *http.Client
-	Token     string
-	HB        *scenarioSet
-	Read      *scenarioSet
-	Reg       scaleRegistration
+	// MetricsBase 是该侧抓取端点的基址（独立监听，见 ADR-0090）。
+	// 两侧**必须各有一个**：A/B 是「同一时刻常驻两个控制面」的对照实验，
+	// 若两侧共用同一抓取地址，抓到的会是同一个进程的指标而两组数字看起来都正常——
+	// 这种错位比缺数据更危险（结论会指向错误的池上限）。
+	MetricsBase string
+	PID         int
+	Client      *http.Client
+	Token       string
+	HB          *scenarioSet
+	Read        *scenarioSet
+	Reg         scaleRegistration
 }
 
 // poolABSample 是一次单轮测量的样本。
@@ -216,7 +221,7 @@ func startPoolABSide(
 	dbPath := filepath.Join(workDir, fmt.Sprintf("beacon-poolab-%d.db", side.OpenConns))
 	removeStaleDBFile(t, dbPath)
 
-	cp, baseURL := startControlPlane(t, harness.ControlPlaneConfig{
+	cpCfg := harness.ControlPlaneConfig{
 		BinPath: bin, RepoRoot: repoRoot,
 		DBDriver: "sqlite", DBDSN: dbPath,
 		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: bootstrapToken,
@@ -224,8 +229,14 @@ func startPoolABSide(
 		ExtraEnv:  map[string]string{"BEACON_LOG_LEVEL": defaultCPLogLevel},
 		// 显式指向本组配置：A 组即仓库根 config.yml，B 组是 max-open-conns 被抬高的副本。
 		Args: []string{"-config", side.Config},
-	}, controlPlaneStartAttempts)
+	}
+	// A/B 两组控制面**同时常驻**，抓取端点必须各占一个空闲端口（下方 helper 逐次分配）；
+	// 否则第二组会在 bind 默认 127.0.0.1:8849 时失败并直接退出（见 ADR-0090），
+	// 表现为「B 组起不来」，与本实验要量的是两码事。
+	cp, baseURL, metricsBase := startControlPlaneWithMetrics(t, cpCfg, controlPlaneStartAttempts)
+	side.MetricsBase = metricsBase
 	side.CP, side.BaseURL = cp, baseURL
+	t.Logf("%s 抓取端点：%s/metrics", side.Label, side.MetricsBase)
 	// 必须取进程句柄上的 PID，不能按二进制路径去 /proc 里找：A/B 两组用的是**同一个二进制**，
 	// 按路径查找会两组都命中先启动的那个，于是 B 组的资源口径实际是 A 组的——
 	// 数据看起来正常却整体错位，比缺失更有害。
@@ -258,6 +269,7 @@ func startPoolABSide(
 	scenarioCfg := scenarioConfig{
 		BaseURL: baseURL, AdminToken: token,
 		BootstrapToken: bootstrapToken, Namespace: agentNamespace, ServerIDs: reg.IDs,
+		MetricsBase: side.MetricsBase,
 	}
 	full := buildScenarioSet(scenarioCfg)
 	side.HB = filterScenariosByName(full, "agent_heartbeat")
@@ -280,7 +292,7 @@ func measurePoolAB(
 	t.Logf("  轮次：%s", label)
 
 	before, beforeErr := fetchObservabilityRaw(t.Context(), side.Client, side.BaseURL, side.Token)
-	metricsBefore := fetchServerMetrics(t.Context(), side.Client, side.BaseURL)
+	metricsBefore := fetchServerMetrics(t.Context(), side.Client, side.MetricsBase)
 
 	sampler := startResourceSampler(map[string]int{"控制面": side.PID, "压测端": os.Getpid()}, time.Second)
 	res, runErr := runLoad(t.Context(), &driverConfig{
@@ -316,7 +328,7 @@ func measurePoolAB(
 			label, delta.MaxOpen, side.OpenConns)
 	}
 
-	metrics := fetchServerMetrics(t.Context(), side.Client, side.BaseURL)
+	metrics := fetchServerMetrics(t.Context(), side.Client, side.MetricsBase)
 	route := "/beacon/v1/agent/heartbeat"
 	if family == "只读" {
 		route = "/admin/v1/system/status"

@@ -90,6 +90,12 @@ func StartControlPlane(cfg ControlPlaneConfig) (*ControlPlane, error) {
 		"BEACON_AUTH_SECRET="+cfg.AuthSecret,
 		"BEACON_BOOTSTRAP_TOKEN="+cfg.BootstrapToken,
 		"BEACON_LOG_LEVEL=INFO",
+		// 抓取端点独立监听（ADR-0090）：**必须**显式注入一个不冲突的地址。
+		// 其默认值 127.0.0.1:8849 是固定的，而每个 e2e 用例起一个独立控制面进程；
+		// 并行跑多个包（或本机已有实例占着 8849）时，后起者会因 bind 失败直接启动失败。
+		// 放在固定项中（而非要求各调用点自己塞 ExtraEnv）：15 个调用点逐个补极易漏，
+		// 而漏掉的那个会在特定并行顺序下才偶发失败——最难排查的形态。
+		"BEACON_METRICS_ENDPOINT_LISTEN_ADDR="+MetricsListenAddrFromEnv(),
 	)
 	// 叠加可选额外环境变量（置于固定项之后，后写覆盖前写，使 e2e 能按需覆盖控制面行为）。
 	for k, v := range cfg.ExtraEnv {

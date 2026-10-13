@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // 场景分组：报告按分组聚合，把「纯内存读 / DB 读 / agent 心跳 / 指标抓取」分开看，
@@ -41,12 +42,16 @@ const (
 type authMode uint8
 
 const (
-	// authNone 无鉴权：/metrics 属内网信任面，不挂管理台鉴权（ADR-0020）。
+	// authNone 无鉴权（如未设凭据的抓取端点、以及本地压测用的公开只读端点）。
 	authNone authMode = iota
 	// authAdminBearer 管理面：Authorization: Bearer <登录令牌>。
 	authAdminBearer
 	// authAgentToken agent 数据面：X-Beacon-Token: <部署共享 token>。
 	authAgentToken
+	// authMetricsBearer 抓取端点（独立监听，见 ADR-0090）的可选凭据：Authorization: Bearer <token>。
+	// 取值建在 authV2AgentToken 之后：后者由 v2_write_scenario.go 以 `authAgentToken + 1` 占位，
+	// 直接插在中间会让两者撞成同一个值（枚举重复，报告里两种鉴权方式会互相冒充）。
+	authMetricsBearer authMode = authV2AgentToken + 1
 )
 
 // name 返回鉴权方式的中文名（报告里展示）。
@@ -60,9 +65,50 @@ func (m authMode) name() string {
 		return "agent 共享令牌"
 	case authV2AgentToken:
 		return "v2 身份令牌"
+	case authMetricsBearer:
+		return "抓取端点令牌"
 	default:
 		return "未知"
 	}
+}
+
+// scrapeMetricsURL 由抓取端点基址拼出完整抓取 URL；基址为空返回空串（表示未启用抓取端点）。
+func scrapeMetricsURL(metricsBase string) string {
+	if strings.TrimSpace(metricsBase) == "" {
+		return ""
+	}
+	return strings.TrimRight(metricsBase, "/") + "/metrics"
+}
+
+// metricsAuthMode 返回抓取场景的鉴权方式（仅用于报告展示）：配了凭据即「抓取端点令牌」，否则「无」。
+func metricsAuthMode(metricsBase string) authMode {
+	if strings.TrimSpace(metricsBase) == "" || metricsToken() == "" {
+		return authNone
+	}
+	return authMetricsBearer
+}
+
+// metricsAuthHeaders 返回抓取场景要预置的请求头。
+// 未配凭据时返回 nil（不加任何头）——空 Bearer 会被启用鉴权的端点判为不匹配（401）。
+func metricsAuthHeaders() []header {
+	token := metricsToken()
+	if token == "" {
+		return nil
+	}
+	return []header{{key: "Authorization", value: "Bearer " + token}}
+}
+
+// headersToMap 把预置头转成 map；空切片返回 nil，与「不带任何头」语义一致。
+// 场景用 []header（热路径不克隆 map），而鉴权风暴用例的 authPath 用 map 承载头，故需要这一层转换。
+func headersToMap(hs []header) map[string]string {
+	if len(hs) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(hs))
+	for _, h := range hs {
+		out[h.key] = h.value
+	}
+	return out
 }
 
 // header 是一条预置请求头。
@@ -115,6 +161,10 @@ type scenarioConfig struct {
 	BootstrapToken string
 	Namespace      string
 	ServerIDs      []string
+	// MetricsBase 是抓取端点基址（独立监听，形如 http://127.0.0.1:49152，见 ADR-0090）。
+	// 与 BaseURL 是两个不同端口：主端口上不再提供 /metrics，故抓取场景必须走这里。
+	// 留空表示调用方不纳入抓取场景——按端点名裁剪后（如只压心跳 / 只读）本项无用。
+	MetricsBase string
 }
 
 // buildScenarioSet 构造全部压测场景：4 组共 6 个端点。
@@ -162,9 +212,13 @@ func buildScenarioSet(cfg scenarioConfig) *scenarioSet {
 		},
 		{
 			Group: groupMetricsScrape, Name: "metrics_scrape",
-			Path: "/metrics", URL: cfg.BaseURL + "/metrics",
+			// 抓取端点已迁到独立监听地址（ADR-0090），主端口上不再有 /metrics；
+			// 基址为空（调用方未起抓取端点）时 URL 保持空串，由调用方按端点名裁剪掉本项。
+			Path: "/metrics", URL: scrapeMetricsURL(cfg.MetricsBase),
 			Method: http.MethodGet, Weight: weightMetricsScrape, WantStatus: http.StatusOK,
-			Auth: authNone,
+			Auth: metricsAuthMode(cfg.MetricsBase),
+			// 端点仅可选地校验 Authorization: Bearer；未配置凭据时不带任何头。
+			headers: metricsAuthHeaders(),
 		},
 	}
 
