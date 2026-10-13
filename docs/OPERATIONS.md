@@ -148,7 +148,7 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 
 ### 3.2 Prometheus 指标抓取
 
-控制面在**独立监听端口**上暴露 `GET /metrics`（Prometheus 文本格式，默认 `http://127.0.0.1:8849/metrics`），由 `config.yml` 顶层配置段 `metrics-endpoint` 控制（决策见仓内 `docs/adr/0090-metrics-endpoint-dedicated-listener.md`）。
+控制面在**独立监听端口**上暴露 `GET /metrics`（Prometheus 文本格式，默认 `http://127.0.0.1:8849/metrics`），由 `config.yml` 顶层配置段 `metrics-endpoint` 控制。之所以与业务端口分离：主端口默认绑所有网卡且承载管理台与 agent 数据面，抓取挂在上面等于「主端口可达即能匿名读到实例拓扑与容量画像」，且无法单独收敛。
 
 **默认只绑本机回环、默认安全**：`metrics-endpoint.listen-addr` 出厂值为 `127.0.0.1:8849`，只在本机回环上监听，**外部与公网默认抓不到**。这替代了此前的「业务同端口暴露」——主端口（默认 `:8848`）默认绑所有网卡且承载管理台与 agent 数据面，抓取挂在上面等于「主端口可达即能匿名读到组织拓扑与容量画像」；迁到独立监听后，暴露面收敛成一个可单独收敛的地址，**不显式放开就等于没暴露**。它给出的仍是聚合运行指标，不含配置内容与凭据。
 
