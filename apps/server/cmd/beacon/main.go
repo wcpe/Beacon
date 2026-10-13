@@ -525,6 +525,32 @@ func run() error {
 	observabilityService.SetMetricWriteDiscardCounter(asyncDailyWriter)
 	observabilityHandler := handler.NewObservabilityHandler(observabilityService)
 
+	// 控制面自身健康进抓取端点（FR-82 的数据面投影，见 ADR-0091）：
+	// 把 /system 自观测页已有的内部运行态（连接池 / 长轮询 / 命令队列 / 写入丢弃）也暴露成
+	// Prometheus 指标，使「池枯竭、队列积压、数据被丢弃」这些故障前兆在监控上可见——
+	// 此前它们只在管理台页面里，而 Prometheus 抓不到鉴权链内的端点。
+	//
+	// 关键约束：**抓取路径不触达 DB**。命令队列深度源自一次 DB GROUP BY，而抓取端点
+	// 默认无鉴权且不限流，放进抓取路径等于让外部请求速率驱动数据库查询。故这里拆两条路：
+	// 内存类字段（连接池 / 长轮询 / 丢弃计数）抓取时现读；命令队列改由后台刷新器周期写缓存。
+	metricsSet.SetSelfHealthSource(func() metrics.SelfHealth {
+		snap := observabilityService.SnapshotWithoutCommandCounts()
+		return metrics.SelfHealth{
+			DBPoolMaxOpen:        snap.DBPool.MaxOpenConnections,
+			DBPoolOpen:           snap.DBPool.OpenConnections,
+			DBPoolInUse:          snap.DBPool.InUse,
+			DBPoolIdle:           snap.DBPool.Idle,
+			DBPoolWaitCount:      snap.DBPool.WaitCount,
+			DBPoolWaitDuration:   float64(snap.DBPool.WaitDurationMs) / 1000, // 毫秒 → 秒（Prometheus 惯例基本单位）
+			LongpollConfig:       snap.Longpoll.Config,
+			LongpollFile:         snap.Longpoll.File,
+			LongpollTopology:     snap.Longpoll.Topology,
+			LongpollCommand:      snap.Longpoll.Command,
+			MetricWriteDiscarded: snap.MetricWriteDiscarded,
+		}
+	})
+	commandCountRefresher := service.NewCommandCountRefresher(commandRepo, metricsSet)
+
 	// P4b 装配：健康域（FR-147，见 v2-metrics-health-scheduling.md §3.3/§4.4）。
 	// 健康权重版本化存储与热更：启动载入最新 rev（表空种子默认配置 rev=1、operator=system），
 	// PUT 校验 → 事务内写设置镜像 + 插入新 rev + 写审计 → 提交后内存原子替换（下一轮健康计算生效）。
@@ -837,6 +863,9 @@ func run() error {
 
 	// 启动异步日表写入通道（FR-144）：每路由多 worker 共享该路由有界队列，攒批事务批插当日日表，随关停信号退出。
 	asyncDailyWriter.Start(ctx)
+
+	// 启动命令队列计数刷新器（见 ADR-0091）：抓取路径不查库，该值由后台周期写缓存。
+	go commandCountRefresher.Run(ctx)
 
 	// 启动热冷归档后台工作器（FR-151，见 ADR-0066）：每日 schedule-hour-utc 自动归档 + 手动任务搬运，随关停信号退出。
 	// 归档库不可达时 Run 内部直接返回不启动搬运循环（overview 仍标不可用）。

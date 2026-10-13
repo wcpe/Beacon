@@ -195,6 +195,22 @@ metrics-endpoint:
 | `go_goroutines` | gauge | — | 当前 goroutine 数（持续增长常意味着泄漏） |
 | `process_resident_memory_bytes` | gauge | — | 控制面进程常驻内存 RSS（字节） |
 
+**控制面自身健康**（`beacon_self_*` 前缀；与上方描述"被管实例"的 `beacon_instances_*` 区分——这组答的是"控制面这个进程自己怎么样"）：
+
+| 指标 | 类型 | 标签 | 含义 |
+|---|---|---|---|
+| `beacon_self_db_pool_connections` | gauge | `state`（max_open / open / in_use / idle） | 数据库连接池各状态连接数 |
+| `beacon_self_db_pool_wait_total` | counter | — | 累计等待数据库连接的次数。**持续增长即池正在枯竭**，是 2026-10-10 那类"所有需 DB 端点挂起"事故的直接前兆 |
+| `beacon_self_db_pool_wait_duration_seconds_total` | counter | — | 累计等待连接的总时长（秒） |
+| `beacon_self_longpoll_waiters` | gauge | `channel`（config / file / topology / command） | 长轮询各通道当前挂起 waiter 数 |
+| `beacon_self_commands` | gauge | `status`（pending / fetched / ready / done / failed / expired） | 命令队列深度。**429 背压出现之前唯一的积压信号** |
+| `beacon_self_metric_write_discarded_total` | counter | — | 指标异步写入累计丢弃行数（多次重试仍失败）。**非零即代表数据已丢失**，最该告警的一类 |
+| `beacon_self_commands_snapshot_timestamp_seconds` | gauge | — | 命令队列计数缓存最后一次成功刷新的 Unix 秒（0 = 从未成功） |
+
+> **命令队列深度是 15 秒级的缓存值，不是抓取时现查**：它源自一次数据库 `GROUP BY`，而抓取端点默认无鉴权且不限流——若在抓取时查库，等于让任何能访问该端口的人按任意频率驱动数据库查询。故该值由后台每 15s 刷新一次；其余自身健康指标（连接池 / 长轮询 / 丢弃计数）都是进程内读取，抓取时现取。
+>
+> 判断数据是否新鲜用 `time() - beacon_self_commands_snapshot_timestamp_seconds`：该值停滞说明后台采集失败（此时计数**保留上一轮值而非清零**，避免把"采集坏了"伪装成"队列空了"）。进程刚启动、尚未完成首轮采集时该指标为 0。
+
 抓取配置示例（`prometheus.yml`；此处字段名按 Prometheus 上游约定书写，不受本项目配置文件命名规范约束）：
 
 ```yaml
@@ -289,6 +305,33 @@ groups:
         for: 30m
         labels: { severity: warning }
         annotations: { summary: "控制面 RSS 持续增长（6h 翻倍，当前 {{ $value }} 字节）" }
+      # 连接池等待在增长：池正在枯竭，是「所有需 DB 端点挂起」那类事故的直接前兆。
+      # 用 rate 而非绝对值：WaitCount 是累计 counter，单调递增，绝对值必然非零故无意义。
+      - alert: BeaconDBPoolWaiting
+        expr: rate(beacon_self_db_pool_wait_total[5m]) > 1
+        for: 10m
+        labels: { severity: critical }
+        annotations: { summary: "控制面数据库连接池持续等待（{{ $value | printf \"%.2f\" }} 次/秒），池可能即将枯竭" }
+      # 命令队列积压：429 背压出现之前唯一的信号（此前运维在指标上看不到任何积压）。
+      # 阈值 100 是保守起点，按自身规模与 agent 拉取间隔调整。
+      - alert: BeaconCommandQueueBacklog
+        expr: sum(beacon_self_commands{status=~"pending|fetched"}) > 100
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "控制面命令队列积压（pending+fetched = {{ $value }}），可能即将触发 429 背压" }
+      # 指标写入被丢弃：非零即代表数据**已经丢了**（多次重试仍失败才计入），最该告警的一类。
+      - alert: BeaconMetricWriteDiscarded
+        expr: increase(beacon_self_metric_write_discarded_total[10m]) > 0
+        for: 0m
+        labels: { severity: critical }
+        annotations: { summary: "控制面指标写入被丢弃（10 分钟内新增 {{ $value }} 行），已发生数据丢失" }
+      # 自身健康采集陈旧：命令队列计数由后台每 15s 刷新，停滞说明采集链路坏了。
+      # 不告警的话，「计数不更新」会被误读成「队列没变化」。
+      - alert: BeaconSelfHealthStale
+        expr: time() - beacon_self_commands_snapshot_timestamp_seconds > 120
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "控制面自身健康采集已陈旧 {{ $value | printf \"%.0f\" }} 秒（后台刷新可能已停）" }
 ```
 
 ### 3.3 控制面压测入口（HTTP 延迟 / 吞吐基线）
@@ -330,7 +373,7 @@ go test -tags "e2e loadtest" -timeout=40m -v -run '^TestLoad' ./apps/server/test
 **背压（429）怎么读**：控制面共 4 处返回 429，四类全部可达。最容易**确定性复现**的是交付数据面并发上限——热改 `delivery.upload-concurrency=1`（或 `download-concurrency=1`）后，一个请求占住额度、第二个即回 429，归还后立即恢复。上报队列则**极易误判**：
 
 - **队列按「批」计槽位，不按行**。`AsyncDailyWriter` 的 4096 有界队列，一个请求无论带 1 条还是 500 条事件都只占 **1 个槽位**。故「200 请求 × 200 事件」对队列的压力是 **4.9%** 而非 977%——差 200 倍。实测要填满需 **4000+ 个请求（约 200 万条事件）**，第 4339~4554 个请求首次回 429（略高于裸容量是因为 worker 一直在消费）。**没触到 429 不等于背压不存在。**
-- **队列深度没有指标暴露**：429 出现前运维从指标上看不到积压（只有「多次重试仍失败而丢弃」的计数）。容量本身是有界 channel，补一条 `len(queue)` gauge 成本极低。
+- **上报写入队列的深度没有指标暴露**：429 出现前运维从指标上看不到积压（只有「多次重试仍失败而丢弃」的计数）。容量本身是有界 channel，补一条 `len(queue)` gauge 成本极低。注意别与 `beacon_self_commands` 混淆——那一条是**命令队列**（控制面下发给 agent 的命令），与本处讨论的**指标上报写入队列**是两个不同的队列，后者目前仍无深度指标。
 - 四类 429 的完整触发与恢复证据、以及单元级 / 真实链路两种证据的区分，见 `.tmp/loadtest/backpressure-429-report.md`（过程产物）。
 
 **规模怎么读**：1000 台规模下控制面**次线性**（无系统性拐点）——心跳与 v2 上报在 15.6 倍规模下保持率 **95%**，内存注册表扛得住；退化集中在 `GET /admin/v1/topology`，它**随实例数线性变贵**（实测 2.15µs/实例，64 台 p50 0.33ms / 8.9KB → 1000 台 2.35ms / 142KB）。**抬高 `max-open-conns` 不是吞吐的解法**：同二进制同规模 A/B（4 → 32）心跳 RPS 比值仅 **1.05x**，且池 32 时仍有 26.7 万次池等待——**池排队是现象不是根因**。容量数字与适用边界见内部文档 `PRD.md` §5「规模容量」（该文档不进文档站，故此处不写成链接）。

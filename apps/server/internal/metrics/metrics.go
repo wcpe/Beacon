@@ -24,6 +24,10 @@ type Metrics struct {
 	configPublish prometheus.Counter
 	pushNotify    prometheus.Counter
 	http          httpMetrics // HTTP 层 RED 指标（请求计数 + 时延直方图）
+	// selfHealth 是控制面自身健康 collector（FR-82 的数据面投影，见 ADR-0091）。
+	// 未注入 live 来源时仍会注册，但只输出命令队列（恒空）与时间戳（0）——
+	// 故生产装配必须调 SetSelfHealthSource，否则自身健康在指标上恒为空。
+	selfHealth *SelfHealthCollector
 }
 
 // New 构造指标集合：注册注册/健康 gauge collector、发布/推送 counter、HTTP RED 指标，
@@ -39,8 +43,11 @@ func New(rt *runtime.Registry) *Metrics {
 		Help: "推送（长轮询唤醒）累计触发次数",
 	})
 	httpM := newHTTPMetrics()
+	// 自身健康 collector：live 来源初值为「全零快照」，生产装配随即经 SetSelfHealthSource 替换。
+	// 这样构造顺序上先注册（Describe 立即生效），且即使忘记注入也只是数值恒零、不会 panic。
+	selfHealth := NewSelfHealthCollector(func() SelfHealth { return SelfHealth{} })
 	reg.MustRegister(
-		configPublish, pushNotify, httpM.requests, httpM.duration, newRegistryCollector(rt),
+		configPublish, pushNotify, httpM.requests, httpM.duration, newRegistryCollector(rt), selfHealth,
 		// Go 运行时与进程级指标默认不会随空 registry 自动挂载，必须显式注册：
 		// 否则 goroutine / 堆 / GC / RSS / CPU 增长在 Prometheus 完全不可见。
 		// v1.24.1 中两构造函数均只返回 prometheus.Collector、不返回 error，
@@ -51,7 +58,19 @@ func New(rt *runtime.Registry) *Metrics {
 		// 进程指标属“附带观测”，单次采集失败应被忽略而非拖垮整次 /metrics 抓取，故保持默认不报告错误。
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
-	return &Metrics{reg: reg, configPublish: configPublish, pushNotify: pushNotify, http: httpM}
+	return &Metrics{reg: reg, configPublish: configPublish, pushNotify: pushNotify, http: httpM, selfHealth: selfHealth}
+}
+
+// SetSelfHealthSource 注入自身健康的内存类字段来源（连接池 / 长轮询 / 丢弃计数）。
+// 生产装配在 main 启动期调用一次；不调用则这些指标恒为 0（不 panic、不报错）。
+func (m *Metrics) SetSelfHealthSource(live func() SelfHealth) {
+	m.selfHealth.SetLiveSource(live)
+}
+
+// SetCommandStatusSnapshot 供后台刷新器写入命令队列计数缓存（含本轮刷新时刻的 Unix 秒）。
+// 该值源自一次 DB GROUP BY，故不在抓取路径上采集（见 SelfHealthCollector 的类型注释）。
+func (m *Metrics) SetCommandStatusSnapshot(byStatus map[string]int, nowUnix float64) {
+	m.selfHealth.SetCommandByStatus(byStatus, nowUnix)
 }
 
 // Handler 返回 /metrics 的 HTTP 处理器（仅本注册表的指标）。
