@@ -33,7 +33,7 @@ taboolib {
             name("BeaconAgentProxy").optional(false)
         }
     }
-    version { taboolib = "6.2.3" }
+    version { taboolib = "6.3.0-wcpe.3" }
     env {
         // BungeeCord 平台。
         install("platform-bungee")
