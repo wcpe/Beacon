@@ -35,6 +35,9 @@ func TestExampleYAMLMatchesBuiltinDefaults(t *testing.T) {
 			DSN      string `yaml:"dsn"`
 			Database string `yaml:"database"`
 		} `yaml:"archive"`
+		MetricsEndpoint struct {
+			ListenAddr string `yaml:"listen-addr"`
+		} `yaml:"metrics-endpoint"`
 	}
 	if err := yaml.Unmarshal(beacon.ConfigExampleYAML, &sample); err != nil {
 		t.Fatalf("解析内嵌 config.example.yml 失败: %v", err)
@@ -60,6 +63,10 @@ func TestExampleYAMLMatchesBuiltinDefaults(t *testing.T) {
 		{"database.tx-timeout-ms", sample.Database.TxTimeoutMs, def.Database.TxTimeoutMs},
 		{"archive.dsn", sample.Archive.DSN, def.Archive.DSN},
 		{"archive.database", sample.Archive.Database, def.Archive.Database},
+		// 抓取端点监听地址（见 ADR-0090）必须纳入比对：它是**安全默认**——样例若写成
+		// `:8849`（全网卡）而内置默认是回环，首启释放 config.yml 后生产拿到的就是对外暴露的地址，
+		// 且部署者不会察觉（文档说"内网信任面"）。这正是本测试要防的那类静默漂移。
+		{"metrics-endpoint.listen-addr", sample.MetricsEndpoint.ListenAddr, def.MetricsEndpoint.ListenAddr},
 	}
 	for _, c := range checks {
 		switch sv := c.sampleValue.(type) {

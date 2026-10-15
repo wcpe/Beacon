@@ -171,11 +171,14 @@ func isServerActive(server *model.Server) bool {
 	return server != nil && serverLifecycleValue(server) == model.ServerLifecycleActive
 }
 
-func ensureServerActive(db *gorm.DB, namespaceID uint, serverID string) error {
-	if err := ensureNamespaceRuntimeActiveByID(db, namespaceID); err != nil {
-		return err
-	}
-	if serverID == "" || !db.Migrator().HasTable(&model.Server{}) {
+// ensureServerRowActive 只判「server 行存在且生命周期 active」，环境（namespace）运行资格由调用方保证。
+//
+// 从 ensureServerActive 拆出的理由：按 code 已经读出 namespace 行的调用方本该直接复用那一行，
+// 原先却经 ensureServerActive → ensureNamespaceRuntimeActiveByID 再 HasTable + 按主键把同一行重读一次
+// ——同一行、同一时刻、同一连接池，纯冗余。心跳每请求因此白付两次取连接（压测实测该路径
+// 曾占到全库连接压力的近一半）。
+func ensureServerRowActive(db *gorm.DB, namespaceID uint, serverID string) error {
+	if serverID == "" || !baseTableExists(db, &model.Server{}) {
 		return nil
 	}
 	var server model.Server
@@ -191,8 +194,15 @@ func ensureServerActive(db *gorm.DB, namespaceID uint, serverID string) error {
 	return nil
 }
 
+func ensureServerActive(db *gorm.DB, namespaceID uint, serverID string) error {
+	if err := ensureNamespaceRuntimeActiveByID(db, namespaceID); err != nil {
+		return err
+	}
+	return ensureServerRowActive(db, namespaceID, serverID)
+}
+
 func ensureServerActiveForNamespace(db *gorm.DB, namespaceCode, serverID string) error {
-	if namespaceCode == "" || serverID == "" || !db.Migrator().HasTable(&model.Namespace{}) {
+	if namespaceCode == "" || serverID == "" || !baseTableExists(db, &model.Namespace{}) {
 		return nil
 	}
 	var namespace model.Namespace
@@ -205,13 +215,14 @@ func ensureServerActiveForNamespace(db *gorm.DB, namespaceCode, serverID string)
 	if err := ensureNamespaceRuntimeActive(&namespace); err != nil {
 		return err
 	}
-	return ensureServerActive(db, namespace.ID, serverID)
+	// 直接复用刚读出的 namespace 行，不再按主键重读同一行（历史路径会再付一次 HasTable + First）。
+	return ensureServerRowActive(db, namespace.ID, serverID)
 }
 
 // ensureNamespaceRuntimeActiveByID 是全部运行写入、投递与候选选择共用的环境资格闸。
 // 历史元数据查询不得调用本函数，避免把只读观察误收紧为审批或运行资格检查。
 func ensureNamespaceRuntimeActiveByID(db *gorm.DB, namespaceID uint) error {
-	if namespaceID == 0 || !db.Migrator().HasTable(&model.Namespace{}) {
+	if namespaceID == 0 || !baseTableExists(db, &model.Namespace{}) {
 		return nil
 	}
 	var namespace model.Namespace
@@ -226,7 +237,7 @@ func ensureNamespaceRuntimeActiveByID(db *gorm.DB, namespaceID uint) error {
 
 // ensureNamespaceRuntimeActiveByCode 按稳定 code 校验运行资格。
 func ensureNamespaceRuntimeActiveByCode(db *gorm.DB, namespaceCode string) error {
-	if namespaceCode == "" || !db.Migrator().HasTable(&model.Namespace{}) {
+	if namespaceCode == "" || !baseTableExists(db, &model.Namespace{}) {
 		return nil
 	}
 	var namespace model.Namespace

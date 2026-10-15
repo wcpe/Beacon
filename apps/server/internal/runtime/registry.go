@@ -287,6 +287,55 @@ func (r *Registry) ForEach(fn func(namespaceCode, serverID, status string) bool)
 	}
 }
 
+// TopologyView 是拓扑组装所需的实例窄投影：只带 Build 真正消费的字段，
+// **不含 Metadata / 各类负载指标**（那些是 List 深拷贝里最贵的部分）。
+//
+// Backends 仍是切片，故投影时单独拷一份——它是拓扑连边的唯一依据，
+// 不能让调用方在锁外持有注册表内部切片。
+type TopologyView struct {
+	ServerID      string
+	Role          string
+	ResolvedGroup string
+	ResolvedZone  string
+	Status        string
+	Address       string
+	Backends      []string
+}
+
+// ForEachTopology 持读锁遍历某 namespace（空串=全部）的实例，逐个投影为 TopologyView 交给 fn，
+// fn 返回 false 可提前终止。**不拷贝 Metadata**：这是它与 List 的关键差别——拓扑组装不需要元数据，
+// 而 List 会为每个命中实例深拷贝一次 Metadata map（1000 台规模下实测占 Build 总开销的大头）。
+//
+// 死锁约束与 ForEach 相同（务必遵守）：本方法在 r.mu 读锁**持有期间**同步调用 fn，
+// fn 内部绝不能调用 Registry 的任何方法（RWMutex 不可重入），也不得把 TopologyView.Backends
+// 之外的引用带出锁外。Backends 已在本方法内拷贝，可安全在锁外使用。
+func (r *Registry) ForEachTopology(namespace string, fn func(TopologyView) bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for ns, nsMap := range r.items {
+		if namespace != "" && namespace != ns {
+			continue
+		}
+		for _, inst := range nsMap {
+			view := TopologyView{
+				ServerID:      inst.ServerID,
+				Role:          inst.Role,
+				ResolvedGroup: inst.ResolvedGroup,
+				ResolvedZone:  inst.ResolvedZone,
+				Status:        inst.Status,
+				Address:       inst.Address,
+			}
+			if len(inst.Backends) > 0 {
+				view.Backends = make([]string, len(inst.Backends))
+				copy(view.Backends, inst.Backends)
+			}
+			if !fn(view) {
+				return
+			}
+		}
+	}
+}
+
 // CountByNamespace 返回某环境下当前内存中的实例条目数（供环境删除守卫，FR-53）。
 func (r *Registry) CountByNamespace(ns string) int {
 	r.mu.RLock()

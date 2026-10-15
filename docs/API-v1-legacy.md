@@ -731,9 +731,9 @@ data: {}
 ### 运维指标
 | 端点 | 说明 |
 |---|---|
-| `GET /metrics` | Prometheus 文本格式运行指标，免管理台鉴权（内网信任面，见 [ADR-0020](adr/0020-prometheus-metrics-observability.md)） |
+| `GET /metrics` | Prometheus 文本格式运行指标，免管理台鉴权。**不在本文档的 v1 端口上**：已迁到独立监听（默认 `127.0.0.1:8849`，可选 Bearer 鉴权，见 [ADR-0090](adr/0090-metrics-endpoint-dedicated-listener.md)；原同端口暴露由该 ADR 取代 [ADR-0020](adr/0020-prometheus-metrics-observability.md) 的对应两条） |
 
-暴露指标：`beacon_instances_registered{namespace,role}`（注册实例数，gauge）、`beacon_instances_status{status}`（健康状态分布 online/degraded/lost/offline，gauge）、`beacon_config_publish_total`（配置发布累计，counter）、`beacon_push_notify_total`（推送/长轮询唤醒累计，counter）。注册/健康为 pull 模型，抓取时读内存注册表实时计数。
+暴露指标：`beacon_instances_registered{namespace,role}`（注册实例数，gauge）、`beacon_instances_status{status}`（健康状态分布 online/degraded/lost/offline，gauge）、`beacon_config_publish_total`（配置发布累计，counter）、`beacon_push_notify_total`（推送/长轮询唤醒累计，counter）、`beacon_http_requests_total{method,route,status}`（HTTP 请求累计，counter）、`beacon_http_request_duration_seconds{method,route}`（HTTP 请求耗时分布，histogram，单位秒，显式分桶 1ms→60s）。另有 Go 运行时（`go_*`）与进程级（`process_*`）、控制面自身健康（`beacon_self_*`）三组指标——**完整清单与读法以 [OPERATIONS](OPERATIONS.md) §3.2 的指标表为单一真源**，此处不重复枚举以免两处各自漂移。注册/健康为 pull 模型，抓取时读内存注册表实时计数。两个 HTTP 指标为**接口 RED 口径**：由全局中间件逐请求观测，`route` 取 **chi 路由模板**（如 `/admin/v2/config-files/{id}`）而非真实路径，未命中统一为 `unmatched`，鉴权 / 只读拒写被组内中间件短路时停在 `/admin/v2/*` 这类组级模板（见 [ADR-0089](adr/0089-http-layer-red-metrics.md)）。
 
 ---
 

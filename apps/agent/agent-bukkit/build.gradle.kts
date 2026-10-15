@@ -54,7 +54,7 @@ taboolib {
         }
     }
     // 锁定 TabooLib 版本。
-    version { taboolib = "6.3.0-afd75a7" }
+    version { taboolib = "6.3.0-wcpe.3" }
     env {
         // Bukkit 平台 + 配置模块（读取 config.yml）。
         // 配置模块在 TabooLib 6.2.x 的工件名为 basic-configuration。

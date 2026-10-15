@@ -525,6 +525,41 @@ func run() error {
 	observabilityService.SetMetricWriteDiscardCounter(asyncDailyWriter)
 	observabilityHandler := handler.NewObservabilityHandler(observabilityService)
 
+	// 控制面自身健康进抓取端点（FR-82 的数据面投影，见 ADR-0091）：
+	// 把 /system 自观测页已有的内部运行态（连接池 / 长轮询 / 命令队列 / 写入丢弃）也暴露成
+	// Prometheus 指标，使「池枯竭、队列积压、数据被丢弃」这些故障前兆在监控上可见——
+	// 此前它们只在管理台页面里，而 Prometheus 抓不到鉴权链内的端点。
+	//
+	// 关键约束：**抓取路径不触达 DB**。命令队列深度源自一次 DB GROUP BY，而抓取端点
+	// 默认无鉴权且不限流，放进抓取路径等于让外部请求速率驱动数据库查询。故这里拆两条路：
+	// 内存类字段（连接池 / 长轮询 / 丢弃计数）抓取时现读；命令队列改由后台刷新器周期写缓存。
+	//
+	// 同理也**不读注册表**：本闭包不输出任何注册表字段（实例数与健康分布由抓取端点上的
+	// registryCollector 自己导出，见 metrics 包），故取 SnapshotForScrape 而非
+	// SnapshotWithoutCommandCounts——后者的 StatusCounts() 是一次持读锁全表遍历 + map 分配
+	// （1000 台实测 54µs），白读一遍只会在每次 scrape 上重复付出。
+	metricsSet.SetSelfHealthSource(func() metrics.SelfHealth {
+		snap := observabilityService.SnapshotForScrape()
+		return metrics.SelfHealth{
+			DBPoolMaxOpen:        snap.DBPool.MaxOpenConnections,
+			DBPoolOpen:           snap.DBPool.OpenConnections,
+			DBPoolInUse:          snap.DBPool.InUse,
+			DBPoolIdle:           snap.DBPool.Idle,
+			DBPoolWaitCount:      snap.DBPool.WaitCount,
+			DBPoolWaitDuration:   float64(snap.DBPool.WaitDurationMs) / 1000, // 毫秒 → 秒（Prometheus 惯例基本单位）
+			LongpollConfig:       snap.Longpoll.Config,
+			LongpollFile:         snap.Longpoll.File,
+			LongpollTopology:     snap.Longpoll.Topology,
+			LongpollCommand:      snap.Longpoll.Command,
+			MetricWriteDiscarded: snap.MetricWriteDiscarded,
+			// 写入队列深度：429 背压出现前唯一的预警信号（此前只能等数据被丢弃才知道出过问题）。
+			// 读的是有界 channel 的 len()，O(1) 且并发安全。
+			WriteQueueDepth:    asyncDailyWriter.QueueDepths(),
+			WriteQueueCapacity: asyncDailyWriter.QueueCapacity(),
+		}
+	})
+	commandCountRefresher := service.NewCommandCountRefresher(commandRepo, metricsSet)
+
 	// P4b 装配：健康域（FR-147，见 v2-metrics-health-scheduling.md §3.3/§4.4）。
 	// 健康权重版本化存储与热更：启动载入最新 rev（表空种子默认配置 rev=1、operator=system），
 	// PUT 校验 → 事务内写设置镜像 + 插入新 rev + 写审计 → 提交后内存原子替换（下一轮健康计算生效）。
@@ -796,7 +831,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2Roster: v2RosterHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, MCPInvocation: mcpInvocationHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, MCPInvocation: mcpInvocationHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, HTTPMetrics: metricsSet, Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{
@@ -811,12 +846,17 @@ func run() error {
 		IdleTimeout: 120 * time.Second,
 	}
 
+	// 抓取端点独立监听（见 ADR-0090）。构造细节见 newMetricsServer。
+	metricsSrv := newMetricsServer(cfg.MetricsEndpoint, metricsSet)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// 关停信号 ctx 作所有请求的根 context（fix-b）：Ctrl+C / SIGTERM 时取消所有在途请求——
 	// SSE / 长轮询等长连接据 r.Context() 即时退出、连接随之 drain，Shutdown 不必干等到 35s 超时（"关不掉"观感）。
 	srv.BaseContext = func(net.Listener) context.Context { return ctx }
+	// 抓取端点同样挂关停 ctx：关停时在途抓取即时取消，不必等 Shutdown 超时。
+	setBaseContext(ctx, metricsSrv)
 	// 异步在线更新下载挂到关停信号 ctx（fix-b）：Ctrl+C / 关停时取消进行中的下载，下载不再脱离进程生命周期。
 	updateAPIService.SetBaseContext(ctx)
 
@@ -832,6 +872,9 @@ func run() error {
 
 	// 启动异步日表写入通道（FR-144）：每路由多 worker 共享该路由有界队列，攒批事务批插当日日表，随关停信号退出。
 	asyncDailyWriter.Start(ctx)
+
+	// 启动命令队列计数刷新器（见 ADR-0091）：抓取路径不查库，该值由后台周期写缓存。
+	go commandCountRefresher.Run(ctx)
 
 	// 启动热冷归档后台工作器（FR-151，见 ADR-0066）：每日 schedule-hour-utc 自动归档 + 手动任务搬运，随关停信号退出。
 	// 归档库不可达时 Run 内部直接返回不启动搬运循环（overview 仍标不可用）。
@@ -868,13 +911,20 @@ func run() error {
 	// P9 M3：交付灰度编排推进器（FR-166，spec §4.1）：启动先按库内状态恢复 rolling / paused 单，再 ticker + 回执唤醒双驱动推进。
 	go deliveryOrchestrator.Run(ctx)
 
-	errCh := make(chan error, 1)
+	// 容量 2 而非 1：有两个监听器（业务主服务 + 抓取端点）各自可能上报错误。
+	// 容量 1 时若两者同时失败，第二个发送方会阻塞在 channel 上——进程仍会因读到首个错误而
+	// 正常退出（不会挂死），但那一条错误被静默丢弃，而这恰恰是最需要同时看到两条信息的场景
+	// （例如同一次端口冲突让两个监听器都起不来）。多一个缓冲位即消除该丢弃。
+	errCh := make(chan error, 2)
 	go func() {
 		slog.Info("HTTP 服务已就绪", "地址", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
+	// 抓取端点监听（见 ADR-0090）：与主服务同时起，错误一并进 errCh。详见 serveMetricsEndpoint。
+	// 鉴权判据走 metricsAuthEnabled——它与实现同口径，理由见该函数注释。
+	serveMetricsEndpoint(metricsSrv, metricsAuthEnabled(cfg.MetricsEndpoint.BearerToken), errCh)
 
 	select {
 	case <-ctx.Done():
@@ -886,14 +936,14 @@ func run() error {
 		// 给关停一个上限：略大于长轮询上限，到点强制结束
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		return shutdownAll(shutdownCtx, srv, metricsSrv)
 	case <-updateRestartCh:
 		// 更新已落位 pending，优雅关停释放端口后自替换二进制并重启（FR-119，见 ADR-0053）：
 		// rename 让位三步换二进制 + spawn 新进程，本进程随后退出（exit 0）；换失败就地回退、重启旧版兜底。
 		slog.Info("更新已就绪，优雅关停后自替换二进制并重启")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
+		if err := shutdownAll(shutdownCtx, srv, metricsSrv); err != nil {
 			return err
 		}
 		if selfErr != nil {
@@ -905,7 +955,7 @@ func run() error {
 		slog.Info("手动回滚已触发，优雅关停后回退到上一版本并重启")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
+		if err := shutdownAll(shutdownCtx, srv, metricsSrv); err != nil {
 			return err
 		}
 		if selfErr != nil {
@@ -915,6 +965,109 @@ func run() error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// shutdownAll 依次优雅关停主服务与抓取端点（见 ADR-0090），返回首个错误。
+//
+// 为什么抓取端点也必须关停、不能随进程退出：
+//   - 自更新 / 回滚分支（SwapAndRespawn / RollbackAndRespawn）会 spawn 新进程接手，新进程要重新绑定
+//     同一抓取端口；本进程若不先释放，新进程 bind 失败——表现为"更新后抓取端点起不来"。
+//   - 关停信号分支下，进程退出虽会由 OS 回收端口，但先关停可让在途抓取收到明确结束而非被硬断。
+//
+// 先关 metricsSrv：它只有短请求（返回一次文本快照即结束），几乎瞬间完成，不会占用共享的超时预算；
+// 而主服务可能还在等 30s 长轮询 drain，放在后面关才能拿到完整的剩余预算。
+//
+// 两者都失败时返回**主服务的错误**（而非字面意义上的"第一个"）：关闭顺序是先 metricsSrv，若按
+// 顺序取首错就会把抓取端点的失败报上去。但主服务才是承载管理台与 agent 数据面的那个，它 drain
+// 被截断意味着在途的长轮询与 SSE 被硬断；而抓取端点的失败最多是这一次抓取少了一帧数据。故
+// 主服务错误优先，只有它成功时才回落到 metricsSrv 的错误（两条都仍会被关停尝试，不受取值影响）。
+func shutdownAll(ctx context.Context, srv, metricsSrv *http.Server) error {
+	// metricsErr 暂存而不立即返回：主服务的关停无论如何都要执行，且其错误优先（见 preferShutdownError）。
+	var metricsErr error
+	if metricsSrv != nil {
+		metricsErr = metricsSrv.Shutdown(ctx)
+	}
+	return preferShutdownError(srv.Shutdown(ctx), metricsErr)
+}
+
+// preferShutdownError 在两次关停都失败时挑出该上报的那个：主服务错误优先，它成功才回落到抓取端点错误。
+//
+// 为什么单独拆出来而不是内联在 shutdownAll 里：这条优先级是**有意为之的反直觉选择**
+// （字面读"返回首个错误"会以为先关的 metricsSrv 优先），值得被单测直接锁死。而真去构造
+// "两个 http.Server 同时关停失败"来测，代价高且脆弱——两者的失败都表现为 ctx.Err()，无法
+// 区分究竟哪一个被上报。把选择逻辑收敛成一个纯函数后，"优先级对不对"与"两次关停确实都执行了"
+// 这两件事就能分别验证，各自都不依赖替身的行为细节。
+func preferShutdownError(mainErr, metricsErr error) error {
+	if mainErr != nil {
+		return mainErr
+	}
+	return metricsErr
+}
+
+// newMetricsServer 按配置构造抓取端点的独立监听器；listen-addr 为空时返回 nil（表示不启动该端点）。
+//
+// 为什么抓取端点要与业务主端口分离：主端口默认 `:8848` 是全网卡绑定且承载管理台与 agent 数据面，
+// 挂在其上等于「主端口可达即可匿名读到组织拓扑与容量画像」，且无法单独收敛。独立监听后
+// 默认只绑回环，暴露面收敛成一个可单独收紧的地址（见 ADR-0090）。
+//
+// 超时口径与主服务**刻意不同**：这里设了 WriteTimeout，主服务不设（见主服务构造处的说明）。
+// 差别只有一个来源——本端点没有 SSE 与长轮询，每次抓取返回一次文本快照即结束，不存在任何
+// 「合法地长时间不写完」的连接，故写上限不会误杀正常请求。不设的后果是：一个连上却不读响应的
+// 客户端能让 handler 的 Write 一直阻塞、goroutine 挂住，而本端点也没有 httpx.StallWriter 的
+// 慢写兜底——被挂住的请求会吃掉 shutdownAll 共用的 35s 关停预算，使「抓取是短请求、几乎瞬间
+// 完成、不占用共享预算」这个前提失效，主服务的长轮询 drain 随之拿不到剩余预算。
+func newMetricsServer(cfg config.MetricsEndpointConfig, m *metrics.Metrics) *http.Server {
+	addr := strings.TrimSpace(cfg.ListenAddr)
+	if addr == "" {
+		return nil
+	}
+	return &http.Server{
+		Addr:              addr,
+		Handler:           m.EndpointHandler(cfg.BearerToken),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// 与 ReadTimeout 同量级：抓取是纯短响应，实测响应体仅 ~11KiB（空注册表 11.0KiB，
+		// 1000 台实例 12.2KiB）。30s 写完这点字节相当于只要 ~0.4KB/s 的链路即可满足，
+		// 对正常抓取足够宽裕，不会误杀慢速网络上的请求。
+		WriteTimeout: 30 * time.Second,
+		// 抓取是短请求（返回一次文本快照即结束），无长连接与 SSE，故可安全设 IdleTimeout。
+		IdleTimeout: 120 * time.Second,
+	}
+}
+
+// setBaseContext 给监听器挂关停信号 ctx（nil 监听器直接跳过）。
+func setBaseContext(ctx context.Context, srv *http.Server) {
+	if srv != nil {
+		srv.BaseContext = func(net.Listener) context.Context { return ctx }
+	}
+}
+
+// metricsAuthEnabled 判断抓取端点是否真的会启用 Bearer 鉴权，供启动日志如实上报。
+//
+// 判据必须与实现**同口径**：metrics.EndpointHandler 先对 token 做 TrimSpace 再判空，故纯空白
+// token（如 " "）在实现侧等于「未配置凭据」——端点会放行任何匿名请求。若这里用裸 `!= ""`，
+// 这种配置会打出「鉴权=true」，运维据此以为已有凭据保护、不再追加网络层防护，而端点其实是
+// 敞开的（正是 ADR-0090 要消除的那种暴露形态）。故判据同样先 TrimSpace 后判空。
+//
+// 拆成具名函数而非内联表达式：这条等式（日志判据 == 实现判据）是安全属性，值得被单测直接锁住。
+func metricsAuthEnabled(token string) bool {
+	return strings.TrimSpace(token) != ""
+}
+
+// serveMetricsEndpoint 异步拉起抓取端点监听（nil 即不启动）。
+//
+// 绑定失败必须与主服务同等对待、进 errCh 终止进程：静默降级会让「以为在抓、实际没在抓」
+// 持续到有人发现看板没数据，比直接启动失败更难排查。
+func serveMetricsEndpoint(srv *http.Server, authEnabled bool, errCh chan<- error) {
+	if srv == nil {
+		return
+	}
+	go func() {
+		slog.Info("抓取端点已就绪", "地址", srv.Addr, "鉴权", authEnabled)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("抓取端点监听失败（地址 %s）: %w", srv.Addr, err)
+		}
+	}()
 }
 
 // openArchiveConn 建立归档库连接（FR-151，见 ADR-0066）：不可达时 WARN + 返回 nil 连接，

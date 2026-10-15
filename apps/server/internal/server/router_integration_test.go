@@ -245,7 +245,6 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 		ReverseFetchTask: reverseFetchTaskHandler,
 		ReverseFetchRule: reverseFetchRuleHandler,
 		Settings:         handler.NewSettingsHandler(settingsSvc),
-		Metrics:          metricsSet.Handler(),
 		Web:              http.HandlerFunc(http.NotFound),
 	}, agentToken, authn, apiKeySvc, auditRepo)
 	ts := httptest.NewServer(router)
@@ -729,35 +728,34 @@ func TestAuditClientIPRecorded(t *testing.T) {
 	}
 }
 
-// TestMetricsEndpoint 验证 /metrics 免鉴权可抓取，且配置发布后发布/推送计数前进（FR-30）。
-func TestMetricsEndpoint(t *testing.T) {
+// TestMetricsEndpointNotServedOnMainPort 锁定「抓取端点已不在业务主端口上」这一迁移结果（见 ADR-0090）。
+//
+// 为什么这条必须存在：迁移后 `/metrics` 由**独立监听器**提供（默认 127.0.0.1:8849），
+// 主端口不再挂载它。若日后有人图省事把挂载加回主路由（例如为了「兼容旧抓取配置」），
+// 抓取端点就会重新随主端口（默认全网卡 `:8848`）一起暴露，且重新变成无法单独收敛。
+// 这条断言把该退化路径钉死。
+//
+// 注意此处断言的是「主端口**不**提供」，而不是「端点**不存在**」——后者由
+// internal/metrics 的用例覆盖（EndpointHandler 本身仍正常输出指标）。
+//
+// 断言用「响应体不含指标名」而非「状态码为 404」是刻意的：本测试的路由以
+// `Web: http.HandlerFunc(http.NotFound)` 装配（见 newTestServer），与生产内嵌 SPA 的
+// 回退行为**不同**——生产实测该路径返回 404 纯文本，而此处同为 404，但换成别的
+// 前端处理器就可能变成 200 + index.html。以指标名判据在两种装配下都成立，
+// 不会因前端回退实现的差异而误报。真正的信号是「有没有把指标文本吐出来」。
+func TestMetricsEndpointNotServedOnMainPort(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
-	// 发布一次配置，触发发布计数与推送计数
-	code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/configs", map[string]any{
-		"namespace": "prod", "group": "__GLOBAL__", "dataId": "metrics-probe.yml",
-		"scopeLevel": "global", "format": "yaml", "content": "k: 1\n", "operator": "alice",
-	})
-	if code != http.StatusCreated {
-		t.Fatalf("建配置应 201，实际 %d", code)
-	}
-
-	// /metrics 不带令牌也应 200（内网信任面）
 	resp, err := http.Get(ts.URL + "/metrics")
 	if err != nil {
-		t.Fatalf("抓取 /metrics 失败: %v", err)
+		t.Fatalf("请求主端口 /metrics 失败: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("/metrics 应 200，实际 %d", resp.StatusCode)
-	}
 	raw, _ := io.ReadAll(resp.Body)
-	body := string(raw)
-	for _, name := range []string{"beacon_config_publish_total", "beacon_push_notify_total", "beacon_instances_status"} {
-		if !bytes.Contains(raw, []byte(name)) {
-			t.Fatalf("/metrics 应含指标 %s，实际：\n%s", name, body)
-		}
+	if bytes.Contains(raw, []byte("beacon_config_publish_total")) ||
+		bytes.Contains(raw, []byte("beacon_instances_status")) {
+		t.Fatalf("主端口不应再输出 Prometheus 指标（抓取端点已迁至独立监听，见 ADR-0090）；实际响应：\n%s", string(raw))
 	}
 }
 

@@ -86,6 +86,9 @@ lint:
 	@echo "==== golangci-lint run（配置见 .golangci.yml）===="
 	golangci-lint run ./...
 	@$(GO_FORMAT_CHECK)
+	@echo "==== 带 e2e / loadtest 标签的编译检查 ===="
+	go vet -tags e2e ./...
+	go vet -tags "e2e loadtest" ./...
 	@echo "==== Go 静态检查全部通过 ===="
 
 # 发布校验全部委托给 POSIX sh 脚本，避免依赖 Python 或 jq。

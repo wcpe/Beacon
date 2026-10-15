@@ -52,6 +52,10 @@ WORKDIR /data
 USER beacon
 # API 与管理台 UI 同端口
 EXPOSE 8848
+# Prometheus 抓取端点的独立监听端口（见 docs/adr/0090）。EXPOSE 只是声明，不等于对外暴露：
+# 容器内默认仍只绑回环 127.0.0.1:8849，要让宿主抓到须另设 BEACON_METRICS_ENDPOINT_LISTEN_ADDR=:8849
+# 并在运行时映射该端口（compose 见 docker-compose.yml）。
+EXPOSE 8849
 # 入口为单进程 beacon；进程崩溃的自动重启靠 compose 的 restart 策略。
 # 注意：容器内自更新换二进制临时有效，但镜像不可变——容器重建会丢更新，生产升级以重拉镜像为准（见 docs/OPERATIONS.md）。
 ENTRYPOINT ["/usr/local/bin/beacon"]

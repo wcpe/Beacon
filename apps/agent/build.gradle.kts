@@ -21,8 +21,22 @@ allprojects {
 // 所有子模块统一的仓库与编译约定。
 subprojects {
     repositories {
+        // WCPE 仓库：承载 wcpe 定制版 taboolib（`6.3.0-wcpe.N`）与 mc-testkit 等只在此托管的坐标，
+        // 上游 repo.tabooproject.org / mavenCentral 都没有这些版本。
+        //
+        // **必须限定 group**：不加 content 过滤时，Gradle 会把它当作所有坐标的来源之一，
+        // 于是此前已从 mavenCentral 缓存命中、可离线解析的工件（实测 kotlin-compiler-embeddable）
+        // 会因来源归属变化而重新去远程解析，离线/受限网络下直接构建失败。
+        maven("https://repo.wcpe.top/repository/maven-public/") {
+            content {
+                includeGroup("io.izzel.taboolib")
+                includeGroup("io.izzel.taboolib.gradle")
+                includeGroup("org.tabooproject.reflex")
+                includeGroup("top.wcpe.taboolib.ioc")
+            }
+        }
         mavenCentral()
-        // TabooLib 官方发布仓库，解析 taboolib 各模块工件。
+        // TabooLib 官方发布仓库，解析上游 taboolib 各模块工件。
         maven("https://repo.tabooproject.org/repository/releases")
     }
 

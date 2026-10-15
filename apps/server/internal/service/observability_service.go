@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
+	"time"
 
 	rt "github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
@@ -106,6 +108,40 @@ func (s *ObservabilityService) SetMetricWriteDiscardCounter(c metricWriteDiscard
 // Snapshot 采集一次自观测快照。各来源均为只读：连接池统计、内存注册表计数、Hub 挂起数同步取；
 // 命令队列计数走一次 DB GROUP BY（低频自观测页，非热路径），失败时降级为空 map 并告警，不阻断其余指标。
 func (s *ObservabilityService) Snapshot() Observability {
+	snap := s.SnapshotWithoutCommandCounts()
+
+	cmdByStatus, err := s.commandCounter.CountByStatus()
+	if err != nil {
+		slog.Warn("采集命令队列计数失败，本次降级为空", "错误", err)
+		cmdByStatus = map[string]int{}
+	}
+	snap.CommandByStatus = cmdByStatus
+	return snap
+}
+
+// ScrapeSnapshot 是抓取路径专用的窄快照：只含抓取侧**真正会用到**的内存类字段。
+//
+// 与 Observability 的差别是**不含注册表规模**。抓取侧的 beacon_self_* 指标只需要连接池 /
+// 长轮询 / 丢弃计数；注册表的实例数与健康分布另有 registryCollector 经 List 即时导出
+// （指标名 beacon_instances_registered / beacon_instances_status），两边口径本就不同、
+// 互不依赖。故抓取路径没有理由顺带再读一遍注册表。
+type ScrapeSnapshot struct {
+	DBPool               DBPoolStats   // 数据库连接池统计
+	Longpoll             LongpollStats // 长轮询四通道挂起数
+	MetricWriteDiscarded int64         // 指标异步写入累计丢弃行数（未注入写入池时恒 0）
+}
+
+// SnapshotForScrape 采集抓取路径需要的全部字段：**不触达 DB，也不读注册表**。
+//
+// 为什么单独拆出来：registry.StatusCounts() 不是 O(1) 读计数，而是一次持读锁的全表遍历
+// 并新建一个 map（1000 台规模下实测 54µs，且要抢注册表的 RWMutex 读锁——心跳写路径正持写锁）。
+// 抓取端点默认无鉴权、不限流，让每个 scrape 都为「本次并不输出」的注册表计数付一次遍历与分配，
+// 属于纯粹的无谓开销；而注册表规模已在抓取端点由 registryCollector 按另一种口径（带 namespace /
+// role / status 标签）导出，两处重复采集只会让口径来源变模糊。
+//
+// 本方法是抓取与自观测页共用的「内存类字段」唯一来源（见 SnapshotWithoutCommandCounts），
+// 避免两处各写一份读取逻辑后漂移。
+func (s *ObservabilityService) SnapshotForScrape() ScrapeSnapshot {
 	st := s.dbStats.Stats()
 
 	configN := s.configHub.WaiterCount()
@@ -113,24 +149,12 @@ func (s *ObservabilityService) Snapshot() Observability {
 	topoN := s.topologyHub.WaiterCount()
 	cmdN := s.commandHub.WaiterCount()
 
-	byStatus := s.registry.StatusCounts()
-	total := 0
-	for _, n := range byStatus {
-		total += n
-	}
-
-	cmdByStatus, err := s.commandCounter.CountByStatus()
-	if err != nil {
-		slog.Warn("采集命令队列计数失败，本次降级为空", "错误", err)
-		cmdByStatus = map[string]int{}
-	}
-
 	var metricDiscarded int64
 	if s.metricDiscard != nil {
 		metricDiscarded = s.metricDiscard.Discarded()
 	}
 
-	return Observability{
+	return ScrapeSnapshot{
 		DBPool: DBPoolStats{
 			MaxOpenConnections: st.MaxOpenConnections,
 			OpenConnections:    st.OpenConnections,
@@ -146,9 +170,86 @@ func (s *ObservabilityService) Snapshot() Observability {
 			Command:  cmdN,
 			Total:    configN + fileN + topoN + cmdN,
 		},
+		MetricWriteDiscarded: metricDiscarded,
+	}
+}
+
+// SnapshotWithoutCommandCounts 采集除命令队列外的全部自观测项，**不触达 DB**。
+//
+// 为什么需要这个变体（见 ADR-0091）：命令队列计数源自一次 DB GROUP BY，而抓取端点
+// 默认无鉴权且不设限流——若把它放进抓取路径，等于任何能访问该端口的人按任意频率
+// 驱动数据库查询。故抓取侧只取本方法（纯内存 / 标准库统计），命令队列计数改由后台
+// 周期刷新器（CommandCountRefresher）单独采集后写入指标缓存。
+//
+// 注意本方法**不用于抓取路径**：它含注册表规模，而抓取侧不用（见 SnapshotForScrape）。
+// 它的调用方只有管理台自观测页那条链（Snapshot）。
+func (s *ObservabilityService) SnapshotWithoutCommandCounts() Observability {
+	base := s.SnapshotForScrape()
+
+	byStatus := s.registry.StatusCounts()
+	total := 0
+	for _, n := range byStatus {
+		total += n
+	}
+
+	return Observability{
+		DBPool:               base.DBPool,
+		Longpoll:             base.Longpoll,
 		RegistryByStatus:     byStatus,
 		RegistryTotal:        total,
-		CommandByStatus:      cmdByStatus,
-		MetricWriteDiscarded: metricDiscarded,
+		CommandByStatus:      map[string]int{},
+		MetricWriteDiscarded: base.MetricWriteDiscarded,
+	}
+}
+
+// CommandCountRefresher 是命令队列计数刷新器（见 ADR-0091）：后台周期把队列深度写入指标缓存。
+//
+// 存在的理由：抓取路径不能查库（见 SnapshotWithoutCommandCounts），但命令队列深度又必须
+// 可见——它是「429 出现前唯一的积压信号」（OPERATIONS 已记录该缺口）。折中是：DB 查询留在
+// 后台，抓取只读缓存。周期取 15s：与 Prometheus 默认抓取间隔同量级，既不加重 DB 负担，
+// 又足以在积压发展成 429 之前被看到。
+type CommandCountRefresher struct {
+	counter commandCounter
+	sink    commandCountSink
+}
+
+// commandCountSink 是刷新器对指标缓存的窄依赖（由 *metrics.Metrics 实现，见其 SetCommandStatusSnapshot）。
+type commandCountSink interface {
+	SetCommandStatusSnapshot(byStatus map[string]int, nowUnix float64)
+}
+
+// commandCountRefreshInterval 是命令队列计数的后台刷新周期。
+const commandCountRefreshInterval = 15 * time.Second
+
+// NewCommandCountRefresher 构造刷新器。
+func NewCommandCountRefresher(counter commandCounter, sink commandCountSink) *CommandCountRefresher {
+	return &CommandCountRefresher{counter: counter, sink: sink}
+}
+
+// Run 周期刷新命令队列计数，直到 ctx 取消。
+//
+// 首轮**立即**刷新（不等第一个 tick）：否则进程启动后的前 15s 抓取只能看到空缓存，
+// 那段时间的看板会把「还没采过」误读成「队列为空」。
+func (r *CommandCountRefresher) Run(ctx context.Context) {
+	refresh := func() {
+		byStatus, err := r.counter.CountByStatus()
+		if err != nil {
+			// 采集失败不写缓存（sink 侧对 nil 亦为保留旧值），避免把"查不到"写成"队列空"。
+			slog.Warn("刷新命令队列计数失败，保留上一轮值", "错误", err)
+			return
+		}
+		r.sink.SetCommandStatusSnapshot(byStatus, float64(time.Now().Unix()))
+	}
+	refresh()
+
+	ticker := time.NewTicker(commandCountRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
 	}
 }

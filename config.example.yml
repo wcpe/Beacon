@@ -6,10 +6,26 @@
 # alert.webhook.* / log.level 这些运维调参项的真源已从本文件移到 DB 设置 store。本文件对它们仅作
 # "出厂默认 / 首启种子"——只在 store 还没该项时（首次启动）生效；store 一旦 seed，改本文件这些项不再
 # 影响运行值，要改请走管理台设置页 / 设置 API（PUT /admin/v1/settings/{key}），改完即热生效、免重启。
-# 启动 / 安全项（http-addr / database.* / auth.* / agent-token / git-export.*）仍以本文件 + env 为真源、改后须重启。
+# 启动 / 安全项（http-addr / metrics-endpoint.* / database.* / auth.* / agent-token / git-export.*）仍以本文件 + env 为真源、改后须重启。
 
 # API 与管理台 UI 的监听地址（二者同端口）
 http-addr: ":8848"
+
+# Prometheus 抓取端点（见 docs/adr/0090）：控制面把运行指标暴露成一个只读 HTTP 端点供监控系统抓取。
+# 属启动项——改后须重启（与下方 metric.* 采样段的「热改项」是两回事：metric.* 管控制面主动采样落库，
+# 本段只管把已有指标读出去）。路径固定为 GET /metrics，且**不再**挂在上面那个业务主端口上。
+metrics-endpoint:
+  # 抓取端点的监听地址，须写成 host:port（只写 IP 或只写端口会被启动校验拒绝）。
+  # 默认 127.0.0.1:8849：只在本机回环监听，外部与公网默认抓不到；同机 Prometheus 直接填这个地址即可。
+  # 想让内网监控抓取就改为内网 IP（如 10.0.0.5:8849）或 ":8849"（所有网卡）；
+  # 后者等于对外暴露，必须先自备防火墙 / 反向代理保护，否则任何可达者都能匿名读到实例拓扑与容量画像。
+  # 置空字符串 "" = 不启动该端点（显式关闭）。本项不能与 http-addr 相同，相同则启动即被校验拒绝。
+  # 也可用环境变量 BEACON_METRICS_ENDPOINT_LISTEN_ADDR 覆盖（env 优先）。
+  # 注意：容器部署时容器内的回环与宿主机回环不是同一个网络，要让宿主抓到须改成 ":8849" 并把端口映射出去。
+  listen-addr: "127.0.0.1:8849"
+  # 抓取凭据（敏感项，按规则不写入本样例）：非空即要求标准 Authorization: Bearer <token> 头，缺失或不匹配回 401。
+  # 仅从环境变量 BEACON_METRICS_ENDPOINT_BEARER_TOKEN 注入，留空 = 不鉴权（此时安全全看上行 listen-addr 收敛到哪一层）。
+  # 该值绝不写入本文件、也不入 DB 设置 store（与 git-export.remote-token 同范式），避免凭据随配置文件扩散。
 
 # agent 端**共享 token**（易与 agent 本地键 bootstrap-token 混淆，务必分清）：
 #   本项（控制面 agent-token）= 共享 token，是 **v1 数据面**端点的凭据，也是机器注册（FR-222）

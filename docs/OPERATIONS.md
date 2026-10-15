@@ -143,8 +143,286 @@ make release-verify-ga \
 agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→agent 推送（配置、文件树、覆盖集等变更通知统一走这一条流，agent 收到通知后仍用原有 HTTP 端点取内容）。若在 beacon 前放反向代理（nginx 等），须保证流不被缓冲、不被空闲超时切断：
 - **关闭响应缓冲**：beacon 已对该响应输出 `X-Accel-Buffering: no`（nginx 据此关 proxy buffering）；其它代理请按等价方式关闭对 `text/event-stream` 的缓冲。nginx 还需 `proxy_http_version 1.1;` + `proxy_set_header Connection "";`。
 - **调长读超时**：把代理对 agent stream 路径的读超时（nginx `proxy_read_timeout`）调到显著大于 beacon 的保活间隔（默认取长轮询挂起上限），避免空闲被误判断流。beacon 无变更时按间隔发 SSE 注释行（`: ping`）保活。
-- **Docker 网络**：沿用现有"agent 能直连 beacon 地址"的可达约束，无新增端口；SSE 走与 API 同一端口（默认 8848）。
+- **Docker 网络**：沿用现有"agent 能直连 beacon 地址"的可达约束，**SSE 与业务主 API 无新增端口**；SSE 走与 API 同一端口（默认 8848）。**例外**：抓取端点已独立监听（默认 `127.0.0.1:8849`，见 §3.2），容器形态下若要让容器外抓取，需额外映射该端口。
 - **断流不影响判活**：健康 online/lost/offline 仍由独立心跳 + TTL 决定，SSE 抖动断流不会误判失联；agent 流断按本地快照继续、自动退避重连并对账（fail-static）。
+
+### 3.2 Prometheus 指标抓取
+
+控制面在**独立监听端口**上暴露 `GET /metrics`（Prometheus 文本格式，默认 `http://127.0.0.1:8849/metrics`），由 `config.yml` 顶层配置段 `metrics-endpoint` 控制。之所以与业务端口分离：主端口默认绑所有网卡且承载管理台与 agent 数据面，抓取挂在上面等于「主端口可达即能匿名读到实例拓扑与容量画像」，且无法单独收敛。
+
+**默认只绑本机回环、默认安全**：`metrics-endpoint.listen-addr` 出厂值为 `127.0.0.1:8849`，只在本机回环上监听，**外部与公网默认抓不到**。这替代了此前的「业务同端口暴露」——主端口（默认 `:8848`）默认绑所有网卡且承载管理台与 agent 数据面，抓取挂在上面等于「主端口可达即能匿名读到组织拓扑与容量画像」；迁到独立监听后，暴露面收敛成一个可单独收敛的地址，**不显式放开就等于没暴露**。它给出的仍是聚合运行指标，不含配置内容与凭据。
+
+**两处行为变化（升级时必读）**：
+
+- **主端口 `:8848` 不再提供 `/metrics`**：既有抓取配置必须把地址改到抓取端点，否则抓取直接失败（主端口上该路径不再存在）。
+- **抓取不再被自记**：抓取端点不经过主路由的全局中间件链，Prometheus 每次 scrape **不会**再记进 `beacon_http_requests_total`（此前那条 `route="/metrics"` 的自记 series 随迁移消失，读法见下方「读法提醒」）。
+
+**放开到内网 / 公网**：改 `config.yml` 的 `metrics-endpoint.listen-addr`，或用环境变量 `BEACON_METRICS_ENDPOINT_LISTEN_ADDR` 覆盖（env 优先），改后重启生效：
+
+```yaml
+# config.yml（启动 / 安全项，改后须重启）
+metrics-endpoint:
+  # 默认 127.0.0.1:8849（仅本机回环）。改为内网地址，让内网 Prometheus 能抓：
+  listen-addr: "10.0.0.5:8849"
+  # 或绑所有网卡（含公网口）——此时**等于对外暴露**，须自备网络层 / 反代保护：
+  # listen-addr: ":8849"
+  # 置空字符串 = 不启动该端点（显式关闭；此时主端口也不提供 /metrics）：
+  # listen-addr: ""
+```
+
+> **须写成 `host:port`**：只写 IP（`10.0.0.5`）或只写端口号（`8849`，**没有冒号**）都会被配置校验拒绝并给出可读原因——**带冒号的 `:8849` 是合法的**（表示所有网卡，见上方注释）。`listen-addr` **不能与 `http-addr` 相同**（相同即等于把抓取端点又挂回业务面，且后监听者必然 bind 失败），同样在校验期直接拒绝。
+>
+> **风险只在「显式放开」这一步**：默认值（回环）本身是安全的，运维无需额外动作；但一旦把 `listen-addr` 改成 `:8849`（所有网卡）或某个公网可达的 IP，**就等于把这个端点对外暴露了**——此时必须确保有网络层或反向代理保护（防火墙只放行监控网段、反代加访问控制或鉴权），**不要让它直接裸奔在公网**。
+>
+> **容器形态另需端口映射**：容器内的回环 `127.0.0.1` 与宿主机回环不是同一个网络命名空间，默认值下**宿主机或外部 Prometheus 抓不到容器内的 8849**。要在容器形态下抓取，需同时做两件事：把 `listen-addr` 改成容器内可达的地址（`:8849`）并把 8849 映射出来（如 compose 的 `ports: ["127.0.0.1:8849:8849"]`——映射到宿主回环即可保持「只有本机能抓」）。
+>
+> **抓取端点 bind 失败 = 控制面启动失败**：不静默降级（「以为在抓、实际没在抓」会一直持续到有人发现看板没数据，比直接失败更难排查）。启动日志里出现抓取端点的 bind 错误时，先查端口占用与 `listen-addr` 是否与 `http-addr` 撞车。
+
+**加鉴权（可选，默认关闭）**：把环境变量 `BEACON_METRICS_ENDPOINT_BEARER_TOKEN` 设为一段强随机串即启用——端点此后校验标准 `Authorization: Bearer <token>` 头（方案名大小写不敏感），**缺失或不匹配一律回 `401`**（不返回 `WWW-Authenticate`，不向外透露期望的凭据方案）。该值**只从环境变量读、不写入 `config.yml` 也不入 DB 设置 store**（沿用 `git-export.remote-token` 的既有敏感项范式，避免凭据随配置文件扩散与入库）；留空 = 不鉴权，此时安全性完全取决于监听地址收敛到哪一层（回环最紧、内网次之、`:8849` 最松）。端点**不额外做限流**，保护手段就是「监听地址 + 可选 Bearer」这两层。
+
+> **监听在非回环地址且未设凭据时，控制面启动会记一条 WARN**（不阻断启动）——内网可信域部署是正当场景，但运维应明确知道：任何可达该地址者都能匿名读取运行指标。
+
+指标清单：
+
+| 指标 | 类型 | 标签 | 含义 |
+|---|---|---|---|
+| `beacon_instances_registered` | gauge | `namespace`、`role` | 当前注册实例数（抓取时读内存注册表现算，非埋点计数） |
+| `beacon_instances_status` | gauge | `status`（online / degraded / lost / offline） | 健康状态分布 |
+| `beacon_config_publish_total` | counter | — | 配置发布累计次数 |
+| `beacon_push_notify_total` | counter | — | 推送（长轮询唤醒）累计次数 |
+| `beacon_http_requests_total` | counter | `method`、`route`、`status` | HTTP 请求累计数（接口红字口径） |
+| `beacon_http_request_duration_seconds` | histogram | `method`、`route` | HTTP 请求耗时分布（单位秒），显式分桶 1ms → 60s |
+| `go_goroutines` | gauge | — | 当前 goroutine 数（持续增长常意味着泄漏） |
+| `process_resident_memory_bytes` | gauge | — | 控制面进程常驻内存 RSS（字节） |
+
+**控制面自身健康**（`beacon_self_*` 前缀；与上方描述"被管实例"的 `beacon_instances_*` 区分——这组答的是"控制面这个进程自己怎么样"）：
+
+| 指标 | 类型 | 标签 | 含义 |
+|---|---|---|---|
+| `beacon_self_db_pool_connections` | gauge | `state`（max_open / open / in_use / idle） | 数据库连接池各状态连接数 |
+| `beacon_self_db_pool_wait_total` | counter | — | 累计等待数据库连接的次数。**持续增长即池正在枯竭**，是 2026-10-10 那类"所有需 DB 端点挂起"事故的直接前兆 |
+| `beacon_self_db_pool_wait_duration_seconds_total` | counter | — | 累计等待连接的总时长（秒） |
+| `beacon_self_longpoll_waiters` | gauge | `channel`（config / file / topology / command） | 长轮询各通道当前挂起 waiter 数 |
+| `beacon_self_commands` | gauge | `status`（pending / fetched / ready / done / failed / expired） | 命令队列深度。**429 背压出现之前唯一的积压信号** |
+| `beacon_self_metric_write_discarded_total` | counter | — | 指标异步写入累计丢弃行数（多次重试仍失败）。**非零即代表数据已丢失**，最该告警的一类 |
+| `beacon_self_commands_snapshot_timestamp_seconds` | gauge | — | 命令队列计数缓存最后一次成功刷新的 Unix 秒（0 = 从未成功） |
+| `beacon_self_write_queue_depth` | gauge | `route`（metric_sample / health_snapshot / conn_event / message_trace / sched_decision / mcp_invocation） | 异步日表写入通道各路由的当前队列深度。**429 背压出现前唯一的预警信号**——此前运维只能在数据已被丢弃后才知道出过问题 |
+| `beacon_self_write_queue_capacity` | gauge | — | 各路由队列容量（当前 4096）。与 depth 相除即水位占比 |
+
+> **命令队列深度是 15 秒级的缓存值，不是抓取时现查**：它源自一次数据库 `GROUP BY`，而抓取端点默认无鉴权且不限流——若在抓取时查库，等于让任何能访问该端口的人按任意频率驱动数据库查询。故该值由后台每 15s 刷新一次；其余自身健康指标（连接池 / 长轮询 / 丢弃计数）都是进程内读取，抓取时现取。
+>
+> 判断数据是否新鲜用 `time() - beacon_self_commands_snapshot_timestamp_seconds`：该值停滞说明后台采集失败（此时计数**保留上一轮值而非清零**，避免把"采集坏了"伪装成"队列空了"）。进程刚启动、尚未完成首轮采集时该指标为 0。
+
+**命令队列怎么读**（下表结论均经 2026-10-14 真机实测：注册 4 台、走完整审批→建命令→agent 拉取→过期链路）：
+
+| 行为 | 实测结论 |
+|---|---|
+| 命令如何产生 | 由运维主动操作触发（强制重同步 / 文件浏览 / 取日志 / 拓印确认），**不随 agent 常规流量增长**。触发时先进**统一审批**（`202` + `approvalRequestId`），**批准后才建命令入队**——故 `pending` 上升前必有一次审批动作，排查时先看审批是否卡住 |
+| 下发路径 | agent 按 `GET /beacon/v1/agent/commands?namespace=&serverId=` 拉取，**一次拉一条**，`pending → fetched` 用 CAS 原子占用（并发拉取不会重复领取同一条） |
+| 队列是否按服务器隔离 | **是**。待办查询按 `namespace AND server_id` 过滤，每台服务器各有独立队列 |
+| 一台堵塞会不会拖累其他服务器 | **不会**（实测）。持有一条未终结的 `fetched` 命令时，该台**仍能立即拉到新命令**；新注册的服务器队列为空、完全不受既有积压影响 |
+| 堵塞会不会永久堆积 | **不会**。后台清理器每 5 分钟扫一次，把创建超过 **1 小时**仍未终结（`pending`/`fetched`/`ready`）的命令标 `expired` 并清空瞬态明文（实测：6 条超期命令一轮后 `pending`/`fetched` 归零、`expired` 计 6） |
+| agent 不回传会怎样 | 该命令 1 小时后转 `expired`，**不阻塞**该台后续命令。这是刻意的：命令是「尽力投递」语义，不保证送达 |
+
+> 由此，`BeaconCommandQueueBacklog` 告警的真实含义是「**agent 拉取速度跟不上运维操作速度**」——若同时看到 `pending` 高企而 `fetched` 不涨，多半是 agent 未在线或未拉取（检查该实例健康状态），而非控制面侧阻塞。
+
+抓取配置示例（`prometheus.yml`；此处字段名按 Prometheus 上游约定书写，不受本项目配置文件命名规范约束）：
+
+```yaml
+scrape_configs:
+  # 控制面自带的运维指标端点：独立监听端口，不再与业务同端口（主端口 :8848 上没有 /metrics）
+  - job_name: beacon
+    metrics_path: /metrics
+    # 抓取间隔 15s 足够看接口延迟趋势；调小只会增加控制面自身的抓取流量
+    scrape_interval: 15s
+    static_configs:
+      # 独立监听地址的端口是 8849（不是业务端口 8848）。
+      # 监听默认绑回环，故 Prometheus 必须与控制面同机（或改用下面的内网地址写法）。
+      - targets: ["127.0.0.1:8849"]
+      # 若已把 listen-addr 放开到内网地址，换成（两行二选一，不要同时留）：
+      # - targets: ["beacon.internal:8849"]
+```
+
+启用 Bearer 鉴权后，同一 job 追加 `authorization`（Prometheus 原生字段，无需自造头）：
+
+```yaml
+scrape_configs:
+  - job_name: beacon
+    metrics_path: /metrics
+    scrape_interval: 15s
+    # 与 BEACON_METRICS_ENDPOINT_BEARER_TOKEN 取同一串；端点按标准 Authorization: Bearer <token> 校验
+    authorization:
+      type: Bearer
+      credentials: "<与 BEACON_METRICS_ENDPOINT_BEARER_TOKEN 一致的强随机串>"
+      # 不想把明文写在 prometheus.yml 里时，改用凭据文件（二者取其一，同时给会报错）：
+      # credentials_file: "/etc/prometheus/beacon-metrics-token"
+    static_configs:
+      - targets: ["127.0.0.1:8849"]
+```
+
+> 未启用鉴权时**不要写** `authorization` 段（端点会忽略多余头，但配置里留着空 Token 容易误以为鉴权已开）。token 轮换要同时改控制面 env 与 Prometheus 侧配置并各自重启，中间会有一段抓取 401 的窗口。
+
+算分位数（按 route 过滤，示例取两个请求-响应型端点）：
+
+```promql
+# p95（5 分钟窗口）
+histogram_quantile(0.95,
+  sum by (le) (rate(beacon_http_request_duration_seconds_bucket{route="/admin/v1/system/status"}[5m])))
+
+# p99
+histogram_quantile(0.99,
+  sum by (le) (rate(beacon_http_request_duration_seconds_bucket{route="/admin/v2/zone-tree"}[5m])))
+```
+
+**读法提醒**（不按这些口径读，数字会误导）：
+
+- `route` 是**路由模板**（如 `/admin/v2/config-files/{id}`）而非真实请求路径——同一端点下不同 id 聚合成一条 series，正是为了不让时序数随业务数据膨胀。未命中任何路由的请求（404、单页应用回退）统一落在 `route="unmatched"`。
+- **鉴权失败 / 只读拒写**的请求，`route` 停在**组级通配模板**（`/admin/v2/*`、`/beacon/v1/agent/*` 一类）：组内中间件短路时路由尚未匹配完。看到这类 series 属正常表现，不是模板漂移。
+- **长轮询 / 流式端点的耗时是真时长**（`/beacon/v1/agent/config/effective`、`/files/manifest`、`/override-sets` 最长挂起 30s；`/beacon/v1/agent/stream` 与管理台 SSE 更长），它们会把整体分位数明显抬高——做接口 SLA 时**按 route 过滤掉这些端点**，只统计请求-响应型端点。
+- **抓取本身不再算一次请求**：抓取端点迁到独立监听后不经过主路由的全局中间件链，Prometheus 每次 scrape **不会**记进 `beacon_http_requests_total`（迁移前会自记一条 `route="/metrics"`，该 series 随迁移消失且不再产生）。因此：算业务 QPS 时**无需再排除抓取**；反过来，看到历史数据里存在 `route="/metrics"` 的 series 属迁移前的旧数据，**不要把它的中断读成业务流量骤降**（新旧同图上会发现该 series 归零）。
+- 进程刚启动、还没有任何请求时，两个 HTTP 指标**不会出现在 `/metrics` 里**（产生第一个请求后才出现），不是采集失败。
+
+建议的最低告警规则：
+
+```yaml
+groups:
+  - name: beacon
+    rules:
+      # 控制面不可达
+      - alert: BeaconDown
+        expr: up{job="beacon"} == 0
+        for: 2m
+        labels: { severity: critical }
+        # 抓取端点是独立监听：本告警既可能是进程挂了，也可能是抓取地址错（仍在抓 :8848）、
+        # listen-addr 被改小 / 置空、或 Bearer token 不匹配——**先看它再下「控制面挂了」的结论**
+        annotations: { summary: "控制面 /metrics 抓取失败（进程不可达，或抓取地址 / 监听地址 / Bearer 凭据不匹配）" }
+      # 5xx 错误率抬头（按 route 分维）
+      - alert: BeaconHttpErrorRate
+        expr: sum by (route) (rate(beacon_http_requests_total{status=~"5.."}[5m])) / sum by (route) (rate(beacon_http_requests_total[5m])) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "控制面 5xx 错误率 >5%（route={{ $labels.route }}）" }
+      # p99 抬头（窗口取 1h 以免抖动；排除天然长时间挂起的端点）
+      - alert: BeaconHttpLatencyP99High
+        expr: histogram_quantile(0.99, sum by (le, route) (rate(beacon_http_request_duration_seconds_bucket{route!~"/beacon/v1/agent/(config/effective|files/manifest|override-sets|stream)"}[1h]))) > 2
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "控制面 p99 > 2s（route={{ $labels.route }}）" }
+      # goroutine 持续增长（疑似泄漏）：当前越过基线且 1 小时内翻倍，单点绝对阈值噪声大故取“基线+翻倍”口径
+      - alert: BeaconGoroutinesGrowing
+        expr: go_goroutines > 1000 and go_goroutines > 2 * go_goroutines offset 1h
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "goroutine 数持续增长（当前 {{ $value }}，疑似泄漏）" }
+      # RSS 持续增长（疑似内存泄漏）：当前越过 512MiB 基线且 6 小时内翻倍，offset 对比避免被单次抓取抖动误伤
+      - alert: BeaconRssGrowing
+        expr: process_resident_memory_bytes > 536870912 and process_resident_memory_bytes > 2 * process_resident_memory_bytes offset 6h
+        for: 30m
+        labels: { severity: warning }
+        annotations: { summary: "控制面 RSS 持续增长（6h 翻倍，当前 {{ $value }} 字节）" }
+      # 连接池等待在增长：池正在枯竭，是「所有需 DB 端点挂起」那类事故的直接前兆。
+      #
+      # 判据取「平均每次等待的时长」而非「等待次数」——这是 60 服规模实测（2026-10-14）校准的结论：
+      # 等待**次数**在正常负载下就达 1 万~2 万次/秒（11 个档位横跨 51~20207 次/秒，跨 3 个数量级），
+      # 任何固定阈值都会持续误报或完全漏报；而**平均等待时长**稳定在 0.00025~0.0099 秒/次，
+      # 且与 p99 时延正相关（最慢档位 p99 89ms 对应最大均值 9.9ms），故以它为判据。
+      # 阈值 50ms 取值依据：实测正常上界约 10ms，留 5 倍余量；越过它意味着单次等待已显著拖慢请求。
+      - alert: BeaconDBPoolWaiting
+        expr: rate(beacon_self_db_pool_wait_duration_seconds_total[5m]) / rate(beacon_self_db_pool_wait_total[5m]) > 0.05
+        for: 10m
+        labels: { severity: critical }
+        annotations: { summary: "控制面数据库连接池等待偏长（平均每次等待 {{ $value | printf \"%.3f\" }} 秒），池可能即将枯竭" }
+      # 命令队列积压：429 背压出现之前唯一的信号（此前运维在指标上看不到任何积压）。
+      #
+      # 阈值 100 是**未经实测校准的保守起点**，按自身规模与 agent 拉取间隔调整。
+      # 未校准的原因：命令由**运维主动操作**产生（文件浏览 / 强制重同步 / 取日志 / 拓印确认），
+      # 不随常规 agent 流量增长，故 60 服规模压测里该值恒为 0——压测覆盖不到这条路径。
+      # 调参方向：先观察正常运维节奏下的峰值，取其数倍作为阈值；持续超过即说明 agent 拉取跟不上。
+      - alert: BeaconCommandQueueBacklog
+        expr: sum(beacon_self_commands{status=~"pending|fetched"}) > 100
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "控制面命令队列积压（pending+fetched = {{ $value }}），可能即将触发 429 背压" }
+      # 指标写入被丢弃：非零即代表数据**已经丢了**（多次重试仍失败才计入），最该告警的一类。
+      - alert: BeaconMetricWriteDiscarded
+        expr: increase(beacon_self_metric_write_discarded_total[10m]) > 0
+        for: 0m
+        labels: { severity: critical }
+        annotations: { summary: "控制面指标写入被丢弃（10 分钟内新增 {{ $value }} 行），已发生数据丢失" }
+      # 自身健康采集陈旧：命令队列计数由后台每 15s 刷新，停滞说明采集链路坏了。
+      # 不告警的话，「计数不更新」会被误读成「队列没变化」。
+      - alert: BeaconSelfHealthStale
+        expr: time() - beacon_self_commands_snapshot_timestamp_seconds > 120
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "控制面自身健康采集已陈旧 {{ $value | printf \"%.0f\" }} 秒（后台刷新可能已停）" }
+      # 上报写入队列积压：429 背压出现**之前**唯一的预警信号。
+      # 水位取 50%（容量 4096 即 2048）：留一半余量给突发，避免刚好卡在 429 边缘才报。
+      # 用 max by (route) 逐路由判：某一路由积压不该被其他路由的空闲掩盖。
+      - alert: BeaconWriteQueueBacklog
+        expr: max by (route) (beacon_self_write_queue_depth) / beacon_self_write_queue_capacity > 0.5
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "控制面写入队列积压（route={{ $labels.route }} 水位 {{ $value | printf \"%.0f%%\" }}），可能即将触发 429 背压" }
+```
+
+### 3.3 控制面压测入口（HTTP 延迟 / 吞吐基线）
+
+仓库内置一套端到端压测 harness：构建并自起**隔离控制面**（独立 SQLite 库与日志，都在 `.tmp/loadtest/` 下）→ 登录 → 注册一批虚拟 agent → 场景预检 → 分级并发压测 → soak → 出 Markdown + JSON 报告，不依赖 k6 / vegeta / wrk 等外部工具。**前置只需本机有 Go 工具链**（不需要 JDK、MC 服务端与 docker）。
+
+覆盖四类口径，报告分节给，**不要混着读**：
+
+| 类别 | 端点 / 指标 | 衡量什么 |
+|---|---|---|
+| 请求-响应（只读） | `/admin/v1/system/status`、`/admin/v1/topology`、`/admin/v2/servers`、`/admin/v2/zone-tree`、`/beacon/v1/agent/heartbeat`、`/metrics`（**独立监听**，harness 需按其地址抓，见 §3.2） | 并发 → RPS / 分位数 / 错误率 |
+| 请求-响应（v2 数据面） | `/beacon/v2/agent/metrics/report`（成功码 **202**）、`/schedule/candidates`、`/schedule/decide` | 生产请求量最大的一面（1000 服每 5s 一批 ≈ 200 req/s，是心跳的 2 倍）；需真实建 namespace 并审批身份成 active |
+| 挂起型 | 长轮询 `/beacon/v1/agent/config/effective`、SSE `/beacon/v1/agent/stream` | **不用 RPS**（一挂 30s 是设计如此）：看服务端观测到的并发挂起数、唤醒时延、连接是否稳 |
+| 背压 | `/beacon/v2/agent/connections/batch`、交付 blob 上传 / 下载 | 429 是否真的可达（触到 429 才算验证了背压路径） |
+| 规模 | 同上，配合 `LOADTEST_AGENT_SERVERS` / `LOADTEST_REGISTER_CONCURRENCY` | 实例数增长时哪些端点退化、瓶颈在控制面还是在宿主机 |
+| 大文件 / 鉴权 / 慢客户端 | 交付 blob 下载、`/admin/v1/auth/login`、慢读客户端 | 流式性（RSS 是否随文件增长）、各鉴权路径的每请求成本、慢客户端是否占死 goroutine |
+
+**默认不压管理面写端点**：写操作逐条落审计，压出来的会是审计写入能力而非接口能力。确认要测写争用时设 `LOADTEST_ENABLE_WRITE_SCENARIOS=1`（会逐条落 `audit_log`，且用的是 `PUT /admin/v2/servers/{serverId}/tags`——admin 侧没有别的合适的幂等写端点）。
+
+```bash
+export E2E_ADMIN_PASS='<管理员口令>' E2E_AUTH_SECRET='<令牌签名密钥>'
+go test -tags "e2e loadtest" -timeout=40m -v -run '^TestLoad' ./apps/server/test/loadtest/
+```
+
+| 环境变量 | 默认 | 含义 |
+|---|---|---|
+| `LOADTEST_LEVELS` | `1,8,32,128` | 并发档位列表 |
+| `LOADTEST_LEVEL_DURATION` | `30s` | 每档时长 |
+| `LOADTEST_SOAK_CONCURRENCY` | `32` | soak 阶段并发（取中间档） |
+| `LOADTEST_SOAK_DURATION` | `5m` | soak 时长；看长时漂移建议拉到 30m 以上 |
+| `LOADTEST_AGENT_SERVERS` | `64` | 虚拟 agent 数量（心跳场景的轮转池）；规模压测设 `1000` 或更高 |
+| `LOADTEST_REGISTER_CONCURRENCY` | 空（=串行） | 虚拟 agent 注册并发度；**缺失或 `1` 时走原串行路径、行为逐字不变**。1000 台串行注册需 20~30s，设 16 后约 1.8s |
+| `LOADTEST_CP_LOG_LEVEL` | `WARN` | 控制面日志级别：压测期抑制逐请求访问日志，避免把 `.tmp` 写爆、也让磁盘 I/O 不混进结果（要完整访问日志时改 `INFO`） |
+| `LOADTEST_ENABLE_WRITE_SCENARIOS` | 空 | 置 `1` 才纳入写路径场景（默认不纳入，理由见上） |
+| `LOADTEST_INGEST_ROUNDS` / `_BATCH` / `_CONCURRENCY` | `200` / `200` / `16` | 上报通道背压探测规模；**默认值触不到 429**，理由见下「队列按批计」 |
+
+冒烟可缩短档位与时长（`LOADTEST_LEVELS=1,4 LOADTEST_LEVEL_DURATION=5s LOADTEST_SOAK_DURATION=5s`）；跑完读 `.tmp/loadtest/` 下的报告，那是过程产物、不入库。压测结论与 §3.2 的 `beacon_http_request_duration_seconds` 同口径读（同样的路由模板口径、同样的「长轮询单列」原则）。Go 层热点另可用微基准量：`go test -run '^$' -bench=. ./apps/server/internal/merge/ ./apps/server/internal/service/`。
+
+**背压（429）怎么读**：控制面共 4 处返回 429，四类全部可达。最容易**确定性复现**的是交付数据面并发上限——热改 `delivery.upload-concurrency=1`（或 `download-concurrency=1`）后，一个请求占住额度、第二个即回 429，归还后立即恢复。上报队列则**极易误判**：
+
+- **队列按「批」计槽位，不按行**。`AsyncDailyWriter` 的 4096 有界队列，一个请求无论带 1 条还是 500 条事件都只占 **1 个槽位**。故「200 请求 × 200 事件」对队列的压力是 **4.9%** 而非 977%——差 200 倍。实测要填满需 **4000+ 个请求（约 200 万条事件）**，第 4339~4554 个请求首次回 429（略高于裸容量是因为 worker 一直在消费）。**没触到 429 不等于背压不存在。**
+- **上报写入队列的深度已有指标**（`beacon_self_write_queue_depth{route}`，见 §3.2 指标表）：429 出现前即可看到积压水位，不必再等「多次重试仍失败而丢弃」的计数（那时数据已经丢了）。注意别与 `beacon_self_commands` 混淆——那一条是**命令队列**（控制面下发给 agent 的命令），与本处的**指标上报写入队列**是两个不同的队列。
+- 四类 429 的完整触发与恢复证据、以及单元级 / 真实链路两种证据的区分，见 `.tmp/loadtest/backpressure-429-report.md`（过程产物）。
+
+**规模怎么读**：1000 台规模下控制面**次线性**（无系统性拐点）——心跳与 v2 上报在 15.6 倍规模下保持率 **95%**，内存注册表扛得住；退化集中在 `GET /admin/v1/topology`，它**随实例数线性变贵**（实测 2.15µs/实例，64 台 p50 0.33ms / 8.9KB → 1000 台 2.35ms / 142KB）。**抬高 `max-open-conns` 不是吞吐的解法**：同二进制同规模 A/B（4 → 32）心跳 RPS 比值仅 **1.05x**，且池 32 时仍有 26.7 万次池等待——**池排队是现象不是根因**。容量数字与适用边界见内部文档 `PRD.md` §5「规模容量」（该文档不进文档站，故此处不写成链接）。
+
+**慢客户端怎么读**：`httpx.StallWriter` 提供「单次写 30s stall 上限」——持续在写不受限，仅当客户端彻底卡住（30s 内一次写都完不成）才中断连接。它依赖 `http.ResponseController.SetWriteDeadline` 沿 ResponseWriter 包装链下钻，故**中间件链上任何包装器都必须实现 `Unwrap() http.ResponseWriter`**，否则 deadline 设不上、防线静默失效（2026-10-12 实测发现并修复了 `statusWriter` 的这个缺口，见 CHANGELOG「修复」节；`stall.go` 现已在不支持时记 WARN，便于再次暴露）。覆盖三处下载端点：delivery blob、file-sync、embedweb；blob 下载另有 `delivery.download-concurrency`（默认 64）兜住并发，**file-sync 下载端点只有 stall 这一道防线**。
+
+**慢客户端探测怎么读**：判据取**服务端访问日志里该请求的耗时**，不要取客户端侧「是否读到 EOF/RST」——服务端在阻塞前已把约 16MiB 写进内核收发缓冲（`tcp_wmem`/`tcp_rmem` 上限各 16MiB），客户端要先排空才能读到 EOF/RST，而探测刻意只读 1 字节（否则会给服务端持续「腾地方」使 Write 永不阻塞满窗口）。两者叠加会让客户端侧在大 blob 下**结构性**观测不到中断，把「保护已生效」误判成「未生效」。修复后实测 8/8 条下载耗时 30011~30015ms（正是 30s 窗口）。
+
+**读报告前必须知道的两条局限**：① 数字受**宿主机负载**影响极大——同配置同代码，宿主机 load 15 时并发 32 可达 7066 RPS、load 36 时只有 4303 RPS，做对比要么固定宿主机负载，要么用「未改动端点漂移多少」当内部对照组；② 挂起探测的唤醒时延用的是 global 层新建配置项（走 notifier → Hub 唤醒该 namespace 全部 waiter），若唤醒语义落在窄 scope 上，唤醒条数会少于挂起数，以表格里的「唤醒返回」列为准。
+
+**日表跨 UTC 00:00 的切换有两种覆盖，不可互替**：注入日期（`go test ./apps/server/internal/store/ -run TestDailyTableRollover`）覆盖「day 参数换了机制仍对」，秒级完成；**真实午夜**长跑覆盖「墙上时钟真的走到那一刻时生产写入路径仍对」，须真等——
+
+```bash
+go test -tags "e2e loadtest" -timeout=26h -v -run '^TestMidnightRolloverRealClock$' ./apps/server/test/loadtest/
+```
+
+耗时 ≈ 距下一个 UTC 00:00 的时长 + 前后各 3 分钟（最长约 24 小时），报告落 `.tmp/loadtest/midnight-rollover-*.md`。`MIDNIGHT_TARGET` 注入仅供冒烟，正式运行**必须留空**（注入模式下报告会显式标注、不产出真实午夜证据）。**为什么必须真等**：已实测 `LD_PRELOAD` 时钟垫片对本项目二进制无效——Go 经 vDSO / raw syscall 取时间、绕过 libc 的 `clock_gettime`，无法伪造进程时钟。多连接下的写锁竞争另由 `go test -race ./apps/server/internal/store/ -run TestDailyTableRolloverMultiConn` 覆盖（真实文件库 + 池 > 1，含「池确实多连接」的前置断言）。
 
 ## 4. 数据库备份与恢复（关键）
 > 数据库是**配置权威库**——丢失会导致全集群配置不可恢复。务必定期备份，并在隔离环境演练恢复。

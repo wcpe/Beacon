@@ -155,7 +155,7 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar → 
    ┌────────────────────────────────────────────────────┐
    │  Beacon 控制面（Go 单二进制 + 内嵌 React 管理台）      │
    │  /admin/* 管理台与 API     /beacon/* agent API       │
-   │  同端口：管理台 UI · REST · SSE · /metrics           │
+   │  同端口：管理台 UI · REST · SSE ；/metrics 另占 8849  │
    │  内存：在线连接 · 健康 TTL ；持久：SQLite / MySQL     │
    └────────────────────────────────────────────────────┘
         ▲ REST 注册 / 心跳 / 拉配置 / 上报 · SSE 推送
