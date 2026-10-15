@@ -533,8 +533,13 @@ func run() error {
 	// 关键约束：**抓取路径不触达 DB**。命令队列深度源自一次 DB GROUP BY，而抓取端点
 	// 默认无鉴权且不限流，放进抓取路径等于让外部请求速率驱动数据库查询。故这里拆两条路：
 	// 内存类字段（连接池 / 长轮询 / 丢弃计数）抓取时现读；命令队列改由后台刷新器周期写缓存。
+	//
+	// 同理也**不读注册表**：本闭包不输出任何注册表字段（实例数与健康分布由抓取端点上的
+	// registryCollector 自己导出，见 metrics 包），故取 SnapshotForScrape 而非
+	// SnapshotWithoutCommandCounts——后者的 StatusCounts() 是一次持读锁全表遍历 + map 分配
+	// （1000 台实测 54µs），白读一遍只会在每次 scrape 上重复付出。
 	metricsSet.SetSelfHealthSource(func() metrics.SelfHealth {
-		snap := observabilityService.SnapshotWithoutCommandCounts()
+		snap := observabilityService.SnapshotForScrape()
 		return metrics.SelfHealth{
 			DBPoolMaxOpen:        snap.DBPool.MaxOpenConnections,
 			DBPoolOpen:           snap.DBPool.OpenConnections,
@@ -918,7 +923,8 @@ func run() error {
 		}
 	}()
 	// 抓取端点监听（见 ADR-0090）：与主服务同时起，错误一并进 errCh。详见 serveMetricsEndpoint。
-	serveMetricsEndpoint(metricsSrv, cfg.MetricsEndpoint.BearerToken != "", errCh)
+	// 鉴权判据走 metricsAuthEnabled——它与实现同口径，理由见该函数注释。
+	serveMetricsEndpoint(metricsSrv, metricsAuthEnabled(cfg.MetricsEndpoint.BearerToken), errCh)
 
 	select {
 	case <-ctx.Done():
@@ -970,18 +976,32 @@ func run() error {
 //
 // 先关 metricsSrv：它只有短请求（返回一次文本快照即结束），几乎瞬间完成，不会占用共享的超时预算；
 // 而主服务可能还在等 30s 长轮询 drain，放在后面关才能拿到完整的剩余预算。
-// 两者都关停后仍返回首个错误（主服务失败更值得上报），保证调用方行为与改动前一致。
+//
+// 两者都失败时返回**主服务的错误**（而非字面意义上的"第一个"）：关闭顺序是先 metricsSrv，若按
+// 顺序取首错就会把抓取端点的失败报上去。但主服务才是承载管理台与 agent 数据面的那个，它 drain
+// 被截断意味着在途的长轮询与 SSE 被硬断；而抓取端点的失败最多是这一次抓取少了一帧数据。故
+// 主服务错误优先，只有它成功时才回落到 metricsSrv 的错误（两条都仍会被关停尝试，不受取值影响）。
 func shutdownAll(ctx context.Context, srv, metricsSrv *http.Server) error {
-	var firstErr error
+	// metricsErr 暂存而不立即返回：主服务的关停无论如何都要执行，且其错误优先（见 preferShutdownError）。
+	var metricsErr error
 	if metricsSrv != nil {
-		if err := metricsSrv.Shutdown(ctx); err != nil {
-			firstErr = err
-		}
+		metricsErr = metricsSrv.Shutdown(ctx)
 	}
-	if err := srv.Shutdown(ctx); err != nil && firstErr == nil {
-		firstErr = err
+	return preferShutdownError(srv.Shutdown(ctx), metricsErr)
+}
+
+// preferShutdownError 在两次关停都失败时挑出该上报的那个：主服务错误优先，它成功才回落到抓取端点错误。
+//
+// 为什么单独拆出来而不是内联在 shutdownAll 里：这条优先级是**有意为之的反直觉选择**
+// （字面读"返回首个错误"会以为先关的 metricsSrv 优先），值得被单测直接锁死。而真去构造
+// "两个 http.Server 同时关停失败"来测，代价高且脆弱——两者的失败都表现为 ctx.Err()，无法
+// 区分究竟哪一个被上报。把选择逻辑收敛成一个纯函数后，"优先级对不对"与"两次关停确实都执行了"
+// 这两件事就能分别验证，各自都不依赖替身的行为细节。
+func preferShutdownError(mainErr, metricsErr error) error {
+	if mainErr != nil {
+		return mainErr
 	}
-	return firstErr
+	return metricsErr
 }
 
 // newMetricsServer 按配置构造抓取端点的独立监听器；listen-addr 为空时返回 nil（表示不启动该端点）。
@@ -989,6 +1009,13 @@ func shutdownAll(ctx context.Context, srv, metricsSrv *http.Server) error {
 // 为什么抓取端点要与业务主端口分离：主端口默认 `:8848` 是全网卡绑定且承载管理台与 agent 数据面，
 // 挂在其上等于「主端口可达即可匿名读到组织拓扑与容量画像」，且无法单独收敛。独立监听后
 // 默认只绑回环，暴露面收敛成一个可单独收紧的地址（见 ADR-0090）。
+//
+// 超时口径与主服务**刻意不同**：这里设了 WriteTimeout，主服务不设（见主服务构造处的说明）。
+// 差别只有一个来源——本端点没有 SSE 与长轮询，每次抓取返回一次文本快照即结束，不存在任何
+// 「合法地长时间不写完」的连接，故写上限不会误杀正常请求。不设的后果是：一个连上却不读响应的
+// 客户端能让 handler 的 Write 一直阻塞、goroutine 挂住，而本端点也没有 httpx.StallWriter 的
+// 慢写兜底——被挂住的请求会吃掉 shutdownAll 共用的 35s 关停预算，使「抓取是短请求、几乎瞬间
+// 完成、不占用共享预算」这个前提失效，主服务的长轮询 drain 随之拿不到剩余预算。
 func newMetricsServer(cfg config.MetricsEndpointConfig, m *metrics.Metrics) *http.Server {
 	addr := strings.TrimSpace(cfg.ListenAddr)
 	if addr == "" {
@@ -999,6 +1026,10 @@ func newMetricsServer(cfg config.MetricsEndpointConfig, m *metrics.Metrics) *htt
 		Handler:           m.EndpointHandler(cfg.BearerToken),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
+		// 与 ReadTimeout 同量级：抓取是纯短响应，实测响应体仅 ~11KiB（空注册表 11.0KiB，
+		// 1000 台实例 12.2KiB）。30s 写完这点字节相当于只要 ~0.4KB/s 的链路即可满足，
+		// 对正常抓取足够宽裕，不会误杀慢速网络上的请求。
+		WriteTimeout: 30 * time.Second,
 		// 抓取是短请求（返回一次文本快照即结束），无长连接与 SSE，故可安全设 IdleTimeout。
 		IdleTimeout: 120 * time.Second,
 	}
@@ -1009,6 +1040,18 @@ func setBaseContext(ctx context.Context, srv *http.Server) {
 	if srv != nil {
 		srv.BaseContext = func(net.Listener) context.Context { return ctx }
 	}
+}
+
+// metricsAuthEnabled 判断抓取端点是否真的会启用 Bearer 鉴权，供启动日志如实上报。
+//
+// 判据必须与实现**同口径**：metrics.EndpointHandler 先对 token 做 TrimSpace 再判空，故纯空白
+// token（如 " "）在实现侧等于「未配置凭据」——端点会放行任何匿名请求。若这里用裸 `!= ""`，
+// 这种配置会打出「鉴权=true」，运维据此以为已有凭据保护、不再追加网络层防护，而端点其实是
+// 敞开的（正是 ADR-0090 要消除的那种暴露形态）。故判据同样先 TrimSpace 后判空。
+//
+// 拆成具名函数而非内联表达式：这条等式（日志判据 == 实现判据）是安全属性，值得被单测直接锁住。
+func metricsAuthEnabled(token string) bool {
+	return strings.TrimSpace(token) != ""
 }
 
 // serveMetricsEndpoint 异步拉起抓取端点监听（nil 即不启动）。

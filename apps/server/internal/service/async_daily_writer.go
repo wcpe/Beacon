@@ -163,6 +163,11 @@ func (w *AsyncDailyWriter) QueueDepths() map[string]int {
 }
 
 // QueueCapacity 返回队列容量（各路由一致，取工程参数；供指标侧计算水位占比与容量上限）。
+//
+// **不变量**：所有路由共用同一个 w.queueCapacity（见 RegisterFlusher 用 w.queueCapacity 建 channel），
+// 故 `beacon_self_write_queue_capacity` 无需 route 维度即可与逐路由的 depth 相除算水位。
+// 若将来要让某路由单独用不同容量（例如给指标路由放大），必须同时把本方法改为按路由返回、
+// 并把容量指标改成带 route 标签——否则告警表达式（max by(route)(depth) / capacity）会静默算错。
 func (w *AsyncDailyWriter) QueueCapacity() int {
 	w.mu.RLock()
 	defer w.mu.RUnlock()

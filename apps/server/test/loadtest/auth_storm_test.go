@@ -195,6 +195,66 @@ func TestAuthStormRealChain(t *testing.T) {
 	storm := authStorm(t, env, paths, results, stormDuration, stormConcurrency)
 
 	authReport(t, results, storm)
+
+	// 兜底断言：本用例是「结论型」的，且结论与**鉴权正确性**直接相关——若伪造令牌被误判为
+	// 200（鉴权绕过），或错误路径返回 500 而非 401，只写报告的话用例仍会绿。
+	// 故对成功路径与风暴三路径逐项复核状态码分布与失败计数。
+	assertAuthStormCovered(t, results, storm)
+}
+
+// assertAuthStormCovered 断言鉴权链路在正常与风暴两种情形下的行为都符合预期。
+//
+// 只断言「正确性」，不断言性能数值（RPS / 延迟随宿主机负载漂移，写死会假红）：
+//   - 成功路径：零失败、零网络错误，且确实打满了请求（防装配失效导致空跑）；
+//   - 风暴三路径：每一次尝试都返回了**预期的拒绝码**（非预期码意味着鉴权行为异常），
+//     且三路径都真实产生了轰击量。
+func assertAuthStormCovered(t *testing.T, results []authResult, storm authStormResult) {
+	t.Helper()
+	if len(results) == 0 {
+		t.Fatal("鉴权：成功路径一档都没测到")
+	}
+	for _, r := range results {
+		if r.Requests == 0 {
+			t.Errorf("鉴权 %s（并发 %d）：零请求，装配或探测失效", r.Path, r.Concurrency)
+		}
+		if r.Failed != 0 || r.NetErrors != 0 {
+			t.Errorf("鉴权 %s（并发 %d）：失败 %d、网络错误 %d，成功路径期望全零（状态码分布=%s）",
+				r.Path, r.Concurrency, r.Failed, r.NetErrors, r.StatusCodes)
+		}
+	}
+	if storm.LoginAttempts == 0 || storm.AdminV2Attempts == 0 || storm.V2ReportAttempts == 0 {
+		t.Errorf("鉴权风暴：三路径轰击量不得为零（login=%d、adminV2=%d、v2Report=%d）",
+			storm.LoginAttempts, storm.AdminV2Attempts, storm.V2ReportAttempts)
+	}
+	// 风暴用错误凭据，故每条路径的返回码集合里不得出现 2xx——
+	// 出现即意味着伪造凭据被接受（鉴权绕过），是本用例最该抓住的失败形态。
+	for _, p := range []struct {
+		name     string
+		statuses string
+		attempts int
+	}{
+		{"login", storm.LoginStatuses, storm.LoginAttempts},
+		{"adminV2", storm.AdminV2Statuses, storm.AdminV2Attempts},
+		{"v2Report", storm.V2ReportStatuses, storm.V2ReportAttempts},
+	} {
+		if p.attempts == 0 {
+			continue
+		}
+		if has2xx(p.statuses) {
+			t.Errorf("鉴权风暴 %s：错误凭据返回了 2xx（状态码分布=%s）——疑似鉴权绕过", p.name, p.statuses)
+		}
+	}
+}
+
+// has2xx 判断形如 "200=3,401=97" 的状态码分布串里是否含 2xx 码。
+func has2xx(statuses string) bool {
+	for _, part := range strings.Split(statuses, ",") {
+		code := strings.TrimSpace(strings.SplitN(part, "=", 2)[0])
+		if len(code) == 3 && code[0] == '2' {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- 前置装配 ----

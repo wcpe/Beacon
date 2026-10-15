@@ -182,8 +182,9 @@ func (s *SystemService) Status() SystemStatus {
 // onlineInstanceCount 取在线实例数（只计数，不深拷贝注册表）。
 //
 // 此前用 len(registry.List(Filter{Status: online}))：为了拿一个计数就把每个命中实例深拷贝一份
-// （Metadata map 与 Backends 切片），且持写偏好的 RWMutex。1000 台规模下实测该端点 p50
-// 0.44 → 0.75ms，无谓开销随规模线性增长。
+// （Metadata map 与 Backends 切片），深拷贝发生在读锁临界区内、临界区随实例数线性变长。
+// 规模口径（实测采样，两数是**不同规模**而非改前/改后）：64 台 p50 0.44ms → 1000 台 0.75ms。
+// 本函数自身的收益是把上述深拷贝移出临界区，不是锁模式变化——List 与 StatusCounts 同为 RLock。
 // StatusCounts 持读锁一次遍历、只累加计数（同文件已注明「不深拷贝、不做 DB IO」），正是此处所需。
 func (s *SystemService) onlineInstanceCount() int {
 	if s.registry == nil {

@@ -259,6 +259,52 @@ func TestBlobThroughputRealChain(t *testing.T) {
 	streaming := blobStreamingEvidence(t, env, payloads)
 
 	blobReport(t, rows, concurrencyRows, rangeRows, streaming)
+
+	// 兜底断言：本用例是「结论型」的——它产出的吞吐数字与 Range 正确性结论会被引用。
+	// 只把结论写进报告而不硬断言，缺陷存在时它照样绿，那就只是一份没人读的报表
+	// （同目录 slow_client 用例正是踩过这个坑才补的断言）。故此处逐项复核。
+	assertBlobCovered(t, rows, rangeRows, concurrencyRows)
+}
+
+// assertBlobCovered 断言 blob 三组测量各自完整且成功，避免「端点整体损坏但报告照打、用例仍绿」。
+//
+// 只断言「完整性 + 成功性」，不断言具体数值（吞吐随宿主机负载漂移，写死会假红）：
+//   - 每档尺寸都测到、状态 200、内容/去重校验通过（RangeOK）；
+//   - 每档 Range 三态的期望码与实际码一致、逐字节比对通过；
+//   - 每档并发的成功流数等于发起流数、无失败流。
+func assertBlobCovered(t *testing.T, rows []blobThroughputRow, rangeRows []blobRangeRow, conc []blobConcurrencyRow) {
+	t.Helper()
+	if len(rows) == 0 {
+		t.Fatal("blob 吞吐：一档都没测到（装配或探测整体失效）")
+	}
+	for _, r := range rows {
+		if r.Status != http.StatusOK {
+			t.Errorf("blob 吞吐 %dMiB：状态码 = %d，期望 200", r.MiB, r.Status)
+		}
+		if !r.RangeOK {
+			t.Errorf("blob 吞吐 %dMiB：内容校验/Range 校验未通过（note=%s）", r.MiB, r.Note)
+		}
+	}
+	if len(rangeRows) == 0 {
+		t.Fatal("blob Range：一条都没测到")
+	}
+	for _, r := range rangeRows {
+		if r.GotStatus != r.WantStatus {
+			t.Errorf("blob Range %dMiB %s：状态码 = %d，期望 %d", r.MiB, r.Spec, r.GotStatus, r.WantStatus)
+		}
+		if !r.BytesMatch {
+			t.Errorf("blob Range %dMiB %s：字节比对不一致", r.MiB, r.Spec)
+		}
+	}
+	if len(conc) == 0 {
+		t.Fatal("blob 并发：一档都没测到")
+	}
+	for _, r := range conc {
+		if r.OKStreams != r.Streams || r.FailedStreams != 0 {
+			t.Errorf("blob 并发 %d 路：成功 %d / 发起 %d、失败 %d，期望全部成功且零失败",
+				r.Concurrency, r.OKStreams, r.Streams, r.FailedStreams)
+		}
+	}
 }
 
 // ---- 前置装配 ----

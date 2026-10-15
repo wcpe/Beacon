@@ -157,8 +157,18 @@ func (c Config) validateMetricsEndpoint() error {
 	}
 	// 必须含端口：裸 IP 或裸主机名会被 net.Listen 拒（`listen tcp: address 10.0.0.5: missing port`），
 	// 但那是在启动后期才报，此处提前到配置校验期、并给出可读原因。
-	if _, _, err := net.SplitHostPort(addr); err != nil {
+	// host 仍以 `_` 忽略：它的合法性由下方 isLoopbackListenAddr 与 net.Listen 负责，本方法只关心端口。
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
 		return fmt.Errorf("配置校验失败: metrics-endpoint.listen-addr 须为 host:port 形式（如 127.0.0.1:8849、:8849），实际 %q：%w", addr, err)
+	}
+	// 冒号后为空**不算**「缺端口」给 SplitHostPort 看：`127.0.0.1:` 与 `:` 都能通过上面的检查（err=nil、
+	// port=""），但 net.Listen 会把端口 0 交给内核、绑到一个随机端口（实测 `127.0.0.1:` → 127.0.0.1:36671，
+	// `:` → 0.0.0.0:35289）。后果是抓取地址不可预测：Prometheus 配了固定端口就永远抓不到，看板一片空白，
+	// 而进程日志只会打一行「已就绪 <随机端口>」，很难联想到是配置少写了个数字。更糟的是 `127.0.0.1:` 的
+	// host 仍是回环，下方的非回环告警不会触发——完全静默。故在校验期直接拒绝，而不是留给启动后期。
+	if strings.TrimSpace(port) == "" {
+		return fmt.Errorf("配置校验失败: metrics-endpoint.listen-addr 的端口不能为空（实际 %q）——空端口会让内核分配随机端口，抓取地址将不可预测", addr)
 	}
 	// 与主端口冲突检查：两者若相同，后监听者必然 bind 失败，而失败发生在启动后期、
 	// 表现为一个难定位的 "address already in use"。且语义上也危险——那等于把抓取端点

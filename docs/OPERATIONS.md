@@ -143,7 +143,7 @@ make release-verify-ga \
 agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→agent 推送（配置、文件树、覆盖集等变更通知统一走这一条流，agent 收到通知后仍用原有 HTTP 端点取内容）。若在 beacon 前放反向代理（nginx 等），须保证流不被缓冲、不被空闲超时切断：
 - **关闭响应缓冲**：beacon 已对该响应输出 `X-Accel-Buffering: no`（nginx 据此关 proxy buffering）；其它代理请按等价方式关闭对 `text/event-stream` 的缓冲。nginx 还需 `proxy_http_version 1.1;` + `proxy_set_header Connection "";`。
 - **调长读超时**：把代理对 agent stream 路径的读超时（nginx `proxy_read_timeout`）调到显著大于 beacon 的保活间隔（默认取长轮询挂起上限），避免空闲被误判断流。beacon 无变更时按间隔发 SSE 注释行（`: ping`）保活。
-- **Docker 网络**：沿用现有"agent 能直连 beacon 地址"的可达约束，无新增端口；SSE 走与 API 同一端口（默认 8848）。
+- **Docker 网络**：沿用现有"agent 能直连 beacon 地址"的可达约束，**SSE 与业务主 API 无新增端口**；SSE 走与 API 同一端口（默认 8848）。**例外**：抓取端点已独立监听（默认 `127.0.0.1:8849`，见 §3.2 与 [ADR-0090](adr/0090-metrics-endpoint-dedicated-listener.md)），容器形态下若要让容器外抓取，需额外映射该端口。
 - **断流不影响判活**：健康 online/lost/offline 仍由独立心跳 + TTL 决定，SSE 抖动断流不会误判失联；agent 流断按本地快照继续、自动退避重连并对账（fail-static）。
 
 ### 3.2 Prometheus 指标抓取

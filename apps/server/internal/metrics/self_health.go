@@ -176,7 +176,8 @@ var (
 	)
 	selfWriteQueueCapacityDesc = prometheus.NewDesc(
 		"beacon_self_write_queue_capacity",
-		"控制面异步日表写入通道各路由的队列容量（各路由一致）。与 depth 相除即水位占比",
+		"控制面异步日表写入通道各路由的队列容量（各路由一致，见 AsyncDailyWriter.RegisterFlusher："+
+			"所有路由共用同一个 queueCapacity，故无需 route 维度）。与 depth 相除即水位占比",
 		nil, nil,
 	)
 )

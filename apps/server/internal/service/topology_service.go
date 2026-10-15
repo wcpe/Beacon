@@ -54,7 +54,7 @@ type Topology struct {
 // 只纳入可用集合（online+degraded）；bc→bukkit 边只连 backends 中当前在册可用的 bukkit，
 // 已离线的后端 serverId 不画悬挂边。返回结果各列表按 serverId 字典序稳定排序。
 //
-// 用 ForEachTopology（窄投影）而非 List：本函数只消费 7 个标量字段 + Backends，
+// 用 ForEachTopology（窄投影）而非 List：本函数只消费 6 个标量字段 + Backends，
 // 而 List 会为每个命中实例深拷贝一次 Metadata map——1000 台规模下实测该端点
 // p50 2.35ms / 响应体 142KB，其中深拷贝占大头。窄投影不碰 Metadata。
 func (s *TopologyService) Build(namespace string) Topology {

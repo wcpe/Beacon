@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	rt "github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
 
 // countingCmdCounter 是 commandCounter 替身：记录被调用次数，用于证明「抓取路径不查库」。
@@ -57,6 +59,52 @@ func (s *recordingSink) snapshot() (int, map[string]int, float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.writes, s.byStatus, s.nowUnix
+}
+
+// TestSnapshotForScrapeDoesNotReadRegistry 锁定「抓取路径不读注册表」这一约束。
+//
+// 为什么必须锁死：registry.StatusCounts() 不是 O(1) 读计数，而是**持读锁的全表遍历 + 新建 map**
+// （1000 台规模下实测 54µs，同时要抢注册表的 RWMutex 读锁，而心跳写路径正持写锁）。抓取端点默认
+// 无鉴权、不设限流，若每个 scrape 都为「本次并不输出」的注册表计数付一次遍历与分配，等于把注册表
+// 读锁交给外部请求速率去争抢。而实例数与健康分布在抓取端点另有 registryCollector 按自己的口径
+// 导出，两处重复采集只会让口径来源变模糊。
+//
+// 判据用**分配次数**而非耗时：StatusCounts 必然新建一个 map（还要按注册表规模增长），故
+// 「每次抓取 0 次分配」是"没碰过注册表"的可证伪证据；耗时断言会随机器负载抖动，不适合做门禁。
+// 实测：本方法 0.00 次分配，而含注册表的那条路 3.00 次（且与规模无关的那部分只是小 map 的起步开销）。
+//
+// 判别力：把 SnapshotForScrape 改回调 SnapshotWithoutCommandCounts（即恢复注册表白读），
+// 本用例立即变红。
+func TestSnapshotForScrapeDoesNotReadRegistry(t *testing.T) {
+	// 注册表给足规模：全表遍历的代价随实例数增长，分配数则从第一次就暴露出来。
+	svc := NewObservabilityService(
+		fakeDBStats{stats: sql.DBStats{MaxOpenConnections: 4, OpenConnections: 2}},
+		newObsRegistry(t, 200),
+		fakeWaiter(1), fakeWaiter(2), fakeWaiter(3), fakeWaiter(4),
+		fakeCmdCounter{counts: map[string]int{"pending": 5}},
+	)
+
+	snap := svc.SnapshotForScrape()
+	if snap.DBPool.MaxOpenConnections != 4 || snap.DBPool.OpenConnections != 2 {
+		t.Fatalf("连接池统计应可用，实际 %+v", snap.DBPool)
+	}
+	if snap.Longpoll.Total != 1+2+3+4 {
+		t.Fatalf("长轮询合计应为 10，实际 %d", snap.Longpoll.Total)
+	}
+
+	if allocs := testing.AllocsPerRun(200, func() { _ = svc.SnapshotForScrape() }); allocs != 0 {
+		t.Fatalf("抓取快照必须不分配内存（StatusCounts 建 map 会立刻让该值 >0），实际 %.2f 次分配——"+
+			"若这是新增功能带来的合法分配，请先确认它没有顺带读注册表，再调整本断言", allocs)
+	}
+
+	// 对照：管理台那条链（Snapshot）仍必须带注册表规模——拆窄后不能把页面需要的数据也弄丢。
+	full := svc.Snapshot()
+	if full.RegistryTotal != 200 || full.RegistryByStatus[rt.StatusOnline] != 200 {
+		t.Fatalf("自观测页仍应带注册表规模，实际 total=%d byStatus=%+v", full.RegistryTotal, full.RegistryByStatus)
+	}
+	if full.DBPool.MaxOpenConnections != 4 || full.Longpoll.Total != 10 {
+		t.Fatalf("拆窄后自观测页的内存类字段不应受影响，实际 pool=%+v longpoll=%+v", full.DBPool, full.Longpoll)
+	}
 }
 
 // TestSnapshotWithoutCommandCountsDoesNotTouchDB 锁定「抓取路径不触达 DB」这一硬约束（见 ADR-0091）。

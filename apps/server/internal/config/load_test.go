@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"net"
+	"strings"
+	"testing"
+)
 
 // setAuthEnv 注入合法的鉴权环境变量，避免校验因缺鉴权凭据而失败（鉴权前移后口令/密钥必填）。
 func setAuthEnv(t *testing.T) {
@@ -291,6 +295,73 @@ func TestValidateRejectsBadMetricsEndpointAddr(t *testing.T) {
 	cfg.MetricsEndpoint.ListenAddr = ""
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("置空应表示不启动端点、属合法配置，却报错: %v", err)
+	}
+}
+
+// TestValidateRejectsEmptyPortMetricsEndpoint 冒号后缺端口号的写法的应被拒（见 ADR-0090）。
+//
+// 为什么这类写法必须专门锁死：`127.0.0.1:` 与 `:` 都能通过 net.SplitHostPort（err=nil、port=""），
+// 因此仅凭 SplitHostPort 是否报错不足以防住它们。放行的后果不是"启动失败"，而是**静默错绑**：
+// net.Listen 把端口 0 交给内核，绑到随机端口（实测 127.0.0.1: → 127.0.0.1:36671、: → 0.0.0.0:35289）。
+// 抓取地址从此不可预测——Prometheus 按固定端口配好却永远抓不到，看板一片空白，而进程日志只打
+// 一行「已就绪 <随机端口>」，很难联想到是配置少写了个数字。更糟的是 `127.0.0.1:` 的 host 仍是
+// 回环，非回环告警也不会触发，整个错误完全静默。
+//
+// 判别力：断言的不只是「报错」，还要求错误文本点明"端口"——否则运维无从知道该改哪里。
+func TestValidateRejectsEmptyPortMetricsEndpoint(t *testing.T) {
+	base := Default()
+	base.Auth.Password = "p"
+	base.Auth.Secret = "s"
+
+	for _, addr := range []string{
+		"127.0.0.1:",  // 裸回环地址 + 空端口（最可能被误写的一种）
+		":",           // 全网卡 + 空端口
+		"10.0.0.5:",   // 内网地址 + 空端口
+		"[::1]:",      // IPv6 回环 + 空端口
+		"localhost: ", // 空白端口（TrimSpace 后为空，与空端口同义）
+	} {
+		t.Run(addr, func(t *testing.T) {
+			cfg := base
+			cfg.MetricsEndpoint.ListenAddr = addr
+			err := cfg.validate()
+			if err == nil {
+				t.Fatalf("端口为空的监听地址 %q 应被拒（否则内核会分配随机端口、抓取地址不可预测），却通过了", addr)
+			}
+			// 报错须点出"端口"二字：只说"须为 host:port 形式"会让人以为格式没错而反复排查。
+			if !strings.Contains(err.Error(), "端口") {
+				t.Fatalf("拒绝 %q 的报错应说明是端口问题，实际: %v", addr, err)
+			}
+		})
+	}
+
+	// 反面对照：带真实端口的写法不得被这条新检查误伤。
+	for _, addr := range []string{"127.0.0.1:8849", ":8849", "[::1]:8849", "10.0.0.5:1"} {
+		cfg := base
+		cfg.MetricsEndpoint.ListenAddr = addr
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("带端口的合法监听地址 %q 不应被拒，却报错: %v", addr, err)
+		}
+	}
+}
+
+// TestEmptyPortAddressWouldBindRandomPort 用真实的 net.Listen 交叉印证上一条用例的前提。
+//
+// 为什么要把标准库的行为也钉下来：上一条用例的正当性完全建立在「空端口 = 内核分配随机端口」
+// 这个事实上。若将来有人觉得那条检查多余（"SplitHostPort 都没报错，凭什么拒？"），本用例
+// 直接给出实测反例——不是推测，而是真的绑到了一个非预期端口。固定住事实，讨论才不会退回去。
+func TestEmptyPortAddressWouldBindRandomPort(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:", ":"} {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			continue // 某些平台/内核可能直接拒绝，那同样说明该写法不可用，无需断言
+		}
+		bound := ln.Addr().String()
+		_ = ln.Close()
+		// 绑定成功的地址必然带一个内核选出的非零端口，且与配置里的空端口不同。
+		if bound == addr {
+			t.Fatalf("net.Listen(%q) 竟原样绑定 %q——若标准库将来改成拒绝空端口，本用例与上一条检查都可简化", addr, bound)
+		}
+		t.Logf("net.Listen(%q) 实际绑到 %s（证明空端口会落到随机端口，抓取地址不可预测）", addr, bound)
 	}
 }
 
