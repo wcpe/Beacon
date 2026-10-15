@@ -49,7 +49,7 @@ func (c *closedConnRW) Header() http.Header {
 	}
 	return c.header
 }
-func (c *closedConnRW) Write(p []byte) (int, error)      { return 0, errClosedConn }
+func (c *closedConnRW) Write([]byte) (int, error)        { return 0, errClosedConn }
 func (c *closedConnRW) WriteHeader(int)                  {}
 func (c *closedConnRW) SetWriteDeadline(time.Time) error { return errClosedConn }
 
