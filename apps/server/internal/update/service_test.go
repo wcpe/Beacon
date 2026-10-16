@@ -434,6 +434,54 @@ func TestCheckForUpdateCarriesCurrentVersionOnError(t *testing.T) {
 	}
 }
 
+// TestCheckForUpdateShowsDisplayVersionButComparesPlainVersion 锁定 ADR-0092 的分工：
+// 对外回显用展示串（带候选标记），判新比较仍用纯 X.Y.Z——两者混用会让更新判定失效。
+//
+// 关键在远端取更高版本：若判新误用展示串，parseSemver 会解析失败并落到「无更新」，
+// 于是 HasUpdate 恒为 false——这正是「把 -rc.N 拼进 Version」会造成的静默失效。
+func TestCheckForUpdateShowsDisplayVersionButComparesPlainVersion(t *testing.T) {
+	const tag = "v1.6.0"
+	binName := currentAssetName(t, tag)
+	srv := newMockReleaseServer(t, tag, binName, "x", fmt.Sprintf("%s  %s\n", sha256hex("x"), binName))
+	svc := NewService(Config{
+		CurrentVersion: "1.5.0",
+		DisplayVersion: "1.5.0-rc.2 (114cf533)",
+		APIBase:        srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	res, err := svc.CheckForUpdate(context.Background(), ChannelStable, "", "tester", "")
+	if err != nil {
+		t.Fatalf("检查应成功: %v", err)
+	}
+	if res.CurrentVersion != "1.5.0-rc.2 (114cf533)" {
+		t.Fatalf("回显应为展示串，实际 %q", res.CurrentVersion)
+	}
+	if !res.HasUpdate {
+		t.Fatalf("远端 1.6.0 高于当前 1.5.0，必须判有更新（判 false 说明判新误用了带后缀的展示串）")
+	}
+}
+
+// TestCheckForUpdateFallsBackWhenDisplayVersionEmpty 未注入展示串时退回正式版本号，保持既有调用方行为不变。
+func TestCheckForUpdateFallsBackWhenDisplayVersionEmpty(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/repos/wcpe/Beacon/releases", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	svc := NewService(Config{
+		CurrentVersion: "1.0.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	res, err := svc.CheckForUpdate(context.Background(), ChannelStable, "", "tester", "")
+	if err == nil {
+		t.Fatal("releases 500 应返回错误（check-failed）")
+	}
+	if res.CurrentVersion != "1.0.0" {
+		t.Fatalf("未注入展示串时应退回正式版本号，实际 %q", res.CurrentVersion)
+	}
+}
+
 // TestCheckForUpdatePreservesDownloadProgress 检查是只读操作，不能覆盖正在下载的进度、目标版本或失败信息。
 func TestCheckForUpdatePreservesDownloadProgress(t *testing.T) {
 	const tag = "v2.0.0"

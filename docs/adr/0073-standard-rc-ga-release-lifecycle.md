@@ -1,6 +1,6 @@
 # ADR-0073：标准 RC/GA 发布生命周期与稳定更新链路
 
-**状态**：已接受，发布流程部分被 [ADR-0074](0074-simple-rc-ga-release-flow.md) 取代（2026-07-20；关联 FR-182～FR-185）
+**状态**：已接受，发布流程部分被 [ADR-0074](0074-simple-rc-ga-release-flow.md) 取代（2026-07-20；关联 FR-182～FR-185）；第 4 条的运行时版本报告口径部分被 [ADR-0092](0092-runtime-version-carries-candidate-marker.md) 取代（`Version` 字段仍为 `X.Y.Z`，JAR/POM、文件名与 OCI payload 口径不变）
 
 > **当前阅读提示**：本 ADR 的通用 RC/GA 生命周期、开发构建不直接晋级与 GA-only 在线更新仍有效；受保护环境审批、分层准入、后置创建 tag 的强制编排及其复杂晋级约束，以 ADR-0074 的简化 RC/GA 流程为准。
 

@@ -83,6 +83,10 @@
 - **破坏性变更：主端口不再提供 `/metrics`，既有抓取配置必须改地址**：主端口（默认 `:8848`）上的 `/metrics` 已移除（`server.Handlers.Metrics` 字段随之删除），Prometheus 的 `static_configs.targets` 须从 `beacon.internal:8848` 改为抓取端点——同机抓取用 `127.0.0.1:8849`，跨机需先把 `metrics-endpoint.listen-addr` 放开到内网地址再指过去；容器形态还须把 8849 映射出来（容器内回环与宿主回环不是同一个网络命名空间，只改 `listen-addr` 不映射依旧抓不到）。降级前未做此改动，`up{job="beacon"}` 会立即归零——控制面本身没挂，是抓取地址变了。
 - **抓取不再被自记进 `beacon_http_requests_total`**：抓取端点不再经过主路由的全局中间件链，Prometheus 每次 scrape **不会**再产生 `route="/metrics"` 的自记 series（[ADR-0089](docs/adr/0089-http-layer-red-metrics.md) 后果节曾专门提醒「算业务 QPS 时要剔除它」）。这是行为变化而**非缺陷**——抓取流量本就不是业务流量；算业务 QPS 的旧口径可相应简化，但**不要把该 series 归零误读成业务流量骤降**。运维细节（抓取配置、Bearer 的 `authorization:` 片段、告警读法调整）见 [OPERATIONS](docs/OPERATIONS.md) §3.2。
 - **ADR 状态同步（正文均未改动）**：[ADR-0020](docs/adr/0020-prometheus-metrics-observability.md) 标注被 ADR-0090 部分取代——仅「同端口」与「不挂鉴权」两条失效，独立 registry、pull 模型、不在运行态写路径埋点、指标清单与窄接口注入计数器的解耦方式全部承继；[ADR-0089](docs/adr/0089-http-layer-red-metrics.md) 的状态前言补注指向 ADR-0090，其 RED 指标、显式分桶、路由模板口径与中间件顺序等决策不受影响。
+- **运行时版本串带候选标记与构建提交，同一正式版本的不同候选不再无法分辨（[ADR-0092](docs/adr/0092-runtime-version-carries-candidate-marker.md)，部分取代 [ADR-0073](docs/adr/0073-standard-rc-ga-release-lifecycle.md) 第 4 条的运行时口径）**：此前 `beacon --version`、启动日志和状态页都只报正式版本 `X.Y.Z`，于是 `vX.Y.Z-rc.1` 与 `vX.Y.Z-rc.2` 的运行实例**输出完全相同**——手上一个二进制是哪个候选，只能靠回查 GitHub Release 的 `SHA256SUMS.txt` 或比对文件大小，脱离下载目录就再也无法自证，验收时极易把旧候选当成新候选测。现新增 `Candidate` 与 `Commit` 两个独立注入字段，展示串为 `1.5.0-rc.2 (114cf533)`：候选标记由 RC tag 反推、提交号取构建来源短 SHA，二者在发布期由 workflow 断言（构建后立即校验 `--version` 输出，不符即失败）。
+  - **`Version` 字段保持三段纯数字，候选标记不拼进去**：在线更新判新（`internal/update` 的 `parseSemver`）与换版对账直接消费 `Version`，把 `-rc.2` 拼进去会让**更新检查静默失效、执行更新直接失败**——这正是本改动没有选择「直接改版本号字符串」的原因。需要辨识的只有展示层，故新字段与 `Version` 分开存放。
+  - **GA 会如实显示产出该字节的候选标记（`1.5.0-rc.2 (…)`），这是刻意行为而非缺陷**：GA 复用最终 RC 的同字节资产、不重建（[ADR-0074](docs/adr/0074-simple-rc-ga-release-flow.md) 第 3 条），字节里带着哪个候选就是哪个候选；抹掉它在技术上等于重建，反而破坏「晋级不引入新变量」。
+  - **本地构建不受影响**：`make build` 不传 `CANDIDATE` 时输出 `1.5.0 (<提交号>)`，无 git 环境（源码包解压）时提交号为空、输出退回 `1.5.0`，均不阻断构建。
 
 ### 修复
 

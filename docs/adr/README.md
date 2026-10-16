@@ -95,6 +95,7 @@
 | [0089](0089-http-layer-red-metrics.md) | 控制面 HTTP 层 RED 指标（路由模板分维的请求计数与时延直方图，扩展现有 /metrics） | 已接受；扩展 ADR-0020（独立 registry 沿用，不改其正文），不取代任何 ADR。**前言中当时沿用的「同端口 / 不挂鉴权」两条已被 [0090](0090-metrics-endpoint-dedicated-listener.md) 取代**（其余决策仍有效） |
 | [0090](0090-metrics-endpoint-dedicated-listener.md) | Prometheus 抓取端点独立监听（默认仅回环）并支持可选 Bearer 鉴权 | 已接受；**部分取代 [0020](0020-prometheus-metrics-observability.md)**（同端口暴露、不挂鉴权两条；独立 registry / pull 模型 / 指标清单等其余决策承继） |
 | [0091](0091-control-plane-self-health-metrics.md) | 控制面自身健康进抓取端点（DB 查询留在后台，抓取只读缓存） | 已接受；扩展 [0090](0090-metrics-endpoint-dedicated-listener.md) 的端点，不取代任何 ADR |
+| [0092](0092-runtime-version-carries-candidate-marker.md) | 运行时版本串携带候选标记与构建提交（机器契约与人可读分离） | 已接受；**部分取代 [0073](0073-standard-rc-ga-release-lifecycle.md) 第 4 条**（「运行时版本报告 `X.Y.Z`」收窄为「`Version` 字段报告 `X.Y.Z`」；JAR/POM、文件名与 OCI payload 口径不变） |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

@@ -28,6 +28,8 @@ jobs:
       version: ${{ steps.calc.outputs.version }}
       tag: ${{ steps.calc.outputs.tag }}
       commit: ${{ steps.calc.outputs.commit }}
+      candidate: ${{ steps.calc.outputs.candidate }}
+      short_commit: ${{ steps.calc.outputs.short_commit }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,10 +49,18 @@ jobs:
             --ga-tag "v$version"
           commit="$(git rev-parse "HEAD^{commit}")"
           test "$(git rev-parse "${CANDIDATE_TAG}^{commit}")" = "$commit"
+          # 候选标记从 RC tag 反推（vX.Y.Z-rc.N → rc.N）：仅用于展示串，不进入正式版本号。
+          candidate=${CANDIDATE_TAG#"v${version}-"}
+          case "$candidate" in
+            rc.[1-9]*) ;;
+            *) echo "::error::无法从候选 tag 解析候选标记：${CANDIDATE_TAG}"; exit 1 ;;
+          esac
           {
             echo "version=$version"
             echo "tag=$CANDIDATE_TAG"
             echo "commit=$commit"
+            echo "candidate=$candidate"
+            echo "short_commit=$(printf '%.8s' "$commit")"
           } >> "$GITHUB_OUTPUT"
 
   web:
@@ -111,12 +121,16 @@ jobs:
         shell: sh
         env:
           VER: ${{ needs.meta.outputs.version }}
+          CANDIDATE: ${{ needs.meta.outputs.candidate }}
+          COMMIT: ${{ needs.meta.outputs.short_commit }}
         run: |
           set -eu
-          ldflags="-s -w -X github.com/wcpe/Beacon/apps/server/internal/version.Version=${VER}"
+          # 候选标记与提交号分别注入独立字段：正式版本号 VER 保持三段纯数字，供在线更新解析。
+          ldflags="-s -w -X github.com/wcpe/Beacon/apps/server/internal/version.Version=${VER} -X github.com/wcpe/Beacon/apps/server/internal/version.Candidate=${CANDIDATE} -X github.com/wcpe/Beacon/apps/server/internal/version.Commit=${COMMIT}"
           out="beacon-${VER}-${{ matrix.target }}${{ matrix.ext }}"
           go build -trimpath -ldflags "$ldflags" -o "$out" ./apps/server/cmd/beacon
-          test "$("./$out" --version)" = "$VER"
+          # 断言可辨识串，而非仅正式版本号：这是「一眼分辨当前候选」的发布期守门。
+          test "$("./$out" --version)" = "${VER}-${CANDIDATE} (${COMMIT})"
       - uses: actions/upload-artifact@v7
         with:
           name: beacon-${{ matrix.target }}
