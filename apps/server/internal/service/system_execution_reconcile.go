@@ -27,8 +27,17 @@ func ReconcileSystemExecutions(db *gorm.DB, runPath, currentVersion string) erro
 	return nil
 }
 
+// reconciledSystemExecutionStatus 判定一次换版执行的事实状态。
+//
+// 版本比对必须按语义而非字符串相等：两个版本串的形态天然不同——
+//   - execution.TargetVersion 来自 FrozenTarget.Version，即 GitHub tag，形如 "v1.5.0"（parseGATag 强制要求前导 v）；
+//   - currentVersion 来自 version.Version，即根 VERSION 注入的运行时版本，形如 "1.5.0" 或候选构建的 "1.5.0-rc.2"（ADR-0092）。
+//
+// 字符串相等会让 apply 路径恒判失败（"v1.5.0" != "1.5.0"），故改比「正式版本三段是否相同」：
+// 前导 v 与候选后缀都不影响同一版本的判定，v1.5.0 / 1.5.0 / 1.5.0-rc.2 视为同一版本。
+// 任一侧无法解析时退回字符串相等（保守：不确定就不判成功）。
 func reconciledSystemExecutionStatus(execution model.SystemExecution, runPath, currentVersion string) (string, string) {
-	if execution.TargetVersion != currentVersion {
+	if !update.SameReleaseVersion(execution.TargetVersion, currentVersion) {
 		return model.SystemExecutionStatusFailed, "换版未达到冻结目标版本"
 	}
 	if execution.Operation == "system.update.apply" && update.PendingUpdateVersion(runPath) != "" {

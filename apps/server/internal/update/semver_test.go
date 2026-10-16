@@ -22,10 +22,26 @@ func TestParseRuntimeVersionRejectsMalformed(t *testing.T) {
 		"", "v", "1.2", "1.2.3.4", "1.2.x", "a.b.c",
 		"01.2.3", "1.02.3", "1.2.03",
 		"-1.0.0", "1.2.3-", "1.2.3+build.1", "dev", " v1.2.3", "v1.2.3 ",
+		// 候选段字符集：`+` 构建元数据、空段、数字段前导零一律拒绝。
+		"1.5.0-rc.+1", "1.5.0-rc.1+build", "1.5.0-rc..1", "1.5.0-rc.01", "1.5.0-rc.1.02",
+		"1.5.0-rc.1_2", "1.5.0-rc.1 2",
 	}
 	for _, value := range bad {
 		if _, err := parseRuntimeVersion(value); err == nil {
 			t.Errorf("非法版本 %q 应解析失败", value)
+		}
+	}
+}
+
+// TestParseRuntimeVersionAcceptsValidPrereleaseCharset 候选段的合法形态不能被误拒。
+func TestParseRuntimeVersionAcceptsValidPrereleaseCharset(t *testing.T) {
+	good := []string{
+		"1.5.0-rc.1", "1.5.0-rc.0", "1.5.0-rc.10", "1.5.0-alpha", "1.5.0-alpha.1",
+		"1.5.0-rc-1", "1.5.0-x-y-z.1", "1.5.0-RC.1",
+	}
+	for _, value := range good {
+		if _, err := parseRuntimeVersion(value); err != nil {
+			t.Errorf("合法候选版本 %q 应解析成功，实际 %v", value, err)
 		}
 	}
 }
@@ -79,6 +95,38 @@ func TestCompareSemver(t *testing.T) {
 		}
 		if got := compareSemver(a, b); got != tc.want {
 			t.Errorf("compareSemver(%q, %q)=%d，期望 %d", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+// TestSameReleaseVersion 锁定换版对账的版本比对口径：容忍前导 v 与候选后缀，只比正式版本三段。
+// 这是 H1 的回归防线——字符串相等会让 apply 路径恒判失败（"v1.5.0" != "1.5.0"）。
+func TestSameReleaseVersion(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		// 生产口径的核心组合：冻结目标是 tag（带 v），当前版本来自 VERSION（不带 v）。
+		{"v1.5.0", "1.5.0", true},
+		// 候选实例：当前版本带候选后缀，仍是同一版本。
+		{"v1.5.0", "1.5.0-rc.2", true},
+		{"1.5.0", "1.5.0-rc.2", true},
+		{"v1.5.0-rc.2", "1.5.0-rc.2", true},
+		// 不同版本必须判否。
+		{"v1.5.0", "1.5.1", false},
+		{"v1.5.0", "1.4.0", false},
+		{"v2.0.0", "1.9.9", false},
+		{"v1.5.0", "1.6.0-rc.1", false},
+		// 无法解析时退回字符串相等：相同串判真，不同串判假（保守，不误判为同一版本）。
+		{"dev", "dev", true},
+		{"dev", "1.5.0", false},
+		{"", "", true},
+		{"", "1.5.0", false},
+		{"abc", "def", false},
+	}
+	for _, tc := range cases {
+		if got := SameReleaseVersion(tc.a, tc.b); got != tc.want {
+			t.Errorf("SameReleaseVersion(%q, %q)=%v，期望 %v", tc.a, tc.b, got, tc.want)
 		}
 	}
 }
