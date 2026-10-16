@@ -75,7 +75,7 @@
 | [0069](0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md) | 交付数据面：控制面 sha256 内容寻址 blob 中转 + agent 流式传输端口（扩展 ADR-0005） | 已接受 |
 | [0070](0070-agent-graceful-shutdown-primitive.md) | agent 优雅关服平台原语（restart 生效靠宿主自启拉起，重申 ADR-0011 禁进程管理） | 已接受（决策部分）。**决策 2 的「先回执『开始生效』再关服」顺序描述被 [0088](0088-restart-activation-single-receipt-and-shutdown-capability.md) 取代**（其余决策仍有效） |
 | [0071](0071-config-gray-effectuation-model.md) | 变更单配置变更的灰度生效语义模型（模型 A：head=定稿非生效、pin 落后者到 from、配置域零改动） | 已接受 |
-| [0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) | 不可变 RC、GA 同 commit/同字节晋级与 N-1 背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
+| [0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) | 不可变 RC、GA 同 commit/同字节晋级与 N-1 背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代，决策 2 的运行时版本口径被 [0092](0092-runtime-version-carries-candidate-suffix.md) 取代；原文保留作历史记录 |
 | [0073](0073-standard-rc-ga-release-lifecycle.md) | 通用 RC/GA 生命周期与 GA-only 在线更新背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
 | [0074](0074-simple-rc-ga-release-flow.md) | 简化 RC/GA 发布：不可变 RC、同 commit 原样晋级、SHA-256 校验与 GA-only 更新 | 已被 [0082](0082-rc-ga-sdk-maven-publication.md) 取代（仅 GA 对 SDK Maven 正式坐标的受限重新发布例外）；其余 GitHub 产品资产规则仍适用 |
 | [0075](0075-lobby-cluster-and-bc-first-entry.md) | 独立 LobbyCluster 与 BC namespace 首次大厅落脚 | 已接受；取代 ADR-0031/0067 中 BC 基于 Zone 默认入口注入 priority/fallback 的消费范围，保留 Zone 默认入口模型与兼容字段 |
