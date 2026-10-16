@@ -1,12 +1,12 @@
 # Beacon 持续集成门禁：PR 只执行质量任务，master 全绿后生成短期开发产物。
-# 纯文档 / 展示资源变更不触发构建与打包（paths-ignore 命中且无其它改动时整条流水线跳过）。
+# 文档 / 展示资源变更默认不触发构建与打包（paths-ignore 命中且无其它改动时整条流水线跳过）；
+# 非 docs/、website/ 路径的 .md（含根级 CHANGELOG.md）不豁免——发布准备提交须进入 CI，供 RC 准入消费。
 name: CI
 
 on:
   push:
     branches: [master]
     paths-ignore:
-      - '**.md'
       - 'docs/**'
       - 'website/**'
       - 'LICENSE'
@@ -18,7 +18,6 @@ on:
     # 否则中间层会在无 CI 保障的情况下累积到下一层。pull_request 事件取 base 分支上的
     # 本文件，故本改动随最底层 PR 合并前即可对其上的堆叠层生效。
     paths-ignore:
-      - '**.md'
       - 'docs/**'
       - 'website/**'
       - 'LICENSE'
