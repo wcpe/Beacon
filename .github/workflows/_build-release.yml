@@ -26,10 +26,9 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.calc.outputs.version }}
+      runtime_version: ${{ steps.calc.outputs.runtime_version }}
       tag: ${{ steps.calc.outputs.tag }}
       commit: ${{ steps.calc.outputs.commit }}
-      candidate: ${{ steps.calc.outputs.candidate }}
-      short_commit: ${{ steps.calc.outputs.short_commit }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,18 +48,19 @@ jobs:
             --ga-tag "v$version"
           commit="$(git rev-parse "HEAD^{commit}")"
           test "$(git rev-parse "${CANDIDATE_TAG}^{commit}")" = "$commit"
-          # 候选标记从 RC tag 反推（vX.Y.Z-rc.N → rc.N）：仅用于展示串，不进入正式版本号。
+          # 候选后缀从 RC tag 反推（vX.Y.Z-rc.N → rc.N），拼成运行时版本 X.Y.Z-rc.N。
+          # VERSION 文件保持 X.Y.Z 不变（驱动 tag、资产名、GA 判定），只有注入二进制的运行时版本带后缀。
           candidate=${CANDIDATE_TAG#"v${version}-"}
           case "$candidate" in
             rc.[1-9]*) ;;
             *) echo "::error::无法从候选 tag 解析候选标记：${CANDIDATE_TAG}"; exit 1 ;;
           esac
+          runtime_version="${version}-${candidate}"
           {
             echo "version=$version"
+            echo "runtime_version=$runtime_version"
             echo "tag=$CANDIDATE_TAG"
             echo "commit=$commit"
-            echo "candidate=$candidate"
-            echo "short_commit=$(printf '%.8s' "$commit")"
           } >> "$GITHUB_OUTPUT"
 
   web:
@@ -120,17 +120,17 @@ jobs:
       - name: 构建控制面
         shell: sh
         env:
-          VER: ${{ needs.meta.outputs.version }}
-          CANDIDATE: ${{ needs.meta.outputs.candidate }}
-          COMMIT: ${{ needs.meta.outputs.short_commit }}
+          RUNTIME_VER: ${{ needs.meta.outputs.runtime_version }}
+          ASSET_VER: ${{ needs.meta.outputs.version }}
         run: |
           set -eu
-          # 候选标记与提交号分别注入独立字段：正式版本号 VER 保持三段纯数字，供在线更新解析。
-          ldflags="-s -w -X github.com/wcpe/Beacon/apps/server/internal/version.Version=${VER} -X github.com/wcpe/Beacon/apps/server/internal/version.Candidate=${CANDIDATE} -X github.com/wcpe/Beacon/apps/server/internal/version.Commit=${COMMIT}"
-          out="beacon-${VER}-${{ matrix.target }}${{ matrix.ext }}"
+          # 注入的运行时版本带候选后缀（如 1.5.0-rc.2），使 --version / 日志 / 状态页 / 更新页一眼可辨；
+          # 资产文件名仍用无后缀的 ASSET_VER，以保持 GA 资产闭集校验与同字节晋级不变。
+          ldflags="-s -w -X github.com/wcpe/Beacon/apps/server/internal/version.Version=${RUNTIME_VER}"
+          out="beacon-${ASSET_VER}-${{ matrix.target }}${{ matrix.ext }}"
           go build -trimpath -ldflags "$ldflags" -o "$out" ./apps/server/cmd/beacon
-          # 断言可辨识串，而非仅正式版本号：这是「一眼分辨当前候选」的发布期守门。
-          test "$("./$out" --version)" = "${VER}-${CANDIDATE} (${COMMIT})"
+          # 断言运行时版本串，而非仅正式版本号：这是「一眼分辨当前候选」的发布期守门。
+          test "$("./$out" --version)" = "$RUNTIME_VER"
       - uses: actions/upload-artifact@v7
         with:
           name: beacon-${{ matrix.target }}

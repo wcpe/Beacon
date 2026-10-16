@@ -60,10 +60,9 @@ type FrozenTarget struct {
 // Service 编排控制面在线更新（FR-97，见 ADR-0044）：查 Release → 下载 → SHA256 → 落位 pending → 请求重启。
 // 出站 client 由调用方经 internal/httpx 工厂注入（带代理 + 超时）。
 type Service struct {
-	// currentVersion 是正式版本 X.Y.Z，仅用于判新比较（parseSemver 消费），禁止带候选标记。
+	// currentVersion 是当前运行版本（如 "1.5.0-rc.2"）。既用于判新比较，也用于对外展示——
+	// 候选版本号本身可读（ADR-0092），无需再维护一份展示串。
 	currentVersion string
-	// displayVersion 是对外展示串（可含候选标记与提交号），只出现在结果视图与日志里。
-	displayVersion string
 	apiBase        string // GitHub API 基址（默认官方，测试注入 mock）
 	repo           string // owner/name
 	// newHTTPClient 按代理构造出站 client（注入 internal/httpx.NewClient，使 core 不裸用 net/http）。
@@ -82,12 +81,9 @@ type Service struct {
 
 // Config 是更新服务装配参数。
 type Config struct {
-	// CurrentVersion 是用于版本判新的正式版本 X.Y.Z。必须保持三段纯数字：parseSemver 直接解析它，
-	// 附加候选标记会让判新静默失效。仅用于比较，不用于展示。
-	CurrentVersion string
-	// DisplayVersion 是用于对外展示的版本串（可含候选标记与提交号，如 "1.5.0-rc.2 (114cf533)"）。
-	// 留空时退回 CurrentVersion，使未注入该字段的调用方行为不变。
-	DisplayVersion  string
+	// CurrentVersion 是当前运行版本（如 "1.5.0-rc.2"）。既用于判新比较，也用于对外展示，
+	// 因为候选版本号本身就可读（ADR-0092）。parseRuntimeVersion 支持候选后缀比较。
+	CurrentVersion  string
 	APIBase         string // 空=官方 api.github.com
 	Repo            string // 空=wcpe/Beacon
 	PendingPath     string // pending 新二进制路径（自替换换位点）
@@ -98,20 +94,10 @@ type Config struct {
 	Audit           AuditWriter
 }
 
-// resolveDisplayVersion 决定对外展示串：优先用显式注入的展示串，为空回退正式版本号。
-// 参数校验留白是有意的——展示串不参与任何机器判定，注入缺失只影响可读性，不应阻断启动。
-func resolveDisplayVersion(display, version string) string {
-	if strings.TrimSpace(display) != "" {
-		return display
-	}
-	return version
-}
-
 // NewService 构造更新服务。
 func NewService(cfg Config) *Service {
 	return &Service{
 		currentVersion:  cfg.CurrentVersion,
-		displayVersion:  resolveDisplayVersion(cfg.DisplayVersion, cfg.CurrentVersion),
 		apiBase:         cfg.APIBase,
 		repo:            cfg.Repo,
 		newHTTPClient:   cfg.NewHTTPClient,
@@ -201,7 +187,7 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 	// check-failed 也回显当前版本（本地恒已知），使前端模态框「当前版本」始终有值（FR-99 修复）。
 	failRes := CheckResult{
 		Channel:        ch,
-		CurrentVersion: s.displayVersion,
+		CurrentVersion: s.currentVersion,
 		IsDevBuild:     strings.TrimSpace(s.currentVersion) == devVersion,
 	}
 	client, err := s.newHTTPClient(proxyURL, downloadTimeout)
@@ -222,7 +208,7 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 	}
 	res := CheckResult{
 		Channel:        ch,
-		CurrentVersion: s.displayVersion,
+		CurrentVersion: s.currentVersion,
 		LatestVersion:  latest,
 		HasUpdate:      hasUpdate,
 		IsDevBuild:     strings.TrimSpace(s.currentVersion) == devVersion,
@@ -231,7 +217,7 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 		PublishedAt:    rel.PublishedAt,
 	}
 	s.writeAudit(model.ActionSystemUpdateCheck, latest, model.ResultOK,
-		fmt.Sprintf("渠道=%s 当前=%s 最新=%s 有更新=%v", ch, s.displayVersion, latest, hasUpdate),
+		fmt.Sprintf("渠道=%s 当前=%s 最新=%s 有更新=%v", ch, s.currentVersion, latest, hasUpdate),
 		operator, clientIP)
 	return res, nil
 }
@@ -359,7 +345,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, ch Channel, proxyURL, operato
 		return s.failApply(target, fmt.Errorf("版本比较失败: %w", cmpErr), operator, clientIP)
 	}
 	if !hasUpdate {
-		return s.failApply(target, fmt.Errorf("远端版本 %s 不高于当前 %s，无需更新", target, s.displayVersion), operator, clientIP)
+		return s.failApply(target, fmt.Errorf("远端版本 %s 不高于当前 %s，无需更新", target, s.currentVersion), operator, clientIP)
 	}
 
 	// 选本平台资产。

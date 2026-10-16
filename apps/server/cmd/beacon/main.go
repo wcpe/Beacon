@@ -136,7 +136,7 @@ func run() error {
 		return err
 	}
 	if options.showVersion {
-		_, err = fmt.Fprintln(os.Stdout, version.Display())
+		_, err = fmt.Fprintln(os.Stdout, version.Version)
 		return err
 	}
 
@@ -149,7 +149,7 @@ func run() error {
 	}
 
 	log.Setup(cfg.Log.Level)
-	slog.Info("Beacon 控制面启动中", "版本", version.Display(), "监听地址", cfg.HTTPAddr)
+	slog.Info("Beacon 控制面启动中", "版本", version.Version, "监听地址", cfg.HTTPAddr)
 
 	// 管理面鉴权：单操作者认证器（凭据/密钥走配置，env 注入）
 	authn, err := auth.New(cfg.Auth.Username, cfg.Auth.Password, cfg.Auth.Secret,
@@ -337,7 +337,7 @@ func run() error {
 	// 而本端点恰是排障时最需要可用的——事故症状会在这里原样复现。经 store.NewBoundedPinger
 	// 拿到包装层（继承 call 预算），拿不到时它自行回退到原生池的 PingContext（仍可被 ctx 中断）。
 	// 采样器启用状态从设置 store 读、热生效（FR-61）：metric.enabled 改了页眉即反映新值。
-	systemService := service.NewSystemService(version.Display(), startedAt, store.NewBoundedPinger(db), registry,
+	systemService := service.NewSystemService(version.Version, startedAt, store.NewBoundedPinger(db), registry,
 		func() bool { return settingsService.GetBool(service.SettingMetricEnabled) }, cpuSampler)
 	systemHandler := handler.NewSystemHandler(systemService)
 
@@ -803,9 +803,8 @@ func run() error {
 	updateRestartCh := make(chan struct{})
 	rollbackCh := make(chan struct{})
 	updateService := update.NewService(update.Config{
-		// 判新比较用纯 X.Y.Z；对外展示用带候选标记与提交号的串（ADR-0092），二者必须分开注入。
+		// 当前运行版本（候选构建带 -rc.N 后缀，如 "1.5.0-rc.2"）：判新比较与对外展示同源（ADR-0092）。
 		CurrentVersion: version.Version,
-		DisplayVersion: version.Display(),
 		PendingPath:    resolvePendingPath(),
 		RunPath:        selfPath,
 		NewHTTPClient:  httpx.NewClient,

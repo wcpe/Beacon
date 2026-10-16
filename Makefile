@@ -12,13 +12,14 @@ VERSION := $(strip $(shell cat VERSION))
 endif
 # 控制面版本注入点（go 包路径）
 VERSION_PKG := github.com/wcpe/Beacon/apps/server/internal/version
-# 候选标记（形如 rc.3）：仅候选构建经 `make build CANDIDATE=rc.3` 显式传入，本地构建留空。
-# 与 VERSION 分开注入——正式版本号须保持三段纯数字供在线更新解析，候选标记只进展示串。
+# 候选标记（形如 rc.3）：候选构建经 `make build CANDIDATE=rc.3` 显式传入，本地构建留空。
+# 注入的运行时版本为 $(VERSION)-$(CANDIDATE)（如 1.5.0-rc.3），使 --version 等位置一眼可辨（ADR-0092）。
+# VERSION 本身保持 X.Y.Z，仍驱动产物文件名与发布校验。
 CANDIDATE ?=
-# 构建来源短提交号：无 git 环境（源码包解压）时为空，不阻断构建。
-GIT_COMMIT := $(shell git rev-parse --short=8 HEAD 2>/dev/null)
-# 链接参数：注入版本 / 候选标记 / 提交号 + 裁剪符号表与调试信息（更小的发布二进制）
-GO_LDFLAGS := -s -w -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Candidate=$(CANDIDATE) -X $(VERSION_PKG).Commit=$(GIT_COMMIT)
+# 运行时版本：正式版本 +（可选）候选后缀。make 的 $(if) 在 CANDIDATE 为空时不产生尾随分隔符。
+RUNTIME_VERSION := $(VERSION)$(if $(CANDIDATE),-$(CANDIDATE))
+# 链接参数：注入运行时版本 + 裁剪符号表与调试信息（更小的发布二进制）
+GO_LDFLAGS := -s -w -X $(VERSION_PKG).Version=$(RUNTIME_VERSION)
 # 控制面入口
 CMD := ./apps/server/cmd/beacon
 # 产物输出目录（不入库）
