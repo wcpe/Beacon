@@ -4,7 +4,69 @@
 
 ## 未发布
 
+## 1.5.0（2026-10-12）
+
 ### 新增
+
+- **MCP 交付只读工具集（FR-245）**：交付域此前是全部领域中 MCP 覆盖度最低的一个——HTTP 面 21 项操作只暴露 6 项，且**全部是「创建审批申请」的写操作、只读侧为 0**：机器主体拿不到变更单号、看不见状态、发现问题也没有可读的止血依据，等于「盲写」。现补齐只读侧六个工具 `beacon.delivery.order.list` / `.order.get` / `.targets.list` / `.impact.get` / `.observe.get` / `.events.list`（`low` 风险、`observer` 与 `automation` 共用），语义与 `/admin/v2/change-orders` 系列读端点逐一对齐。规格见 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md)。
+  - **返回一律有界投影**：列表强制分页、`order.get` 只回摘要字段与 `targetCounts` / `rollbackCounts` 计数（**不回**逐文件清单与批次明细）、`targets.list` / `impact.get` 逐目标分页、观察窗与事件沿用 HTTP 端点的有界条数；输出键名沿用既有 HTTP 视图字段名，不自造键名。
+  - **跨 namespace 拒绝**：除 `order.list`（`namespaceId` 为字符串形式的数值 ID 且必填——列表按 namespace 定位）外，另外五个工具由 `orderId` 定位。观测范围参数（`envId` / `namespaceId`，均为字符串形式的数值 ID，传整数会被协议层按 schema 拒绝）是**调用者声明的收窄条件**、缺省即其可观测的全量范围（与告警处置同口径），服务端按单所属 namespace 判归属；范围外与不存在**共用同一条拒绝文案**（不泄露范围外单是否存在）。
+  - **门禁**：六个工具全部登记 `mcpToolCatalog`（`low`、`OperationKind` 留空、**不带 `AutomationOnly`**——该标记的真实语义是「仅 automation 可发现」，挂上即令 observer 不可见），走 `mcpAddTool` 唯一注册入口，既有覆盖测试自动守护新增项。
+  - **测试**：两 profile 可见性（清单与真实注册两侧）、投影有界断言（逐字段键集合精确比对）与全链路可读 + 跨 namespace `orderId` 拒绝的负向用例。
+
+- **交付审批票据与 MCP 审批视图扩字段（FR-249）**：机器主体（AI）提交交付申请后只能拿到 `{approvalRequestId,status,operation}`——既不知道申请的是哪张变更单、也看不到影响面；申请被驳回或执行失败时同样只有状态，无从判断"为什么没成"。现按 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md) §3.6 补齐两侧契约。
+  - **票据补归属与影响面**：六类交付申请入口（提交 / 草稿删除 / 继续 / 批次确认 / 整单回滚 / 结束回滚）的 `202` 票据新增 `orderId` 与 `impactSummary` 对象 `{targetCount,batchCount,payloadFiles,payloadConfigs}`。摘要在**创建申请那一刻即时统计**（只读当前落库的 targets / batches / items 行，`file_diff` 与 `config_change` 分计），draft 阶段目标与批次尚未固化故两项为 0，计数为 0 时保留 0 而不省略键；**不写入冻结 payload**、不随后续推进漂移。
+  - **两侧同名同源**：HTTP 面直出结构体（既有键 `operationKey`）、MCP 侧投影（既有键 `operation`），两侧键名现状都不变，只同步新增后两键——MCP 投影不同步补键的话，AI 永远看不到归属单号。
+  - **审批视图拆两档**：`beacon.approvals.own.list` 保持轻量并补截断后的 `failureSummary` 与 `finishedAt`（列表一次可能回多行，故按 200 字符截断）；`own.get` 在轻量档之上补完整失败摘要、`rejectReason`、`decisionReason`、`approvedBy` 与 `decidedAt` / `approvedAt` / `executedAt` / `finishedAt` 四个时间点（有值即返、不组装数组）；`withdraw` / `approve` / `reject` 沿用轻量档。两档都**不投影**审批申请的 `impactSummary` / `safeSummary` 文本列——避免与票据的对象键同名两型。
+  - **隔离不变**：机器主体仍只可见自己创建的申请（服务端强制注入 `RequesterType` / `RequesterID`），新增负向用例锁定他人申请在列表不可见、详情一律拒绝且与"不存在"同形。
+  - **测试**：六类申请点逐类断言 `orderId` 与四项计数，并断言计数**未进**冻结 payload；MCP 协议路径实测 `beacon.delivery.order.submit` 的结构化输出带两键；列表 / 详情字段集合逐键锁定（含两档字段数）与主体隔离负向用例。
+
+- **MCP 交付组单与止损工具（FR-246 / FR-247）**：只读侧补齐（FR-245）后，交付域机器主体仍**建不了单、也止不了血**——HTTP 面 21 项操作里最常用的组单与止损只对人类管理台开放，AI 发现问题后没有任何处置手段。现补上五个**直接执行**（不创建审批票据）的工具，语义与 `/admin/v2/change-orders` 系列端点逐一对齐：组单三项 `beacon.delivery.order.create` / `.order.update` / `.order.diff-scan`（`low`）、止损两项 `beacon.delivery.order.pause` / `.order.cancel`（`high`）。规格见 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md) §3.3 / §3.4。
+  - **组单一次成型**：`create` 可携带 `configChanges`，配置项与单在同一事务内落库（任一配置项非法则整单不落）；未提供即纯文件单。`update` 支持 `configChanges` 整组替换（传空数组即清空）。显式传入空 `batchSizes` 不会被当成「未提供」静默忽略，而是原样交给领域层拒绝（`batchSizes 不能为空`）——否则客户端以为改成了零批次、实际沿用默认值，成功与失败都看不出来。`diff-scan` 只回**计数聚合** `{add,update,delete,total,snapshotAt}`——逐文件明细在大单（上千差异项）下会撑爆返回体，明细仍走 HTTP 面。
+  - **止损直执**：`pause` 把 `rolling` 打成 `paused(manual)` 且不打断在途目标；`cancel` 把 `rolling` / `paused` 打成 `cancelled`，`reason` **必填**（与 HTTP 面一致）并入审计与单据。两项均为可逆操作（可 resume / 可回滚），故取 `high` 而非 `low`。
+  - **观测范围与只读工具同源**：建单必须落在调用者可观测的 namespace 内；其余四项按单所属 namespace 判归属，**跨 namespace 的 `orderId` 与不存在的单共用同一条拒绝文案**（不把范围校验变成存在性探针）。
+  - **门禁**：五项全部登记 `mcpToolCatalog`（组单 `low` / 止损 `high`、均带 `AutomationOnly`、`OperationKind` 留空），走 `mcpAddTool` 唯一注册入口；`observer` 一个都不可见。
+  - **测试**：目录等级与可见性、真实注册路径、一次成型（含非法配置项整单回滚）、差异扫描计数聚合、暂停/终止真效果与审计、拒绝文案逐条断言、跨 namespace 与不存在同文案。
+
+- **交付系工具的拒绝理由透出（FR-248）**：交付系工具（六项既有申请类 + FR-246 / FR-247 的五项直执工具）被拒时此前**一律回硬编码文案并丢弃领域错误**，AI 只能得知「被拒了」而不知为何——而状态不允许、缺模板源、无目标、缺原因这几类的处置方向完全不同（等状态 / 补源 / 改 selector / 补参数）。现改为回**可区分的中文原因**，与告警域先例对齐。
+  - **一处常量表**：领域错误码 → 稳定短语集中在 `mcpDeliveryRejectedReasons`（覆盖规格 §3.5 全部 16 个错误码，含大写的 `FORBIDDEN` 与 `not_creator`，另含交付域自身产出的 `missing_reason`）；code 取自既有真源（多数直接用 `apperr` 定义，改名即编译失败），短语不随领域内部措辞漂移。`illegal_state` 额外拼上**当前状态与目标动作**（如 `当前状态不允许该操作：当前状态 rolling 不允许 编辑`），便于直接定位卡点。
+  - **不回空文案**：未列入表的错误沿用领域错误自带的中文说明（已按 [ADR-0057](docs/adr/0057-surface-desensitized-errors.md) 脱敏），非领域错误（存储层等）回统一兜底文案，不透传内部细节。
+  - **测试**：逐错误码断言表内条目与映射结果（并断言表条目数精确匹配，防止静默增删）、兜底三条路径（领域说明 / 空说明 / 非领域错误）、以及经真实拒绝路径的逐工具文案断言。
+
+- **交付 MCP 工具的入参与审计口径收口**：`beacon.delivery.order.resume` 的 `mode` 明确枚举并在输入 schema 里带上字段描述（`retry_failed` / `skip_failed`，越界在调用领域层之前即拒）；`beacon.delivery.rollback.finish` **移除 `reason` 入参**——HTTP 面与 service 都不接受调用方原因（申请原因固定为「结束交付回滚」且已进冻结 payload），此前声明该字段却静默丢弃，会让 AI 误以为原因已生效；`beacon.delivery.order.delete` 改用**独立入参类型**（与 `order.submit` 解耦，避免任一方字段变更改到另一方的对外契约）；机器主体经 MCP 调用交付工具时，审计来源地址统一记 **`mcp`**（表达来源类别而非 IP，人类管理台仍记真实地址）。
+
+- **变更单详情单服级状态墙与审批进度视图（FR-254 / FR-255）**：交付执行期一直是「黑箱」——详情页只有批次级的进度条与「回滚中」计数，**逐台状态与失败原因全站没有一处渲染**（`ChangeTarget.error` / `rollbackError` 在代码里从未被消费）；提审之后同样断线，详情页看不到申请批到什么程度、被谁驳回、为什么没过。
+  - **单服级状态墙**：详情页「灰度批次」Tab 接入既有 `GET /change-orders/{id}/targets`（此前仅历史页在用），逐台展示正推状态、回滚状态、失败原因、回滚失败原因与备份标记，并给出汇总行；执行中（灰度中 / 已暂停 / 回滚中）5s 自动刷新，终态不轮询。「哪台到哪一步、哪台失败为什么」一眼可见。汇总行口径分两层以免误读：总台数取接口 `total`（全单），失败 / 回滚失败计数只覆盖当前页、故文案显式标「本页 M 台失败」（列表分页 20 台一页）。
+  - **审批进度视图**：详情页新增审批进度卡，展示本单关联的统一审批申请（状态 / 审批人 / 申请原因 / 驳回理由 / 更新时间）与逐条深链。**读法是按单号反查**——变更单表不落 `approval_request_id`（真机详情响应不带申请号，此前详情页那个依赖 `approvalRequestId` 的「查看统一审批」链接在真机上永不渲染），故按 `keyword=<单号>` 查审批列表再按 `resourceType`/`resourceId` 精确过滤，避免同号异类资源被误挂。
+    - **截断与空命中的口径分开**：每单最多列最近 5 条，超出提示「本单共 N 条申请」（本地精确过滤后的条数，准确）；接口无按资源过滤的参数、只按单号关键词拉一页，故当响应 `total` 大于本页条数时另提示「审批中心按该单号命中 N 条记录，可能还有未展示的申请」——**不把关键词命中数冒充成本单申请数**。本页没有本单申请但服务端还有下一页时，卡片给「可能分页在后，去审批中心查看」而**不静默隐藏**（用户否则无法区分「本单没有申请」与「申请在下一页」）。
+- **变更单进度事件 SSE 实时推送（FR-256）**：`GET /admin/v2/change-orders/{id}/events` 早已支持 `Accept: text/event-stream` 内容协商，但前端只把同一端点当**一次性数组**用（5s 轮询），实时通道从未被消费。现改为：优先建立 SSE 连接（`fetch` + `ReadableStream` 手工读帧并解析 `event` / `data` 帧与 `: keepalive` 保活注释），事件到达即并入时间线；**连接失败或流结束自动回退 5s 轮询**，界面标注当前处于「实时推送中」还是「轮询刷新中（5 秒）」。流内事件与轮询快照按 `seq` 去重合并，断线重连不重复也不丢进度。未使用 `EventSource`：它无法携带 `Authorization` 头，而控制面鉴权只认该头。观察窗 Tab 同接该事件流，事件到达即重取观察数据（断流仍由 5s 轮询兜底）。
+
+- **目标级（子集）回滚（FR-270）**：回滚粒度此前只有**整单**——事故现场常见「某个小区那几台配错了」，却只能把没问题的几十台一起打回，二次事故风险远大于原始故障。现在管理台目标列表可勾选（先按批筛选再勾）发起「回滚选中目标」，MCP `beacon.delivery.order.rollback` 扩 `serverIds` 入参同能力，HTTP 新增 `POST /admin/v2/change-orders/{id}/rollback/targets`。
+  - **范围与语义（拍板口径）**：只回滚选中目标的**文件**；**配置版本不回退**且确认弹窗与回滚记录都**明示「配置未回退」**（不是折叠说明）；**单主状态不变**（已完成的单仍是 `completed`），结果落目标级 `rollback_status` / `rollback_error` 与独立动作记录。**全选等价整单回滚**——选中集合覆盖本单全部可回滚目标时执行期回落整单路径（含配置版本回退），审批证据行也会据实改写为整单风险口径，避免审批人按子集的风险预期决策。
+  - **越界即整单拒绝**：选中目标必须都曾推送过（`pushed_at` 非空），越界返回 `400 invalid_rollback_target` 且**不部分执行**；申请阶段即预检，避免等到审批通过才发现选错了台。
+  - **推进与互斥**：子集回滚不改单主状态，故这些单不会被「按单状态筛」的活动单列表选中——编排器新增一路目标级扫描（按目标是否处于回滚推进态定位单），逐台复用整单回滚同一套下发 / 回执 / 心跳回归判定；扫描**排除 `rolling_back` 单**，与整单回滚互斥，同一目标不会被两条路径同时下发。
+  - **MCP 面扩参而非新增工具**：同一 `delivery.rollback` operation、同一 202 票据契约、同一原因与幂等键语义，新增工具会让同一危险动作在目录里出现两个等级与两套拒绝文案；省略 `serverIds` 时行为与改动前**逐字一致**。
+  - **测试**：Go 侧夹具规模（2 台单选中 1 台）覆盖「只选中台收到命令、其余不动、单主状态不变、配置版本行数不增」、全选回落整单（配置版本行数确增，证明断言可判别）、越界拒绝零部分落库、子集失败后再发起一次子集回滚各自留痕、交错动作下逐台结果归属正确、在途目标拒绝二次置态、无失败目标的重试被拒；MCP 侧断言 `serverIds` 冻进审批载荷、省略时载荷不含该键；web 侧勾选 → 弹窗明示配置未回退 → 提交 `serverIds` 与幂等键 → 票据反馈，以及**经真实演示模式（不打桩）**走完申请与批准后只有选中台变化。PRD 里「真机 20 台选 3 台」的场景**待真机验**。
+
+- **交付 agent 能力版本守卫（FR-264，落实 [ADR-0069](docs/adr/0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md) 后果段要求）**：ADR 早已要求「控制面须在启动 / 组单时校验目标 agent 能力版本，不对不支持流式交付的旧 agent 下发命令」，但 spec 与代码均无此守卫——旧 agent 会收到它根本执行不了的 `delivery_upload` / `push` / `activate` / `rollback`，表现为命令挂到超时，运维只看到「卡住」、看不到原因。现补上守卫。
+  - **判定真源**：`agent_identity.agent_version`（agent 注册自报）与运维新增热改项 `delivery.min-agent-version`（默认 `0.29.0`，即 FR-165 数据面落地版本；**留空即关闭守卫**）逐段数值比较；**未上报版本一律按不支持处理**（fail-closed）。版本串带预发布后缀（`1.4.0-rc.1`）按前导数字段比较，不因后缀误判。
+  - **三处挂点**：启动期校验全目标集 + 模板源（不合格即**整单拒绝启动**、一条命令都不建）；推送 / 生效下发前逐台校验（不合格目标就地置 `failed` 并写原因）；回滚下发前校验（落 `rollback_status=failed` + `rollback_error`，不动主状态）。拒绝原因含**实际版本、最低要求与不合格目标清单**，随目标视图透出。
+  - **与 ADR-0088 不冲突**：`gracefulShutdownSupported` 是 agent **进程内**对「关服原语是否实现」的自探测（只决定 restart 能否回执 success）；本守卫是**控制面**对「版本是否够新到认识流式交付命令」的前置判定（只决定是否下发）。判定主体与时机均不同，同一台旧 agent 先被本守卫拒、即便侥幸下发也被 agent 侧能力探测拒——双 fail-closed。
+  - **默认关闭守卫**（评审 P0）：`delivery.min-agent-version` 出厂默认改为**空串**。守卫是 fail-closed 的（未上报版本一律拒），而 agent 上报串来自 TabooLib `pluginVersion`（Gradle 侧 0.1.0 不生效），形态未经真机核对——拍猜测值作默认等于**上线即全量拒服**（全部目标被拒、首日无任何已批准单能启动）。改为显式配置才启用。
+  - **事务安全（实测踩到）**：能力查询复用调用方事务连接。审批适配器在事务内启动变更单，守卫若另开连接，单连接池下会与外层事务**互等死锁**。
+  - **测试**：版本比较纯函数穷举（空版本 / 低于 / 等于 / 段数不足 / 预发布后缀 / 下限为空）、启动拒绝且零命令落库、新版 agent 行为不变（命令照常下发、目标不被误伤）、批内单台不合格被拒且原因可读而合格目标不受牵连、下限置空即放行。
+
+- **交付幂等语义收口（FR-263）**：控制面重启后命令重发、agent 重复 push/activate、result 重复回执、blob PUT 重传四类重复此前各自为政——有的靠 CAS 侥幸幂等，有的会重复推进状态、重复产生副作用。波次 A 已在 agent 侧定了「同一条命令只发一条回执」（[ADR-0088](docs/adr/0088-restart-activation-single-receipt-and-shutdown-capability.md)），本条补的是**控制面侧的确定行为**，两端合起来才是完整契约。
+  - **命令重发**：新增 `FindActiveByTypeAndOrder`（幂等键 = `namespace × serverId × type × payload.orderId`），推送 / 生效 / 回滚三条下发路径先查后建，命中在途同键命令即**复用不新建**。只看**在途态**是刻意的——已终态的历史命令不得挡住重试 / 回滚的下一轮下发。幂等键取 payload 内 `orderId` 而非加列：payload 是 TEXT JSON，用 SQL JSON 函数会破坏 DB 可移植。
+  - **重复回执**：锁定三条行为——不改命令状态、不改 `result_detail`（**失败原因不得覆盖已落定的成功事实**）、**不二次唤醒推进器**（唤醒是「回执落定」而非「收到回执」的副产物）。
+  - **blob PUT 重传**：锁定秒传不重写磁盘（mtime 不变）与 8 路并发同内容只落一份、全部成功、字节一致。
+  - **测试**：端到端锁定「目标回退 pending + 命令在途（模拟重启续跑）后重扫，推送命令条数保持 2 不变」——**改前实为 4**，即重复下发会产生二次副作用。
+
+- **交付版本可见与回滚动作记录（FR-271）**：事故里两个最基本的问句此前都答不上来——「这台现在跑的是哪一单交付的版本」全站无处可查；「这次事故回滚过几次、谁发起的、为什么、打到哪几台、每台成没成」只能去审计流里拼。
+  - **当前交付版本**：口径 = 该服最近一条 `activated` **且未被回滚**的目标记录所属变更单（含单号 / 单标题 / 生效时间）。直接建在既有 `change_target` / `change_order` 上，**不新增冗余状态列、不引入第二真源**：某台被回滚后该行转 `rolled_back`，自然被排除出候选、展示回退到上一单（无更早记录则显示「无交付记录」）。挂载于变更单目标列表逐行、服务器健康详情抽屉，并新增批量端点 `GET /admin/v2/change-orders/delivered-versions`（`serverIds` 上限 100，无记录的服不回行，避免把「查不到」伪装成一条空版本）。
+  - **回滚动作记录**：新增 `change_rollback_record` + `change_rollback_record_target` 两表，每次回滚动作（整单 / 子集 / 重试）一行，含操作人 / 时间 / 原因 / 台数 / 是否回退了配置版本 / 逐台结果快照。与 `change_target.rollback_status` 分工明确：那张表答「某台**现在**是什么回滚态」（会被后续动作覆写），本表答「发生过**哪些**动作、当时打到哪几台」。逐台结果在动作创建时按当时真实状态初始化、在该台进终态时更新，故「第一次失败、第二次重试成功」两次动作各自留下自己的结果。
+  - **两路可追溯且互指**：动作记录与领域审计在**同一事务**内写入，审计 detail 带 `kind` / `serverIds` / `configRolledBack` / `recordId`，`/audits?orderId=` 与 `GET .../rollback-records` 都能定位到另一次，不会出现「有记录没审计」或反之。
+  - **测试**：交付版本回退语义（两台交付 → 回滚一台 → 该台无记录、另一台不受影响）、动作记录字段与逐台结果随终态更新、审计 detail 三键断言、web 侧记录列表渲染（含「配置未回退」与「配置版本已回退」两态区分）。
 
 - **控制面自身健康进抓取端点（[ADR-0091](docs/adr/0091-control-plane-self-health-metrics.md)，扩展 [ADR-0090](docs/adr/0090-metrics-endpoint-dedicated-listener.md) 的端点）**：控制面的进程内部运行态（连接池、长轮询挂起、命令队列深度、指标写入丢弃）此前只有一个出口——管理台的 `/admin/v1/system/observability` 页面，而**该端点在管理面鉴权链之内，Prometheus 抓不到**。于是这些故障前兆在监控上完全不可见，只能靠人登录页面肉眼查看：连接池等待增长（2026-10-10「所有需 DB 端点挂起」事故的直接前兆）、命令队列积压（429 背压出现前唯一的信号）、指标写入丢弃（非零即代表数据**已经丢了**）。现新增 `beacon_self_*` 一组指标把它们暴露到抓取端点，与描述"被管实例"的 `beacon_instances_*` 前缀区分。
   - **抓取路径不触达 DB（本决策的核心约束）**：命令队列深度源自一次 `SELECT status, count(*) GROUP BY status`。抓取端点默认无鉴权且不设限流，若在抓取时执行该查询，等于让任何能访问该端口的人按任意频率驱动数据库查询——与 ADR-0090「收敛暴露面」的初衷方向相反。故按来源拆两条路：**内存类字段**（连接池统计、长轮询挂起数、丢弃计数）抓取时现读，进程内 O(1) 读取、无需缓存；**DB 类字段**（命令队列深度）由后台每 15s 刷新写入指标缓存，抓取只读缓存。管理台页面行为不变，仍实时查库。
@@ -71,13 +133,6 @@
   - **鉴权风暴**：`POST /admin/v1/auth/login` 单请求 CPU **92ms → 单核约 11 次登录/秒**，并发 1→64 时 RPS 仅 10.9→244.5（纯排队，p99 101→586ms）；对比 `/admin/v2` HMAC 令牌路径贵 **850x**、v2 agent 上报路径贵 **78x**。错误凭据风暴（默认 `AUTH_STORM_CONCURRENCY=32` × `AUTH_STORM_DURATION=20s`）下错误路径普遍**更便宜**（提前失败），login 例外（0.70，bcrypt 照样跑满）；正常请求 p95 仅 +8.2ms，风暴后即恢复。**全仓无失败计数 / 锁定 / IP 封禁**，狂打错误凭据不会触发封禁或 429 升级。
   - **慢客户端暴露一个真实缺陷（已修）**：blob 下载端点的 `StallWriter` 曾**完全失效**——75s 保持期内 0/8 条慢连接被中断（期望 30s 内全部中断），goroutine 转储证实 8 个卡在写路径。根因与修复见「修复」节。
 
-### 安全
-
-- **Prometheus 抓取端点独立监听、默认只绑回环，并新增可选 Bearer 鉴权（[ADR-0090](docs/adr/0090-metrics-endpoint-dedicated-listener.md)，部分取代 [ADR-0020](docs/adr/0020-prometheus-metrics-observability.md) 的「同端口」与「不挂鉴权」）**：`/metrics` 此前挂在业务主端口上，而主端口默认是 `:8848`——Go 网络约定里 `:8848` 表示**绑定所有网卡**（非 `127.0.0.1`），`docker-compose.yml` 的端口映射同样未写宿主 IP。于是「内网信任面、不挂鉴权」这一文档前提与部署默认值之间存在落差：**只要主端口可达，无需任何凭据即可读到 `beacon_instances_registered{namespace,role}` 与 `beacon_instances_status{status}`**，也就是组织拓扑与容量画像（不含凭据，但正是侦察时先要的东西）；且它与承载管理台、agent 数据面、SSE 长连接的主端口共用监听地址，想收敛抓取就只能连带影响业务面。现改为**独立监听**，让暴露面可单独收敛。
-  - **默认安全**：新增顶层配置段 `metrics-endpoint`，`listen-addr` 默认 `127.0.0.1:8849`（仅本机回环），**外部与公网默认抓不到**——放开与否成为运维的显式选择，而不再由默认值替他决定。改为内网 IP（如 `10.0.0.5:8849`）或 `:8849` 即可让外部抓取，亦可用 env `BEACON_METRICS_ENDPOINT_LISTEN_ADDR` 覆盖；置空字符串表示显式关闭该端点。写入 `host:port` 之外的形态、或让 `listen-addr` 与 `http-addr` 相同（相同即等于把抓取端点又挂回业务面，且后监听者必然 bind 失败），均在配置校验期直接拒绝并给出可读原因。
-  - **可选鉴权**：新增 `bearer-token`，校验标准 `Authorization: Bearer <token>`（方案名大小写不敏感、恒定时间比较），缺失或不匹配一律 `401` 且不回 `WWW-Authenticate`（不透露期望的凭据方案）。该值属敏感项，**仅从 env `BEACON_METRICS_ENDPOINT_BEARER_TOKEN` 注入、不写入 `config.yml` 也不入 DB 设置 store**（沿用 `git-export.remote-token` 的既有范式）；**默认空 = 不鉴权**，因为默认监听已是回环，强制鉴权只会破坏同机抓取的开箱即用。监听在**非回环地址且未设凭据**时记一条 WARN（不阻断启动——内网可信域部署是正当场景，但要让运维明确知道任何可达该地址者都能匿名读取）。本批**不加限流**：限流属独立关注点，抓取端点独立后该职责可由网络层或反代承担。
-  - **端点路径与指标清单零变化**：仍是 `GET /metrics`，仍是原来的独立 registry 与同一份指标（含 [ADR-0089](docs/adr/0089-http-layer-red-metrics.md) 的 HTTP 层 RED 指标），Prometheus 侧只需改地址、无需改指标名与查询。抓取端点绑定失败按**启动失败**处理（进 `errCh` 终止进程）：不静默降级，「以为在抓、实际没在抓」会一直持续到有人发现看板没数据，比直接失败更难排查。
-
 ### 变更
 
 - **破坏性变更：主端口不再提供 `/metrics`，既有抓取配置必须改地址**：主端口（默认 `:8848`）上的 `/metrics` 已移除（`server.Handlers.Metrics` 字段随之删除），Prometheus 的 `static_configs.targets` 须从 `beacon.internal:8848` 改为抓取端点——同机抓取用 `127.0.0.1:8849`，跨机需先把 `metrics-endpoint.listen-addr` 放开到内网地址再指过去；容器形态还须把 8849 映射出来（容器内回环与宿主回环不是同一个网络命名空间，只改 `listen-addr` 不映射依旧抓不到）。降级前未做此改动，`up{job="beacon"}` 会立即归零——控制面本身没挂，是抓取地址变了。
@@ -90,89 +145,6 @@
   - **候选段字符集校验**：候选后缀只允许点分隔的非空字母数字段，禁止 `+`（构建元数据）、空段与数字段前导零，与核心三段的严格度保持一致。
   - **GA 会如实报告最终候选后缀**（如 `1.5.0-rc.2`）：GA 复用最终 RC 的同字节资产、不重建（[ADR-0074](docs/adr/0074-simple-rc-ga-release-flow.md) 第 3 条），抹掉后缀需重建或改写二进制，反而破坏「晋级不引入新变量」，且改写后 `SHA256SUMS.txt` 校验必然失败。该后缀如实标明字节来源，不是版本号错误。
   - **RC 构建期断言** `--version` 输出等于注入的运行时版本，不符即失败，使可辨识性成为发布门禁而非事后人工确认。agent JAR 内 `plugin.yml`、Maven 坐标与产品文件名的版本口径不变。
-
-### 修复
-
-- **心跳热路径每请求少付 4 次 DB 取连接（`6 → 2`）**：`ensureServerActiveForNamespace` 原先按 `code` 查出 namespace 行之后，又经 `ensureServerActive` → `ensureNamespaceRuntimeActiveByID` 把它**按主键重读一遍**，且这两段各带一次 `HasTable`。`Migrator().HasTable` 并不是读内存，而是真发一条 `SELECT count(*) FROM sqlite_master ...`；而基础表只在启动期 `AutoMigrate` 后就不再变动（仓库无运行期 DropTable）。压测实测：DB 连接池约 69% 的语句到达时池已占满必须排队，该路径贡献了近一半的连接压力。
-  - **两处改动**：① 拆出 `ensureServerRowActive`（只判 server 行存在且 active，环境资格由调用方保证），按 code 已读出 namespace 的调用方直接复用那一行、不再按主键重读；② 新增 `baseTableExists` 缓存基础表存在性。
-  - **缓存键必须是（数据库句柄, 表名）而非表名**：只按表名会让「某库还没有该表」的答案污染其它库的判定，运行资格闸一旦被误判为「表不存在」就会**静默放行**归档 namespace——这比慢查询危险得多。开发中正是先按表名写、被既有测试抓红后才补上句柄维度。
-  - **事务与日表不进缓存**：`*sql.Tx` 句柄每笔事务唯一，按它缓存会无界增长；日表（conn_detail / message / metric_sample_v2 等）的 `HasTable` 语义正是「缺表即跳过」，缓存会把「目前还没有」永远钉死。作用域写进 helper 注释，改调用点前必读。
-  - **实测收益**（并发 32、混合负载）：心跳 `p50 10.79 → 4.03ms`、`p95 19.60 → 9.45ms`、`p99 25.39 → 13.07ms`；同期**未改动的端点只漂移 +7~22%（宿主机负载本身在变）**，可作内部对照组——说明降幅不是环境差异。DB 连接池每请求等待次数由 2.25 降至 1.22。
-  - **测试**：按 SQL 语句计数守护「每请求 ≤ 2 条」，并已双向验证有牙齿（拆掉行复用记 3 条、去掉缓存读取记 4 条，均报红）；另有跨库缓存隔离、归档 namespace 仍被拒、事务内不缓存三条用例。
-
-- **慢客户端保护在全站静默失效：`statusWriter` 缺 `Unwrap()` 令 `SetWriteDeadline` 从未生效**（本次压测发现并已修）：`internal/server/middleware.go` 的 `statusWriter` 只实现了 `WriteHeader` 与 `Flush`（后者是为修 SSE 500 历史事故而加），但**没有 `Unwrap() http.ResponseWriter`**。`http.NewResponseController(w).SetWriteDeadline(...)` 需要沿包装链逐层下钻到真正的 `*http.response` 才能设置连接级写截止时间，遇到本包装器即中断并返回 `feature not supported`；而 `internal/httpx/stall.go` 的 `Write` 里写的是 `_ = s.rc.SetWriteDeadline(...)`——**错误被有意忽略**（原注释：「SetWriteDeadline 失败时忽略，不会比未包装时更差」），于是「防慢客户端写阻塞」这道防线从未真正建立。**最小复现**：同一 writer 经 `statusWriter` 后 `SetWriteDeadline` 返回 `feature not supported`，补 `Unwrap()` 后返回 `<nil>`（底层 `SetWriteDeadline` 调用次数 1 → 2）。影响三处下载端点：`delivery_stream_handler.go`、`file_sync_handler.go`、`embedweb.go`。**为何此前未暴露**：全局故意不设 `WriteTimeout`（SSE / 长轮询需无限写），故没有第二道防线；且慢客户端占住的 goroutine 在正常测试里不会被观测到——只有专门的慢客户端探测才让它显形（blob 下载另有 `delivery.download-concurrency` 默认 64 兜住并发，file-sync 下载端点连这个都没有）。
-  - **修复**：`statusWriter` 补 `Unwrap()`；`stall.go` 不再静默丢弃错误，改为按错误类型分流记 WARN——「底层不支持」（`errors.Is(err, http.ErrNotSupported)`，不能用 `==` 比较：`net/http` 的 `errNotSupported()` 包了一层 `%w`）全进程只记一次（去重防刷屏），其余错误（`SetWriteDeadline` 实为 `net.Conn.SetWriteDeadline` 透传，连接已关闭时返回传输错误）逐次记录且**不占用**那次去重机会，否则客户端断开这类常见事件会先把唯一的告警机会用掉、真正的「中间件链漏实现 Unwrap」此后永不被告出。`StallWriter` 自身同样补 `Unwrap()`。`Flush` 与 `Unwrap` 不可互替——前者是「显式透传某个具体能力」，后者是「让标准库自己能找到底层 writer」，且能力集合随 Go 版本增长（`SetReadDeadline` / `Hijack` / `EnableFullDuplex`），逐个透传必然漏。
-  - **双向验证**：修复后 8/8 条慢客户端下载耗时 **30011~30015ms**（正是 30s 窗口），用例通过；还原成修复前形态后服务端日志记录 **0/8** 条（handler 从未返回、无访问日志），用例报红。单测锁定该装配点（还原即报红）。
-  - **顺带修掉慢客户端用例的两处探针缺陷**（否则判据不可信）：① 该用例此前**只把结论写进报告、从不断言**，缺陷存在时照样绿——这正是它潜伏至今的原因，已补硬断言；② 客户端侧中断判定在大 blob 下**结构性失效**：服务端阻塞前已写入约 16MiB 内核收发缓冲，客户端要先排空才能读到 EOF/RST，而探测刻意只读 1 字节（否则会给服务端持续「腾地方」使 Write 永不阻塞满窗口），故改以**服务端访问日志耗时**为 ground truth（曾试过 CLOSE_WAIT 判定，实测本链路走 RST、不产生 CLOSE_WAIT，故放弃）。
-
-- **双端 agent 在较新版 BungeeCord 上启动即失败（TabooLib 升级至 6.3.0-wcpe.3 修复）**：BungeeCord 于 2026-10-04 升级到 maven-resolver 2（`maven-resolver-provider` 3.9.16 → 3.10.0），移除了 `MavenRepositorySystemUtils.newServiceLocator()`。TabooLib 的 `AetherResolver` 在构造依赖解析器时直接调用该方法，故插件加载即抛 `NoSuchMethodError`，**运行期依赖（okhttp / okio / kotlinx）无法下载、agent 起不来**；而 TabooLib 的探测逻辑只检查 `org.eclipse.aether.graph.Dependency` 这类**类**是否存在、不检查**方法**，故不会优雅降级到 Legacy 路径。已用对照实验复现：同一份故障版 BungeeCord（构建 `c2f2`）下，修复前必抛 `NoSuchMethodError`、修复后成功解析 8 个构件；旧版（构建 `502c`，resolver 1.x）亦照常工作。
-  - **修法（双路径兼容，不改服务端）**：优先用新版的 `RepositorySystemSupplier`（旧版不存在该类）构建解析系统，缺失时回退到原有 `ServiceLocator`；新版分支走反射（编译期依赖仍是 resolver 1.x），旧版分支拆为独立方法——JVM 仅在调用点实际执行时才解析符号，故 resolver 2 环境下未执行的旧方法体不会触发链接错误。`newSession()` 两代通用，session 构造无需改动。
-  - **影响面**：不止 CI——任何使用该日期之后 BungeeCord 的服务端都会遇到；升级后需重新构建并部署双端 agent jar。
-
-## 1.5.0（2026-10-12）
-
-### 新增
-
-- **MCP 交付只读工具集（FR-245）**：交付域此前是全部领域中 MCP 覆盖度最低的一个——HTTP 面 21 项操作只暴露 6 项，且**全部是「创建审批申请」的写操作、只读侧为 0**：机器主体拿不到变更单号、看不见状态、发现问题也没有可读的止血依据，等于「盲写」。现补齐只读侧六个工具 `beacon.delivery.order.list` / `.order.get` / `.targets.list` / `.impact.get` / `.observe.get` / `.events.list`（`low` 风险、`observer` 与 `automation` 共用），语义与 `/admin/v2/change-orders` 系列读端点逐一对齐。规格见 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md)。
-  - **返回一律有界投影**：列表强制分页、`order.get` 只回摘要字段与 `targetCounts` / `rollbackCounts` 计数（**不回**逐文件清单与批次明细）、`targets.list` / `impact.get` 逐目标分页、观察窗与事件沿用 HTTP 端点的有界条数；输出键名沿用既有 HTTP 视图字段名，不自造键名。
-  - **跨 namespace 拒绝**：除 `order.list`（`namespaceId` 为字符串形式的数值 ID 且必填——列表按 namespace 定位）外，另外五个工具由 `orderId` 定位。观测范围参数（`envId` / `namespaceId`，均为字符串形式的数值 ID，传整数会被协议层按 schema 拒绝）是**调用者声明的收窄条件**、缺省即其可观测的全量范围（与告警处置同口径），服务端按单所属 namespace 判归属；范围外与不存在**共用同一条拒绝文案**（不泄露范围外单是否存在）。
-  - **门禁**：六个工具全部登记 `mcpToolCatalog`（`low`、`OperationKind` 留空、**不带 `AutomationOnly`**——该标记的真实语义是「仅 automation 可发现」，挂上即令 observer 不可见），走 `mcpAddTool` 唯一注册入口，既有覆盖测试自动守护新增项。
-  - **测试**：两 profile 可见性（清单与真实注册两侧）、投影有界断言（逐字段键集合精确比对）与全链路可读 + 跨 namespace `orderId` 拒绝的负向用例。
-
-- **交付审批票据与 MCP 审批视图扩字段（FR-249）**：机器主体（AI）提交交付申请后只能拿到 `{approvalRequestId,status,operation}`——既不知道申请的是哪张变更单、也看不到影响面；申请被驳回或执行失败时同样只有状态，无从判断"为什么没成"。现按 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md) §3.6 补齐两侧契约。
-  - **票据补归属与影响面**：六类交付申请入口（提交 / 草稿删除 / 继续 / 批次确认 / 整单回滚 / 结束回滚）的 `202` 票据新增 `orderId` 与 `impactSummary` 对象 `{targetCount,batchCount,payloadFiles,payloadConfigs}`。摘要在**创建申请那一刻即时统计**（只读当前落库的 targets / batches / items 行，`file_diff` 与 `config_change` 分计），draft 阶段目标与批次尚未固化故两项为 0，计数为 0 时保留 0 而不省略键；**不写入冻结 payload**、不随后续推进漂移。
-  - **两侧同名同源**：HTTP 面直出结构体（既有键 `operationKey`）、MCP 侧投影（既有键 `operation`），两侧键名现状都不变，只同步新增后两键——MCP 投影不同步补键的话，AI 永远看不到归属单号。
-  - **审批视图拆两档**：`beacon.approvals.own.list` 保持轻量并补截断后的 `failureSummary` 与 `finishedAt`（列表一次可能回多行，故按 200 字符截断）；`own.get` 在轻量档之上补完整失败摘要、`rejectReason`、`decisionReason`、`approvedBy` 与 `decidedAt` / `approvedAt` / `executedAt` / `finishedAt` 四个时间点（有值即返、不组装数组）；`withdraw` / `approve` / `reject` 沿用轻量档。两档都**不投影**审批申请的 `impactSummary` / `safeSummary` 文本列——避免与票据的对象键同名两型。
-  - **隔离不变**：机器主体仍只可见自己创建的申请（服务端强制注入 `RequesterType` / `RequesterID`），新增负向用例锁定他人申请在列表不可见、详情一律拒绝且与"不存在"同形。
-  - **测试**：六类申请点逐类断言 `orderId` 与四项计数，并断言计数**未进**冻结 payload；MCP 协议路径实测 `beacon.delivery.order.submit` 的结构化输出带两键；列表 / 详情字段集合逐键锁定（含两档字段数）与主体隔离负向用例。
-
-- **MCP 交付组单与止损工具（FR-246 / FR-247）**：只读侧补齐（FR-245）后，交付域机器主体仍**建不了单、也止不了血**——HTTP 面 21 项操作里最常用的组单与止损只对人类管理台开放，AI 发现问题后没有任何处置手段。现补上五个**直接执行**（不创建审批票据）的工具，语义与 `/admin/v2/change-orders` 系列端点逐一对齐：组单三项 `beacon.delivery.order.create` / `.order.update` / `.order.diff-scan`（`low`）、止损两项 `beacon.delivery.order.pause` / `.order.cancel`（`high`）。规格见 [delivery-mcp-tools](docs/specs/delivery-mcp-tools.md) §3.3 / §3.4。
-  - **组单一次成型**：`create` 可携带 `configChanges`，配置项与单在同一事务内落库（任一配置项非法则整单不落）；未提供即纯文件单。`update` 支持 `configChanges` 整组替换（传空数组即清空）。显式传入空 `batchSizes` 不会被当成「未提供」静默忽略，而是原样交给领域层拒绝（`batchSizes 不能为空`）——否则客户端以为改成了零批次、实际沿用默认值，成功与失败都看不出来。`diff-scan` 只回**计数聚合** `{add,update,delete,total,snapshotAt}`——逐文件明细在大单（上千差异项）下会撑爆返回体，明细仍走 HTTP 面。
-  - **止损直执**：`pause` 把 `rolling` 打成 `paused(manual)` 且不打断在途目标；`cancel` 把 `rolling` / `paused` 打成 `cancelled`，`reason` **必填**（与 HTTP 面一致）并入审计与单据。两项均为可逆操作（可 resume / 可回滚），故取 `high` 而非 `low`。
-  - **观测范围与只读工具同源**：建单必须落在调用者可观测的 namespace 内；其余四项按单所属 namespace 判归属，**跨 namespace 的 `orderId` 与不存在的单共用同一条拒绝文案**（不把范围校验变成存在性探针）。
-  - **门禁**：五项全部登记 `mcpToolCatalog`（组单 `low` / 止损 `high`、均带 `AutomationOnly`、`OperationKind` 留空），走 `mcpAddTool` 唯一注册入口；`observer` 一个都不可见。
-  - **测试**：目录等级与可见性、真实注册路径、一次成型（含非法配置项整单回滚）、差异扫描计数聚合、暂停/终止真效果与审计、拒绝文案逐条断言、跨 namespace 与不存在同文案。
-
-- **交付系工具的拒绝理由透出（FR-248）**：交付系工具（六项既有申请类 + FR-246 / FR-247 的五项直执工具）被拒时此前**一律回硬编码文案并丢弃领域错误**，AI 只能得知「被拒了」而不知为何——而状态不允许、缺模板源、无目标、缺原因这几类的处置方向完全不同（等状态 / 补源 / 改 selector / 补参数）。现改为回**可区分的中文原因**，与告警域先例对齐。
-  - **一处常量表**：领域错误码 → 稳定短语集中在 `mcpDeliveryRejectedReasons`（覆盖规格 §3.5 全部 16 个错误码，含大写的 `FORBIDDEN` 与 `not_creator`，另含交付域自身产出的 `missing_reason`）；code 取自既有真源（多数直接用 `apperr` 定义，改名即编译失败），短语不随领域内部措辞漂移。`illegal_state` 额外拼上**当前状态与目标动作**（如 `当前状态不允许该操作：当前状态 rolling 不允许 编辑`），便于直接定位卡点。
-  - **不回空文案**：未列入表的错误沿用领域错误自带的中文说明（已按 [ADR-0057](docs/adr/0057-surface-desensitized-errors.md) 脱敏），非领域错误（存储层等）回统一兜底文案，不透传内部细节。
-  - **测试**：逐错误码断言表内条目与映射结果（并断言表条目数精确匹配，防止静默增删）、兜底三条路径（领域说明 / 空说明 / 非领域错误）、以及经真实拒绝路径的逐工具文案断言。
-
-- **交付 MCP 工具的入参与审计口径收口**：`beacon.delivery.order.resume` 的 `mode` 明确枚举并在输入 schema 里带上字段描述（`retry_failed` / `skip_failed`，越界在调用领域层之前即拒）；`beacon.delivery.rollback.finish` **移除 `reason` 入参**——HTTP 面与 service 都不接受调用方原因（申请原因固定为「结束交付回滚」且已进冻结 payload），此前声明该字段却静默丢弃，会让 AI 误以为原因已生效；`beacon.delivery.order.delete` 改用**独立入参类型**（与 `order.submit` 解耦，避免任一方字段变更改到另一方的对外契约）；机器主体经 MCP 调用交付工具时，审计来源地址统一记 **`mcp`**（表达来源类别而非 IP，人类管理台仍记真实地址）。
-
-- **变更单详情单服级状态墙与审批进度视图（FR-254 / FR-255）**：交付执行期一直是「黑箱」——详情页只有批次级的进度条与「回滚中」计数，**逐台状态与失败原因全站没有一处渲染**（`ChangeTarget.error` / `rollbackError` 在代码里从未被消费）；提审之后同样断线，详情页看不到申请批到什么程度、被谁驳回、为什么没过。
-  - **单服级状态墙**：详情页「灰度批次」Tab 接入既有 `GET /change-orders/{id}/targets`（此前仅历史页在用），逐台展示正推状态、回滚状态、失败原因、回滚失败原因与备份标记，并给出汇总行；执行中（灰度中 / 已暂停 / 回滚中）5s 自动刷新，终态不轮询。「哪台到哪一步、哪台失败为什么」一眼可见。汇总行口径分两层以免误读：总台数取接口 `total`（全单），失败 / 回滚失败计数只覆盖当前页、故文案显式标「本页 M 台失败」（列表分页 20 台一页）。
-  - **审批进度视图**：详情页新增审批进度卡，展示本单关联的统一审批申请（状态 / 审批人 / 申请原因 / 驳回理由 / 更新时间）与逐条深链。**读法是按单号反查**——变更单表不落 `approval_request_id`（真机详情响应不带申请号，此前详情页那个依赖 `approvalRequestId` 的「查看统一审批」链接在真机上永不渲染），故按 `keyword=<单号>` 查审批列表再按 `resourceType`/`resourceId` 精确过滤，避免同号异类资源被误挂。
-    - **截断与空命中的口径分开**：每单最多列最近 5 条，超出提示「本单共 N 条申请」（本地精确过滤后的条数，准确）；接口无按资源过滤的参数、只按单号关键词拉一页，故当响应 `total` 大于本页条数时另提示「审批中心按该单号命中 N 条记录，可能还有未展示的申请」——**不把关键词命中数冒充成本单申请数**。本页没有本单申请但服务端还有下一页时，卡片给「可能分页在后，去审批中心查看」而**不静默隐藏**（用户否则无法区分「本单没有申请」与「申请在下一页」）。
-- **变更单进度事件 SSE 实时推送（FR-256）**：`GET /admin/v2/change-orders/{id}/events` 早已支持 `Accept: text/event-stream` 内容协商，但前端只把同一端点当**一次性数组**用（5s 轮询），实时通道从未被消费。现改为：优先建立 SSE 连接（`fetch` + `ReadableStream` 手工读帧并解析 `event` / `data` 帧与 `: keepalive` 保活注释），事件到达即并入时间线；**连接失败或流结束自动回退 5s 轮询**，界面标注当前处于「实时推送中」还是「轮询刷新中（5 秒）」。流内事件与轮询快照按 `seq` 去重合并，断线重连不重复也不丢进度。未使用 `EventSource`：它无法携带 `Authorization` 头，而控制面鉴权只认该头。观察窗 Tab 同接该事件流，事件到达即重取观察数据（断流仍由 5s 轮询兜底）。
-
-- **目标级（子集）回滚（FR-270）**：回滚粒度此前只有**整单**——事故现场常见「某个小区那几台配错了」，却只能把没问题的几十台一起打回，二次事故风险远大于原始故障。现在管理台目标列表可勾选（先按批筛选再勾）发起「回滚选中目标」，MCP `beacon.delivery.order.rollback` 扩 `serverIds` 入参同能力，HTTP 新增 `POST /admin/v2/change-orders/{id}/rollback/targets`。
-  - **范围与语义（拍板口径）**：只回滚选中目标的**文件**；**配置版本不回退**且确认弹窗与回滚记录都**明示「配置未回退」**（不是折叠说明）；**单主状态不变**（已完成的单仍是 `completed`），结果落目标级 `rollback_status` / `rollback_error` 与独立动作记录。**全选等价整单回滚**——选中集合覆盖本单全部可回滚目标时执行期回落整单路径（含配置版本回退），审批证据行也会据实改写为整单风险口径，避免审批人按子集的风险预期决策。
-  - **越界即整单拒绝**：选中目标必须都曾推送过（`pushed_at` 非空），越界返回 `400 invalid_rollback_target` 且**不部分执行**；申请阶段即预检，避免等到审批通过才发现选错了台。
-  - **推进与互斥**：子集回滚不改单主状态，故这些单不会被「按单状态筛」的活动单列表选中——编排器新增一路目标级扫描（按目标是否处于回滚推进态定位单），逐台复用整单回滚同一套下发 / 回执 / 心跳回归判定；扫描**排除 `rolling_back` 单**，与整单回滚互斥，同一目标不会被两条路径同时下发。
-  - **MCP 面扩参而非新增工具**：同一 `delivery.rollback` operation、同一 202 票据契约、同一原因与幂等键语义，新增工具会让同一危险动作在目录里出现两个等级与两套拒绝文案；省略 `serverIds` 时行为与改动前**逐字一致**。
-  - **测试**：Go 侧夹具规模（2 台单选中 1 台）覆盖「只选中台收到命令、其余不动、单主状态不变、配置版本行数不增」、全选回落整单（配置版本行数确增，证明断言可判别）、越界拒绝零部分落库、子集失败后再发起一次子集回滚各自留痕、交错动作下逐台结果归属正确、在途目标拒绝二次置态、无失败目标的重试被拒；MCP 侧断言 `serverIds` 冻进审批载荷、省略时载荷不含该键；web 侧勾选 → 弹窗明示配置未回退 → 提交 `serverIds` 与幂等键 → 票据反馈，以及**经真实演示模式（不打桩）**走完申请与批准后只有选中台变化。PRD 里「真机 20 台选 3 台」的场景**待真机验**。
-
-- **交付 agent 能力版本守卫（FR-264，落实 [ADR-0069](docs/adr/0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md) 后果段要求）**：ADR 早已要求「控制面须在启动 / 组单时校验目标 agent 能力版本，不对不支持流式交付的旧 agent 下发命令」，但 spec 与代码均无此守卫——旧 agent 会收到它根本执行不了的 `delivery_upload` / `push` / `activate` / `rollback`，表现为命令挂到超时，运维只看到「卡住」、看不到原因。现补上守卫。
-  - **判定真源**：`agent_identity.agent_version`（agent 注册自报）与运维新增热改项 `delivery.min-agent-version`（默认 `0.29.0`，即 FR-165 数据面落地版本；**留空即关闭守卫**）逐段数值比较；**未上报版本一律按不支持处理**（fail-closed）。版本串带预发布后缀（`1.4.0-rc.1`）按前导数字段比较，不因后缀误判。
-  - **三处挂点**：启动期校验全目标集 + 模板源（不合格即**整单拒绝启动**、一条命令都不建）；推送 / 生效下发前逐台校验（不合格目标就地置 `failed` 并写原因）；回滚下发前校验（落 `rollback_status=failed` + `rollback_error`，不动主状态）。拒绝原因含**实际版本、最低要求与不合格目标清单**，随目标视图透出。
-  - **与 ADR-0088 不冲突**：`gracefulShutdownSupported` 是 agent **进程内**对「关服原语是否实现」的自探测（只决定 restart 能否回执 success）；本守卫是**控制面**对「版本是否够新到认识流式交付命令」的前置判定（只决定是否下发）。判定主体与时机均不同，同一台旧 agent 先被本守卫拒、即便侥幸下发也被 agent 侧能力探测拒——双 fail-closed。
-  - **默认关闭守卫**（评审 P0）：`delivery.min-agent-version` 出厂默认改为**空串**。守卫是 fail-closed 的（未上报版本一律拒），而 agent 上报串来自 TabooLib `pluginVersion`（Gradle 侧 0.1.0 不生效），形态未经真机核对——拍猜测值作默认等于**上线即全量拒服**（全部目标被拒、首日无任何已批准单能启动）。改为显式配置才启用。
-  - **事务安全（实测踩到）**：能力查询复用调用方事务连接。审批适配器在事务内启动变更单，守卫若另开连接，单连接池下会与外层事务**互等死锁**。
-  - **测试**：版本比较纯函数穷举（空版本 / 低于 / 等于 / 段数不足 / 预发布后缀 / 下限为空）、启动拒绝且零命令落库、新版 agent 行为不变（命令照常下发、目标不被误伤）、批内单台不合格被拒且原因可读而合格目标不受牵连、下限置空即放行。
-
-- **交付幂等语义收口（FR-263）**：控制面重启后命令重发、agent 重复 push/activate、result 重复回执、blob PUT 重传四类重复此前各自为政——有的靠 CAS 侥幸幂等，有的会重复推进状态、重复产生副作用。波次 A 已在 agent 侧定了「同一条命令只发一条回执」（[ADR-0088](docs/adr/0088-restart-activation-single-receipt-and-shutdown-capability.md)），本条补的是**控制面侧的确定行为**，两端合起来才是完整契约。
-  - **命令重发**：新增 `FindActiveByTypeAndOrder`（幂等键 = `namespace × serverId × type × payload.orderId`），推送 / 生效 / 回滚三条下发路径先查后建，命中在途同键命令即**复用不新建**。只看**在途态**是刻意的——已终态的历史命令不得挡住重试 / 回滚的下一轮下发。幂等键取 payload 内 `orderId` 而非加列：payload 是 TEXT JSON，用 SQL JSON 函数会破坏 DB 可移植。
-  - **重复回执**：锁定三条行为——不改命令状态、不改 `result_detail`（**失败原因不得覆盖已落定的成功事实**）、**不二次唤醒推进器**（唤醒是「回执落定」而非「收到回执」的副产物）。
-  - **blob PUT 重传**：锁定秒传不重写磁盘（mtime 不变）与 8 路并发同内容只落一份、全部成功、字节一致。
-  - **测试**：端到端锁定「目标回退 pending + 命令在途（模拟重启续跑）后重扫，推送命令条数保持 2 不变」——**改前实为 4**，即重复下发会产生二次副作用。
-
-- **交付版本可见与回滚动作记录（FR-271）**：事故里两个最基本的问句此前都答不上来——「这台现在跑的是哪一单交付的版本」全站无处可查；「这次事故回滚过几次、谁发起的、为什么、打到哪几台、每台成没成」只能去审计流里拼。
-  - **当前交付版本**：口径 = 该服最近一条 `activated` **且未被回滚**的目标记录所属变更单（含单号 / 单标题 / 生效时间）。直接建在既有 `change_target` / `change_order` 上，**不新增冗余状态列、不引入第二真源**：某台被回滚后该行转 `rolled_back`，自然被排除出候选、展示回退到上一单（无更早记录则显示「无交付记录」）。挂载于变更单目标列表逐行、服务器健康详情抽屉，并新增批量端点 `GET /admin/v2/change-orders/delivered-versions`（`serverIds` 上限 100，无记录的服不回行，避免把「查不到」伪装成一条空版本）。
-  - **回滚动作记录**：新增 `change_rollback_record` + `change_rollback_record_target` 两表，每次回滚动作（整单 / 子集 / 重试）一行，含操作人 / 时间 / 原因 / 台数 / 是否回退了配置版本 / 逐台结果快照。与 `change_target.rollback_status` 分工明确：那张表答「某台**现在**是什么回滚态」（会被后续动作覆写），本表答「发生过**哪些**动作、当时打到哪几台」。逐台结果在动作创建时按当时真实状态初始化、在该台进终态时更新，故「第一次失败、第二次重试成功」两次动作各自留下自己的结果。
-  - **两路可追溯且互指**：动作记录与领域审计在**同一事务**内写入，审计 detail 带 `kind` / `serverIds` / `configRolledBack` / `recordId`，`/audits?orderId=` 与 `GET .../rollback-records` 都能定位到另一次，不会出现「有记录没审计」或反之。
-  - **测试**：交付版本回退语义（两台交付 → 回滚一台 → 该台无记录、另一台不受影响）、动作记录字段与逐台结果随终态更新、审计 detail 三键断言、web 侧记录列表渲染（含「配置未回退」与「配置版本已回退」两态区分）。
-
 
 ### 修复
 
@@ -339,6 +311,29 @@
   - **界面「全选」判定基数**：前端此前用 `total` 判「全选等价整单回滚」，与后端 `eligible`（曾推送）口径不一致——存在未推送台时勾满可勾选台会误判成子集（界面说「配置不回退」而后端按整单执行，**明示与语义相反**），按批筛选时又反之。现由目标分页响应给出 `rollbackEligibleCount`（与执行期判定同源），前端按它判定；补两条用例（含未推送台勾满→整单口径、按批筛选勾满→子集口径）。
   - 顺带：无失败目标时的「回滚重试」显式拒绝（`400 no_failed_rollback_target`，不落 `targetCount=0` 空动作记录）；交付版本查询端点给 `change_target` 加 `(server_id, status, activated_at)` 组合索引（目标列表 5s 轮询会反复命中）；只读查询的空参 / 超限文案与回滚写路径分叉（不再让查询报错说「回滚」）。
 - **回滚预检 UI（FR-255r）**：spec §4.7.2 L367 承诺「预检阶段即在前端明示哪些目标不可文件回滚」，实现里到点才在结果中看到 `failed`。现在整单回滚与目标级回滚的确认弹窗内先展示预检区块：全部可回滚时明确说「全部目标均可文件回滚」，有备份缺失时给出**台数与 serverId 逐台清单**（运维能直接对上是哪台）；**预检读不到数据时显示「预检不可用」而不是显示 0 台**——「未知」与「全部可回滚」在界面上必须可区分，否则一次查询失败会被显示成安全。逐台选择回滚时，选中集合里有未读到的台即整体标不可用，同样不把没读到当可回滚。
+
+- **心跳热路径每请求少付 4 次 DB 取连接（`6 → 2`）**：`ensureServerActiveForNamespace` 原先按 `code` 查出 namespace 行之后，又经 `ensureServerActive` → `ensureNamespaceRuntimeActiveByID` 把它**按主键重读一遍**，且这两段各带一次 `HasTable`。`Migrator().HasTable` 并不是读内存，而是真发一条 `SELECT count(*) FROM sqlite_master ...`；而基础表只在启动期 `AutoMigrate` 后就不再变动（仓库无运行期 DropTable）。压测实测：DB 连接池约 69% 的语句到达时池已占满必须排队，该路径贡献了近一半的连接压力。
+  - **两处改动**：① 拆出 `ensureServerRowActive`（只判 server 行存在且 active，环境资格由调用方保证），按 code 已读出 namespace 的调用方直接复用那一行、不再按主键重读；② 新增 `baseTableExists` 缓存基础表存在性。
+  - **缓存键必须是（数据库句柄, 表名）而非表名**：只按表名会让「某库还没有该表」的答案污染其它库的判定，运行资格闸一旦被误判为「表不存在」就会**静默放行**归档 namespace——这比慢查询危险得多。开发中正是先按表名写、被既有测试抓红后才补上句柄维度。
+  - **事务与日表不进缓存**：`*sql.Tx` 句柄每笔事务唯一，按它缓存会无界增长；日表（conn_detail / message / metric_sample_v2 等）的 `HasTable` 语义正是「缺表即跳过」，缓存会把「目前还没有」永远钉死。作用域写进 helper 注释，改调用点前必读。
+  - **实测收益**（并发 32、混合负载）：心跳 `p50 10.79 → 4.03ms`、`p95 19.60 → 9.45ms`、`p99 25.39 → 13.07ms`；同期**未改动的端点只漂移 +7~22%（宿主机负载本身在变）**，可作内部对照组——说明降幅不是环境差异。DB 连接池每请求等待次数由 2.25 降至 1.22。
+  - **测试**：按 SQL 语句计数守护「每请求 ≤ 2 条」，并已双向验证有牙齿（拆掉行复用记 3 条、去掉缓存读取记 4 条，均报红）；另有跨库缓存隔离、归档 namespace 仍被拒、事务内不缓存三条用例。
+
+- **慢客户端保护在全站静默失效：`statusWriter` 缺 `Unwrap()` 令 `SetWriteDeadline` 从未生效**（本次压测发现并已修）：`internal/server/middleware.go` 的 `statusWriter` 只实现了 `WriteHeader` 与 `Flush`（后者是为修 SSE 500 历史事故而加），但**没有 `Unwrap() http.ResponseWriter`**。`http.NewResponseController(w).SetWriteDeadline(...)` 需要沿包装链逐层下钻到真正的 `*http.response` 才能设置连接级写截止时间，遇到本包装器即中断并返回 `feature not supported`；而 `internal/httpx/stall.go` 的 `Write` 里写的是 `_ = s.rc.SetWriteDeadline(...)`——**错误被有意忽略**（原注释：「SetWriteDeadline 失败时忽略，不会比未包装时更差」），于是「防慢客户端写阻塞」这道防线从未真正建立。**最小复现**：同一 writer 经 `statusWriter` 后 `SetWriteDeadline` 返回 `feature not supported`，补 `Unwrap()` 后返回 `<nil>`（底层 `SetWriteDeadline` 调用次数 1 → 2）。影响三处下载端点：`delivery_stream_handler.go`、`file_sync_handler.go`、`embedweb.go`。**为何此前未暴露**：全局故意不设 `WriteTimeout`（SSE / 长轮询需无限写），故没有第二道防线；且慢客户端占住的 goroutine 在正常测试里不会被观测到——只有专门的慢客户端探测才让它显形（blob 下载另有 `delivery.download-concurrency` 默认 64 兜住并发，file-sync 下载端点连这个都没有）。
+  - **修复**：`statusWriter` 补 `Unwrap()`；`stall.go` 不再静默丢弃错误，改为按错误类型分流记 WARN——「底层不支持」（`errors.Is(err, http.ErrNotSupported)`，不能用 `==` 比较：`net/http` 的 `errNotSupported()` 包了一层 `%w`）全进程只记一次（去重防刷屏），其余错误（`SetWriteDeadline` 实为 `net.Conn.SetWriteDeadline` 透传，连接已关闭时返回传输错误）逐次记录且**不占用**那次去重机会，否则客户端断开这类常见事件会先把唯一的告警机会用掉、真正的「中间件链漏实现 Unwrap」此后永不被告出。`StallWriter` 自身同样补 `Unwrap()`。`Flush` 与 `Unwrap` 不可互替——前者是「显式透传某个具体能力」，后者是「让标准库自己能找到底层 writer」，且能力集合随 Go 版本增长（`SetReadDeadline` / `Hijack` / `EnableFullDuplex`），逐个透传必然漏。
+  - **双向验证**：修复后 8/8 条慢客户端下载耗时 **30011~30015ms**（正是 30s 窗口），用例通过；还原成修复前形态后服务端日志记录 **0/8** 条（handler 从未返回、无访问日志），用例报红。单测锁定该装配点（还原即报红）。
+  - **顺带修掉慢客户端用例的两处探针缺陷**（否则判据不可信）：① 该用例此前**只把结论写进报告、从不断言**，缺陷存在时照样绿——这正是它潜伏至今的原因，已补硬断言；② 客户端侧中断判定在大 blob 下**结构性失效**：服务端阻塞前已写入约 16MiB 内核收发缓冲，客户端要先排空才能读到 EOF/RST，而探测刻意只读 1 字节（否则会给服务端持续「腾地方」使 Write 永不阻塞满窗口），故改以**服务端访问日志耗时**为 ground truth（曾试过 CLOSE_WAIT 判定，实测本链路走 RST、不产生 CLOSE_WAIT，故放弃）。
+
+- **双端 agent 在较新版 BungeeCord 上启动即失败（TabooLib 升级至 6.3.0-wcpe.3 修复）**：BungeeCord 于 2026-10-04 升级到 maven-resolver 2（`maven-resolver-provider` 3.9.16 → 3.10.0），移除了 `MavenRepositorySystemUtils.newServiceLocator()`。TabooLib 的 `AetherResolver` 在构造依赖解析器时直接调用该方法，故插件加载即抛 `NoSuchMethodError`，**运行期依赖（okhttp / okio / kotlinx）无法下载、agent 起不来**；而 TabooLib 的探测逻辑只检查 `org.eclipse.aether.graph.Dependency` 这类**类**是否存在、不检查**方法**，故不会优雅降级到 Legacy 路径。已用对照实验复现：同一份故障版 BungeeCord（构建 `c2f2`）下，修复前必抛 `NoSuchMethodError`、修复后成功解析 8 个构件；旧版（构建 `502c`，resolver 1.x）亦照常工作。
+  - **修法（双路径兼容，不改服务端）**：优先用新版的 `RepositorySystemSupplier`（旧版不存在该类）构建解析系统，缺失时回退到原有 `ServiceLocator`；新版分支走反射（编译期依赖仍是 resolver 1.x），旧版分支拆为独立方法——JVM 仅在调用点实际执行时才解析符号，故 resolver 2 环境下未执行的旧方法体不会触发链接错误。`newSession()` 两代通用，session 构造无需改动。
+  - **影响面**：不止 CI——任何使用该日期之后 BungeeCord 的服务端都会遇到；升级后需重新构建并部署双端 agent jar。
+
+### 安全
+
+- **Prometheus 抓取端点独立监听、默认只绑回环，并新增可选 Bearer 鉴权（[ADR-0090](docs/adr/0090-metrics-endpoint-dedicated-listener.md)，部分取代 [ADR-0020](docs/adr/0020-prometheus-metrics-observability.md) 的「同端口」与「不挂鉴权」）**：`/metrics` 此前挂在业务主端口上，而主端口默认是 `:8848`——Go 网络约定里 `:8848` 表示**绑定所有网卡**（非 `127.0.0.1`），`docker-compose.yml` 的端口映射同样未写宿主 IP。于是「内网信任面、不挂鉴权」这一文档前提与部署默认值之间存在落差：**只要主端口可达，无需任何凭据即可读到 `beacon_instances_registered{namespace,role}` 与 `beacon_instances_status{status}`**，也就是组织拓扑与容量画像（不含凭据，但正是侦察时先要的东西）；且它与承载管理台、agent 数据面、SSE 长连接的主端口共用监听地址，想收敛抓取就只能连带影响业务面。现改为**独立监听**，让暴露面可单独收敛。
+  - **默认安全**：新增顶层配置段 `metrics-endpoint`，`listen-addr` 默认 `127.0.0.1:8849`（仅本机回环），**外部与公网默认抓不到**——放开与否成为运维的显式选择，而不再由默认值替他决定。改为内网 IP（如 `10.0.0.5:8849`）或 `:8849` 即可让外部抓取，亦可用 env `BEACON_METRICS_ENDPOINT_LISTEN_ADDR` 覆盖；置空字符串表示显式关闭该端点。写入 `host:port` 之外的形态、或让 `listen-addr` 与 `http-addr` 相同（相同即等于把抓取端点又挂回业务面，且后监听者必然 bind 失败），均在配置校验期直接拒绝并给出可读原因。
+  - **可选鉴权**：新增 `bearer-token`，校验标准 `Authorization: Bearer <token>`（方案名大小写不敏感、恒定时间比较），缺失或不匹配一律 `401` 且不回 `WWW-Authenticate`（不透露期望的凭据方案）。该值属敏感项，**仅从 env `BEACON_METRICS_ENDPOINT_BEARER_TOKEN` 注入、不写入 `config.yml` 也不入 DB 设置 store**（沿用 `git-export.remote-token` 的既有范式）；**默认空 = 不鉴权**，因为默认监听已是回环，强制鉴权只会破坏同机抓取的开箱即用。监听在**非回环地址且未设凭据**时记一条 WARN（不阻断启动——内网可信域部署是正当场景，但要让运维明确知道任何可达该地址者都能匿名读取）。本批**不加限流**：限流属独立关注点，抓取端点独立后该职责可由网络层或反代承担。
+  - **端点路径与指标清单零变化**：仍是 `GET /metrics`，仍是原来的独立 registry 与同一份指标（含 [ADR-0089](docs/adr/0089-http-layer-red-metrics.md) 的 HTTP 层 RED 指标），Prometheus 侧只需改地址、无需改指标名与查询。抓取端点绑定失败按**启动失败**处理（进 `errCh` 终止进程）：不静默降级，「以为在抓、实际没在抓」会一直持续到有人发现看板没数据，比直接失败更难排查。
 
 ### 文档
 
