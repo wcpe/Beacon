@@ -1,6 +1,6 @@
 # ADR-0072：不可变 RC/GA 同字节晋级与 N-1 兼容准入
 
-**状态**：已接受，发布流程部分被 [ADR-0074](0074-simple-rc-ga-release-flow.md) 取代（2026-07-20）。
+**状态**：已接受，发布流程部分被 [ADR-0074](0074-simple-rc-ga-release-flow.md) 取代（2026-07-20）；决策 2 中「控制面运行时版本与版本端点不得包含 `-rc.N`」一条被 [ADR-0092](0092-runtime-version-carries-candidate-suffix.md) 取代（运行时版本号改为携带候选后缀；JAR/POM、产品文件名与 OCI payload 口径不变）。
 
 > **当前阅读提示**：本 ADR 中的不可变 RC、GA 与最终 RC 同 commit、产品资产原样晋级仍有效；N-1、迁移、四平台、供应链、Maven Central、OCI、审批和证据门仅保留为历史背景或测试参考，不再是当前 RC/GA 的硬条件。当前流程以 ADR-0074 及 FR-182～FR-185 为准。
 

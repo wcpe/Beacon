@@ -65,11 +65,14 @@ func newReleaseClient(httpClient *http.Client, apiBase, repo string) *releaseCli
 }
 
 // parseGATag 只接受规范的 GA tag：精确 vX.Y.Z，数字段除 0 外不得有前导零。
+//
+// 必须显式拒绝候选与开发后缀：运行时版本解析为支持候选比较已放宽接受 "X.Y.Z-rc.N"（ADR-0092），
+// 若此处不复用 GA 口径，vX.Y.Z-rc.N 会被当成合法 GA 候选混入自动更新，破坏「在线更新只消费 GA」。
 func parseGATag(tag string) (semver, error) {
 	if len(tag) < 2 || tag[0] != 'v' {
 		return semver{}, fmt.Errorf("GA tag 须以 v 开头")
 	}
-	return parseSemver(tag)
+	return parseGAVersion(tag)
 }
 
 func isGATag(tag string) bool {

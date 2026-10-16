@@ -75,7 +75,7 @@
 | [0069](0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md) | 交付数据面：控制面 sha256 内容寻址 blob 中转 + agent 流式传输端口（扩展 ADR-0005） | 已接受 |
 | [0070](0070-agent-graceful-shutdown-primitive.md) | agent 优雅关服平台原语（restart 生效靠宿主自启拉起，重申 ADR-0011 禁进程管理） | 已接受（决策部分）。**决策 2 的「先回执『开始生效』再关服」顺序描述被 [0088](0088-restart-activation-single-receipt-and-shutdown-capability.md) 取代**（其余决策仍有效） |
 | [0071](0071-config-gray-effectuation-model.md) | 变更单配置变更的灰度生效语义模型（模型 A：head=定稿非生效、pin 落后者到 from、配置域零改动） | 已接受 |
-| [0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) | 不可变 RC、GA 同 commit/同字节晋级与 N-1 背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
+| [0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) | 不可变 RC、GA 同 commit/同字节晋级与 N-1 背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代，决策 2 的运行时版本口径被 [0092](0092-runtime-version-carries-candidate-suffix.md) 取代；原文保留作历史记录 |
 | [0073](0073-standard-rc-ga-release-lifecycle.md) | 通用 RC/GA 生命周期与 GA-only 在线更新背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
 | [0074](0074-simple-rc-ga-release-flow.md) | 简化 RC/GA 发布：不可变 RC、同 commit 原样晋级、SHA-256 校验与 GA-only 更新 | 已被 [0082](0082-rc-ga-sdk-maven-publication.md) 取代（仅 GA 对 SDK Maven 正式坐标的受限重新发布例外）；其余 GitHub 产品资产规则仍适用 |
 | [0075](0075-lobby-cluster-and-bc-first-entry.md) | 独立 LobbyCluster 与 BC namespace 首次大厅落脚 | 已接受；取代 ADR-0031/0067 中 BC 基于 Zone 默认入口注入 priority/fallback 的消费范围，保留 Zone 默认入口模型与兼容字段 |
@@ -95,6 +95,7 @@
 | [0089](0089-http-layer-red-metrics.md) | 控制面 HTTP 层 RED 指标（路由模板分维的请求计数与时延直方图，扩展现有 /metrics） | 已接受；扩展 ADR-0020（独立 registry 沿用，不改其正文），不取代任何 ADR。**前言中当时沿用的「同端口 / 不挂鉴权」两条已被 [0090](0090-metrics-endpoint-dedicated-listener.md) 取代**（其余决策仍有效） |
 | [0090](0090-metrics-endpoint-dedicated-listener.md) | Prometheus 抓取端点独立监听（默认仅回环）并支持可选 Bearer 鉴权 | 已接受；**部分取代 [0020](0020-prometheus-metrics-observability.md)**（同端口暴露、不挂鉴权两条；独立 registry / pull 模型 / 指标清单等其余决策承继） |
 | [0091](0091-control-plane-self-health-metrics.md) | 控制面自身健康进抓取端点（DB 查询留在后台，抓取只读缓存） | 已接受；扩展 [0090](0090-metrics-endpoint-dedicated-listener.md) 的端点，不取代任何 ADR |
+| [0092](0092-runtime-version-carries-candidate-suffix.md) | 运行时版本号携带候选后缀（`VERSION` 文件仍为 `X.Y.Z`，两侧解析强度不对称） | 已接受；**部分取代 [0073](0073-standard-rc-ga-release-lifecycle.md) 第 4 条**（「运行时版本报告 `X.Y.Z`」收窄为「`VERSION` 文件与资产名报告 `X.Y.Z`」；JAR/POM、文件名与 OCI payload 口径不变） |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

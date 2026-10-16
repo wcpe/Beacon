@@ -60,6 +60,8 @@ type FrozenTarget struct {
 // Service 编排控制面在线更新（FR-97，见 ADR-0044）：查 Release → 下载 → SHA256 → 落位 pending → 请求重启。
 // 出站 client 由调用方经 internal/httpx 工厂注入（带代理 + 超时）。
 type Service struct {
+	// currentVersion 是当前运行版本（如 "1.5.0-rc.2"）。既用于判新比较，也用于对外展示——
+	// 候选版本号本身可读（ADR-0092），无需再维护一份展示串。
 	currentVersion string
 	apiBase        string // GitHub API 基址（默认官方，测试注入 mock）
 	repo           string // owner/name
@@ -79,6 +81,8 @@ type Service struct {
 
 // Config 是更新服务装配参数。
 type Config struct {
+	// CurrentVersion 是当前运行版本（如 "1.5.0-rc.2"）。既用于判新比较，也用于对外展示，
+	// 因为候选版本号本身就可读（ADR-0092）。parseRuntimeVersion 支持候选后缀比较。
 	CurrentVersion  string
 	APIBase         string // 空=官方 api.github.com
 	Repo            string // 空=wcpe/Beacon

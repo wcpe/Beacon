@@ -803,6 +803,7 @@ func run() error {
 	updateRestartCh := make(chan struct{})
 	rollbackCh := make(chan struct{})
 	updateService := update.NewService(update.Config{
+		// 当前运行版本（候选构建带 -rc.N 后缀，如 "1.5.0-rc.2"）：判新比较与对外展示同源（ADR-0092）。
 		CurrentVersion: version.Version,
 		PendingPath:    resolvePendingPath(),
 		RunPath:        selfPath,

@@ -412,9 +412,52 @@ func TestCheckForUpdateReportsNewer(t *testing.T) {
 	}
 }
 
-// TestCheckForUpdateCarriesCurrentVersionOnError check-failed（查 release 失败）时仍回显当前版本。
+// TestCheckForUpdateCarriesCandidateVersion 锁定 ADR-0092：候选构建的当前版本带 -rc.N 后缀，
+// 且该串同时用于回显与判新——更新检查必须正常解析它，而不是静默退化为「无更新」。
+func TestCheckForUpdateCarriesCandidateVersion(t *testing.T) {
+	const tag = "v1.6.0"
+	binName := currentAssetName(t, tag)
+	srv := newMockReleaseServer(t, tag, binName, "x", fmt.Sprintf("%s  %s\n", sha256hex("x"), binName))
+	svc := NewService(Config{
+		CurrentVersion: "1.5.0-rc.2",
+		APIBase:        srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	res, err := svc.CheckForUpdate(context.Background(), ChannelStable, "", "tester", "")
+	if err != nil {
+		t.Fatalf("检查应成功: %v", err)
+	}
+	if res.CurrentVersion != "1.5.0-rc.2" {
+		t.Fatalf("应回显候选版本号本身，实际 %q", res.CurrentVersion)
+	}
+	if !res.HasUpdate {
+		t.Fatalf("远端 1.6.0 高于当前 1.5.0-rc.2，必须判有更新（判 false 说明候选版本号无法被解析）")
+	}
+}
+
+// TestCheckForUpdateTreatsGAAsNewerThanSameCandidate 同号 GA 高于候选：1.5.0 > 1.5.0-rc.2（SemVer 第 11 条）。
+// 候选实例因此能正常被 GA 提升，不需要人工干预。
+func TestCheckForUpdateTreatsGAAsNewerThanSameCandidate(t *testing.T) {
+	const tag = "v1.5.0"
+	binName := currentAssetName(t, tag)
+	srv := newMockReleaseServer(t, tag, binName, "x", fmt.Sprintf("%s  %s\n", sha256hex("x"), binName))
+	svc := NewService(Config{
+		CurrentVersion: "1.5.0-rc.2",
+		APIBase:        srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	res, err := svc.CheckForUpdate(context.Background(), ChannelStable, "", "tester", "")
+	if err != nil {
+		t.Fatalf("检查应成功: %v", err)
+	}
+	if !res.HasUpdate {
+		t.Fatalf("GA 1.5.0 应高于候选 1.5.0-rc.2，必须判有更新")
+	}
+}
+
+// TestCheckForUpdateCarriesVersionOnError check-failed（查 release 失败）时仍回显当前版本。
 // 修复前失败路径返回空 CheckResult，致前端更新模态框「当前版本」空白（真机暴露）。
-func TestCheckForUpdateCarriesCurrentVersionOnError(t *testing.T) {
+func TestCheckForUpdateCarriesVersionOnError(t *testing.T) {
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

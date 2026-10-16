@@ -168,7 +168,9 @@ expect_pass "静态 check 不依赖真实 tag" sh "$checker" check \
     --rc-tag v1.2.3-rc.999 \
     --ga-tag v1.2.3 \
     --workflow "$root_dir/.github/workflows/release.yml"
-for tag in v1.2.3-rc.0 v1.2.3-rc.01 v1.2.3-rc v1.2.3-rc.1-extra v01.2.3-rc.1; do
+# v1.2.3-rc.1-rc.1 是「双重候选后缀」：它会让运行时版本拼成 1.2.3-rc.1-rc.1（ADR-0092），
+# 必须在此被拦住，否则残缺版本串会一路带进二进制与 Maven 坐标。
+for tag in v1.2.3-rc.0 v1.2.3-rc.01 v1.2.3-rc v1.2.3-rc.1-extra v1.2.3-rc.1-rc.1 v01.2.3-rc.1; do
     expect_fail "非法 RC tag：$tag" sh "$checker" check \
         --version-file "$work/VERSION" --version 1.2.3 --rc-tag "$tag" --ga-tag v1.2.3
 done

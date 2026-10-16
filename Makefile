@@ -12,8 +12,51 @@ VERSION := $(strip $(shell cat VERSION))
 endif
 # 控制面版本注入点（go 包路径）
 VERSION_PKG := github.com/wcpe/Beacon/apps/server/internal/version
-# 链接参数：注入版本 + 裁剪符号表/调试信息（更小的发布二进制）
-GO_LDFLAGS := -s -w -X $(VERSION_PKG).Version=$(VERSION)
+# 候选后缀（形如 rc.3）：候选构建经 `make build CANDIDATE=rc.3` 显式传入，本地构建留空。
+# 注入的运行时版本为 $(VERSION)-$(CANDIDATE)（如 1.5.0-rc.3），使 --version 等位置一眼可辨（ADR-0092）。
+# VERSION 本身保持 X.Y.Z，仍驱动产物文件名与发布校验。
+CANDIDATE ?=
+# 校验 CANDIDATE 必须是 rc.<正整数>：防止误传整串版本号（CANDIDATE=1.5.0-rc.3）
+# 或已带后缀的串（rc.3-rc.3）而拼出 "1.5.0-1.5.0-rc.3" / "1.5.0-rc.3-rc.3"。
+# 用 make 内建函数实现，不调用 grep/sed——Windows 本地 make 没有这些工具。
+ifneq ($(CANDIDATE),)
+# 必须恰为单个词，且以 rc. 开头。
+ifneq ($(words $(CANDIDATE)),1)
+$(error CANDIDATE 不能含空格（应形如 rc.3），实际 "$(CANDIDATE)")
+endif
+ifeq ($(filter rc.%,$(CANDIDATE)),)
+$(error CANDIDATE 必须以 rc. 开头（应形如 rc.3），实际 "$(CANDIDATE)")
+endif
+# 序数不得为空（"rc." 会拼出 1.5.0-rc. 这种残缺串）。
+CANDIDATE_SEQ := $(patsubst rc.%,%,$(CANDIDATE))
+ifeq ($(CANDIDATE_SEQ),)
+$(error CANDIDATE 序数不能为空（应形如 rc.3），实际 "$(CANDIDATE)")
+endif
+# 序数部分必须全为数字：逐位剥离 0-9，剥完必须为空（如 rc.3-rc.3 会残留 "-rc."）。
+# 刻意写成扁平的逐层赋值而非嵌套 $(subst)：嵌套十层极易括号失配，且失配时报错点离现场很远。
+CANDIDATE_SEQ := $(patsubst rc.%,%,$(CANDIDATE))
+CANDIDATE_STRIP_0 := $(subst 0,,$(CANDIDATE_SEQ))
+CANDIDATE_STRIP_1 := $(subst 1,,$(CANDIDATE_STRIP_0))
+CANDIDATE_STRIP_2 := $(subst 2,,$(CANDIDATE_STRIP_1))
+CANDIDATE_STRIP_3 := $(subst 3,,$(CANDIDATE_STRIP_2))
+CANDIDATE_STRIP_4 := $(subst 4,,$(CANDIDATE_STRIP_3))
+CANDIDATE_STRIP_5 := $(subst 5,,$(CANDIDATE_STRIP_4))
+CANDIDATE_STRIP_6 := $(subst 6,,$(CANDIDATE_STRIP_5))
+CANDIDATE_STRIP_7 := $(subst 7,,$(CANDIDATE_STRIP_6))
+CANDIDATE_STRIP_8 := $(subst 8,,$(CANDIDATE_STRIP_7))
+CANDIDATE_STRIP_9 := $(subst 9,,$(CANDIDATE_STRIP_8))
+ifneq ($(CANDIDATE_STRIP_9),)
+$(error CANDIDATE 序数只能为数字（应形如 rc.3），实际 "$(CANDIDATE)")
+endif
+# 序数不得以 0 开头（rc.0 与 rc.03 均非法），与 RC tag 规则 vX.Y.Z-rc.N 一致。
+ifneq ($(filter 0%,$(CANDIDATE_SEQ)),)
+$(error CANDIDATE 序数不得以 0 开头（应形如 rc.3），实际 "$(CANDIDATE)")
+endif
+endif
+# 运行时版本：正式版本 +（可选）候选后缀。make 的 $(if) 在 CANDIDATE 为空时不产生尾随分隔符。
+RUNTIME_VERSION := $(VERSION)$(if $(CANDIDATE),-$(CANDIDATE))
+# 链接参数：注入运行时版本 + 裁剪符号表与调试信息（更小的发布二进制）
+GO_LDFLAGS := -s -w -X $(VERSION_PKG).Version=$(RUNTIME_VERSION)
 # 控制面入口
 CMD := ./apps/server/cmd/beacon
 # 产物输出目录（不入库）

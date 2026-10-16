@@ -26,6 +26,7 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.calc.outputs.version }}
+      runtime_version: ${{ steps.calc.outputs.runtime_version }}
       tag: ${{ steps.calc.outputs.tag }}
       commit: ${{ steps.calc.outputs.commit }}
     steps:
@@ -47,8 +48,28 @@ jobs:
             --ga-tag "v$version"
           commit="$(git rev-parse "HEAD^{commit}")"
           test "$(git rev-parse "${CANDIDATE_TAG}^{commit}")" = "$commit"
+          # 候选后缀从 RC tag 反推（vX.Y.Z-rc.N → rc.N），拼成运行时版本 X.Y.Z-rc.N。
+          # VERSION 文件保持 X.Y.Z 不变（驱动 tag、资产名、GA 判定），只有注入二进制的运行时版本带后缀。
+          #
+          # 形态校验刻意做成自足判据（而非依赖上游 release_check.sh 兜底）：序数部分剥离数字后必须为空，
+          # 这样 rc.1-rc.1 / rc.1x 这类会让版本串变成 1.5.0-rc.1-rc.1 的形态在此即被拒。
+          case "$CANDIDATE_TAG" in
+            "v${version}-rc."*) ;;
+            *) echo "::error::候选 tag 前缀非法：${CANDIDATE_TAG}"; exit 1 ;;
+          esac
+          candidate_seq=${CANDIDATE_TAG#"v${version}-rc."}
+          test -n "$candidate_seq" || { echo "::error::候选序号为空：${CANDIDATE_TAG}"; exit 1; }
+          case "$candidate_seq" in
+            *[!0-9]*) echo "::error::候选序号只能为数字：${CANDIDATE_TAG}"; exit 1 ;;
+          esac
+          case "$candidate_seq" in
+            0*) echo "::error::候选序号不得以 0 开头：${CANDIDATE_TAG}"; exit 1 ;;
+          esac
+          candidate="rc.${candidate_seq}"
+          runtime_version="${version}-${candidate}"
           {
             echo "version=$version"
+            echo "runtime_version=$runtime_version"
             echo "tag=$CANDIDATE_TAG"
             echo "commit=$commit"
           } >> "$GITHUB_OUTPUT"
@@ -110,13 +131,20 @@ jobs:
       - name: 构建控制面
         shell: sh
         env:
-          VER: ${{ needs.meta.outputs.version }}
+          RUNTIME_VER: ${{ needs.meta.outputs.runtime_version }}
+          ASSET_VER: ${{ needs.meta.outputs.version }}
         run: |
           set -eu
-          ldflags="-s -w -X github.com/wcpe/Beacon/apps/server/internal/version.Version=${VER}"
-          out="beacon-${VER}-${{ matrix.target }}${{ matrix.ext }}"
+          # 先确认两个版本元数据都已解析出来：否则空值会被注入，且下面的断言在 ""="" 时仍会通过。
+          test -n "${RUNTIME_VER:?发布元数据缺 runtime_version}" || { echo "::error::运行时版本为空"; exit 1; }
+          test -n "${ASSET_VER:?发布元数据缺 version}" || { echo "::error::资产版本为空"; exit 1; }
+          # 注入的运行时版本带候选后缀（如 1.5.0-rc.2），使 --version / 日志 / 状态页 / 更新页一眼可辨；
+          # 资产文件名仍用无后缀的 ASSET_VER，以保持 GA 资产闭集校验与同字节晋级不变。
+          ldflags="-s -w -X github.com/wcpe/Beacon/apps/server/internal/version.Version=${RUNTIME_VER}"
+          out="beacon-${ASSET_VER}-${{ matrix.target }}${{ matrix.ext }}"
           go build -trimpath -ldflags "$ldflags" -o "$out" ./apps/server/cmd/beacon
-          test "$("./$out" --version)" = "$VER"
+          # 断言运行时版本串，而非仅正式版本号：这是「一眼分辨当前候选」的发布期守门。
+          test "$("./$out" --version)" = "$RUNTIME_VER"
       - uses: actions/upload-artifact@v7
         with:
           name: beacon-${{ matrix.target }}
