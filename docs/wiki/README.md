@@ -19,7 +19,7 @@
 | 健康、命令与审计 | [可观测与日常运维](observability-and-operations.md) | 健康状态、告警、BC 查询/目录命令、重同步、审计与调度判断。 |
 | 业务插件接入 | [业务插件 SDK](business-plugin-sdk.md) | Bukkit/Bungee 本地 SDK、配置读取、命令、HTTP 中转消息与 fail-static。 |
 | 权限、备份与升级 | [安全与维护](security-and-maintenance.md) | 身份审批、token、最小权限、SQLite/外置 MySQL 备份、升级和回滚。 |
-| 问题定位 | [故障排查](troubleshooting.md) | 注册、审批、配置、SSE、地址、全局大厅和消息链路。 |
+| 问题定位 | [故障排查](troubleshooting.md) | 注册、审批、配置、地址、全局大厅、消息链路、DB 等待超时与控制面挂起取证。 |
 
 ## 适用边界
 

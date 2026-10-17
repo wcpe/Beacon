@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'wiki/configuration-and-delivery',
+        'wiki/delivery-rollback',
         'wiki/global-lobby-operations',
         'wiki/approval-lifecycle-and-mcp',
         'wiki/observability-and-operations',
