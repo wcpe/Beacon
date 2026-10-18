@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -810,6 +811,69 @@ func TestExpireStale(t *testing.T) {
 	n, err := svc.ExpireStale(time.Now().Add(-1 * time.Hour))
 	if err != nil || n != 1 {
 		t.Fatalf("应过期 1 条，实际 %d / %v", n, err)
+	}
+}
+
+// TestRequestTailLogsConcurrentSingleActive 验证同一目标的并发取日志请求最多创建一条在途命令。
+func TestRequestTailLogsConcurrentSingleActive(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	logs := NewAgentLogService(db, repository.NewAgentCommandRepository(db), repository.NewAuditLogRepository(db))
+	const requests = 16
+	start := make(chan struct{})
+	results := make(chan error, requests)
+	var wait sync.WaitGroup
+	for range requests {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			_, err := logs.RequestTailLogs("prod", "lobby-1", "alice", "127.0.0.1")
+			results <- err
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	successes := 0
+	rejected := 0
+	for err := range results {
+		if err == nil {
+			successes++
+			continue
+		}
+		if errors.Is(err, apperr.ErrAgentLogActive) {
+			rejected++
+			continue
+		}
+		t.Fatalf("并发请求只允许成功或以 active 错误拒绝，实际 %v", err)
+	}
+	if successes != 1 || rejected != requests-1 {
+		t.Fatalf("同一目标应恰有一条活跃日志命令，成功=%d 拒绝=%d", successes, rejected)
+	}
+	var active int64
+	if err := db.Model(&model.AgentCommand{}).Where("namespace = ? AND server_id = ? AND type = ? AND status IN ?",
+		"prod", "lobby-1", model.CommandTypeTailLogs, []string{model.CommandStatusPending, model.CommandStatusFetched}).Count(&active).Error; err != nil || active != 1 {
+		t.Fatalf("数据库中应恰有一条活跃日志命令，数量=%d err=%v", active, err)
+	}
+}
+
+// TestReadLatestRejectsCorruptLogContent 损坏的日志 JSON 必须失败，不能作为空日志写成功审计。
+func TestReadLatestRejectsCorruptLogContent(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	logs := NewAgentLogService(db, repository.NewAgentCommandRepository(db), repository.NewAuditLogRepository(db))
+	cmd := &model.AgentCommand{
+		NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeTailLogs,
+		Status: model.CommandStatusDone, LogContent: "{损坏的日志 JSON", Operator: "alice",
+	}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建损坏日志命令失败: %v", err)
+	}
+	if _, err := logs.ReadLatest("prod", "lobby-1", "alice", "127.0.0.1"); err == nil {
+		t.Fatal("日志 JSON 解码失败必须返回错误")
+	}
+	var audits int64
+	if err := db.Model(&model.AuditLog{}).Where("action = ?", model.ActionInstanceTailLogs).Count(&audits).Error; err != nil || audits != 0 {
+		t.Fatalf("解码失败不得写成功读取审计，数量=%d err=%v", audits, err)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -38,12 +39,45 @@ type AgentLogResult struct {
 //
 // 严守 ADR-0040 边界：只承载 agent **自身**日志、行数由 agent 缓冲天然有界、瞬态不入持久真源 / 不进审计 detail。
 type AgentLogService struct {
-	db        *gorm.DB
-	repo      *repository.AgentCommandRepository
-	auditRepo *repository.AuditLogRepository
-	notifier  CommandNotifier
-	approval  *ApprovalService
-	grants    *SensitiveAccessGrantService
+	db           *gorm.DB
+	repo         *repository.AgentCommandRepository
+	auditRepo    *repository.AuditLogRepository
+	notifier     CommandNotifier
+	approval     *ApprovalService
+	grants       *SensitiveAccessGrantService
+	activeLockMu sync.Mutex
+	activeLocks  map[string]*agentLogTargetLock
+}
+
+type agentLogTargetLock struct {
+	mu         sync.Mutex
+	references int
+}
+
+func (s *AgentLogService) lockTarget(ns, serverID string) func() {
+	key := ns + "\x00" + serverID
+	s.activeLockMu.Lock()
+	if s.activeLocks == nil {
+		s.activeLocks = make(map[string]*agentLogTargetLock)
+	}
+	target := s.activeLocks[key]
+	if target == nil {
+		target = &agentLogTargetLock{}
+		s.activeLocks[key] = target
+	}
+	target.references++
+	s.activeLockMu.Unlock()
+
+	target.mu.Lock()
+	return func() {
+		target.mu.Unlock()
+		s.activeLockMu.Lock()
+		target.references--
+		if target.references == 0 {
+			delete(s.activeLocks, key)
+		}
+		s.activeLockMu.Unlock()
+	}
 }
 
 // NewAgentLogService 构造服务。
@@ -106,8 +140,11 @@ func (s *AgentLogService) applyRequestTailLogsInTx(tx *gorm.DB, ns, serverID, op
 	if ns == "" || serverID == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
+	// 按 namespace/server 串行化限速检查与命令创建，事务隔离本身不能消除并发竞态。
+	unlock := s.lockTarget(ns, serverID)
+	defer unlock()
 	// 单活跃限速（ADR-0040 决策4）：该实例已有进行中（pending/fetched）的取日志命令则拒，避免刷命令压垮 agent。
-	active, err := s.repo.CountActiveByType(ns, serverID, model.CommandTypeTailLogs)
+	active, err := s.repo.WithTx(tx).CountActiveByType(ns, serverID, model.CommandTypeTailLogs)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +244,10 @@ func (s *AgentLogService) GetLatest(ns, serverID string) (*AgentLogResult, error
 	res := &AgentLogResult{CommandID: cmd.ID, Status: cmd.Status, Lines: []AgentLogLine{}}
 	if cmd.Status == model.CommandStatusDone && cmd.LogContent != "" {
 		var lines []AgentLogLine
-		if e := json.Unmarshal([]byte(cmd.LogContent), &lines); e == nil {
+		if err := json.Unmarshal([]byte(cmd.LogContent), &lines); err != nil {
+			return nil, apperr.ErrInternal
+		}
+		if lines != nil {
 			res.Lines = lines
 		}
 	}
