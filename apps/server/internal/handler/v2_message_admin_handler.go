@@ -254,9 +254,15 @@ func (h *V2MessageAdminHandler) Payload(w http.ResponseWriter, r *http.Request) 
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	result, err := h.payloadS.View(service.ViewPayloadParams{
 		MessageID: chi.URLParam(r, "messageId"), Reason: body.Reason,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r), TraceID: render.TraceID(r.Context()),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -274,9 +280,15 @@ func (h *V2MessageAdminHandler) RequestPayloadApproval(w http.ResponseWriter, r 
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	result, err := h.payloadS.View(service.ViewPayloadParams{
 		MessageID: chi.URLParam(r, "messageId"), Reason: body.Reason,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r), TraceID: render.TraceID(r.Context()),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -295,9 +307,15 @@ func (h *V2MessageAdminHandler) ConsumePayloadGrant(w http.ResponseWriter, r *ht
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	result, err := h.payloadS.View(service.ViewPayloadParams{
 		MessageID: body.MessageID, Reason: body.Reason,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r), TraceID: render.TraceID(r.Context()),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)

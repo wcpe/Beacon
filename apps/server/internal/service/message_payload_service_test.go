@@ -30,6 +30,18 @@ func (f *fakeAuditWriter) Create(e *model.AuditLog) error {
 	return nil
 }
 
+type fakePayloadNamespaceReader struct{}
+
+func (fakePayloadNamespaceReader) FindByID(id uint) (*model.Namespace, error) {
+	return &model.Namespace{ID: id, Code: "prod"}, nil
+}
+
+func newPayloadServiceForTest(repo *repository.MessageRepository, audit messagePayloadAuditWriter) *MessagePayloadService {
+	svc := NewMessagePayloadService(repo, audit)
+	svc.SetNamespaceRepository(fakePayloadNamespaceReader{})
+	return svc
+}
+
 // uuidV7At 构造高 48 位内嵌毫秒的 UUIDv7 文本（service 测试用）。
 func uuidV7At(ms int64, seq string) string {
 	const d = "0123456789abcdef"
@@ -68,7 +80,7 @@ func seedPayloadMsg(t *testing.T, repo *repository.MessageRepository, id, payloa
 func TestPayloadViewReasonValidation(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_reason"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo, audit)
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "r1")
 	seedPayloadMsg(t, repo, id, "body", false)
 
@@ -91,7 +103,7 @@ func TestPayloadViewReasonValidation(t *testing.T) {
 func TestPayloadViewNotFound(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_404"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo, audit)
+	svc := newPayloadServiceForTest(repo, audit)
 	_, err := svc.View(ViewPayloadParams{MessageID: uuidV7At(time.Now().UTC().UnixMilli(), "nf"), Reason: "查", Operator: "op"})
 	if !errors.Is(err, apperr.ErrMessageNotFound) {
 		t.Fatalf("不存在消息应返回 not found，实际 %v", err)
@@ -105,7 +117,7 @@ func TestPayloadViewNotFound(t *testing.T) {
 func TestPayloadViewAuditFailFailsRequest(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_auditfail"))
 	audit := &fakeAuditWriter{failErr: errors.New("审计不可用")}
-	svc := NewMessagePayloadService(repo, audit)
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "af")
 	seedPayloadMsg(t, repo, id, "机密内容", false)
 
@@ -118,11 +130,30 @@ func TestPayloadViewAuditFailFailsRequest(t *testing.T) {
 	}
 }
 
-// TestPayloadViewSuccessAuditsFirst 验证返回 payload 前已有只含元数据的审计。
+// TestPayloadViewRejectsOutsideObservationScope 域外 messageId 不得读取正文或写成功审计。
+func TestPayloadViewRejectsOutsideObservationScope(t *testing.T) {
+	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_out_of_scope"))
+	audit := &fakeAuditWriter{}
+	svc := newPayloadServiceForTest(repo, audit)
+	id := uuidV7At(time.Now().UTC().UnixMilli(), "scope")
+	seedPayloadMsg(t, repo, id, "域外正文", false)
+
+	result, err := svc.View(ViewPayloadParams{
+		MessageID: id, Reason: "排查", Operator: "alice", Scoped: true, NamespaceIDs: []uint{8},
+	})
+	if !errors.Is(err, apperr.ErrMessageNotFound) || result.Payload != "" {
+		t.Fatalf("域外 messageId 应按未命中拒绝，result=%+v err=%v", result, err)
+	}
+	if len(audit.entries) != 0 {
+		t.Fatalf("域外 messageId 不得写成功审计，实际 %d 条", len(audit.entries))
+	}
+}
+
+// TestPayloadViewSuccessAuditsFirst 验证返回 payload 前已有只含元数据且归属正确 namespace 的审计。
 func TestPayloadViewSuccessAuditsFirst(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_ok"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo, audit)
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "ok")
 	secret := `{"pw":"top-secret-xyz"}`
 	seedPayloadMsg(t, repo, id, secret, true)
@@ -134,13 +165,16 @@ func TestPayloadViewSuccessAuditsFirst(t *testing.T) {
 	if strings.Contains(audit.entries[0].Detail, secret) || !strings.Contains(audit.entries[0].Detail, res.SHA256) {
 		t.Fatalf("审计只能含哈希等元数据，detail=%q", audit.entries[0].Detail)
 	}
+	if audit.entries[0].NamespaceCode != "prod" {
+		t.Fatalf("payload 读取审计应归属消息 namespace prod，实际 %q", audit.entries[0].NamespaceCode)
+	}
 }
 
 // TestPayloadViewRequiresApprovedGrant 验证消息正文直读不再依赖审批 grant，但仍先写审计。
 func TestPayloadViewRequiresApprovedGrant(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_grant_required"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo, audit)
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "grant")
 	seedPayloadMsg(t, repo, id, "允许直读", false)
 
@@ -206,7 +240,7 @@ func TestMessagePayloadApprovalGrantFlow(t *testing.T) {
 func TestPayloadViewStoredFalseStillAudits(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_none"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo, audit)
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "no")
 	seedPayloadMsg(t, repo, id, "", false) // 无 payload
 
