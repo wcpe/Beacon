@@ -35,23 +35,8 @@ type assetPreviewJS struct {
 	Sensitive bool    `json:"sensitive"`
 }
 
-// Preview 是旧正文直出入口，永久失败关闭。
+// Preview 直接读取一个文件资产并由 service 先记元数据审计。
 func (h *AssetHandler) Preview(w http.ResponseWriter, r *http.Request) {
-	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
-}
-
-// Diff 是旧双文件正文直出入口，永久失败关闭。
-func (h *AssetHandler) Diff(w http.ResponseWriter, r *http.Request) {
-	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
-}
-
-// RequestPreviewApproval 为单文件内容读取创建专用审批申请，冻结文件清单版本而不读取正文。
-func (h *AssetHandler) RequestPreviewApproval(w http.ResponseWriter, r *http.Request) {
-	principal, ok := auth.FromContext(r.Context())
-	if !ok {
-		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
-		return
-	}
 	var body struct {
 		ServerID string `json:"serverId"`
 		Path     string `json:"path"`
@@ -61,21 +46,11 @@ func (h *AssetHandler) RequestPreviewApproval(w http.ResponseWriter, r *http.Req
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	request, err := h.svc.RequestAccess(body.ServerID, body.Path, body.Reason, r.Header.Get("Idempotency-Key"), principal, clientIP(r))
-	if err != nil {
-		writeAssetError(w, r, err)
-		return
-	}
-	render.WriteJSON(w, http.StatusAccepted, map[string]any{"requestId": request.RequestID, "status": request.Status})
+	h.writePreview(w, r, body.ServerID, body.Path, body.Reason)
 }
 
-// RequestPairReadApproval 为跨服务器差异读取创建两份独立审批申请；申请中只冻结元数据与哈希。
-func (h *AssetHandler) RequestPairReadApproval(w http.ResponseWriter, r *http.Request) {
-	principal, ok := auth.FromContext(r.Context())
-	if !ok {
-		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
-		return
-	}
+// Diff 直接比较两侧文件资产，正文只随本次响应返回。
+func (h *AssetHandler) Diff(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Left struct {
 			ServerID string `json:"serverId"`
@@ -91,55 +66,142 @@ func (h *AssetHandler) RequestPairReadApproval(w http.ResponseWriter, r *http.Re
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	left, right, err := h.svc.RequestPairAccess(service.AssetRef{ServerID: body.Left.ServerID, Path: body.Left.Path}, service.AssetRef{ServerID: body.Right.ServerID, Path: body.Right.Path}, body.Reason, r.Header.Get("Idempotency-Key"), principal, clientIP(r))
-	if err != nil {
-		writeAssetError(w, r, err)
-		return
-	}
-	render.WriteJSON(w, http.StatusAccepted, map[string]any{"leftRequestId": left.RequestID, "rightRequestId": right.RequestID, "status": "pending"})
+	h.writeDiff(w, r, service.DiffParams{
+		Left:   service.AssetRef{ServerID: body.Left.ServerID, Path: body.Left.Path},
+		Right:  service.AssetRef{ServerID: body.Right.ServerID, Path: body.Right.Path},
+		Reason: body.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
 }
 
-// ConsumePreviewGrant 仅允许原申请主体一次性消费 Agent 已回传的文件内容。
+// RequestPreviewApproval 保留旧路径名，直接返回文件预览结果。
+func (h *AssetHandler) RequestPreviewApproval(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ServerID string `json:"serverId"`
+		Path     string `json:"path"`
+		Reason   string `json:"reason"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	h.writePreview(w, r, body.ServerID, body.Path, body.Reason)
+}
+
+// RequestPairReadApproval 保留旧路径名，直接返回两侧文件差异。
+func (h *AssetHandler) RequestPairReadApproval(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Left struct {
+			ServerID string `json:"serverId"`
+			Path     string `json:"path"`
+		} `json:"left"`
+		Right struct {
+			ServerID string `json:"serverId"`
+			Path     string `json:"path"`
+		} `json:"right"`
+		Reason string `json:"reason"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	h.writeDiff(w, r, service.DiffParams{
+		Left:   service.AssetRef{ServerID: body.Left.ServerID, Path: body.Left.Path},
+		Right:  service.AssetRef{ServerID: body.Right.ServerID, Path: body.Right.Path},
+		Reason: body.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+}
+
+// ConsumePreviewGrant 兼容旧路径，以命令定位器直接重新读取文件，不校验 grant。
 func (h *AssetHandler) ConsumePreviewGrant(w http.ResponseWriter, r *http.Request) {
-	principal, ok := auth.FromContext(r.Context())
-	if !ok {
-		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
-		return
-	}
 	var body struct {
-		CommandID uint `json:"commandId"`
+		CommandID uint   `json:"commandId"`
+		Reason    string `json:"reason"`
 	}
-	if json.NewDecoder(r.Body).Decode(&body) != nil {
+	if json.NewDecoder(r.Body).Decode(&body) != nil || body.CommandID == 0 {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	result, err := h.svc.ConsumeApproved(chi.URLParam(r, "grantId"), body.CommandID, principal)
+	if h == nil || h.svc == nil {
+		render.WriteError(w, r, apperr.ErrInternal)
+		return
+	}
+	result, err := h.svc.PreviewFromCommand(r.Context(), chi.URLParam(r, "serverId"), body.CommandID, body.Reason, auth.Operator(r.Context()), clientIP(r))
 	if err != nil {
 		writeAssetError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, assetPreviewJS{Content: result.Content, Truncated: result.Truncated, Binary: result.Binary, SHA256: result.SHA256, Size: result.Size})
+	writePreviewResult(w, result)
 }
 
-// ConsumePairReadGrant 原申请人凭任一侧 grant 触发双侧原子消费，只返回脱敏差异摘要。
+// ConsumePairReadGrant 兼容旧路径，以 pair grant 定位两侧目标并直接比较。
 func (h *AssetHandler) ConsumePairReadGrant(w http.ResponseWriter, r *http.Request) {
-	principal, ok := auth.FromContext(r.Context())
-	if !ok {
-		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
-		return
-	}
 	var body struct {
-		CommandID uint `json:"commandId"`
+		CommandID uint   `json:"commandId"`
+		Reason    string `json:"reason"`
 	}
-	if json.NewDecoder(r.Body).Decode(&body) != nil {
+	if json.NewDecoder(r.Body).Decode(&body) != nil || body.CommandID == 0 {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	result, err := h.svc.ConsumePairApproved(chi.URLParam(r, "grantId"), body.CommandID, principal)
+	if h == nil || h.svc == nil {
+		render.WriteError(w, r, apperr.ErrInternal)
+		return
+	}
+	result, err := h.svc.DiffFromPairGrant(r.Context(), chi.URLParam(r, "grantId"), body.CommandID, body.Reason, auth.Operator(r.Context()), clientIP(r))
 	if err != nil {
 		writeAssetError(w, r, err)
 		return
 	}
+	writePairDiffResult(w, result)
+}
+
+func (h *AssetHandler) writePreview(w http.ResponseWriter, r *http.Request, serverID, path, reason string) {
+	if h == nil || h.svc == nil {
+		render.WriteError(w, r, apperr.ErrInternal)
+		return
+	}
+	result, err := h.svc.Preview(r.Context(), service.PreviewParams{
+		ServerID: serverID, Path: path, Reason: reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		writeAssetError(w, r, err)
+		return
+	}
+	writePreviewResult(w, result)
+}
+
+func writePreviewResult(w http.ResponseWriter, result *service.AssetPreviewResult) {
+	render.WriteJSON(w, http.StatusOK, assetPreviewJS{
+		Content: result.Content, Truncated: result.Truncated, Binary: result.Binary,
+		SHA256: result.SHA256, Size: result.Size, Sensitive: result.Sensitive,
+	})
+}
+
+func (h *AssetHandler) writeDiff(w http.ResponseWriter, r *http.Request, params service.DiffParams) {
+	if h == nil || h.svc == nil {
+		render.WriteError(w, r, apperr.ErrInternal)
+		return
+	}
+	params.Operator = auth.Operator(r.Context())
+	params.ClientIP = clientIP(r)
+	result, err := h.svc.Diff(r.Context(), params)
+	if err != nil {
+		writeAssetError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"identical": result.Identical, "left": assetDiffSideJSON(result.Left), "right": assetDiffSideJSON(result.Right),
+	})
+}
+
+func assetDiffSideJSON(side *service.AssetDiffSide) any {
+	if side == nil {
+		return nil
+	}
+	return map[string]any{"serverId": side.ServerID, "path": side.Path, "content": side.Content, "sha256": side.SHA256}
+}
+
+func writePairDiffResult(w http.ResponseWriter, result *service.AssetPairDiffResult) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{
 		"identical": result.Identical, "changed": result.Changed, "unsupported": result.Unsupported,
 		"left":  map[string]any{"serverId": result.Left.ServerID, "path": result.Left.Path, "sha256": result.Left.SHA256, "size": result.Left.Size},

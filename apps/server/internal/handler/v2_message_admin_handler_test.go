@@ -61,17 +61,20 @@ func newMsgAdminRouter(t *testing.T, name string) (chi.Router, *repository.Messa
 	db := openMsgAdminDB(t, name)
 	repo := repository.NewMessageRepository(db)
 	auditRepo := repository.NewAuditLogRepository(db)
-	h := NewV2MessageAdminHandler(service.NewMessageQueryService(repo), service.NewMessagePayloadService(repo), newTestSettings(t, db))
+	h := NewV2MessageAdminHandler(service.NewMessageQueryService(repo), service.NewMessagePayloadService(repo, auditRepo), newTestSettings(t, db))
 	r := chi.NewRouter()
 	r.Get("/admin/v2/messages", h.List)
 	r.Get("/admin/v2/messages/stats", h.Stats)
 	r.Get("/admin/v2/messages/{messageId}", h.Detail)
 	// payload 路由前置注入操作者（模拟 adminAuthMiddleware），供审计记 operator。
-	r.With(func(next http.Handler) http.Handler {
+	withOperator := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			next.ServeHTTP(w, req.WithContext(auth.WithOperator(req.Context(), "tester")))
 		})
-	}).Post("/admin/v2/messages/{messageId}/payload", h.Payload)
+	}
+	r.With(withOperator).Post("/admin/v2/messages/{messageId}/payload", h.Payload)
+	r.With(withOperator).Post("/admin/v2/messages/{messageId}/payload/approval-requests", h.RequestPayloadApproval)
+	r.With(withOperator).Post("/admin/v2/sensitive-access-grants/{grantId}/consume", h.ConsumePayloadGrant)
 	return r, repo, auditRepo
 }
 
@@ -414,7 +417,7 @@ func TestMsgAdminStatsEdgeSkipsBroadcast(t *testing.T) {
 	}
 }
 
-// TestMsgAdminPayloadViewAudits 旧 payload 路由统一拒绝，不返回正文也不写旧查看审计。
+// TestMsgAdminPayloadViewAudits 验证 payload 直读先审计且审计 detail 不含正文。
 func TestMsgAdminPayloadViewAudits(t *testing.T) {
 	r, repo, auditRepo := newMsgAdminRouter(t, "msg_adm_payload")
 	base := time.Now().UTC().Add(-2 * time.Minute).UnixMilli()
@@ -423,22 +426,29 @@ func TestMsgAdminPayloadViewAudits(t *testing.T) {
 	seedMsg(t, repo, msgSeed{id: mid, src: "game-1", msgType: "economy:sync", targetKind: model.MsgTargetKindServer,
 		targetServer: "game-2", resolved: "game-2", status: model.MsgStatusDelivered, payload: secret})
 
-	// 无论 body 内容，旧路径都返回 409 operation_requires_approval。
-	code, body := postJSON(t, r, "/admin/v2/messages/"+mid+"/payload", map[string]any{})
-	if code != http.StatusConflict || body["code"] != "operation_requires_approval" {
-		t.Fatalf("旧 payload 路由应 409 operation_requires_approval，实际 %d %v", code, body)
+	for _, tc := range []struct {
+		path string
+		body map[string]any
+	}{
+		{"/admin/v2/messages/" + mid + "/payload", map[string]any{"reason": "排查跨服经济异常"}},
+		{"/admin/v2/messages/" + mid + "/payload/approval-requests", map[string]any{"reason": "排查跨服经济异常"}},
+		{"/admin/v2/sensitive-access-grants/legacy/consume", map[string]any{"messageId": mid, "reason": "排查跨服经济异常"}},
+	} {
+		code, body := postJSON(t, r, tc.path, tc.body)
+		if code != http.StatusOK || body["payload"] != secret || body["size"] != float64(len(secret)) {
+			t.Fatalf("payload 直读应返回正文与大小：path=%s code=%d body=%v", tc.path, code, body)
+		}
 	}
-	code, body = postJSON(t, r, "/admin/v2/messages/"+mid+"/payload", map[string]any{"reason": "排查跨服经济异常"})
-	if code != http.StatusConflict || body["code"] != "operation_requires_approval" || strings.Contains(fmt.Sprint(body), secret) {
-		t.Fatalf("旧 payload 路由不得返回正文：code=%d body=%v", code, body)
-	}
-
-	// 旧路由不应留下旧查看审计。
 	audits, _, err := auditRepo.List(repository.AuditFilter{Action: model.ActionMessagePayloadView, Page: 1, Size: 50})
 	if err != nil {
 		t.Fatalf("查审计失败: %v", err)
 	}
-	if len(audits) != 0 {
-		t.Fatalf("旧 payload 路由不应留下查看审计：%+v", audits)
+	if len(audits) != 3 {
+		t.Fatalf("三个 direct payload 入口各应写一条审计，实际 %d", len(audits))
+	}
+	for _, audit := range audits {
+		if strings.Contains(audit.Detail, secret) || audit.TargetRef != mid {
+			t.Fatalf("payload 元数据审计不得含正文且目标应为消息 ID：%+v", audit)
+		}
 	}
 }

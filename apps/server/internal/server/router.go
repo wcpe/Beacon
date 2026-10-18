@@ -476,13 +476,12 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 主动下线（FR-49）：落 DB 拒绝态 + 移出可用集；DELETE 取消下线。二者为写方法，readonly 密钥经 readonlyWriteGuard 403
 		r.Post("/instances/{serverId}/offline", h.Instance.Offline)
 		r.Delete("/instances/{serverId}/offline", h.Instance.Online)
-		// 取 agent 日志（FR-88，见 ADR-0040）：触发取自身脱敏日志（写，readonly 403）+ 查询最近一次结果（读）
+		// 取 agent 脱敏日志与受限文件浏览均按 content.read 直执；service 在正文返回前写元数据审计。
 		r.Post("/instances/{serverId}/logs", h.AgentLog.Request)
 		r.Get("/instances/{serverId}/logs", h.AgentLog.Get)
 		r.Post("/instances/{serverId}/logs/grants/{grantId}/consume", h.AgentLog.ConsumeApproved)
-		// 强制重同步（FR-91）：触发该实例重拉有效配置/文件树/覆盖集（写，readonly 403）
+		// 强制重同步仍需审批（FR-91）。
 		r.Post("/instances/{serverId}/resync", h.Command.Resync)
-		// 旧 GET 固定 409；只有 POST 申请经审批 worker 下发浏览命令。
 		r.Get("/instances/{serverId}/browse", h.Browse.Browse)
 		r.Post("/instances/{serverId}/browse", h.Browse.Request)
 		r.Post("/instances/{serverId}/browse/grants/{grantId}/consume", h.Browse.ConsumeApproved)

@@ -148,6 +148,15 @@ func authenticateAPIKey(w http.ResponseWriter, r *http.Request, next http.Handle
 // 放在鉴权中间件之后（角色已注入 context）；handler 不再散落角色判断。
 func readonlyWriteGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if descriptor, ok := adminRouteDescriptorForRequest(r.Method, r.URL.Path); ok && descriptor.Operation == "content.read" && descriptor.Classification == routeDirect {
+			principal, hasPrincipal := auth.FromContext(r.Context())
+			if !hasPrincipal || !principal.HasCapability(descriptor.Capability) {
+				render.WriteError(w, r, apperr.ErrForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 		if auth.Role(r.Context()) == model.RoleReadonly && isWriteMethod(r.Method) {
 			render.WriteError(w, r, apperr.ErrForbidden)
 			return

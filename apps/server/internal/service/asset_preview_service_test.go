@@ -213,7 +213,7 @@ func TestPreviewNotFound(t *testing.T) {
 	}
 }
 
-// TestPreviewSensitiveGuard 命中敏感清单无 reason → 403 且不建命令 / 不审计；填 reason → 放行 + 审计带 sensitiveOverride。
+// TestPreviewSensitiveGuard 命中敏感清单无 reason → 403 且不建命令 / 不审计；填 reason → 放行并仅审计元数据。
 func TestPreviewSensitiveGuard(t *testing.T) {
 	db := newAssetSvcTestDB(t)
 	svc := newAssetSvc(db, true)
@@ -228,7 +228,7 @@ func TestPreviewSensitiveGuard(t *testing.T) {
 		t.Fatal("敏感拒绝不应建命令 / 审计")
 	}
 
-	// 填 reason → 放行 + 审计带 sensitiveOverride + 原因。
+	// 填 reason → 放行 + 审计只标记敏感放行，不保存原因或正文。
 	stop := startAgentSim(t, db, svc, textReply)
 	defer stop()
 	res, err := svc.applyPreviewForTest(context.Background(), PreviewParams{
@@ -237,8 +237,8 @@ func TestPreviewSensitiveGuard(t *testing.T) {
 	if err != nil || !res.Sensitive {
 		t.Fatalf("填 reason 应放行且 sensitive=true，实际 res=%+v err=%v", res, err)
 	}
-	if !auditDetailContains(t, db, model.ActionAssetPreview, "sensitiveOverride") || !auditDetailContains(t, db, model.ActionAssetPreview, "排查登录异常") {
-		t.Fatal("敏感放行审计应含 sensitiveOverride + 原因原文")
+	if !auditDetailContains(t, db, model.ActionAssetPreview, "sensitiveOverride") || auditDetailContains(t, db, model.ActionAssetPreview, "排查登录异常") {
+		t.Fatal("敏感放行审计只允许标记状态，不得保存原因或正文")
 	}
 }
 
@@ -280,24 +280,34 @@ func TestPreviewInvalidParam(t *testing.T) {
 	}
 }
 
-// TestAssetContentReadsRequireApprovedGrant 锁定 preview/diff 不得经旧服务直建
-// Agent 命令或返回正文；批准后的 command/grant 消费链路由 FR-209 adapter 接管。
-func TestAssetContentReadsRequireApprovedGrant(t *testing.T) {
+// TestAssetContentReadsRequireApprovedGrant 验证 preview/diff 可直读且专项审计不含正文。
+func TestAssetContentReadsAreDirectAndAudited(t *testing.T) {
 	db := newAssetSvcTestDB(t)
 	svc := newAssetSvc(db, true)
 	left := seedPreviewServer(t, db, "prod", "lobby-1")
 	right := seedPreviewServer(t, db, "prod", "lobby-2")
 	seedAsset(t, db, left, "a.yml", "left", 10, true)
 	seedAsset(t, db, right, "a.yml", "right", 10, true)
+	stop := startAgentSim(t, db, svc, textReply)
+	defer stop()
 
-	if res, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "a.yml", Operator: "alice"}); err == nil || res != nil {
-		t.Fatalf("未批准的预览不得返回内容：res=%+v err=%v", res, err)
+	preview, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "a.yml", Operator: "alice"})
+	if err != nil || preview == nil || preview.Content == nil {
+		t.Fatalf("preview 应可直读：result=%+v err=%v", preview, err)
 	}
-	if res, err := svc.Diff(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "alice"}); err == nil || res != nil {
-		t.Fatalf("未批准的 diff 不得返回内容：res=%+v err=%v", res, err)
+	diff, err := svc.Diff(context.Background(), DiffParams{
+		Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "alice",
+	})
+	if err != nil || diff == nil || diff.Identical || diff.Left == nil || diff.Right == nil {
+		t.Fatalf("diff 应可直读：result=%+v err=%v", diff, err)
 	}
-	if len(allCommands(t, db)) != 0 || countAudit(t, db, model.ActionAssetPreview) != 0 || countAudit(t, db, model.ActionAssetDiff) != 0 {
-		t.Fatal("未批准读取不得创建 Agent 命令或写内容查看审计")
+	if len(allCommands(t, db)) != 3 || countAudit(t, db, model.ActionAssetPreview) != 1 || countAudit(t, db, model.ActionAssetDiff) != 1 {
+		t.Fatal("direct preview/diff 应创建命令并各写一条专项审计")
+	}
+	if auditDetailContains(t, db, model.ActionAssetPreview, *preview.Content) ||
+		auditDetailContains(t, db, model.ActionAssetDiff, diff.Left.Content) ||
+		auditDetailContains(t, db, model.ActionAssetDiff, diff.Right.Content) {
+		t.Fatal("文件正文不得进入审计 detail")
 	}
 }
 

@@ -103,7 +103,7 @@ type SystemStatus struct {
 }
 
 // SystemService 汇集控制面自身状态：版本 / 运行时长 / DB 连通 / 在线实例数 / 采样器状态 / Go 运行时资源。
-// 不持 GORM：DB 连通经窄接口 dbPinger 探测；在线实例数读内存注册表（List 返回深拷贝、锁内取）。
+// 不持 GORM：DB 连通经窄接口 dbPinger 探测；在线实例数读内存注册表（StatusCounts 只计数、不深拷贝）。
 type SystemService struct {
 	version        string
 	startedAt      time.Time
@@ -137,7 +137,7 @@ func NewGopsutilCPUSampler() CPUSampler {
 
 // Status 采集一次控制面自身状态快照。
 // DB Ping 同步执行（连接池上的轻量探测，带预算：池耗尽时在预算内快速失败而非挂起）；
-// 在线实例数读内存注册表；Go 运行时资源读 runtime。
+// 在线实例数读内存注册表，Go 运行时资源读 runtime。
 func (s *SystemService) Status() SystemStatus {
 	now := s.now()
 	var ms runtime.MemStats

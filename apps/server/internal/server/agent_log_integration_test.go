@@ -7,37 +7,27 @@ import (
 	"testing"
 )
 
-// TestAgentLogTailFullChain 取 agent 日志命令-回传全链路（FR-88，见 ADR-0040）：
-// admin 触发取日志(202, pending) → 写一条 instance.tail-logs 审计 → agent 拉 tail-logs 命令(200)
-// → agent 回传脱敏日志(/beacon/v1/agent/logs, 200) → admin 查询(200, done) 得脱敏日志行。
+// TestAgentLogTailFullChain 验证日志命令直执、Agent 回传、正文查询与元数据审计闭环。
 func TestAgentLogTailFullChain(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "log-1", "area1")
 
-	// admin 提审后由 worker 创建 pending 命令。
-	ticket := requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/instances/log-1/logs?namespace=prod", t.Name()+"-tail-logs", map[string]any{
-		"reason": "集成测试读取脱敏日志",
-	})
-	requestID, _ := ticket["approvalRequestId"].(string)
+	code, created := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-1/logs?namespace=prod", map[string]any{"reason": "集成测试读取脱敏日志"})
+	if code != http.StatusAccepted || created["commandId"] == nil {
+		t.Fatalf("日志读取应直接创建命令，实际 %d：%v", code, created)
+	}
+	cmdID := int(created["commandId"].(float64))
 
-	// 触发即写一条 instance.tail-logs 审计（detail 不含日志内容）
 	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action=instance.tail-logs", nil)
 	if code != http.StatusOK || len(asSlice(audits["items"])) == 0 {
 		t.Fatalf("应有 instance.tail-logs 审计，实际 %d：%v", code, audits["items"])
 	}
-
-	// agent 拉 tail-logs 命令 → 200，type=tail-logs
 	code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=log-1", nil)
-	if code != http.StatusOK {
-		t.Fatalf("拉 tail-logs 命令应 200，实际 %d：%v", code, pulled)
+	if code != http.StatusOK || pulled["type"] != "tail-logs" || int(pulled["id"].(float64)) != cmdID {
+		t.Fatalf("agent 应拉到指定 tail-logs 命令，实际 %d：%v", code, pulled)
 	}
-	if pulled["type"] != "tail-logs" {
-		t.Fatalf("命令 type 应 tail-logs，实际 %v", pulled["type"])
-	}
-	cmdID := int(pulled["id"].(float64))
 
-	// agent 回传脱敏日志快照 → 200
 	code, recv := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/logs", map[string]any{
 		"commandId": cmdID,
 		"lines": []map[string]any{
@@ -49,11 +39,9 @@ func TestAgentLogTailFullChain(t *testing.T) {
 		t.Fatalf("回传日志应 200，实际 %d：%v", code, recv)
 	}
 
-	// 原申请人从审批详情取得一次性授权，再消费脱敏日志正文。
-	grantID := sensitiveGrantIDForTest(t, ts, requestID)
-	code, view := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-1/logs/grants/"+grantID+"/consume", map[string]any{"commandId": cmdID})
+	code, view := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-1/logs/grants/legacy/consume", map[string]any{"commandId": cmdID})
 	if code != http.StatusOK || view["status"] != "done" {
-		t.Fatalf("查询取日志应 200 done，实际 %d：%v", code, view)
+		t.Fatalf("direct 查询取日志应 200 done，实际 %d：%v", code, view)
 	}
 	lines := asSlice(view["lines"])
 	if len(lines) != 2 {
@@ -63,24 +51,25 @@ func TestAgentLogTailFullChain(t *testing.T) {
 	if first["level"] != "INFO" || first["text"] != "已应用有效配置 md5=abc" {
 		t.Fatalf("首行日志不符，实际 %v", first)
 	}
+	code, latest := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/instances/log-1/logs?namespace=prod", nil)
+	if code != http.StatusOK || len(asSlice(latest["lines"])) != 2 {
+		t.Fatalf("GET 日志应直读最近结果，实际 %d：%v", code, latest)
+	}
 }
 
-// TestAgentLogTailSingleActive 单活跃限速（FR-88）：重复申请可进入审批，但执行时不得创建第二条活跃命令。
+// TestAgentLogTailSingleActive 验证 direct 日志请求仍受单活跃命令限速。
 func TestAgentLogTailSingleActive(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "log-2", "area1")
 
-	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/instances/log-2/logs?namespace=prod", t.Name()+"-tail-logs-first", map[string]any{"reason": "集成测试读取脱敏日志"})
-	code, ticket := doJSONWithHeaders(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-2/logs?namespace=prod", map[string]any{"reason": "集成测试重复读取日志"}, map[string]string{"Idempotency-Key": t.Name() + "-tail-logs-second"})
-	if code != http.StatusAccepted {
-		t.Fatalf("重复取日志应先返回审批票据，实际 %d：%v", code, ticket)
+	code, first := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-2/logs?namespace=prod", map[string]any{"reason": "集成测试读取脱敏日志"})
+	if code != http.StatusAccepted || first["commandId"] == nil {
+		t.Fatalf("首次日志读取应创建命令，实际 %d：%v", code, first)
 	}
-	applyApprovalTicket(t, ts, ticket)
-	requestID, _ := ticket["approvalRequestId"].(string)
-	code, detail := doJSON(t, http.MethodGet, ts.URL+"/admin/v2/approval-requests/"+requestID, nil)
-	if code != http.StatusOK || detail["status"] != "failed" {
-		t.Fatalf("第二条取日志执行应因单活跃限制失败，实际 %d：%v", code, detail)
+	code, second := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-2/logs?namespace=prod", map[string]any{"reason": "集成测试重复读取日志"})
+	if code != http.StatusConflict || second["code"] != "AGENT_LOG_ACTIVE" {
+		t.Fatalf("重复取日志应被单活跃限制拒绝，实际 %d：%v", code, second)
 	}
 }
 
@@ -94,24 +83,29 @@ func TestAgentLogTailOfflineInstance(t *testing.T) {
 	}
 }
 
-// TestAgentLogTailReadonlyForbidden 只读密钥触发取日志（写操作）→ 经只读拒写中间件 403。
+// TestAgentLogTailReadonlyForbidden 验证具有 management.read 的只读密钥可 direct 触发日志读取。
 func TestAgentLogTailReadonlyForbidden(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
+	registerOnline(t, ts.URL, "prod", "log-ro", "area1")
 	roKey, _ := createKey(t, ts, "ro-log", "readonly")
-	code, body := doAPIKey(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-1/logs?namespace=prod", roKey, false, nil)
-	if code != http.StatusForbidden || body["code"] != "FORBIDDEN" {
-		t.Fatalf("只读密钥触发取日志应 403 FORBIDDEN，实际 %d：%v", code, body)
+	code, body := doAPIKey(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-ro/logs?namespace=prod", roKey, false, nil)
+	if code != http.StatusAccepted || body["commandId"] == nil {
+		t.Fatalf("只读密钥具备 management.read，应允许 direct 读取，实际 %d：%v", code, body)
 	}
 }
 
-// TestAgentLogGetNoCommand 旧查询入口不返回日志正文，必须经审批授权消费。
+// TestAgentLogGetNoCommand 验证没有历史日志时 direct 查询返回空摘要并写审计。
 func TestAgentLogGetNoCommand(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "log-3", "area1")
-	code, _ := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/instances/log-3/logs?namespace=prod", nil)
-	if code != http.StatusConflict {
-		t.Fatalf("旧日志查询入口应拒绝并要求审批，实际 %d", code)
+	code, body := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/instances/log-3/logs?namespace=prod", nil)
+	if code != http.StatusOK || len(asSlice(body["lines"])) != 0 {
+		t.Fatalf("无历史日志应返回空摘要，实际 %d：%v", code, body)
+	}
+	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action=instance.tail-logs", nil)
+	if code != http.StatusOK || len(asSlice(audits["items"])) == 0 {
+		t.Fatalf("无结果查询也应留下元数据审计，实际 %d：%v", code, audits)
 	}
 }

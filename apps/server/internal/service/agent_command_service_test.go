@@ -113,8 +113,8 @@ func TestTailLogsApprovalGrantFlow(t *testing.T) {
 	logs.SetSensitiveAccessGrants(grants)
 	RegisterAgentLogApprovalAdapter(registry, logs, grants)
 
-	if _, err := logs.RequestTailLogs("prod", "lobby-1", "alice", "127.0.0.1"); !errors.Is(err, apperr.ErrForbidden) {
-		t.Fatalf("公开日志下发必须拒绝旁路，实际 %v", err)
+	if _, err := logs.RequestTailLogs("", "", "alice", "127.0.0.1"); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("日志直读缺少目标时应拒绝，实际 %v", err)
 	}
 	ticket, err := logs.RequestTailLogsApproval("prod", "lobby-1", "排查启动异常", "tail-approval-1", "alice", "127.0.0.1", auth.HumanPrincipal("alice"))
 	if err != nil {
@@ -163,8 +163,8 @@ func TestBrowseApprovalGrantFlow(t *testing.T) {
 	commands.SetSensitiveAccessGrants(grants)
 	RegisterAgentCommandApprovalAdapters(registry, commands, grants)
 
-	if _, err := commands.RequestBrowse(context.Background(), BrowseParams{Namespace: "prod", ServerID: "lobby-1", Op: model.BrowseOpFile, Path: "Demo/config.yml", Operator: "alice"}); !errors.Is(err, apperr.ErrForbidden) {
-		t.Fatalf("公开浏览下发必须拒绝旁路，实际 %v", err)
+	if _, err := commands.RequestBrowse(context.Background(), BrowseParams{}); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("浏览直读缺少目标时应拒绝，实际 %v", err)
 	}
 	ticket, err := commands.RequestBrowseApproval(BrowseParams{Namespace: "prod", ServerID: "lobby-1", Op: model.BrowseOpFile, Path: "Demo/config.yml", Operator: "alice", ClientIP: "127.0.0.1"}, "核对线上文件", "browse-approval-1", auth.HumanPrincipal("alice"))
 	if err != nil {

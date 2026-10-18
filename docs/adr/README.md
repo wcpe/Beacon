@@ -82,7 +82,7 @@
 | [0076](0076-control-plane-identity-bootstrap.md) | 控制面身份分配、Bootstrap/Active Runtime 分层与绑定快照 fail-static | 已接受；部分取代 ADR-0004 本地 serverId bootstrap 与 ADR-0014 首次必须在线取得身份的结论 |
 | [0077](0077-agent-endpoint-address-authority.md) | Agent 角色化 endpoint 地址权威与 BC 多 listener | 已接受；保持 ADR-0005 core/平台壳层边界 |
 | [0078](0078-stable-resource-identity-and-lifecycle-tombstones.md) | 资源稳定业务标识、可变显示名称与不可复用墓碑 | 已接受 |
-| [0079](0079-principal-capability-and-dangerous-operation-approval.md) | 统一管理主体、语义能力与危险操作审批执行模型 | 已接受；部分取代 ADR-0026 的角色与判权模型 |
+| [0079](0079-principal-capability-and-dangerous-operation-approval.md) | 统一管理主体、语义能力与危险操作审批执行模型 | 已接受；读取类敏感内容审批结论被 [0093](0093-direct-sensitive-content-reads.md) 部分取代；部分取代 ADR-0026 的角色与判权模型 |
 | [0080](0080-builtin-mcp-oauth-client-credentials.md) | 内置公网 MCP Streamable HTTP 与 OAuth Client Credentials 边界 | 已接受；在 MCP OAuth 范围部分取代 ADR-0026 |
 | [0081](0081-local-persistent-encryption-key-files.md) | 控制面 at-rest 加密密钥使用本地持久文件 | 已接受；取代 ADR-0018 的环境变量密钥来源 |
 | [0082](0082-rc-ga-sdk-maven-publication.md) | RC/GA 发布 agent-api 与 agent-kit 的候选/正式 Maven 坐标，并保留 GitHub 产品资产原样晋级 | 已接受；取代 ADR-0074 中 GA 完全禁止重新发布的约束 |
@@ -96,6 +96,7 @@
 | [0090](0090-metrics-endpoint-dedicated-listener.md) | Prometheus 抓取端点独立监听（默认仅回环）并支持可选 Bearer 鉴权 | 已接受；**部分取代 [0020](0020-prometheus-metrics-observability.md)**（同端口暴露、不挂鉴权两条；独立 registry / pull 模型 / 指标清单等其余决策承继） |
 | [0091](0091-control-plane-self-health-metrics.md) | 控制面自身健康进抓取端点（DB 查询留在后台，抓取只读缓存） | 已接受；扩展 [0090](0090-metrics-endpoint-dedicated-listener.md) 的端点，不取代任何 ADR |
 | [0092](0092-runtime-version-carries-candidate-suffix.md) | 运行时版本号携带候选后缀（`VERSION` 文件仍为 `X.Y.Z`，两侧解析强度不对称） | 已接受；**部分取代 [0073](0073-standard-rc-ga-release-lifecycle.md) 第 4 条**（「运行时版本报告 `X.Y.Z`」收窄为「`VERSION` 文件与资产名报告 `X.Y.Z`」；JAR/POM、文件名与 OCI payload 口径不变） |
+| [0093](0093-direct-sensitive-content-reads.md) | 指定敏感内容读取改为直执并强审计 | 已接受；部分取代 [0079](0079-principal-capability-and-dangerous-operation-approval.md) 与 FR-209 的读取审批边界 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

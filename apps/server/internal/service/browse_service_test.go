@@ -21,16 +21,23 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
-// TestRequestBrowseRejectsPublicBypass 验证旧公开 service 不能直接下发 fs-browse 命令。
-func TestRequestBrowseRejectsPublicBypass(t *testing.T) {
+// TestRequestBrowseDirectAudit 验证浏览命令可直执且写专项审计。
+func TestRequestBrowseDirectAudit(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newCommandSvc(db)
-	if _, err := svc.RequestBrowse(context.Background(), BrowseParams{Namespace: "prod", ServerID: "lobby-1", Op: model.BrowseOpList, Operator: "alice"}); !errors.Is(err, apperr.ErrForbidden) {
-		t.Fatalf("公开浏览下发应拒绝，实际 %v", err)
+	commandID, err := svc.RequestBrowse(context.Background(), BrowseParams{
+		Namespace: "prod", ServerID: "lobby-1", Op: model.BrowseOpList, Operator: "alice", ClientIP: "127.0.0.1",
+	})
+	if err != nil || commandID == "" {
+		t.Fatalf("直接浏览应创建命令，commandId=%q err=%v", commandID, err)
 	}
 	var count int64
-	if err := db.Model(&model.AgentCommand{}).Count(&count).Error; err != nil || count != 0 {
-		t.Fatalf("拒绝旁路后不得创建命令，count=%d err=%v", count, err)
+	if err := db.Model(&model.AgentCommand{}).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("直执浏览应创建一条命令，count=%d err=%v", count, err)
+	}
+	var audit model.AuditLog
+	if err := db.Where("action = ?", model.ActionFileBrowse).First(&audit).Error; err != nil || strings.Contains(audit.Detail, "content") {
+		t.Fatalf("直执浏览应写入不含正文的专项审计：detail=%q err=%v", audit.Detail, err)
 	}
 }
 

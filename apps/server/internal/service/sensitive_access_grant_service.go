@@ -142,6 +142,24 @@ func (s *SensitiveAccessGrantService) BindAndActivatePendingCommandFromAgent(com
 	return err
 }
 
+// BindAndActivatePendingCommandFromAgentIfPresent 保留审批 grant 激活，同时允许 direct 命令无 grant 回传。
+func (s *SensitiveAccessGrantService) BindAndActivatePendingCommandFromAgentIfPresent(commandID uint, operation, contentHash string, now time.Time) error {
+	if s == nil || s.repo == nil {
+		return apperr.ErrInternal
+	}
+	if commandID == 0 || operation == "" || contentHash == "" {
+		return apperr.ErrInvalidParam
+	}
+	grant, err := s.repo.FindPendingByTargetRef(fmt.Sprintf("agent-command/%d", commandID))
+	if err != nil || grant == nil {
+		return err
+	}
+	if grant.Operation != operation {
+		return apperr.ErrSensitiveAccessTargetDrift
+	}
+	return s.BindAndActivatePendingCommandFromAgent(commandID, operation, contentHash, now)
+}
+
 // RevokePendingCommand 使 Agent 读取失败对应的待消费授权永久失效。
 func (s *SensitiveAccessGrantService) RevokePendingCommand(commandID uint) error {
 	if s == nil || s.repo == nil {
@@ -152,6 +170,21 @@ func (s *SensitiveAccessGrantService) RevokePendingCommand(commandID uint) error
 	}
 	_, err := s.repo.RevokePendingByTargetRef(fmt.Sprintf("agent-command/%d", commandID))
 	return err
+}
+
+// RevokePendingCommandIfPresent 仅撤销确实由审批创建的待授权。
+func (s *SensitiveAccessGrantService) RevokePendingCommandIfPresent(commandID uint) error {
+	if s == nil || s.repo == nil {
+		return apperr.ErrInternal
+	}
+	if commandID == 0 {
+		return apperr.ErrInvalidParam
+	}
+	grant, err := s.repo.FindPendingByTargetRef(fmt.Sprintf("agent-command/%d", commandID))
+	if err != nil || grant == nil {
+		return err
+	}
+	return s.RevokePendingCommand(commandID)
 }
 
 // Consume 验证冻结目标和原申请主体后原子消费一次授权。

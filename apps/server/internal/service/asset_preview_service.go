@@ -197,11 +197,37 @@ func NewAssetPreviewService(db *gorm.DB, cmdRepo *repository.AgentCommandReposit
 // Preview 预览单个文件内容（FR-164 §4.5）：
 // 校验 → 存在性（404）→ 敏感规则（无 reason 命中即 403）→ 在线（离线 504）→ 下发 asset-read + 同步等回传 →
 // 先写审计后返回（二进制只回元数据、超限标 truncated）。内容瞬态不落库、不进审计 detail、不缓存。
-func (s *AssetPreviewService) Preview(_ context.Context, _ PreviewParams) (*AssetPreviewResult, error) {
-	return nil, apperr.ErrOperationRequiresApproval
+func (s *AssetPreviewService) Preview(ctx context.Context, p PreviewParams) (*AssetPreviewResult, error) {
+	return s.applyPreview(ctx, p)
 }
 
-// applyPreview 在已获批准的受控结果消费路径中读取单个文件内容。
+// PreviewFromCommand 兼容旧 grant 路径：以完成的 asset-read 命令定位文件，再按 direct 路径重新读取。
+func (s *AssetPreviewService) PreviewFromCommand(ctx context.Context, serverID string, commandID uint, reason, operator, clientIP string) (*AssetPreviewResult, error) {
+	if s == nil || s.cmdRepo == nil || commandID == 0 || serverID == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	cmd, err := s.cmdRepo.FindByID(commandID)
+	if err != nil {
+		return nil, err
+	}
+	if cmd == nil || cmd.Type != model.CommandTypeAssetRead || cmd.Status != model.CommandStatusDone || cmd.ServerID != serverID {
+		return nil, apperr.ErrCommandNotFound
+	}
+	var read assetReadPayload
+	if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
+		return nil, apperr.ErrCommandNotFound
+	}
+	_, namespace, err := s.resolveServer(serverID)
+	if err != nil {
+		return nil, err
+	}
+	if namespace != cmd.NamespaceCode {
+		return nil, apperr.ErrCommandNotFound
+	}
+	return s.Preview(ctx, PreviewParams{ServerID: serverID, Path: read.Path, Reason: reason, Operator: operator, ClientIP: clientIP})
+}
+
+// applyPreview 在受控单文件读取路径中读取并审计内容。
 func (s *AssetPreviewService) applyPreview(ctx context.Context, p PreviewParams) (*AssetPreviewResult, error) {
 	if p.ServerID == "" || p.Path == "" {
 		return nil, apperr.ErrInvalidParam
@@ -250,8 +276,8 @@ func (s *AssetPreviewService) applyPreview(ctx context.Context, p PreviewParams)
 // Diff 比较两侧文件内容（FR-164 §4.5/§4.6）：
 // 存在性 → 二进制 / 超限早拒（asset_diff_unsupported）→ 敏感规则 → 两侧清单哈希相同则短路 identical（不取内容）→
 // 否则在线校验后并行取两侧内容 → 先写审计后返回。任一侧回传二进制 / 截断亦拒。
-func (s *AssetPreviewService) Diff(_ context.Context, _ DiffParams) (*AssetDiffResult, error) {
-	return nil, apperr.ErrOperationRequiresApproval
+func (s *AssetPreviewService) Diff(ctx context.Context, p DiffParams) (*AssetDiffResult, error) {
+	return s.applyDiff(ctx, p)
 }
 
 // applyDiff 保留原有双文件差异计算，只有受控结果消费路径可调用。
@@ -366,7 +392,7 @@ func (s *AssetPreviewService) ReceiveContent(ns, serverID string, commandID uint
 			return nil
 		}
 		if p.Error != "" {
-			return s.grants.WithTx(tx).RevokePendingCommand(commandID)
+			return s.grants.WithTx(tx).RevokePendingCommandIfPresent(commandID)
 		}
 		var read assetReadPayload
 		if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
@@ -380,7 +406,7 @@ func (s *AssetPreviewService) ReceiveContent(ns, serverID string, commandID uint
 		if findErr != nil || asset == nil {
 			return apperr.ErrForbidden
 		}
-		return s.grants.WithTx(tx).ActivatePendingCommandFromAgent(commandID, authz.OperationAgentCommandFSBrowse, asset.SHA256, time.Now().UTC())
+		return s.grants.WithTx(tx).BindAndActivatePendingCommandFromAgentIfPresent(commandID, authz.OperationAgentCommandFSBrowse, asset.SHA256, time.Now().UTC())
 	})
 	if err != nil {
 		return err
@@ -501,7 +527,7 @@ func (s *AssetPreviewService) dispatchRead(ns, serverID, path, operator string) 
 	return &assetReadHandle{commandID: cmd.ID, waiter: waiter}, nil
 }
 
-// createAssetReadCommandInTx 仅在已获批准的领域事务中写入单文件读取命令。
+// createAssetReadCommandInTx 在内容读取事务中写入单文件读取命令。
 func (s *AssetPreviewService) createAssetReadCommandInTx(tx *gorm.DB, ns, serverID, path, operator string) (*model.AgentCommand, error) {
 	if tx == nil || ns == "" || serverID == "" || path == "" {
 		return nil, apperr.ErrInvalidParam
@@ -616,13 +642,12 @@ func (s *AssetPreviewService) loadSensitivePatterns() ([]string, error) {
 	return patterns, nil
 }
 
-// recordPreviewAudit 落一条 asset.preview 审计（detail 记 serverId/path/truncated/binary + 敏感放行标记，**绝不含内容**）。
-// 审计写失败拒绝返回内容（对齐 payload 查看「先审计后返回」纪律，杜绝「看了没记录」）。
+// recordPreviewAudit 落一条 asset.preview 审计，仅记目标和结果元数据，不记录正文或原因文本。
+// 审计写失败拒绝返回内容，杜绝「看了没记录」。
 func (s *AssetPreviewService) recordPreviewAudit(p PreviewParams, serverID, nsCode string, c *assetContent, sensitive bool) error {
 	detail := map[string]any{"serverId": serverID, "path": p.Path, "truncated": c.truncated, "binary": c.binary}
 	if sensitive {
 		detail["sensitiveOverride"] = true
-		detail["reason"] = p.Reason
 	}
 	raw, _ := json.Marshal(detail)
 	entry := &model.AuditLog{
@@ -640,7 +665,7 @@ func (s *AssetPreviewService) recordPreviewAudit(p PreviewParams, serverID, nsCo
 	return nil
 }
 
-// recordDiffAudit 落一条 asset.diff 审计（detail 记两侧 serverId/path + identical + 敏感放行标记，**绝不含内容**）。
+// recordDiffAudit 落一条 asset.diff 审计，仅记两侧目标、比较结果和敏感标记，不记录正文或原因文本。
 func (s *AssetPreviewService) recordDiffAudit(p DiffParams, leftServerID, rightServerID, nsCode string, identical, sensitive bool) error {
 	detail := map[string]any{
 		"left":      map[string]string{"serverId": leftServerID, "path": p.Left.Path},
@@ -649,7 +674,6 @@ func (s *AssetPreviewService) recordDiffAudit(p DiffParams, leftServerID, rightS
 	}
 	if sensitive {
 		detail["sensitiveOverride"] = true
-		detail["reason"] = p.Reason
 	}
 	raw, _ := json.Marshal(detail)
 	entry := &model.AuditLog{

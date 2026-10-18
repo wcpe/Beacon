@@ -722,7 +722,7 @@ func run() error {
 	// 游标分页 + 逐表短路防全量扫描；payload 受控查看先写 message.payload.view 审计后返回内容。
 	connQueryService := service.NewConnQueryService(connDetailRepo)
 	v2ConnectionAdminHandler := handler.NewV2ConnectionAdminHandler(connQueryService, settingsService)
-	messagePayloadService := service.NewMessagePayloadService(messageRepo)
+	messagePayloadService := service.NewMessagePayloadService(messageRepo, auditRepo)
 	messageQueryService := service.NewMessageQueryService(messageRepo)
 	v2MessageAdminHandler := handler.NewV2MessageAdminHandler(
 		messageQueryService,

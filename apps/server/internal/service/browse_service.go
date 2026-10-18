@@ -62,9 +62,27 @@ type browseApprovalPayload struct {
 	ClientIP  string `json:"clientIP"`
 }
 
-// RequestBrowse 保留旧服务入口并永久拒绝，防止绕过审批直接下发浏览命令。
-func (s *AgentCommandService) RequestBrowse(_ context.Context, _ BrowseParams) (string, error) {
-	return "", apperr.ErrForbidden
+// RequestBrowse 直接创建受限文件浏览命令并写专项审计。
+func (s *AgentCommandService) RequestBrowse(_ context.Context, p BrowseParams) (string, error) {
+	if s == nil || s.db == nil {
+		return "", apperr.ErrInternal
+	}
+	if !validBrowseParams(p) {
+		return "", apperr.ErrInvalidParam
+	}
+	var cmd *model.AgentCommand
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		cmd, err = s.applyRequestBrowseInTx(tx, p)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	if s.notifier != nil {
+		s.notifier.NotifyCommand(p.Namespace, p.ServerID)
+	}
+	return strconv.FormatUint(uint64(cmd.ID), 10), nil
 }
 
 // RequestBrowseApproval 冻结受限浏览参数并创建审批申请；批准 worker 才能下发命令与待激活授权。
@@ -88,7 +106,7 @@ func validBrowseParams(p BrowseParams) bool {
 	return p.Namespace != "" && p.ServerID != "" && p.Operator != "" && model.IsValidBrowseOp(p.Op)
 }
 
-// applyRequestBrowseInTx 仅供审批适配器在同一领域事务中创建浏览命令和审计。
+// applyRequestBrowseInTx 在同一领域事务中创建浏览命令和审计。
 func (s *AgentCommandService) applyRequestBrowseInTx(tx *gorm.DB, p BrowseParams) (*model.AgentCommand, error) {
 	if tx == nil || !validBrowseParams(p) {
 		return nil, apperr.ErrInvalidParam
@@ -109,8 +127,8 @@ func (s *AgentCommandService) applyRequestBrowseInTx(tx *gorm.DB, p BrowseParams
 // ok=true 则把结果 JSON 转存命令瞬态（browse_result）并 CAS fetched→done；ok=false 则 CAS fetched→failed
 // 并只记服务端安全枚举摘要。result 是受控瞬态——绝不入审计、不落持久真源。
 func (s *AgentCommandService) ReceiveBrowseResult(identity agentauth.Identity, commandID uint, ok bool, result, _ string) error {
-	if s == nil || s.grants == nil {
-		return apperr.ErrForbidden
+	if s == nil {
+		return apperr.ErrInternal
 	}
 	cmd, err := s.repo.FindByID(commandID)
 	if err != nil {
@@ -134,7 +152,10 @@ func (s *AgentCommandService) ReceiveBrowseResult(identity agentauth.Identity, c
 			if !hit {
 				return apperr.ErrCommandNotFound
 			}
-			return s.grants.WithTx(tx).RevokePendingCommand(cmd.ID)
+			if s.grants == nil {
+				return nil
+			}
+			return s.grants.WithTx(tx).RevokePendingCommandIfPresent(cmd.ID)
 		})
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(result)))
@@ -146,7 +167,10 @@ func (s *AgentCommandService) ReceiveBrowseResult(identity agentauth.Identity, c
 		if !hit {
 			return apperr.ErrCommandNotFound
 		}
-		return s.grants.WithTx(tx).BindAndActivatePendingCommandFromAgent(cmd.ID, authz.OperationAgentCommandFSBrowse, hash, time.Now().UTC())
+		if s.grants == nil {
+			return nil
+		}
+		return s.grants.WithTx(tx).BindAndActivatePendingCommandFromAgentIfPresent(cmd.ID, authz.OperationAgentCommandFSBrowse, hash, time.Now().UTC())
 	})
 }
 
@@ -177,6 +201,51 @@ func (s *AgentCommandService) ConsumeApprovedBrowse(grantID string, commandID ui
 			return apperr.ErrSensitiveAccessConsumed
 		}
 		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+// ReadBrowseResult 直接读取指定命令的结果，并在同一事务内清理正文和记录元数据审计。
+func (s *AgentCommandService) ReadBrowseResult(commandID uint, serverID, operator, clientIP string) (string, error) {
+	if s == nil || s.db == nil || s.auditRepo == nil {
+		return "", apperr.ErrInternal
+	}
+	if commandID == 0 || serverID == "" || operator == "" {
+		return "", apperr.ErrInvalidParam
+	}
+	var result string
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		cmd, err := s.repo.WithTx(tx).FindByID(commandID)
+		if err != nil {
+			return err
+		}
+		if cmd == nil || cmd.ServerID != serverID || cmd.Type != model.CommandTypeFsBrowse || cmd.Status != model.CommandStatusDone {
+			return apperr.ErrCommandNotFound
+		}
+		if cmd.BrowseResult == "" {
+			return apperr.ErrSensitiveAccessConsumed
+		}
+		var payload browsePayload
+		if json.Unmarshal([]byte(cmd.Payload), &payload) != nil {
+			return apperr.ErrForbidden
+		}
+		result = cmd.BrowseResult
+		cleared, err := s.repo.WithTx(tx).ClearBrowseResult(commandID, result)
+		if err != nil {
+			return err
+		}
+		if !cleared {
+			return apperr.ErrSensitiveAccessConsumed
+		}
+		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+			NamespaceCode: cmd.NamespaceCode, Operator: operator, Action: model.ActionFileBrowse,
+			TargetType: model.TargetTypeCommand, TargetRef: serverID,
+			Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q,"op":%q,"path":%q,"bytes":%d}`, commandID, serverID, payload.Op, payload.Path, len(result)),
+			Result: model.ResultOK, ClientIP: clientIP,
+		})
 	})
 	if err != nil {
 		return "", err

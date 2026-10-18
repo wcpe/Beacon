@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -314,6 +316,65 @@ func (s *AssetPreviewService) ConsumePairApproved(grantID string, commandID uint
 		Right: AssetPairDiffSide{ServerID: right.ref.ServerID, Path: right.ref.Path, SHA256: right.asset.SHA256, Size: right.asset.Size}}, nil
 }
 
+// DiffFromPairGrant 将旧 pair grant 仅作为目标定位器，不再校验申请主体或授权状态。
+func (s *AssetPreviewService) DiffFromPairGrant(ctx context.Context, grantID string, commandID uint, reason, operator, clientIP string) (*AssetPairDiffResult, error) {
+	if s == nil || s.grants == nil || commandID == 0 || grantID == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	requested, err := s.grants.repo.FindByID(grantID)
+	if err != nil {
+		return nil, err
+	}
+	if requested == nil || requested.PairID == "" {
+		return nil, apperr.ErrSensitiveAccessNotFound
+	}
+	leftGrant, rightGrant, err := s.grants.repo.FindPairByGrantID(grantID)
+	if err != nil {
+		return nil, err
+	}
+	leftCommandID, rightCommandID, err := pairCommandIDs(leftGrant, rightGrant, grantID, commandID)
+	if err != nil {
+		return nil, err
+	}
+	left, err := s.pairReadSideForDirect(leftCommandID)
+	if err != nil {
+		return nil, err
+	}
+	right, err := s.pairReadSideForDirect(rightCommandID)
+	if err != nil {
+		return nil, err
+	}
+	params := DiffParams{
+		Left:   AssetRef{ServerID: left.ref.ServerID, Path: left.ref.Path},
+		Right:  AssetRef{ServerID: right.ref.ServerID, Path: right.ref.Path},
+		Reason: reason, Operator: operator, ClientIP: clientIP,
+	}
+	diff, err := s.Diff(ctx, params)
+	unsupported := errors.Is(err, apperr.ErrAssetDiffUnsupported)
+	if err != nil && !unsupported {
+		return nil, err
+	}
+	if unsupported {
+		matcher, matchErr := s.sensitiveMatcher()
+		if matchErr != nil {
+			return nil, matchErr
+		}
+		sensitive := matcher.matches(params.Left.Path) || matcher.matches(params.Right.Path)
+		if sensitive && strings.TrimSpace(reason) == "" {
+			return nil, apperr.ErrAssetSensitivePath
+		}
+		if auditErr := s.recordDiffAudit(params, left.server.ServerID, right.server.ServerID, left.namespace, false, sensitive); auditErr != nil {
+			return nil, auditErr
+		}
+	}
+	identical := diff != nil && diff.Identical
+	return &AssetPairDiffResult{
+		Identical: identical, Changed: !identical && !unsupported, Unsupported: unsupported,
+		Left:  AssetPairDiffSide{ServerID: left.ref.ServerID, Path: left.ref.Path, SHA256: left.asset.SHA256, Size: left.asset.Size},
+		Right: AssetPairDiffSide{ServerID: right.ref.ServerID, Path: right.ref.Path, SHA256: right.asset.SHA256, Size: right.asset.Size},
+	}, nil
+}
+
 type pairReadSide struct {
 	server    *model.Server
 	namespace string
@@ -337,6 +398,35 @@ func (s *AssetPreviewService) pairReadSide(grant *model.SensitiveAccessGrant, co
 	asset, err := s.assetRepo.FindByServerPath(server.ID, read.Path)
 	if err != nil || asset == nil || asset.SHA256 != grant.ContentVersionHash {
 		return pairReadSide{}, apperr.ErrApprovalTargetChanged
+	}
+	return pairReadSide{server: server, namespace: namespace, ref: AssetRef{ServerID: cmd.ServerID, Path: read.Path}, asset: asset}, nil
+}
+
+func (s *AssetPreviewService) pairReadSideForDirect(commandID uint) (pairReadSide, error) {
+	if s == nil || s.cmdRepo == nil || commandID == 0 {
+		return pairReadSide{}, apperr.ErrInvalidParam
+	}
+	cmd, err := s.cmdRepo.FindByID(commandID)
+	if err != nil {
+		return pairReadSide{}, err
+	}
+	if cmd == nil || cmd.Type != model.CommandTypeAssetRead || cmd.Status != model.CommandStatusDone {
+		return pairReadSide{}, apperr.ErrCommandNotFound
+	}
+	var read assetReadPayload
+	if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
+		return pairReadSide{}, apperr.ErrCommandNotFound
+	}
+	server, namespace, err := s.resolveServer(cmd.ServerID)
+	if err != nil {
+		return pairReadSide{}, err
+	}
+	asset, err := s.assetRepo.FindByServerPath(server.ID, read.Path)
+	if err != nil {
+		return pairReadSide{}, err
+	}
+	if asset == nil {
+		return pairReadSide{}, apperr.ErrAssetNotFound
 	}
 	return pairReadSide{server: server, namespace: namespace, ref: AssetRef{ServerID: cmd.ServerID, Path: read.Path}, asset: asset}, nil
 }

@@ -62,10 +62,27 @@ func (s *AgentLogService) SetSensitiveAccessGrants(grants *SensitiveAccessGrantS
 	s.grants = grants
 }
 
-// RequestTailLogs 由 admin 触发取某在线实例的自身日志：单活跃限速 → 事务内建 pending tail-logs 命令 + 审计 → 唤醒。
-// 在线校验与 SSE 唤醒触发点在 handler 层（与反向抓取一致）。返回命令（含 id 供查询引用）。
-func (s *AgentLogService) RequestTailLogs(_, _, _, _ string) (*model.AgentCommand, error) {
-	return nil, apperr.ErrForbidden
+// RequestTailLogs 直接创建日志读取命令并写专项审计。
+func (s *AgentLogService) RequestTailLogs(ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
+	if s == nil || s.db == nil {
+		return nil, apperr.ErrInternal
+	}
+	if ns == "" || serverID == "" || operator == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	var cmd *model.AgentCommand
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		cmd, err = s.applyRequestTailLogsInTx(tx, ns, serverID, operator, clientIP)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if s.notifier != nil {
+		s.notifier.NotifyCommand(ns, serverID)
+	}
+	return cmd, nil
 }
 
 // RequestTailLogsApproval 创建日志命令审批申请。
@@ -145,7 +162,7 @@ func (s *AgentLogService) ReceiveLogs(commandID uint, lines []AgentLogLine, clie
 	}
 	if s.grants != nil {
 		hash := fmt.Sprintf("%x", sha256.Sum256(content))
-		if err := s.grants.BindAndActivatePendingCommandFromAgent(cmd.ID, authz.OperationAgentCommandTailLogs, hash, time.Now().UTC()); err != nil {
+		if err := s.grants.BindAndActivatePendingCommandFromAgentIfPresent(cmd.ID, authz.OperationAgentCommandTailLogs, hash, time.Now().UTC()); err != nil {
 			return err
 		}
 	}
@@ -195,4 +212,69 @@ func (s *AgentLogService) GetLatest(ns, serverID string) (*AgentLogResult, error
 		}
 	}
 	return res, nil
+}
+
+// ReadLatest 返回最近日志并先写仅含状态与行数的专项审计。
+func (s *AgentLogService) ReadLatest(ns, serverID, operator, clientIP string) (*AgentLogResult, error) {
+	result, err := s.GetLatest(ns, serverID)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		result = &AgentLogResult{Lines: []AgentLogLine{}}
+	}
+	if err := s.recordReadAudit(ns, serverID, operator, clientIP, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ReadCommand 返回指定命令的日志，不依赖 grant，审计只记录命令状态和行数。
+func (s *AgentLogService) ReadCommand(serverID string, commandID uint, operator, clientIP string) (*AgentLogResult, error) {
+	if serverID == "" || commandID == 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	cmd, err := s.repo.FindByID(commandID)
+	if err != nil {
+		return nil, err
+	}
+	if cmd == nil || cmd.ServerID != serverID || cmd.Type != model.CommandTypeTailLogs {
+		return nil, apperr.ErrCommandNotFound
+	}
+	result := &AgentLogResult{CommandID: cmd.ID, Status: cmd.Status, Lines: []AgentLogLine{}}
+	if cmd.Status == model.CommandStatusDone && cmd.LogContent != "" {
+		if err := json.Unmarshal([]byte(cmd.LogContent), &result.Lines); err != nil {
+			return nil, apperr.ErrForbidden
+		}
+		if result.Lines == nil {
+			result.Lines = []AgentLogLine{}
+		}
+	}
+	if err := s.recordReadAudit(cmd.NamespaceCode, serverID, operator, clientIP, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *AgentLogService) recordReadAudit(ns, serverID, operator, clientIP string, result *AgentLogResult) error {
+	if s == nil || s.auditRepo == nil {
+		return apperr.ErrInternal
+	}
+	if operator == "" {
+		return apperr.ErrInvalidParam
+	}
+	commandID := uint(0)
+	status := "none"
+	lineCount := 0
+	if result != nil {
+		commandID = result.CommandID
+		status = result.Status
+		lineCount = len(result.Lines)
+	}
+	return s.auditRepo.Create(&model.AuditLog{
+		NamespaceCode: ns, Operator: operator, Action: model.ActionInstanceTailLogs,
+		TargetType: model.TargetTypeInstance, TargetRef: serverID,
+		Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q,"status":%q,"lineCount":%d}`, commandID, serverID, status, lineCount),
+		Result: model.ResultOK, ClientIP: clientIP,
+	})
 }

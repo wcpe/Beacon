@@ -1,6 +1,6 @@
 # ADR-0079：统一管理主体、语义能力与危险操作审批执行模型
 
-**状态**：已接受（2026-07-29；部分取代 [ADR-0026](0026-runtime-api-keys-and-readonly-role.md) 的两级角色、纯 HTTP 方法判权及拒绝细粒度能力结论）
+**状态**：已接受（2026-07-29；[ADR-0093](0093-direct-sensitive-content-reads.md) 部分取代读取类敏感内容必须审批的结论；另部分取代 [ADR-0026](0026-runtime-api-keys-and-readonly-role.md) 的两级角色、纯 HTTP 方法判权及拒绝细粒度能力结论）
 
 ## 背景
 

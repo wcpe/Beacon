@@ -628,7 +628,7 @@ const (
 	ActionSystemUpdateCancel = "system.update-cancel"
 	// 健康权重配置热更（FR-147，spec §4.4）：detail 记新配置 json（不含任何凭据）
 	ActionHealthWeightsUpdate = "health-weights.update"
-	// 消息 payload 查看（FR-150，spec §4.4）：高风险受控查看，先审计后返回；detail 记 messageId/类型/来源目标/原因原文，绝不含 payload 内容
+	// 消息 payload 查看（FR-150，spec §4.4）：直读前写元数据审计，detail 只记 messageId/哈希/大小，绝不含 payload 内容
 	ActionMessagePayloadView = "message.payload.view"
 	// 告警事件处理（FR-157，见 ADR-0064）：确认 / 标记已处理，detail 记事件 id / 动作 / 处置说明（不含凭据）
 	ActionAlertEventAcknowledge = "alert-event.acknowledge"

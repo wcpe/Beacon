@@ -62,8 +62,12 @@ export default function DemoSensitiveAccessDialog({ open, onOpenChange, mode, ta
   const status = approval?.status
   const canSubmit = reason.trim() !== '' && !createMutation.isPending
   const error = createMutation.error ?? approvalQuery.error ?? consumeMutation.error
+  const pending = createMutation.isPending || consumeMutation.isPending
 
   const close = (): void => {
+    if (pending) {
+      return
+    }
     setReason('')
     setRequestId(null)
     idempotencyKey.current = null
@@ -73,45 +77,53 @@ export default function DemoSensitiveAccessDialog({ open, onOpenChange, mode, ta
   }
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) close() }}>
-      <DialogContent>
+    <Dialog open={open} onOpenChange={(next) => { if (!next && !pending) close() }}>
+      <DialogContent
+        className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] overflow-hidden"
+        showCloseButton={!pending}
+        onInteractOutside={(event) => {
+          event.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{t(`${key}.title`)}</DialogTitle>
           <DialogDescription>{t(`${key}.desc`)}</DialogDescription>
         </DialogHeader>
-        <p className="break-all rounded-md bg-surface-2 px-3 py-2 font-mono text-xs text-ink-3">
-          {t(`${key}.target`)}：{targetRef}
-        </p>
-        {requestId === null ? (
-          <div className="grid gap-1.5">
-            <Label htmlFor="demo-sensitive-access-reason">{t(`${key}.reasonLabel`)}</Label>
-            <Textarea
-              id="demo-sensitive-access-reason"
-              value={reason}
-              onChange={(event) => { setReason(event.target.value) }}
-              placeholder={t(`${key}.reasonPlaceholder`)}
-              rows={3}
-            />
-          </div>
-        ) : (
-          <div className="grid gap-2 rounded-lg border border-border bg-surface-1 p-3 text-sm" role="status">
-            {status === 'pending' && <p>{t(`${key}.pending`)}</p>}
-            {status === 'executing' && <p>{t(`${key}.executing`)}</p>}
-            {status === 'succeeded' && <p>{t(`${key}.succeeded`)}</p>}
-            {status === 'failed' && <p className="text-destructive">{t(`${key}.failed`)}</p>}
-            {approvalQuery.isLoading && <div className="h-5 w-3/5 animate-pulse rounded bg-surface-3" />}
-            <Link className="w-fit text-brand underline-offset-4 hover:underline" to={`/approvals/${encodeURIComponent(requestId)}`}>
-              {t(`${key}.open`)}
-            </Link>
-          </div>
-        )}
-        {consumeMutation.isSuccess && (
-          <p className="rounded-lg border border-ok-bd bg-ok-bg px-3 py-2 text-sm text-ok">{t(`${key}.consumed`)}</p>
-        )}
-        {error && <p className="text-sm text-destructive">{errorMessage(error)}</p>}
+        <div className="min-h-0 overflow-y-auto pr-1">
+          <p className="mb-4 break-all rounded-md bg-surface-2 px-3 py-2 font-mono text-xs text-ink-3">
+            {t(`${key}.target`)}：{targetRef}
+          </p>
+          {requestId === null ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor="demo-sensitive-access-reason">{t(`${key}.reasonLabel`)}</Label>
+              <Textarea
+                id="demo-sensitive-access-reason"
+                value={reason}
+                onChange={(event) => { setReason(event.target.value) }}
+                placeholder={t(`${key}.reasonPlaceholder`)}
+                rows={3}
+              />
+            </div>
+          ) : (
+            <div className="grid gap-2 rounded-lg border border-border bg-surface-1 p-3 text-sm" role="status">
+              {status === 'pending' && <p>{t(`${key}.pending`)}</p>}
+              {status === 'executing' && <p>{t(`${key}.executing`)}</p>}
+              {status === 'succeeded' && <p>{t(`${key}.succeeded`)}</p>}
+              {status === 'failed' && <p className="text-destructive">{t(`${key}.failed`)}</p>}
+              {approvalQuery.isLoading && <div className="h-5 w-3/5 animate-pulse rounded bg-surface-3" />}
+              <Link className="w-fit text-brand underline-offset-4 hover:underline" to={`/approvals/${encodeURIComponent(requestId)}`}>
+                {t(`${key}.open`)}
+              </Link>
+            </div>
+          )}
+          {consumeMutation.isSuccess && (
+            <p className="mt-3 rounded-lg border border-ok-bd bg-ok-bg px-3 py-2 text-sm text-ok">{t(`${key}.consumed`)}</p>
+          )}
+          {error && <p role="alert" className="mt-3 text-sm text-destructive">{errorMessage(error)}</p>}
+        </div>
         <DialogFooter>
           {requestId === null ? (
-            <Button disabled={!canSubmit} onClick={() => { createMutation.mutate() }}>
+            <Button type="button" disabled={!canSubmit} onClick={() => { createMutation.mutate() }}>
               {createMutation.isPending ? t(`${key}.submitting`) : t(`${key}.submit`)}
             </Button>
           ) : (
@@ -128,7 +140,7 @@ export default function DemoSensitiveAccessDialog({ open, onOpenChange, mode, ta
               )}
             </>
           )}
-          <Button variant="outline" onClick={close}>{t(`${key}.close`)}</Button>
+          <Button type="button" variant="outline" disabled={pending} onClick={close}>{t(`${key}.close`)}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

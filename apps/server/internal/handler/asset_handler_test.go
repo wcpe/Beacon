@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// TestAssetHandlerPairReadRequiresPrincipal 验证双侧读取申请不会因缺失登录主体而触及领域服务。
-func TestAssetHandlerPairReadRequiresPrincipal(t *testing.T) {
+// TestAssetHandlerPairReadRequiresService 验证双侧直读缺少领域服务时失败关闭。
+func TestAssetHandlerPairReadRequiresService(t *testing.T) {
 	h := &AssetHandler{}
 	req := httptest.NewRequest(http.MethodPost, "/admin/v2/assets/pair-read/approval-requests", strings.NewReader(`{"left":{"serverId":"a","path":"a.yml"},"right":{"serverId":"b","path":"b.yml"},"reason":"核验"}`))
 	resp := httptest.NewRecorder()
 	h.RequestPairReadApproval(resp, req)
-	if resp.Code != http.StatusUnauthorized {
-		t.Fatalf("缺失主体应拒绝双侧读取申请，实际 %d", resp.Code)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("缺少服务装配时应失败关闭，实际 %d", resp.Code)
 	}
 }
