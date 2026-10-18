@@ -91,3 +91,8 @@ export function useObservationScopeSelection(): ObservationScopeSelection {
     () => snapshot,
   )
 }
+
+/** 非 React 环境读取当前范围快照（与 useObservationScopeSelection 同源，测试与命令式逻辑用）。 */
+export function getObservationScopeSelection(): ObservationScopeSelection {
+  return snapshot
+}

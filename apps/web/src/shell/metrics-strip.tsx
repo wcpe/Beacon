@@ -1,9 +1,19 @@
-// 段 1 全局运维指标条（FR-188）：控制面在线 / Agent 在线 / 待确认 / 未处理告警 / 进行中变更单。
-// 单项失败显示「—」；跨页固定，数据来自 useGlobalOpsMetrics。
+// 全局运维指标入口：控制面状态点作为触发器，四个指标（Agent 在线 / 待确认 /
+// 未处理告警 / 进行中变更单）收进悬浮面板，不再常驻占用页眉一行。
+// 指标属于「异常时才看」的信息，常驻会挤占最宝贵的顶部空间；收进弹层后
+// 页眉得以保持单层，同时仍能一键查看并跳转到对应页面。
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
-import { Badge } from '@beacon/ui'
+import {
+  Badge,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@beacon/ui'
 
 import { useGlobalOpsMetrics } from './use-global-ops-metrics'
 
@@ -18,54 +28,116 @@ export default function MetricsStrip() {
   const { t } = useTranslation()
   const { metrics } = useGlobalOpsMetrics()
 
-  const onlineLabel =
+  const controlPlaneState =
+    metrics.controlPlaneOnline === null ? 'unknown' : metrics.controlPlaneOnline ? 'online' : 'offline'
+  const controlPlaneLabel =
     metrics.controlPlaneOnline === null
       ? t('common.metrics.controlPlaneUnknown')
       : metrics.controlPlaneOnline
         ? t('common.controlPlaneOnline')
         : t('common.metrics.controlPlaneOffline')
+  const controlPlaneDotClass =
+    metrics.controlPlaneOnline === null ? 'bg-ink-4' : metrics.controlPlaneOnline ? 'bg-ok' : 'bg-crit'
 
-  const onlineVariant =
-    metrics.controlPlaneOnline === true ? 'ok' : metrics.controlPlaneOnline === false ? 'crit' : 'secondary'
+  // 汇总里只要有异常数值就提醒（告警或待确认 > 0），让用户在收起状态下也能察觉
+  const pendingCount = metrics.pendingRegistrations ?? 0
+  const openAlertCount = metrics.openAlerts ?? 0
+  const hasAttention = openAlertCount > 0 || pendingCount > 0
+  const controlPlaneDescription = [
+    controlPlaneLabel,
+    pendingCount > 0 ? `${t('common.metrics.pendingRegistrations')}: ${String(pendingCount)}` : null,
+    openAlertCount > 0 ? `${t('common.metrics.openAlerts')}: ${String(openAlertCount)}` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(' · ')
 
   return (
-    <div
-      data-slot="metrics-strip"
-      className="flex h-9 shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-surface-2/60 px-[22px] text-[12px] text-ink-3"
-    >
-      <Badge variant={onlineVariant} className="gap-1.5">
-        <span className="size-[7px] rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_18%,transparent)]" />
-        {onlineLabel}
-      </Badge>
-
-      <MetricLink href="/servers" label={t('common.metrics.agentOnline')} value={metrics.agentOnline} />
-      <MetricLink
-        href="/servers"
-        label={t('common.metrics.pendingRegistrations')}
-        value={metrics.pendingRegistrations}
-      />
-      <MetricLink href="/alert-events" label={t('common.metrics.openAlerts')} value={metrics.openAlerts} />
-      <MetricLink href="/changes" label={t('common.metrics.activeChanges')} value={metrics.activeChanges} />
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={controlPlaneDescription}
+          data-slot="control-plane-status"
+          data-state={controlPlaneState}
+          title={controlPlaneDescription}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-ink-3 transition-colors hover:bg-muted hover:text-ink-1 focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
+        >
+          <span
+            aria-hidden="true"
+            className={[
+              'size-2 shrink-0 rounded-full',
+              controlPlaneDotClass,
+              controlPlaneState === 'unknown' ? '' : 'animate-status-breathe',
+            ].join(' ')}
+          />
+          <span data-slot="control-plane-status-label" className="hidden whitespace-nowrap xl:inline">
+            {controlPlaneLabel}
+          </span>
+          {/* 有需要关注项时挂一个小红点，避免收进弹层后完全失去提醒能力 */}
+          {hasAttention && (
+            <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-crit" />
+          )}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        sideOffset={6}
+        collisionPadding={12}
+        className="w-64 max-w-[calc(100vw-1.5rem)] p-1.5"
+        data-slot="metrics-menu"
+      >
+        <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-medium text-ink-4">
+          {t('common.metrics.title')}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <MetricItem href="/servers" label={t('common.metrics.agentOnline')} value={metrics.agentOnline} />
+        <MetricItem
+          href="/servers"
+          label={t('common.metrics.pendingRegistrations')}
+          value={metrics.pendingRegistrations}
+          highlight={(metrics.pendingRegistrations ?? 0) > 0}
+        />
+        <MetricItem
+          href="/alert-events"
+          label={t('common.metrics.openAlerts')}
+          value={metrics.openAlerts}
+          highlight={(metrics.openAlerts ?? 0) > 0}
+        />
+        <MetricItem
+          href="/changes"
+          label={t('common.metrics.activeChanges')}
+          value={metrics.activeChanges}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
-function MetricLink({
+function MetricItem({
   href,
   label,
   value,
+  highlight = false,
 }: {
   href: string
   label: string
   value: number | null
+  highlight?: boolean
 }) {
   return (
-    <Link
-      to={href}
-      className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink-1"
-    >
-      <span className="text-ink-4">{label}</span>
-      <span className="font-semibold tabular-nums text-ink-1">{formatMetric(value)}</span>
-    </Link>
+    <DropdownMenuItem asChild className="cursor-pointer gap-2 rounded-lg px-2 py-1.5">
+      <Link to={href} className="flex w-full items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-[12.5px] text-ink-2">{label}</span>
+        {highlight ? (
+          <Badge variant="destructive" className="h-5 shrink-0 px-1.5 text-[10px] font-semibold tabular-nums">
+            {formatMetric(value)}
+          </Badge>
+        ) : (
+          <span className="shrink-0 text-[12.5px] font-semibold tabular-nums text-ink-1">
+            {formatMetric(value)}
+          </span>
+        )}
+      </Link>
+    </DropdownMenuItem>
   )
 }

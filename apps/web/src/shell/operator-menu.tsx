@@ -48,16 +48,16 @@ export default function OperatorMenu() {
           type="button"
           variant="ghost"
           size="sm"
-          className="gap-1.5 px-1.5"
+          className="h-8 w-8 gap-0 px-0 sm:w-auto sm:gap-1.5 sm:px-1.5"
           aria-label={t('common.header.accountMenu')}
         >
           <span className="grid size-7 place-items-center rounded-full bg-gradient-to-br from-[oklch(0.62_0.19_282)] to-[oklch(0.62_0.2_305)] text-[11px] font-bold text-white">
             {avatarGlyph(displayName)}
           </span>
-          <span className="hidden max-w-[7rem] truncate text-[13px] text-ink-2 sm:inline">
+          <span className="hidden max-w-[7rem] truncate text-[13px] text-ink-2 xl:inline">
             {displayName}
           </span>
-          <ChevronDown className="size-3.5 text-ink-4" />
+          <ChevronDown className="hidden size-3.5 text-ink-4 sm:inline" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-44">

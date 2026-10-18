@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import AppShell from '../shell/app-shell'
 import DocumentTitle from '../shell/document-title'
-import { SIDEBAR_WIDTH_COLLAPSED, SIDEBAR_WIDTH_EXPANDED } from '../shell/sidebar'
+import {
+  SIDEBAR_GUTTER,
+  SIDEBAR_WIDTH_COLLAPSED,
+  SIDEBAR_WIDTH_EXPANDED,
+} from '../shell/sidebar'
 import { useShellStore } from '../store'
 import '../i18n'
 
@@ -16,6 +20,7 @@ function renderAt(path: string) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
+        <DocumentTitle />
         <AppShell />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -52,24 +57,52 @@ const pageCases: [string, string][] = [
   ['/envs', '环境'],
 ]
 
-/** 页眉面包屑作用域（E3）：页面身份已由内容区大标题上移到此 */
-function pageBreadcrumb() {
-  return within(screen.getByRole('navigation', { name: '面包屑' }))
+/** 页眉段 2 的观测范围选择器（环境 / 命名空间固定在最左，全站统一渲染） */
+function observationScopeFilter() {
+  const el = document.querySelector('[data-slot="observation-scope-filter"]')
+  expect(el).not.toBeNull()
+  return el as HTMLElement
 }
 
 describe('全站路由', () => {
-  it.each(pageCases)('%s 面包屑展示页面身份「%s」', (path, title) => {
+  // 页面身份自页眉面包屑移除后由内容页 PageHeader 大标题承担；
+  // 此处仍以「路由 → 页面标题」真源（routes.tsx titleKey → document.title）校验路由表与 UX.md §2 对齐，
+  // 不绑定各页内部结构，避免逐页改造期间互相牵连。
+  it.each(pageCases)('%s 页面身份为「%s」', (path, title) => {
     renderAt(path)
-    // 面包屑当前页那一档即页面标题地标（<h1>，位于页眉；屏幕阅读器可跳转）
-    const identity = pageBreadcrumb().getByRole('heading', { name: title })
-    expect(identity.tagName).toBe('H1')
-    // E5：内容区不再出现大标题（h1），身份改由页眉面包屑承担
-    expect(document.querySelector('main h1')).toBeNull()
+    expect(document.title).toBe(`Beacon - ${title}`)
+    // 段 2 不再放面包屑，环境 / 命名空间选择器对所有页面统一渲染
+    expect(observationScopeFilter()).toBeInTheDocument()
   })
 
   it('根路径 / 重定向到 /dashboard', () => {
     renderAt('/')
-    expect(pageBreadcrumb().getByRole('heading', { name: '运维总览' })).toBeInTheDocument()
+    expect(document.title).toBe('Beacon - 运维总览')
+  })
+
+  it('切换页面时重置内容滚动位置并按路径重挂载入场层', async () => {
+    const user = userEvent.setup()
+    renderAt('/dashboard')
+    const main = screen.getByRole('main')
+    const initialTransition = document.querySelector('[data-slot="route-transition"]')
+    expect(initialTransition).not.toBeNull()
+
+    main.scrollTop = 240
+    await user.click(desktopSidebar().getByRole('link', { name: '配置中心' }))
+
+    expect(main.scrollTop).toBe(0)
+    expect(document.querySelector('[data-slot="route-transition"]')).not.toBe(initialTransition)
+  })
+
+  it('桌面路由内容填满主区且保留 useFitToWidth 的宽度测量', () => {
+    renderAt('/approvals')
+    const main = screen.getByRole('main')
+    const route = main.querySelector('[data-slot="route-transition"]')
+    expect(route).not.toBeNull()
+    const content = route?.parentElement
+    expect(content).toHaveClass('md:flex', 'md:h-full', 'md:min-h-0', 'md:flex-col')
+    expect(route).toHaveClass('md:flex-1', 'md:min-h-0')
+    expect(content).not.toHaveClass('overflow-hidden')
   })
 })
 
@@ -105,14 +138,20 @@ describe('侧栏导航', () => {
   })
 })
 
-describe('双段页眉（FR-187）', () => {
-  it('渲染段 1 指标槽与段 2 工具占位', () => {
+describe('单层页眉（FR-187）', () => {
+  it('页眉只占一行：状态点 + 观测范围 + 右侧工具，指标收进弹层', () => {
     renderAt('/dashboard')
-    expect(document.querySelector('[data-slot="metrics-strip"]')).not.toBeNull()
-    expect(document.querySelector('[data-slot="app-header"]')).not.toBeNull()
-    // 段 1 含指标标签（真数据异步，标签先可见）
-    expect(screen.getByText('Agent 在线')).toBeInTheDocument()
-    expect(screen.getByText('待确认')).toBeInTheDocument()
+    // 页眉合并为单层：不再有独立的指标条容器
+    expect(document.querySelector('[data-slot="metrics-strip"]')).toBeNull()
+    const appHeader = document.querySelector('[data-slot="app-header"]')
+    expect(appHeader).not.toBeNull()
+    // 单层页眉内直接包含控制面状态点（同时是指标弹层触发器）
+    const controlPlaneStatus = appHeader?.querySelector('[data-slot="control-plane-status"]')
+    expect(controlPlaneStatus).not.toBeNull()
+    expect(controlPlaneStatus?.getAttribute('data-state')).toMatch(/^(online|offline|unknown)$/)
+    expect(controlPlaneStatus?.getAttribute('aria-label')).toMatch(/控制面在线|控制面异常|控制面状态未知/)
+    // 指标已收进弹层：未展开时不常驻占用页眉
+    expect(screen.queryByText('Agent 在线')).not.toBeInTheDocument()
     // FR-193～196：搜索 / 语言 / 通知 / 刷新均已启用（不再是 comingSoon 占位）
     expect(screen.getByRole('button', { name: '搜索' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '语言' })).toBeEnabled()
@@ -120,6 +159,15 @@ describe('双段页眉（FR-187）', () => {
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
     // 页眉观测范围选择器仍在
     expect(screen.getByRole('button', { name: '观测环境' })).toBeInTheDocument()
+  })
+
+  it('审批页不再有品牌徽标特判：同样渲染观测范围选择器', () => {
+    renderAt('/approvals')
+    // 页眉布局全站统一：环境 / 命名空间选择器固定在段 2 最左
+    expect(observationScopeFilter()).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '观测环境' })).toBeInTheDocument()
+    // 旧的「全局审批」徽标已移除（页面内部筛选逻辑不受影响）
+    expect(document.querySelector('[data-slot="global-approval-header"]')).toBeNull()
   })
 })
 
@@ -134,6 +182,12 @@ describe('小屏抽屉侧栏（FR-189）', () => {
     const mobile = document.querySelector('[data-slot="mobile-sidebar"]')
     expect(mobile).not.toBeNull()
     expect(mobile).toHaveAttribute('data-open', 'false')
+    expect(mobile).toHaveClass('rounded-2xl', 'shadow-pop', 'backdrop-blur-sm')
+    expect(mobile).toHaveStyle({
+      left: `${String(SIDEBAR_GUTTER)}px`,
+      top: `${String(SIDEBAR_GUTTER)}px`,
+      bottom: `${String(SIDEBAR_GUTTER)}px`,
+    })
     await user.click(screen.getByRole('button', { name: '打开导航' }))
     expect(mobile).toHaveAttribute('data-open', 'true')
     // 抽屉内可导航
@@ -153,7 +207,24 @@ describe('侧栏图标轨折叠（FR-186）', () => {
     const aside = document.querySelector('[data-slot="desktop-sidebar"]')
     expect(aside).not.toBeNull()
     expect(aside).toHaveAttribute('data-collapsed', 'false')
-    expect(aside).toHaveStyle({ width: `${String(SIDEBAR_WIDTH_EXPANDED)}px` })
+    expect(aside).toHaveStyle({
+      width: `${String(SIDEBAR_WIDTH_EXPANDED)}px`,
+      left: `${String(SIDEBAR_GUTTER)}px`,
+      top: `${String(SIDEBAR_GUTTER)}px`,
+      bottom: `${String(SIDEBAR_GUTTER)}px`,
+    })
+    // 悬浮圆角卡片形态（四周留白 + 边框 + 阴影），不复刻连体外壳
+    expect(aside).toHaveClass('rounded-2xl', 'border-border/60', 'shadow-pop', 'backdrop-blur-sm')
+    expect(aside).toHaveClass('duration-[400ms]', 'ease-[cubic-bezier(0.22,1,0.36,1)]', 'delay-0')
+    expect(aside).not.toHaveClass('motion-reduce:transition-none')
+    const shellLayout = document.querySelector('[style*="--shell-sidebar-width"]')
+    expect(shellLayout).toHaveStyle({
+      '--shell-sidebar-width': `${String(SIDEBAR_WIDTH_EXPANDED + SIDEBAR_GUTTER * 2)}px`,
+    })
+    expect(shellLayout).toHaveClass('duration-[400ms]', 'ease-[cubic-bezier(0.22,1,0.36,1)]')
+    // 折叠按钮已移入侧栏内部（品牌行右端），不再是贴合卡缘的浮动按钮
+    const collapseBtn = screen.getByRole('button', { name: '收起导航' })
+    expect(aside).toContainElement(collapseBtn)
     // 品牌无副标题
     expect(aside?.textContent ?? '').not.toContain('管理台')
     // 身份只在页眉
@@ -168,9 +239,18 @@ describe('侧栏图标轨折叠（FR-186）', () => {
     )
   })
 
-  it('段 2 页眉无横线隔断（FR-191）', () => {
+  it('页眉与内容区同底透明，侧栏为独立悬浮圆角卡片', () => {
     renderAt('/dashboard')
+    const headerShell = document.querySelector('[data-slot="app-header"]')
     const header = document.querySelector('[data-slot="app-header"] header')
+    const aside = document.querySelector('[data-slot="desktop-sidebar"]')
+    const contentSurface = document.querySelector('[data-slot="route-transition"]')?.parentElement
+
+    // 页眉外层不铺实色底，段 2 透明（FR-191），侧栏保持自带边框/阴影的悬浮卡片
+    expect(headerShell).not.toHaveClass('bg-surface-2')
+    expect(aside).toHaveClass('rounded-2xl', 'shadow-pop', 'backdrop-blur-sm', 'bg-sidebar/95')
+    // 内容区直接铺在应用背景上，不再套独立圆角卡面
+    expect(contentSurface).not.toHaveClass('bg-card')
     expect(header).not.toBeNull()
     expect(header?.className ?? '').not.toMatch(/border-b/)
     expect(header?.className ?? '').not.toMatch(/backdrop-blur/)
@@ -190,6 +270,17 @@ describe('侧栏图标轨折叠（FR-186）', () => {
     const aside = document.querySelector('[data-slot="desktop-sidebar"]')
     expect(aside).toHaveAttribute('data-collapsed', 'true')
     expect(aside).toHaveStyle({ width: `${String(SIDEBAR_WIDTH_COLLAPSED)}px` })
+    expect(aside).toHaveClass('delay-[50ms]')
+    const shellLayout = document.querySelector('[style*="--shell-sidebar-width"]')
+    expect(shellLayout).toHaveStyle({
+      '--shell-sidebar-width': `${String(SIDEBAR_WIDTH_COLLAPSED + SIDEBAR_GUTTER * 2)}px`,
+    })
+    expect(shellLayout).toHaveClass('delay-[50ms]')
+    // 收起态折叠按钮移到 logo 下方，仍在侧栏内部
+    const expandBtn = screen.getByRole('button', { name: '展开导航' })
+    expect(aside).toContainElement(expandBtn)
+    // 折叠态：侧栏内不再承载控制面状态点（已移回页眉），此处只验证折叠按钮位置
+    expect(aside?.querySelector('[data-slot="control-plane-status"]')).toBeNull()
     // 折叠后分组标题隐藏，但链接仍以 aria-label 可达
     const nav = desktopSidebar()
     expect(nav.getByRole('link', { name: '配置中心' })).toBeInTheDocument()
