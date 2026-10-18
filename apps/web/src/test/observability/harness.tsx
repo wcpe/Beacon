@@ -29,13 +29,15 @@ export function useScenario(scenario: MockScenario): void {
  * 在 Provider 树内渲染页面（retry:false 让错误态立即可断言）。
  * initialEntries 可指定初始路由（含查询参数），供互跳 URL query 初始化用例断言（FR-157）。
  */
-export function renderPage(ui: ReactElement, initialEntries?: string[]): RenderResult {
+export function renderPage(ui: ReactElement, initialEntries?: string[]): RenderResult & { queryClient: QueryClient } {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
     </QueryClientProvider>,
   )
+  // 一并返回 queryClient，供需要断言缓存行为的用例使用（如敏感正文不得滞留 MutationCache）。
+  return { ...result, queryClient }
 }

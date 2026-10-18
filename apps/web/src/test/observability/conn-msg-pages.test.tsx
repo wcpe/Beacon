@@ -226,7 +226,7 @@ describe('/messages 消息链路页', () => {
         return HttpResponse.json({ payload, sha256: 'a'.repeat(64), size: payload.length })
       }),
     )
-    renderPage(<MessagesPage />)
+    const { queryClient } = renderPage(<MessagesPage />)
 
     const rows = await waitForDataRows()
     await user.click(rows[0])
@@ -250,5 +250,12 @@ describe('/messages 消息链路页', () => {
 
     await user.click(within(dialog).getByRole('button', { name: '关闭' }))
     expect(screen.queryByText(payload)).not.toBeInTheDocument()
+
+    // 敏感正文不得滞留在全局 MutationCache：该 mutation 设了 gcTime: 0，
+    // 无 observer 后应被回收，否则关闭弹窗后仍可从缓存取到正文。
+    await waitFor(() => {
+      const cached = queryClient.getMutationCache().getAll()
+      expect(cached.some((mutation) => JSON.stringify(mutation.state.data ?? '').includes(payload))).toBe(false)
+    })
   })
 })

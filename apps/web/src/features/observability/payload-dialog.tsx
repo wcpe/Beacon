@@ -21,6 +21,9 @@ export default function PayloadDialog({ messageId, onClose }: PayloadDialogProps
   const [reason, setReason] = useState('')
   const payloadMutation = useMutation({
     mutationFn: () => readMessagePayload(messageId, reason.trim()),
+    // 敏感正文不入长期缓存：gcTime 置 0 使无 observer 的 mutation 立即被回收。
+    // 默认 gcTime 会让正文在全局 MutationCache 中滞留数分钟，关闭弹窗后仍可被取到。
+    gcTime: 0,
   })
   const close = (): void => {
     if (payloadMutation.isPending) return
