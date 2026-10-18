@@ -1,8 +1,16 @@
 import {
   MOCK_SCENARIOS,
+  MOCK_DATA_VOLUMES,
+  MOCK_LATENCIES,
   getMockScenario,
+  getMockDataVolume,
+  getMockLatency,
   setMockScenario,
+  setMockDataVolume,
+  setMockLatency,
   subscribeMockScenario,
+  subscribeMockDataVolume,
+  subscribeMockLatency,
 } from '@beacon/devmock'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -10,6 +18,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 describe('mock 场景切换', () => {
   afterEach(() => {
     setMockScenario('normal')
+    setMockDataVolume('baseline')
+    setMockLatency('none')
     window.localStorage.clear()
   })
 
@@ -41,5 +51,39 @@ describe('mock 场景切换', () => {
     setMockScenario('huge')
     expect(listener).toHaveBeenCalledTimes(1)
     unsubscribe()
+  })
+
+  it('数据量与延时是独立档位，并各自持久化', () => {
+    expect(MOCK_DATA_VOLUMES.map((option) => [option.value, option.itemCount])).toEqual([
+      ['baseline', null],
+      ['small', 10],
+      ['normal', 50],
+      ['large', 500],
+      ['xlarge', 5000],
+    ])
+    expect(MOCK_LATENCIES.map((option) => option.milliseconds)).toEqual([0, 200, 800, 2500])
+
+    setMockDataVolume('large')
+    setMockLatency('slow')
+
+    expect(getMockDataVolume()).toBe('large')
+    expect(window.localStorage.getItem('beacon-mock-data-volume')).toBe('large')
+    expect(getMockLatency()).toBe('slow')
+    expect(window.localStorage.getItem('beacon-mock-latency')).toBe('slow')
+  })
+
+  it('数据量与延时切换分别通知订阅者', () => {
+    const volumeListener = vi.fn()
+    const latencyListener = vi.fn()
+    const unsubscribeVolume = subscribeMockDataVolume(volumeListener)
+    const unsubscribeLatency = subscribeMockLatency(latencyListener)
+
+    setMockDataVolume('small')
+    setMockLatency('fast')
+
+    expect(volumeListener).toHaveBeenCalledWith('small')
+    expect(latencyListener).toHaveBeenCalledWith('fast')
+    unsubscribeVolume()
+    unsubscribeLatency()
   })
 })

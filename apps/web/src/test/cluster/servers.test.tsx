@@ -36,9 +36,9 @@ describe('/servers 服务器页', () => {
     useScenario('normal')
     renderPage(<ServersPage />)
 
-    // 资产列表出现已知子服
+    // 资产列表出现已知子服，mock 生命周期评审不再占用真实页面区域
     expect(await findServerRow('lobby-1')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '服务器生命周期评审（Mock）' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '服务器生命周期评审' })).not.toBeInTheDocument()
     // 吸顶入口按钮存在（待确认收敛为入口，不再默认铺开）
     const pendingBtn = await screen.findByRole('button', { name: /注册待确认/ })
     expect(pendingBtn).toBeInTheDocument()

@@ -764,9 +764,10 @@ export const system = {
   },
   lifecycle: {
     subject: { namespace: '命名空间', server: '服务器' },
-    title: '{{subject}}生命周期评审（Mock）',
+    // 不再在标题里挂「（Mock）」后缀：mock 身份由右下角 Mock 开发工具统一标识，
+    // 页面内保持与真实功能一致的专业表述。
+    title: '{{subject}}生命周期评审',
     mockLabel: '{{subject}}生命周期评审 mock',
-    demoOnly: '仅供确认交互与文案，不调用真实后端。',
     scenarios: '生命周期评审场景',
     states: { normal: '常规', empty: '空态', loading: '加载态', error: '错误态', huge: '超大量态' },
     empty: '没有可执行生命周期操作的已归档{{subject}}。请先归档目标资产后再申请永久删除。',

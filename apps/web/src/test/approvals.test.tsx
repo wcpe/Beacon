@@ -2,11 +2,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import ApprovalsPage from '../pages/approvals'
+import { setObservationScope } from '../features/env/observation-scope'
 import { allHandlers, resetMockData, setMockScenario, type MockScenario } from '@beacon/devmock'
 
 import '../i18n'
@@ -19,6 +20,8 @@ beforeAll(() => {
 
 afterEach(() => {
   server.resetHandlers()
+  // 观测范围是模块级单例，测试之间必须复位，否则会串味
+  setObservationScope({ kind: 'all' })
 })
 
 afterAll(() => {
@@ -49,7 +52,103 @@ describe('/approvals 审批中心', () => {
 
     expect(await screen.findByText('提审变更单 #5002：经济系统配置调优')).toBeInTheDocument()
     expect(screen.getByText('归档离线 backend-37，退出默认观测范围')).toBeInTheDocument()
-    expect(screen.getByText('全局审批不继承页眉环境或 namespace scope；以下 namespace 仅为页面筛选。')).toBeInTheDocument()
+    // 页面骨架：大标题 + 一行说明；说明里明确作用域跟随页眉筛选器（页内不再有自己的命名空间下拉）
+    expect(screen.getByRole('heading', { level: 1, name: '审批' })).toBeInTheDocument()
+    expect(screen.getByText(/统一审批入口/)).toBeInTheDocument()
+    expect(screen.getByText(/作用域跟随顶部所选环境与命名空间/)).toBeInTheDocument()
+    // 筛选区为「常显一行 + 高级筛选折叠」：分组标题已移除，默认只露状态与关键字
+    expect(screen.getByRole('button', { name: /高级筛选/ })).toBeInTheDocument()
+    const statusFilter = screen.getByRole('textbox', { name: '审批状态' })
+    expect(statusFilter).toHaveValue('待审批')
+    expect(screen.getByRole('textbox', { name: '审批关键字' })).toBeInTheDocument()
+    // 高级字段默认收起：时间窗输入不应外露
+    expect(screen.queryByLabelText('创建时间起')).not.toBeInTheDocument()
+    // 页内不再重复放命名空间下拉，「目标命名空间」只剩页眉筛选器一个来源
+    expect(screen.queryByRole('combobox', { name: '目标命名空间' })).not.toBeInTheDocument()
+  })
+
+  it('桌面列表使用卡片内滚动并吸顶自定义表头', async () => {
+    renderPage()
+    expect(await screen.findByText('提审变更单 #5002：经济系统配置调优')).toBeInTheDocument()
+
+    const scrollArea = document.querySelector('[data-slot="list-card-scroll"]')
+    expect(scrollArea).toHaveClass('md:min-h-0', 'md:overflow-y-auto')
+    expect(scrollArea).not.toHaveClass('max-h-[calc(100vh-22rem)]')
+    expect(screen.getByText('申请编号').parentElement).toHaveClass('sticky', 'top-0', 'z-10')
+  })
+
+  it('审批状态保留预选标签并支持输入筛选', async () => {
+    const urls: string[] = []
+    server.use(
+      http.get('*/admin/v2/approval-requests', ({ request }) => {
+        urls.push(request.url)
+        return HttpResponse.json({ items: [], total: 0 })
+      }),
+    )
+    renderPage()
+    const user = userEvent.setup()
+    const status = await screen.findByRole('textbox', { name: '审批状态' })
+
+    expect(status).toHaveValue('待审批')
+    await user.click(status)
+    expect(await screen.findByRole('option', { name: '待审批' })).toHaveAttribute('aria-selected', 'true')
+    await user.type(status, '执行中')
+    await user.click(await screen.findByRole('option', { name: '执行中' }))
+
+    await waitFor(() => {
+      expect(status).toHaveValue('执行中')
+      expect(urls.some((url) => new URL(url).searchParams.get('status') === 'executing')).toBe(true)
+    })
+  })
+
+  it('高级审批枚举支持搜索并保留全部哨兵映射', async () => {
+    const urls: string[] = []
+    server.use(
+      http.get('*/admin/v2/approval-requests', ({ request }) => {
+        urls.push(request.url)
+        return HttpResponse.json({ items: [], total: 0 })
+      }),
+    )
+    renderPage()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /高级筛选/ }))
+
+    const risk = await screen.findByRole('textbox', { name: '风险级别' })
+    expect(risk).toHaveValue('全部风险')
+    await user.click(risk)
+    expect(await screen.findByRole('option', { name: '全部风险' })).toHaveAttribute('aria-selected', 'true')
+    await user.type(risk, '严重')
+    await user.click(await screen.findByRole('option', { name: '严重' }))
+
+    const requesterType = screen.getByRole('textbox', { name: '申请主体类型' })
+    expect(requesterType).toHaveValue('全部主体')
+    await user.click(requesterType)
+    await user.type(requesterType, 'API 密钥')
+    await user.click(await screen.findByRole('option', { name: 'API 密钥' }))
+
+    await waitFor(() => {
+      expect(risk).toHaveValue('严重')
+      expect(requesterType).toHaveValue('API 密钥')
+      expect(urls.some((url) => new URL(url).searchParams.get('riskLevel') === 'critical')).toBe(true)
+      expect(urls.some((url) => new URL(url).searchParams.get('requesterType') === 'api_key')).toBe(true)
+    })
+  })
+
+  it('列表按页眉选中的环境与命名空间收窄', async () => {
+    const urls: string[] = []
+    server.use(
+      http.get('*/admin/v2/approval-requests', ({ request }) => {
+        urls.push(request.url)
+        return HttpResponse.json({ items: [], total: 0 })
+      }),
+    )
+    // 页眉选中「生产 → prod(#1)」：审批列表查询必须带上 namespaceId=1
+    setObservationScope({ kind: 'env', envId: 1, namespaceId: 1 })
+    renderPage()
+
+    await waitFor(() => {
+      expect(urls.some((url) => url.includes('namespaceId=1'))).toBe(true)
+    })
   })
 
   it('通过详情 deep-link 打开指定审批申请', async () => {
@@ -58,6 +157,7 @@ describe('/approvals 审批中心', () => {
     const selectedRow = await screen.findByRole('button', { name: /apr_change_9101/ })
     expect(selectedRow).toHaveAttribute('aria-current', 'true')
     expect(screen.getByRole('heading', { name: '风险与影响' })).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="detail-actions-footer"]')).toHaveClass('sticky', 'bottom-0', 'mt-auto')
   })
 
   it('批准动作只调用统一审批批准端点', async () => {
@@ -151,6 +251,36 @@ describe('/approvals 审批中心', () => {
     expect(called).toBe(true)
   })
 
+  it('拒绝失败留在弹窗内，关闭后重新打开会清空原因与旧错误', async () => {
+    server.use(
+      http.post('*/admin/v2/approval-requests/apr_change_9101/reject', async () => {
+        await delay(100)
+        return HttpResponse.json(
+          { code: 'temporary_failure', message: '模拟拒绝失败' },
+          { status: 503 },
+        )
+      }),
+    )
+    renderPage(['/approvals/apr_change_9101'])
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: '拒绝' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByLabelText('原因'), '第一次拒绝理由')
+    await user.click(within(dialog).getByRole('button', { name: '拒绝' }))
+
+    expect(await within(dialog).findByText('模拟拒绝失败')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: '拒绝' }))
+    const reopened = await screen.findByRole('alertdialog')
+    expect(within(reopened).queryByText('模拟拒绝失败')).not.toBeInTheDocument()
+    expect(within(reopened).getByLabelText('原因')).toHaveValue('')
+    expect(within(reopened).getByRole('button', { name: '拒绝' })).toBeDisabled()
+  })
+
   it('并发 409 后刷新服务器详情', async () => {
     let detailReads = 0
     server.use(
@@ -169,7 +299,9 @@ describe('/approvals 审批中心', () => {
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '批准并执行' }))
 
-    expect((await screen.findAllByText('执行中')).length).toBeGreaterThan(1)
+    // 状态筛选项已改为组件库 Select（不再渲染原生 option 文本），
+    // 因此这条断言改为只认状态徽标：详情确实被刷新成了「执行中」。
+    expect((await screen.findAllByText('执行中', { selector: '[data-slot="badge"]' })).length).toBeGreaterThan(0)
     expect(detailReads).toBeGreaterThan(1)
   })
 
@@ -183,8 +315,9 @@ describe('/approvals 审批中心', () => {
   it('执行中申请轮询到最终结果', async () => {
     renderPage(['/approvals/apr_config_9103'])
 
-    expect(await screen.findByText('执行中')).toBeInTheDocument()
-    expect(await screen.findByText('已完成')).toBeInTheDocument()
+    // 状态文案同时出现在状态徽标与详情时间线里，断言钉在状态徽标上避免多义
+    expect(await screen.findByText('执行中', { selector: '[data-slot="badge"]' })).toBeInTheDocument()
+    expect(await screen.findByText('已完成', { selector: '[data-slot="badge"]' })).toBeInTheDocument()
   }, 5_000)
 })
 

@@ -1,6 +1,6 @@
 // FR-190：站内开源协议页（项目 MIT + 第三方依赖清单）
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -33,8 +33,8 @@ describe('开源协议页（FR-190）', () => {
 
   it('展示项目 MIT 全文与第三方依赖清单', () => {
     renderAt('/license')
-    // E3/E5：页面身份由页眉面包屑承担（内容区不再渲染大标题）
-    expect(within(screen.getByRole('navigation', { name: '面包屑' })).getByText('开源协议')).toBeInTheDocument()
+    // 页面身份由浏览器标签标题承担（页眉面包屑已移除，见 docs/UX.md §4）
+    expect(document.title).toBe('Beacon - 开源协议')
     const full = document.querySelector('[data-slot="license-full-text"]')
     expect(full).not.toBeNull()
     const body = full?.textContent ?? ''
@@ -57,7 +57,6 @@ describe('开源协议页（FR-190）', () => {
     expect(screen.getByText(firstName)).toBeInTheDocument()
     // 不应出现纯类型包
     expect(screen.queryByText('@types/react')).not.toBeInTheDocument()
-    expect(document.title).toBe('Beacon - 开源协议')
   })
 
   it('搜索可过滤依赖表', async () => {
@@ -86,7 +85,10 @@ describe('开源协议页（FR-190）', () => {
     const footer = desktop?.querySelector('[data-slot="sidebar-footer"]')
     expect(footer).not.toBeNull()
     await user.click(within(footer as HTMLElement).getByRole('link', { name: '开源协议' }))
-    expect(await screen.findByText('开源协议', { selector: '[data-slot="page-breadcrumb"] *' })).toBeInTheDocument()
-    expect(document.title).toBe('Beacon - 开源协议')
+    // 面包屑已从页眉移除：改用许可页正文与标签标题确认已导航到位
+    expect(document.querySelector('[data-slot="license-full-text"]')).not.toBeNull()
+    await waitFor(() => {
+      expect(document.title).toBe('Beacon - 开源协议')
+    })
   })
 })

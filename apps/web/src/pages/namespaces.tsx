@@ -40,8 +40,6 @@ import {
 import type { ApprovalTicket } from '../api/cluster'
 import SystemReasonDialog from '../features/system/reason-dialog'
 import { formatIso } from '../features/system/format'
-import { isDemoMode } from '../demo-mode'
-import LifecycleMockReview from '../features/lifecycle/mock-review'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
 import Pager from '../features/observability/pager'
@@ -347,8 +345,6 @@ export default function NamespacesPage() {
           <Link className="w-fit text-brand hover:underline" to={`/approvals/${encodeURIComponent(grantTicket.approvalRequestId)}`}>查看统一审批</Link>
         </div>
       )}
-
-      {isDemoMode() && <LifecycleMockReview subject="namespace" />}
 
       {/* 创建 namespace 弹窗 */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

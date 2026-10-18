@@ -792,9 +792,10 @@ export const system = {
   },
   lifecycle: {
     subject: { namespace: 'namespace', server: 'server' },
-    title: '{{subject}} lifecycle review (Mock)',
+    // The "(Mock)" suffix is no longer part of the page title: mock identity is
+    // signalled by the floating Mock dev tools in the bottom-right corner.
+    title: '{{subject}} lifecycle review',
     mockLabel: '{{subject}} lifecycle review mock',
-    demoOnly: 'For interaction and copy review only; it never calls the real backend.',
     scenarios: 'Lifecycle review scenarios',
     states: { normal: 'Normal', empty: 'Empty', loading: 'Loading', error: 'Error', huge: 'Huge' },
     empty: 'No archived {{subject}} has a lifecycle operation available. Archive an asset before requesting permanent deletion.',
