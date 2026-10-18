@@ -4,6 +4,7 @@ package server_test
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 )
 
@@ -92,7 +93,16 @@ func TestServerPageBrowseApprovalFlow(t *testing.T) {
 	if code != http.StatusAccepted || ticket["commandId"] == nil {
 		t.Fatalf("直接创建浏览命令应返回 202 与 commandId，实际 %d：%v", code, ticket)
 	}
-	commandID := int(ticket["commandId"].(float64))
+	// RequestBrowse 返回 string（命令 ID 为不透明标识），故按字符串解析后再转数值用于比对。
+	rawCommandID, ok := ticket["commandId"].(string)
+	if !ok {
+		t.Fatalf("commandId 应为字符串，实际 %T：%v", ticket["commandId"], ticket)
+	}
+	commandID64, err := strconv.ParseUint(rawCommandID, 10, 0)
+	if err != nil {
+		t.Fatalf("commandId 应可解析为数值，实际 %q：%v", rawCommandID, err)
+	}
+	commandID := int(commandID64)
 
 	code, pulled := doAgentJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=srv-browse-approval", agentHeaders, nil)
 	if code != http.StatusOK || pulled["type"] != "fs-browse" {
