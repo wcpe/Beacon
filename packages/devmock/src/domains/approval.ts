@@ -515,16 +515,6 @@ async function createDemoApproval(info: MockRequestInfo): Promise<Response> {
   return createApproval(operationKey, resourceType, resourceId, requestReason, safeSummary)
 }
 
-async function createMessagePayloadApproval(info: MockRequestInfo): Promise<Response> {
-  const body = await readBody<{ reason?: string }>(info.request)
-  const messageId = pathParam(info, 'messageId')
-  const reason = body.reason?.trim()
-  if (!messageId || !reason) {
-    return jsonError(400, 'invalid_approval_request', '消息 payload 审批申请参数无效')
-  }
-  return createApproval('message.payload.read', 'message', messageId, reason, '申请查看消息 payload；正文不进入审批记录')
-}
-
 function createApproval(
   operationKey: DemoApprovalRequestInput['operationKey'],
   resourceType: string,
@@ -569,7 +559,6 @@ function consumeDemoGrant(info: MockRequestInfo): Response {
 
 export const approvalHandlers: HttpHandler[] = [
   mockPost('/admin/v2/approval-requests', createDemoApproval),
-  mockPost('/admin/v2/messages/:messageId/payload/approval-requests', createMessagePayloadApproval),
   mockPost('/_demo/approval-requests/:requestId/sensitive-access/consume', consumeDemoGrant),
   mockGet('/admin/v2/approval-requests', ({ request }) => listApprovals(request)),
   mockGet('/admin/v2/approvals', ({ request }) => listApprovals(request)),

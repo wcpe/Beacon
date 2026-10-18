@@ -257,51 +257,64 @@ async function openPayloadDialog(user: ReturnType<typeof userEvent.setup>): Prom
   await user.click(viewButtons[0])
 }
 
-describe('/topology 消息 payload 审批申请弹窗', () => {
-  it('原因必填：为空禁用提交，填写后可提交审批', async () => {
+describe('/topology 消息 payload 直读弹窗', () => {
+  it('原因必填：为空禁用直读，填写后可发起请求', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<TopologyPage />)
     await openPayloadDialog(user)
 
-    // 弹窗打开：提交按钮在原因为空时禁用。
-    expect(await screen.findByText('敏感内容审批')).toBeInTheDocument()
-    const confirm = screen.getByRole('button', { name: '提交审批' })
+    expect(await screen.findByText('查看消息 payload')).toBeInTheDocument()
+    const confirm = screen.getByRole('button', { name: '确认查看' })
     expect(confirm).toBeDisabled()
-    await user.type(screen.getByLabelText(/申请原因/), '排查异常链路失败样本')
+    await user.type(screen.getByLabelText(/查看原因/), '排查异常链路失败样本')
     expect(confirm).toBeEnabled()
   })
 
-  it('填写原因提交成功：只展示审批深链，不展示 payload 正文', async () => {
+  it('填写原因后直接读取并展示正文、哈希和大小，不进入审批中心', async () => {
     useScenario('normal')
     const user = userEvent.setup()
+    const payload = '{"type":"test:message"}'
+    let requestBody: unknown = null
+    let requestMessageId = ''
+    server.use(
+      http.post('/admin/v2/messages/:messageId/payload', async ({ request, params }) => {
+        requestMessageId = String(params.messageId)
+        requestBody = await request.json()
+        return HttpResponse.json({ payload, sha256: 'b'.repeat(64), size: payload.length })
+      }),
+    )
     renderPage(<TopologyPage />)
     await openPayloadDialog(user)
 
-    await user.type(screen.getByLabelText(/申请原因/), '排查异常链路失败样本')
-    await user.click(screen.getByRole('button', { name: '提交审批' }))
+    expect(screen.queryByText(payload)).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText(/查看原因/), '排查异常链路失败样本')
+    await user.click(screen.getByRole('button', { name: '确认查看' }))
 
-    expect(await screen.findByRole('link', { name: '前往审批中心' })).toBeInTheDocument()
-    expect(screen.queryByText(/"type"/)).not.toBeInTheDocument()
-    expect(screen.queryByText('SHA-256')).not.toBeInTheDocument()
+    expect(await screen.findByText(payload)).toBeInTheDocument()
+    expect(screen.getByText(/SHA-256/)).toBeInTheDocument()
+    expect(screen.getByText('b'.repeat(64))).toBeInTheDocument()
+    expect(screen.getByText(`大小 ${String(payload.length)} 字节`)).toBeInTheDocument()
+    expect(requestBody).toEqual({ reason: '排查异常链路失败样本' })
+    expect(requestMessageId).not.toBe('')
+    expect(screen.queryByRole('link', { name: '前往审批中心' })).not.toBeInTheDocument()
   })
 
-  it('提交失败时弹窗内展示脱敏错误文案，不静默', async () => {
+  it('直读失败时弹窗内展示错误，不展示正文或元数据', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     server.use(
-      http.post('/admin/v2/messages/:messageId/payload/approval-requests', () =>
-        HttpResponse.json({ code: 'forbidden', message: '只读密钥无权执行写操作' }, { status: 403 }),
+      http.post('/admin/v2/messages/:messageId/payload', () =>
+        HttpResponse.json({ code: 'forbidden', message: '只读密钥无权执行读取' }, { status: 403 }),
       ),
     )
     renderPage(<TopologyPage />)
     await openPayloadDialog(user)
 
-    await user.type(screen.getByLabelText(/申请原因/), '排查异常链路失败样本')
-    await user.click(screen.getByRole('button', { name: '提交审批' }))
+    await user.type(screen.getByLabelText(/查看原因/), '排查异常链路失败样本')
+    await user.click(screen.getByRole('button', { name: '确认查看' }))
 
-    // 脱敏错误内联展示在弹窗内，payload 未被展示。
-    expect(await screen.findByText('只读密钥无权执行写操作')).toBeInTheDocument()
+    expect(await screen.findByText('只读密钥无权执行读取')).toBeInTheDocument()
     expect(screen.queryByText('SHA-256')).not.toBeInTheDocument()
   })
 })

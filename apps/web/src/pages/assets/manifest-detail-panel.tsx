@@ -20,7 +20,7 @@ function MetaRow({ label, children }: { label: string; children: React.ReactNode
 
 export default function ManifestDetailPanel({ item }: { item: AssetItem }) {
   const { t } = useTranslation()
-  const [previewTarget, setPreviewTarget] = useState<{ serverId: string; path: string } | null>(null)
+  const [previewTarget, setPreviewTarget] = useState<{ namespaceId: number; serverId: string; path: string } | null>(null)
 
   return (
     <div className="grid gap-4">
@@ -55,7 +55,7 @@ export default function ManifestDetailPanel({ item }: { item: AssetItem }) {
       {/* 正文在用户触发后直读，详情面板不预取内容 */}
       <section className="grid gap-2">
         <h4 className="text-[13px] font-semibold text-ink-1">{t('delivery.assets.detail.previewTitle')}</h4>
-        <Button size="sm" className="w-fit" onClick={() => { setPreviewTarget({ serverId: item.serverId, path: item.path }) }}>
+        <Button size="sm" className="w-fit" onClick={() => { setPreviewTarget({ namespaceId: item.namespaceId, serverId: item.serverId, path: item.path }) }}>
           {t('delivery.assets.detail.requestPreview')}
         </Button>
       </section>

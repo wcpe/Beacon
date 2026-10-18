@@ -341,12 +341,14 @@ describe('/assets 文件资产页', () => {
   it('单文件查看直接读取并展示正文，同时保留敏感标记和审计提示', async () => {
     useScenario('normal')
     const user = userEvent.setup()
+    let requestNamespaceId: number | undefined
     let requestServerId = ''
     let requestPath = ''
     let requestReason = ''
     server.use(
       http.post('*/admin/v2/assets/preview', async ({ request }) => {
-        const body = await request.json() as { serverId: string; path: string; reason: string }
+        const body = await request.json() as { namespaceId: number; serverId: string; path: string; reason: string }
+        requestNamespaceId = body.namespaceId
         requestServerId = body.serverId
         requestPath = body.path
         requestReason = body.reason
@@ -375,6 +377,7 @@ describe('/assets 文件资产页', () => {
     expect(within(dialog).getByText('敏感')).toBeInTheDocument()
     // 审计提示已移除：只保留「敏感」标记本身，不再在正文旁解释流程
     expect(within(dialog).queryByText('本次敏感文件读取会记录审计，审计中不保存正文。')).not.toBeInTheDocument()
+    expect(requestNamespaceId).toBe(1)
     expect(requestServerId).toBe('lobby-1')
     expect(requestPath).not.toBe('')
     expect(requestReason).toBe('管理台文件正文直读')
@@ -475,8 +478,8 @@ describe('/assets 文件资产页', () => {
     await user.click(within(region).getByRole('button', { name: '查看差异' }))
 
     expect(pairBody).toEqual({
-      left: { serverId: 'lobby-1', path: 'plugins/Beacon/config.yml' },
-      right: { serverId: 'lobby-2', path: 'plugins/Beacon/config.yml' },
+      left: { namespaceId: 1, serverId: 'lobby-1', path: 'plugins/Beacon/config.yml' },
+      right: { namespaceId: 1, serverId: 'lobby-2', path: 'plugins/Beacon/config.yml' },
       reason: '管理台文件差异直读',
     })
     expect(await within(region).findByText('两侧文件存在差异')).toBeInTheDocument()

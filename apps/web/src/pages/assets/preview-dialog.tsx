@@ -15,10 +15,11 @@ import {
 
 import type { AssetPreviewResponse } from '@beacon/contracts'
 import { ApiClientError } from '../../api/http'
-import { fetchAssetPreview } from '../../api/delivery-assets'
+import { previewAsset } from '../../api/delivery-assets'
 import { formatBytes, shortHash } from './format'
 
 interface PreviewTarget {
+  namespaceId: number
   serverId: string
   path: string
 }
@@ -39,7 +40,7 @@ export default function PreviewDialog({ target, onOpenChange }: PreviewDialogPro
   const previewMutation = useMutation<AssetPreviewResponse>({
     mutationFn: () => {
       if (target === null) return Promise.reject(new Error('未选择文件'))
-      return fetchAssetPreview(target.serverId, target.path, PREVIEW_REASON)
+      return previewAsset(target, PREVIEW_REASON)
     },
   })
   const handleOpenChange = (open: boolean): void => {
@@ -50,14 +51,15 @@ export default function PreviewDialog({ target, onOpenChange }: PreviewDialogPro
   // 打开即读取：弹窗本身就是"查看正文"这一步，不再额外要求用户二次确认。
   // 审计仍由后端在返回正文前记录，前端无需为此加一道点击。
   const mutate = previewMutation.mutate
+  const namespaceId = target?.namespaceId
   const serverId = target?.serverId
   const path = target?.path
   useEffect(() => {
-    if (serverId === undefined || path === undefined) {
+    if (namespaceId === undefined || serverId === undefined || path === undefined) {
       return
     }
     mutate()
-  }, [serverId, path, mutate])
+  }, [namespaceId, serverId, path, mutate])
 
   if (target === null) return null
 

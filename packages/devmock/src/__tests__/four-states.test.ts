@@ -145,13 +145,18 @@ describe('normal 场景：真实感中文运维数据', () => {
   it('敏感文件预览：无原因 403，携原因放行', async () => {
     const assets = asPaged(
       (await callJson('GET', '/admin/v2/assets?namespaceId=1&pathPrefix=plugins/Economy/database-password.yml')).json,
-    ) as { items: { serverId: string; path: string }[] }
+    ) as { items: { namespaceId: number; serverId: string; path: string }[] }
     expect(assets.items.length).toBeGreaterThan(0)
     const target = assets.items[0]
-    const denied = await callJson('POST', '/admin/v2/assets/preview', { serverId: target.serverId, path: target.path })
+    const denied = await callJson('POST', '/admin/v2/assets/preview', {
+      namespaceId: target.namespaceId,
+      serverId: target.serverId,
+      path: target.path,
+    })
     expect(denied.status).toBe(403)
     expect((denied.json as { sensitive?: boolean }).sensitive).toBe(true)
     const allowed = await callJson('POST', '/admin/v2/assets/preview', {
+      namespaceId: target.namespaceId,
       serverId: target.serverId,
       path: target.path,
       reason: '排查线上口令配置漂移',

@@ -16,7 +16,7 @@ import type {
   MsgHop,
   MsgStatus,
 } from '@beacon/contracts'
-import { jsonError, mockGet, mockPost, pathParam, queryInt, queryStr, queryTimeMs, readBody } from '../http'
+import { jsonError, mockGet, mockPost, pathParam, queryInt, queryStr, queryTimeMs, readBody, type MockRequestInfo } from '../http'
 import { getClusterState } from '../data/cluster'
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
@@ -172,6 +172,25 @@ function toMessageItem(row: MessageDetail): MessageItem {
   delete item.hops
   delete item.correlated
   return item
+}
+
+async function readMessagePayload(info: MockRequestInfo): Promise<Response> {
+  const state = getConnMsgState()
+  const messageId = pathParam(info, 'messageId')
+  const row = state.messages.find((message) => message.messageId === messageId)
+  if (!row) {
+    return jsonError(404, 'message_not_found', '消息不存在')
+  }
+  const body = await readBody<{ reason?: string }>(info.request)
+  if (!body.reason || body.reason.length > 255) {
+    return jsonError(400, 'missing_reason', '查看 payload 必须填写原因（≤255 字）')
+  }
+  const payload = state.payloads.get(messageId) ?? ''
+  return HttpResponse.json({
+    payload,
+    sha256: pseudoSha256(payload),
+    size: payload.length,
+  } satisfies MessagePayloadResponse)
 }
 
 export const connectionsMessagesHandlers: HttpHandler[] = [
@@ -431,22 +450,7 @@ export const connectionsMessagesHandlers: HttpHandler[] = [
   }),
 
   // 查看 payload（原因必填 + 先审计后返回；mock 校验原因即放行）
-  mockPost('/admin/v2/messages/:messageId/payload', async (info) => {
-    const state = getConnMsgState()
-    const messageId = pathParam(info, 'messageId')
-    const row = state.messages.find((m) => m.messageId === messageId)
-    if (!row) {
-      return jsonError(404, 'message_not_found', '消息不存在')
-    }
-    const body = await readBody<{ reason?: string }>(info.request)
-    if (!body.reason || body.reason.length > 255) {
-      return jsonError(400, 'missing_reason', '查看 payload 必须填写原因（≤255 字）')
-    }
-    const payload = state.payloads.get(messageId) ?? ''
-    return HttpResponse.json({
-      payload,
-      sha256: pseudoSha256(payload),
-      size: payload.length,
-    } satisfies MessagePayloadResponse)
-  }),
+  mockPost('/admin/v2/messages/:messageId/payload', readMessagePayload),
+  // 旧审批路径保留兼容，但直接返回正文，不再创建审批申请。
+  mockPost('/admin/v2/messages/:messageId/payload/approval-requests', readMessagePayload),
 ]

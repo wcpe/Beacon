@@ -19,7 +19,7 @@ import {
 
 import AssetPathPicker from '../../features/delivery/asset-path-picker'
 import ServerPicker from '../../features/delivery/server-picker'
-import { fetchAssetPairDiff, type AssetPairDiffResponse } from '../../api/delivery-assets'
+import { readAssetPair, type AssetPairDiffResponse } from '../../api/delivery-assets'
 import { ApiClientError } from '../../api/http'
 import { shortHash } from './format'
 
@@ -38,9 +38,9 @@ export default function DiffPanel({ namespaceId }: { namespaceId: number }) {
   const canCompare = leftServer.trim() !== '' && rightServer.trim() !== '' && path.trim() !== ''
 
   const diffMutation = useMutation({
-    mutationFn: () => fetchAssetPairDiff(
-      { serverId: leftServer.trim(), path: path.trim() },
-      { serverId: rightServer.trim(), path: path.trim() },
+    mutationFn: () => readAssetPair(
+      { namespaceId, serverId: leftServer.trim(), path: path.trim() },
+      { namespaceId, serverId: rightServer.trim(), path: path.trim() },
       DIFF_REASON,
     ),
     onSuccess: setResult,
