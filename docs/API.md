@@ -231,12 +231,12 @@ agent 面：
 | GET | `/admin/v2/connections/stats` | 连接 / 玩家流时间桶聚合 **【已实现·FR-145】** |
 | GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**；支持 `targetKind` 过滤，广播行输出 fan-out 聚合字段 `fanoutTotal`/`deliveredCount`/`failedCount`/`expiredCount`/`targetZone`）；`messageId` / `correlationId` 直查在首选日表未命中时按最近**真实**日表有界回退（约 8 个真实日表，晚于当前的未来日表不入窗口；覆盖 `message_id` 非规范 UUIDv7 的消息），未投递消息的终态（`expired` / `failed` + `failReason`）据此可查 **【已实现·FR-149/180】** |
 | GET | `/admin/v2/messages/{messageId}` | 消息详情 + hops 链路（payload 仅元信息） **【已实现·FR-149】** |
-| POST | `/admin/v2/messages/{messageId}/payload` | 旧 payload 正文入口，固定 `409 operation_requires_approval`；先通过专用审批申请，再由原申请主体消费一次性 grant **【FR-209】** |
+| POST | `/admin/v2/messages/{messageId}/payload` | 直接读取 payload；需 `management.read` 与原因，service 先记仅含 messageId/哈希/大小的审计再返回正文 **【FR-209/ADR-0093】** |
 | GET | `/admin/v2/messages/stats` | 异常链路聚合（拓扑页数据源；`groupBy=edge\|type`，独立 bucket 维度无契约与消费方、暂未提供） **【已实现·FR-149/156】** |
-| POST | `/admin/v2/messages/{messageId}/payload/approval-requests` | payload 读取专用审批申请入口（body `{reason}` + `Idempotency-Key`，返回 `202 {requestId,status}`）；旧正文端点不隐式建申请 **【FR-209】** |
-| POST | `/admin/v2/sensitive-access-grants/{grantId}/consume` | 原申请主体一次性消费已批准的敏感内容（消息 payload）：重校验原 Principal、批准事实、grant 状态与目标版本，任一不匹配失败关闭 **【FR-209】** |
+| POST | `/admin/v2/messages/{messageId}/payload/approval-requests` | 兼容旧路径名的 direct payload 读取入口（body `{reason}`），返回正文与哈希/大小，不创建审批 **【FR-209/ADR-0093】** |
+| POST | `/admin/v2/sensitive-access-grants/{grantId}/consume` | 兼容旧 grant 路径的 direct payload 读取入口（body `{messageId,reason}`）；`grantId` 不作授权依据，仍需 `management.read` **【FR-209/ADR-0093】** |
 
-> 上表末两行的契约真源为 [agent-command-and-sensitive-content-approval.md](specs/agent-command-and-sensitive-content-approval.md) §5（FR-209）；本域只登记入口，不复制 grant / 一次性消费与错误码细则，敏感执行状态摘要另见该规格的 `GET /admin/v2/agent-operations/{resultRef}`。
+> 本节 payload 读取直执与审计细则见 [ADR-0093](adr/0093-direct-sensitive-content-reads.md)；审批申请、执行许可和其他敏感操作仍以 [agent-command-and-sensitive-content-approval.md](specs/agent-command-and-sensitive-content-approval.md) 为准。
 
 ### 热冷归档（P6 · 0.26.x，真源 [v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md) §5）
 
@@ -309,12 +309,12 @@ agent 面：
 | GET | `/admin/v2/assets/scan-status` | 每服扫描概要（摘要 / 文件数 / 耗时） |
 | GET | `/admin/v2/assets/compare` | 跨服同路径哈希分组比对 + 缺失服列表 |
 | POST | `/admin/v2/assets/rescan` | 批量下发重扫命令 |
-| POST | `/admin/v2/assets/preview` | 旧正文直出入口，固定 `409 operation_requires_approval` |
-| POST | `/admin/v2/assets/preview/approval-requests` | 提交单文件内容读取审批：`{serverId,path,reason}` + `Idempotency-Key`，冻结清单 SHA-256，返回 `202 {requestId,status}` |
-| POST | `/admin/v2/assets/preview/grants/{grantId}/consume` | 原申请主体在 Agent 成功回传后一次消费：`{commandId}`；校验 command、内容版本与 grant，返回正文或元数据 |
-| POST | `/admin/v2/assets/diff` | 旧双文件正文直出入口，固定 `409 operation_requires_approval` |
-| POST | `/admin/v2/assets/pair-read/approval-requests` | 跨服务器内容差异的双侧审批入口：`{left:{serverId,path},right:{serverId,path},reason}` + `Idempotency-Key`；分别冻结左右 server/path/SHA-256，返回 `202 {leftRequestId,rightRequestId,status:"pending"}`，不含正文、diff 或 pairId |
-| POST | `/admin/v2/assets/pair-read/grants/{grantId}/consume` | 原申请主体携任一侧 grant 的 `{commandId}` 触发双侧原子消费；仅当同一 pair 的两份 grant 都已由 Agent 回传激活且当前哈希仍匹配时返回 `{identical,changed,unsupported,left:{serverId,path,sha256,size},right:{...}}`，绝不返回任一正文或 diff 片段 |
+| POST | `/admin/v2/assets/preview` | 直接读取 `{serverId,path,reason?}` 指定的文件资产；敏感路径仍需 reason；返回正文/截断/二进制元数据，service 先写元数据审计 **【FR-164/ADR-0093】** |
+| POST | `/admin/v2/assets/preview/approval-requests` | 兼容旧路径名，直接读取 `{serverId,path,reason?}`，返回同 preview 响应，不创建审批 **【FR-164/ADR-0093】** |
+| POST | `/admin/v2/assets/preview/grants/{grantId}/consume` | 兼容旧 grant 路径，body `{commandId,reason?}` 通过命令定位路径并重新 direct 读取；`grantId` 不作授权依据 **【FR-164/ADR-0093】** |
+| POST | `/admin/v2/assets/diff` | 直接比较 `{left:{serverId,path},right:{serverId,path},reason?}`，返回差异两侧正文与哈希；敏感路径仍需 reason，审计只记目标与比较元数据 **【FR-164/ADR-0093】** |
+| POST | `/admin/v2/assets/pair-read/approval-requests` | 兼容旧路径名，直接执行双侧文件差异读取并返回 diff 响应；敏感路径仍需 reason，不创建两份审批 **【FR-164/ADR-0093】** |
+| POST | `/admin/v2/assets/pair-read/grants/{grantId}/consume` | 兼容旧 pair grant 路径，body `{commandId,reason?}` 定位两侧目标并 direct 比较；仅返回 `{identical,changed,unsupported,left:{serverId,path,sha256,size},right:{...}}` 元数据摘要 **【FR-164/ADR-0093】** |
 | GET | `/admin/v2/assets/sensitive-rules` | 敏感路径规则清单 |
 | PUT | `/admin/v2/assets/sensitive-rules` | 整体替换敏感路径规则（审计） |
 
