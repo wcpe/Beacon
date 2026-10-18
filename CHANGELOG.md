@@ -63,7 +63,6 @@
 
 - 新增 [ADR-0093](docs/adr/0093-direct-sensitive-content-reads.md) 并更新 [ADR-0079](docs/adr/0079-principal-capability-and-dangerous-operation-approval.md) 与 [ADR 索引](docs/adr/README.md) 的取代关系；同步 `docs/specs/agent-command-and-sensitive-content-approval.md`、`docs/API-v1-legacy.md`、`docs/UX.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`、`docs/API.md` 与 `docs/wiki/` 下相关口径。
 - 新增 `docs/specs/control-plane-resource-header.md`，记录页眉资源指标的数据来源、轮询与降级口径。
-- 删除 `docs/wiki/delivery-rollback.md`（内容已并入配置与交付章节）。
 
 ## 1.5.0（2026-10-12）
 

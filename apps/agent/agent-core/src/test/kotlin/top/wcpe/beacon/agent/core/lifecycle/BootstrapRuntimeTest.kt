@@ -139,13 +139,27 @@ class BootstrapRuntimeTest {
     fun `控制面兼容地址变化不使同一绑定快照失效`() {
         val activeCalls = AtomicInteger()
         val terminated = CountDownLatch(1)
-        val runtime = runtime(HttpResponse(200, "active-address-changed"), activeCalls, terminated, snapshot = validSnapshot())
+        val active = CountDownLatch(1)
+        val file = Files.createTempFile("binding", ".json").toFile()
+        val runtime =
+            runtime(
+                response = HttpResponse(200, "active-address-changed"),
+                activeCalls = activeCalls,
+                terminated = terminated,
+                snapshot = validSnapshot(),
+                snapshotFile = file,
+                onActive = { active.countDown() },
+            )
 
         runtime.start()
 
-        Thread.sleep(100)
+        // 注册走 adapter 线程池异步执行，固定 sleep 在负载高的 runner（尤其 Windows）上
+        // 可能先于线程调度返回，导致误判「未启动」；改为等待 onActive 这一确定信号。
+        assertTrue(active.await(5, TimeUnit.SECONDS), "兼容地址变化时仍应构造 active runtime")
         assertEquals(1, activeCalls.get())
         assertEquals(1L, terminated.count)
+        // 地址不在同一权威绑定的比较范围内，因此快照必须仍然有效（未被 invalidate 删除）。
+        assertTrue(file.exists(), "兼容地址变化不应使既有绑定快照失效")
     }
 
     private fun runtime(
@@ -153,6 +167,7 @@ class BootstrapRuntimeTest {
         activeCalls: AtomicInteger,
         terminated: CountDownLatch,
         snapshot: Map<String, Any?> = emptyMap(),
+        snapshotFile: java.io.File = Files.createTempFile("binding", ".json").toFile(),
         onActive: () -> Unit = {},
     ): BootstrapRuntime =
         runtime(
@@ -160,6 +175,7 @@ class BootstrapRuntimeTest {
             activeCalls = activeCalls,
             terminated = terminated,
             snapshot = snapshot,
+            snapshotFile = snapshotFile,
             onActive = onActive,
         )
 
