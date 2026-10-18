@@ -11,3 +11,44 @@ body {
     system-ui,
     sans-serif;
 }
+
+@keyframes shell-route-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.995);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+[data-slot='route-transition'] {
+  animation: shell-route-enter 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 侧栏控制面状态点的呼吸效果：用光晕扩散 + 轻微明暗表达"心跳"，
+   不改变元素几何尺寸（避免在 56px 图标轨里引发布局抖动）。 */
+@keyframes status-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+
+  50% {
+    opacity: 0.72;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
+  }
+}
+
+.animate-status-breathe {
+  animation: status-breathe 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-status-breathe {
+    animation-duration: 6s;
+  }
+}

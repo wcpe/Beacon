@@ -80,6 +80,7 @@ export {
 } from './components/ui/dropdown-menu'
 export { Input } from './components/ui/input'
 export { Label } from './components/ui/label'
+export { PageHeader } from './components/ui/page-header'
 export { ScrollArea, ScrollBar } from './components/ui/scroll-area'
 export {
   Select,

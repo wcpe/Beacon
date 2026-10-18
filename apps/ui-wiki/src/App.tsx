@@ -18,6 +18,7 @@ import {
   SlidersHorizontal,
   Terminal,
   TrendingUp,
+  Truck,
   Users,
   Zap,
 } from 'lucide-react'
@@ -73,6 +74,7 @@ import {
   Label,
   MarkdownLite,
   MiniSparkline,
+  PageHeader,
   ratioLevel,
   ScrollArea,
   Select,
@@ -197,6 +199,35 @@ function ButtonPreview() {
           离线
         </Badge>
         <Badge variant="brand">品牌</Badge>
+      </div>
+    </ComponentShell>
+  )
+}
+
+function PageHeaderPreview() {
+  return (
+    <ComponentShell>
+      <div className="space-y-6">
+        {/* 完整形态：图标 + 大标题 + 一行解释 + 右侧常用操作与「文档」入口 */}
+        <PageHeader
+          icon={<Truck />}
+          title="变更单"
+          description="一次交付就是一单：审批、分批推送、观察与回滚都在同一单里完成。"
+          actions={
+            <>
+              <Button size="sm">新建变更单</Button>
+              <Button variant="outline" size="sm">
+                文档
+              </Button>
+            </>
+          }
+        />
+        <Separator />
+        {/* 退化形态：无图标、无操作时只留标题与解释；长文案按省略号降级 */}
+        <PageHeader
+          title="服务端二进制"
+          description="查看每台服务器上报的二进制版本、可升级候选与漂移提示，超长解释会以省略号收尾而不是把布局撑破。"
+        />
       </div>
     </ComponentShell>
   )
@@ -769,12 +800,17 @@ const items: MuseumItem[] = [
   },
   {
     id: 'section-header',
-    title: '区段标题',
+    title: '页级与区段标题',
     group: '展示组件',
-    description: '卡内 / 页内区段标题：图标 + 标题 + 计数 + 右侧操作；base/lg 两档。',
-    exports: ['SectionHeader'],
-    states: ['with actions', 'section base', 'section lg'],
-    preview: <SectionHeaderPreview />,
+    description: '页级标题：图标 + 大标题 + 一行解释 + 右侧操作；区段标题：图标 + 标题 + 计数 + 右侧操作，base/lg 两档。',
+    exports: ['PageHeader', 'SectionHeader'],
+    states: ['page header', 'with actions', 'no icon', 'section base', 'section lg'],
+    preview: (
+      <div className="grid gap-4">
+        <PageHeaderPreview />
+        <SectionHeaderPreview />
+      </div>
+    ),
   },
   {
     id: 'text',

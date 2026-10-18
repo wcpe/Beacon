@@ -2,6 +2,9 @@
 // 仅做表格呈现（含空态行），加载/错误三态交给外层 AsyncSection，职责单一便于测试。
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ChevronRight } from 'lucide-react'
+
+import { Button } from './ui/button'
 import {
   Table,
   TableBody,
@@ -41,6 +44,8 @@ interface DataTableProps<T> {
   pageSize?: number
   // 表格密度：默认保持原舒适间距，紧凑档用于高密度运维页
   density?: 'comfortable' | 'compact'
+  // 启用后表头吸顶，纵向滚动由外层列表容器承担
+  stickyHeader?: boolean
 }
 
 export default function DataTable<T>({
@@ -52,6 +57,7 @@ export default function DataTable<T>({
   rowClassName,
   pageSize,
   density = 'comfortable',
+  stickyHeader = false,
 }: DataTableProps<T>) {
   // 舒适档沿用底层 table.tsx 默认；紧凑档只收紧本表，不影响其它表格。
   const list = useMemo(() => rows ?? [], [rows])
@@ -71,7 +77,7 @@ export default function DataTable<T>({
 
   return (
     <>
-      <Table>
+      <Table containerClassName={stickyHeader ? 'overflow-x-visible' : undefined}>
         <TableHeader>
           <TableRow>
             {columns.map((col, i) => (
@@ -79,12 +85,21 @@ export default function DataTable<T>({
                 key={i}
                 className={cn(
                   density === 'compact' && 'h-8 px-2 text-xs',
+                  stickyHeader && 'sticky top-0 z-10 bg-surface-2',
                   col.headClassName,
                 )}
               >
                 {col.header}
               </TableHead>
             ))}
+            {/* 可点击行的行尾箭头占位：给出常驻的"可进入"暗示，
+                不依赖只有鼠标才能感知的 cursor 变化 */}
+            {onRowClick && (
+              <TableHead
+                className={cn('w-8', stickyHeader && 'sticky top-0 z-10 bg-surface-2')}
+                aria-label="操作"
+              />
+            )}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -98,7 +113,8 @@ export default function DataTable<T>({
                   key={rowKey(row, absoluteIndex)}
                   className={cn(
                     onRowClick &&
-                      'cursor-pointer outline-none focus-visible:bg-brand-50/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                      // 可点击行：悬停底色 + 指针 + 键盘聚焦环；窄屏/触摸场景靠行尾箭头列传达可点性
+                      'group/row cursor-pointer outline-none hover:bg-surface-2 focus-visible:bg-brand-50/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
                     rowClassName?.(row),
                   )}
                   onClick={onRowClick ? () => { onRowClick(row); } : undefined}
@@ -126,12 +142,23 @@ export default function DataTable<T>({
                       {col.cell(row)}
                     </TableCell>
                   ))}
+                  {onRowClick && (
+                    <TableCell className="w-8 text-right">
+                      <ChevronRight
+                        aria-hidden
+                        className="size-4 text-ink-4 transition-transform group-hover/row:translate-x-0.5 group-hover/row:text-ink-2"
+                      />
+                    </TableCell>
+                  )}
                 </TableRow>
               )
             })
           ) : (
             <TableRow>
-              <TableCell colSpan={columns.length} className="text-center text-muted-foreground">
+              <TableCell
+                colSpan={columns.length + (onRowClick ? 1 : 0)}
+                className="text-center text-muted-foreground"
+              >
                 {emptyText ?? '暂无数据'}
               </TableCell>
             </TableRow>
@@ -143,22 +170,25 @@ export default function DataTable<T>({
           <span>
             第 {currentPage + 1} / {pageCount} 页 · 共 {list.length} 行
           </span>
-          <button
+          {/* 内部分页也走组件库按钮（此前是裸 <button>，违反"页面不自建通用控件"） */}
+          <Button
             type="button"
-            className="rounded-md border px-2 py-1 disabled:opacity-50"
+            variant="outline"
+            size="sm"
             disabled={currentPage === 0}
             onClick={() => { setPageIndex((p) => Math.max(0, p - 1)); }}
           >
             上一页
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="rounded-md border px-2 py-1 disabled:opacity-50"
+            variant="outline"
+            size="sm"
             disabled={currentPage >= pageCount - 1}
             onClick={() => { setPageIndex((p) => Math.min(pageCount - 1, p + 1)); }}
           >
             下一页
-          </button>
+          </Button>
         </div>
       )}
     </>
