@@ -1,7 +1,13 @@
 // FR-159 验收核心：各域代表性端点在四态场景下的响应形状。
 // empty 空列表 / normal 有真实感数据 / huge total>1000 且分页真实生效 / error 统一错误体。
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { BASE_MS, MOCK_TRACE_ID, setMockScenario } from '../index'
+import {
+  BASE_MS,
+  MOCK_TRACE_ID,
+  setMockScenario,
+  setMockDataVolume,
+  setMockLatency,
+} from '../index'
 import { callJson, resetMockWorld, server } from './msw-server'
 
 interface PagedShape {
@@ -151,6 +157,78 @@ describe('normal 场景：真实感中文运维数据', () => {
       reason: '排查线上口令配置漂移',
     })
     expect(allowed.status).toBe(200)
+  })
+})
+
+describe('数据量与接口延时正交切换', () => {
+  it.each([
+    ['small', 10],
+    ['large', 500],
+  ] as const)('%s 档按目标规模扩展交付、配置、资产、审批与 MCP 流水', async (volume, expectedCount) => {
+    setMockDataVolume(volume)
+
+    const delivery = asPaged(
+      (await callJson('GET', '/admin/v2/change-orders?namespaceId=1&pageSize=1')).json,
+    )
+    const configs = asPaged(
+      (await callJson('GET', '/admin/v2/config-files?namespaceId=1&pageSize=1')).json,
+    )
+    const assets = asPaged(
+      (await callJson('GET', '/admin/v2/assets?namespaceId=1&pageSize=1')).json,
+    )
+    const approvals = asPaged(
+      (await callJson('GET', '/admin/v2/approvals?pageSize=1')).json,
+    )
+    const mcpLastPage = (await callJson(
+      'GET',
+      `/admin/v2/mcp/invocations?cursor=${String(expectedCount - 1)}&limit=1`,
+    )).json as { items: unknown[]; nextCursor: string }
+    const mcpPastEnd = (await callJson(
+      'GET',
+      `/admin/v2/mcp/invocations?cursor=${String(expectedCount)}&limit=1`,
+    )).json as { items: unknown[]; nextCursor: string }
+
+    expect(delivery.total).toBe(expectedCount)
+    expect(configs.total).toBe(expectedCount)
+    expect(assets.total).toBe(expectedCount)
+    expect(approvals.total).toBeGreaterThanOrEqual(expectedCount)
+    expect(mcpLastPage.items).toHaveLength(1)
+    expect(mcpLastPage.nextCursor).toBe('')
+    expect(mcpPastEnd.items).toEqual([])
+    expect(mcpPastEnd.nextCursor).toBe('')
+  })
+
+  it('xlarge 档的 MCP 流水可翻到第 5000 条', async () => {
+    setMockDataVolume('xlarge')
+    const last = (await callJson('GET', '/admin/v2/mcp/invocations?cursor=4999&limit=1')).json as {
+      items: unknown[]
+      nextCursor: string
+    }
+    expect(last.items).toHaveLength(1)
+    expect(last.nextCursor).toBe('')
+  })
+
+  it('empty 场景优先于 xlarge 数据量', async () => {
+    setMockDataVolume('xlarge')
+    setMockScenario('empty')
+    const config = asPaged((await callJson('GET', '/admin/v2/config-files?namespaceId=1')).json)
+    const asset = asPaged((await callJson('GET', '/admin/v2/assets?namespaceId=1')).json)
+    const delivery = asPaged((await callJson('GET', '/admin/v2/change-orders?namespaceId=1')).json)
+    expect(config.total).toBe(0)
+    expect(asset.total).toBe(0)
+    expect(delivery.total).toBe(0)
+  })
+
+  it('fast 延时作用于正常响应与 error 场景', async () => {
+    setMockLatency('fast')
+    const normalStart = Date.now()
+    expect((await callJson('GET', '/admin/v2/namespaces')).status).toBe(200)
+    expect(Date.now() - normalStart).toBeGreaterThanOrEqual(180)
+
+    setMockScenario('error')
+    const errorStart = Date.now()
+    expect((await callJson('GET', '/admin/v2/namespaces')).status).toBe(500)
+    expect(Date.now() - errorStart).toBeGreaterThanOrEqual(180)
   })
 })
 

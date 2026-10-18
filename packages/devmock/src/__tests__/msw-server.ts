@@ -1,6 +1,12 @@
 // 测试共用的 msw Node 服务端：注册全量 handlers，并在用例间复位场景与数据仓。
 import { setupServer } from 'msw/node'
-import { allHandlers, resetMockData, setMockScenario } from '../index'
+import {
+  allHandlers,
+  resetMockData,
+  setMockDataVolume,
+  setMockLatency,
+  setMockScenario,
+} from '../index'
 
 export const server = setupServer(...allHandlers)
 
@@ -23,5 +29,7 @@ export async function callJson(
 /** 复位到常规态 + 重建数据仓（每个用例后调用） */
 export function resetMockWorld(): void {
   setMockScenario('normal')
+  setMockDataVolume('baseline')
+  setMockLatency('none')
   resetMockData()
 }

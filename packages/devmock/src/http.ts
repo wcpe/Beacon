@@ -4,7 +4,7 @@
 
 import { http, HttpResponse, type HttpHandler } from 'msw'
 import type { MockErrorBody, Paged } from '@beacon/contracts'
-import { getMockScenario } from './scenario'
+import { getMockLatencyMilliseconds, getMockScenario } from './scenario'
 
 /** mock 固定 traceId（确定性，测试可断言） */
 export const MOCK_TRACE_ID = 'trace-devmock'
@@ -37,9 +37,13 @@ export interface MockRequestInfo {
 
 type MockResolver = (info: MockRequestInfo) => Response | Promise<Response>
 
-/** 包一层 error 场景：当前场景为 error 时任何端点直接回统一 500 错误体 */
+/** 统一注入接口延时，并让 error 场景优先于各端点数据处理。 */
 function withScenario(resolver: MockResolver): MockResolver {
-  return (info) => {
+  return async (info) => {
+    const delayMs = getMockLatencyMilliseconds()
+    if (delayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
+    }
     if (getMockScenario() === 'error') {
       return internalError()
     }

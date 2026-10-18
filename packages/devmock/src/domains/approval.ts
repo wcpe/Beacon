@@ -25,7 +25,7 @@ import {
   type MockRequestInfo,
 } from '../http'
 import { defineScenarioStore } from '../store'
-import type { MockScenario } from '../scenario'
+import { getMockDataVolumeCount, type MockScenario } from '../scenario'
 import { isoOffset, pseudoSha256 } from '../support'
 import { deliveryApprovalSpecs } from './delivery-approval-bridge'
 import { enqueueApprovedChangeOrder } from './delivery'
@@ -297,6 +297,25 @@ function buildApproval(scenario: MockScenario): ApprovalState {
         }),
       )
     }
+  }
+  const statuses: ApprovalStatus[] = ['pending', 'executing', 'succeeded', 'failed']
+  for (let i = rows.length; i < getMockDataVolumeCount(); i += 1) {
+    rows.push(
+      makeApproval({
+        ordinal: 20_000 + i,
+        requestId: `apr_volume_${String(i + 1).padStart(4, '0')}`,
+        operationKey: 'delivery.approve',
+        resourceType: 'change-order',
+        resourceId: String(10_000 + i),
+        riskLevel: i % 3 === 0 ? 'critical' : 'high',
+        status: statuses[i % statuses.length],
+        requesterType: i % 5 === 0 ? 'mcp' : 'human',
+        requesterId: i % 5 === 0 ? 'mcp:batch' : 'ops-chen',
+        namespaceId: 1,
+        safeSummary: `数据量验收审批 #${String(i + 1).padStart(4, '0')}`,
+        ageMs: (i + 1) * HOUR,
+      }),
+    )
   }
   return { rows, executionPolls: {}, demoGrantStatus: {} }
 }

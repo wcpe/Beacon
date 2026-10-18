@@ -35,7 +35,7 @@ import type {
 } from '@beacon/contracts'
 import { jsonError, mockDelete, mockGet, mockPatch, mockPost, paginate, pathParam, queryStr, readBody } from '../http'
 import { getClusterState, type ClusterState, type ServerRow } from '../data/cluster'
-import type { MockScenario } from '../scenario'
+import { getMockDataVolumeCount, type MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { createRng, hashString, isoOffset, pseudoSha256 } from '../support'
 import { deliveryApprovalSpecs, registerDeliveryApproval, type DeliveryApprovalSpec } from './delivery-approval-bridge'
@@ -440,6 +440,15 @@ function buildDelivery(scenario: MockScenario): DeliveryState {
         ageDays: 10 + i,
       })
     }
+  }
+  const targetCount = scenario === 'huge'
+    ? Math.max(state.orders.length, getMockDataVolumeCount())
+    : getMockDataVolumeCount()
+  for (let i = state.orders.length; i < targetCount; i += 1) {
+    makeOrder(state, 1, `压测样例变更单 #${String(i + 1).padStart(4, '0')}`, 'completed', {
+      configOnly: true,
+      ageDays: 90 + i,
+    })
   }
   return state
 }

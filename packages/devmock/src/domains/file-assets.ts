@@ -15,7 +15,7 @@ import type {
 } from '@beacon/contracts'
 import { jsonError, mockGet, mockPost, mockPut, paginate, queryStr, readBody } from '../http'
 import { getClusterState } from '../data/cluster'
-import type { MockScenario } from '../scenario'
+import { getMockDataVolumeCount, type MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { BASE_MS, hashString, isoOffset, pseudoSha256, uuidFrom } from '../support'
 
@@ -117,7 +117,38 @@ function buildAssets(scenario: MockScenario): AssetState {
       scanDurationMs: 800 + (serverHash % 4200),
     })
   }
-  return { assets, scans, patterns: [...DEFAULT_SENSITIVE_PATTERNS] }
+  const volumeCount = getMockDataVolumeCount()
+  let volumeAssets = assets
+  if (volumeCount > 0) {
+    volumeAssets = []
+    const namespaceIds = Array.from(new Set(servers.map((server) => server.namespaceId)))
+    for (const namespaceId of namespaceIds) {
+      const namespaceAssets = assets.filter((asset) => asset.namespaceId === namespaceId)
+      const targetCount = scenario === 'huge' ? Math.max(namespaceAssets.length, volumeCount) : volumeCount
+      const selected = namespaceAssets.slice(0, targetCount)
+      const server = servers.find((candidate) => candidate.namespaceId === namespaceId)
+      const template = selected[0] ?? assets[0]
+      if (server !== undefined && template !== undefined) {
+        for (let index = selected.length; index < targetCount; index += 1) {
+          const path = `plugins/MockData/fixture-${String(index + 1).padStart(4, '0')}.yml`
+          selected.push({
+            ...template,
+            serverId: server.serverId,
+            namespaceId,
+            path,
+            ext: 'yml',
+            sha256: pseudoSha256(`asset-volume:${String(namespaceId)}:${String(index)}`),
+            size: 1024 + (index % 4096),
+            mtimeMs: BASE_MS - index * 1000,
+            isText: true,
+            scannedAt: isoOffset(-(index % 1800) * 1000),
+          })
+        }
+      }
+      volumeAssets = volumeAssets.concat(selected)
+    }
+  }
+  return { assets: volumeAssets, scans, patterns: [...DEFAULT_SENSITIVE_PATTERNS] }
 }
 
 const getAssetState: () => AssetState = defineScenarioStore(buildAssets)
