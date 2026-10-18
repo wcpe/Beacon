@@ -128,7 +128,9 @@ function buildAssets(scenario: MockScenario): AssetState {
       const selected = namespaceAssets.slice(0, targetCount)
       const server = servers.find((candidate) => candidate.namespaceId === namespaceId)
       const template = selected[0] ?? assets[0]
-      if (server !== undefined && template !== undefined) {
+      // template 来自索引访问，本项目未开启 noUncheckedIndexedAccess，故类型上不含 undefined；
+      // 真正可能为空的是 servers.find() 的结果。
+      if (server !== undefined) {
         for (let index = selected.length; index < targetCount; index += 1) {
           const path = `plugins/MockData/fixture-${String(index + 1).padStart(4, '0')}.yml`
           selected.push({
