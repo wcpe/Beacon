@@ -53,16 +53,22 @@ func TestServerPageBrowseFullChain(t *testing.T) {
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "srv-browse-1", "area1")
 
-	path := ts.URL + "/admin/v1/instances/srv-browse-1/browse?namespace=prod&op=list&path=&limit=50"
-	code, body := doJSON(t, http.MethodGet, path, nil)
+	path := ts.URL + "/admin/v1/instances/srv-browse-1/browse"
+	getPath := path + "?namespace=prod&op=list&path=&limit=50"
+	code, body := doJSON(t, http.MethodGet, getPath, nil)
+	if code != http.StatusBadRequest {
+		t.Fatalf("缺 commandId 的 GET 应只查询并拒绝创建，实际 %d：%v", code, body)
+	}
+	browseRequest := map[string]any{"namespace": "prod", "op": "list", "path": "", "limit": 50}
+	code, body = doJSON(t, http.MethodPost, path, browseRequest)
 	if code != http.StatusAccepted || body["commandId"] == nil {
-		t.Fatalf("浏览应直接创建命令，实际 %d：%v", code, body)
+		t.Fatalf("POST 浏览应直接创建命令，实际 %d：%v", code, body)
 	}
 
 	roKey, _ := createKey(t, ts, "ro-browse", "readonly")
-	code, body = doAPIKey(t, http.MethodGet, path, roKey, false, nil)
+	code, body = doAPIKey(t, http.MethodPost, path, roKey, false, browseRequest)
 	if code != http.StatusAccepted || body["commandId"] == nil {
-		t.Fatalf("具有 management.read 的只读密钥应能直接浏览，实际 %d：%v", code, body)
+		t.Fatalf("具有 management.read 的只读密钥应能 POST 直接浏览，实际 %d：%v", code, body)
 	}
 	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action=file.browse", nil)
 	if code != http.StatusOK || len(asSlice(audits["items"])) < 2 {

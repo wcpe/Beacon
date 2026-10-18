@@ -28,9 +28,11 @@ type AgentCommand struct {
 	// 与 ImprintContent 平行——受控瞬态：done 后供 admin 取一次、命令过期即清空；不入审计 detail、不导出 git、不落持久真源。
 	LogContent string `gorm:"column:log_content;type:text"`
 	// 文件浏览回传结果（FR-110，瞬态，见 ADR-0049）：type=fs-browse 回传的目录清单 / 子树 / 文件内容（JSON 文本）。
-	// 与 ImprintContent / LogContent 平行——受控瞬态：等待中的 admin 取一次即用、命令过期即清空；
+	// 与 ImprintContent / LogContent 平行——受控瞬态：等待中的 admin 取一次即用、独立过期时间到达即清空；
 	// **绝不入审计 detail**（文件内容敏感）、不导出 git、不落持久真源。
 	BrowseResult string `gorm:"column:browse_result;type:text"`
+	// 浏览正文的独立过期时间，不依赖是否存在敏感访问授权。
+	BrowseResultExpiresAt *time.Time `gorm:"column:browse_result_expires_at;index"`
 	// 触发操作者（admin 认证身份，非手填）
 	Operator string `gorm:"column:operator;size:128;not null"`
 	// 创建时间（UTC）

@@ -34,33 +34,29 @@ func NewBrowseHandler(svc *service.AgentCommandService, instSvc *service.Instanc
 // SetReportAuthenticator 注入浏览回传的 v2 权威身份校验器。
 func (h *BrowseHandler) SetReportAuthenticator(authn browseReportAuthenticator) { h.reportAuth = authn }
 
-// Browse 直接创建浏览命令；带 commandId 时读取该命令的一次性结果。
+// Browse 只读取指定 commandId 的一次性结果；创建命令由 POST /browse 处理。
 func (h *BrowseHandler) Browse(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if rawID := q.Get("commandId"); rawID != "" {
-		commandID, err := strconv.ParseUint(rawID, 10, 0)
-		if err != nil || commandID == 0 {
-			render.WriteError(w, r, apperr.ErrInvalidParam)
-			return
-		}
-		if h == nil || h.svc == nil {
-			render.WriteError(w, r, apperr.ErrInternal)
-			return
-		}
-		result, err := h.svc.ReadBrowseResult(uint(commandID), chi.URLParam(r, "serverId"), auth.Operator(r.Context()), clientIP(r))
-		if err != nil {
-			render.WriteError(w, r, err)
-			return
-		}
-		render.WriteJSON(w, http.StatusOK, json.RawMessage(result))
+	rawID := q.Get("commandId")
+	if rawID == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	p := service.BrowseParams{
-		Namespace: q.Get("namespace"), ServerID: chi.URLParam(r, "serverId"), Op: q.Get("op"),
-		Path: q.Get("path"), Offset: intQuery(q.Get("offset")), Limit: intQuery(q.Get("limit")), MaxDepth: intQuery(q.Get("maxDepth")),
-		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	commandID, err := strconv.ParseUint(rawID, 10, 0)
+	if err != nil || commandID == 0 {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
 	}
-	h.startBrowse(w, r, p)
+	if h == nil || h.svc == nil {
+		render.WriteError(w, r, apperr.ErrInternal)
+		return
+	}
+	result, err := h.svc.ReadBrowseResult(uint(commandID), chi.URLParam(r, "serverId"), auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, json.RawMessage(result))
 }
 
 type browseApprovalRequest struct {

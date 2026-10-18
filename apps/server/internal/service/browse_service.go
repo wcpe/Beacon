@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -18,6 +17,9 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
 )
+
+// 浏览正文的数据库保留上限，是否存在授权均不影响此期限。
+const browseResultTTL = 5 * time.Minute
 
 // BrowseResultHub 是资产预览结果等待的窄接口（由 longpoll.Hub 实现）。
 type BrowseResultHub interface {
@@ -160,7 +162,7 @@ func (s *AgentCommandService) ReceiveBrowseResult(identity agentauth.Identity, c
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(result)))
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		hit, err := s.repo.WithTx(tx).UpdateStatusWithBrowseResult(cmd.ID, result)
+		hit, err := s.repo.WithTx(tx).UpdateStatusWithBrowseResult(cmd.ID, result, time.Now().UTC().Add(browseResultTTL))
 		if err != nil {
 			return err
 		}
@@ -253,33 +255,10 @@ func (s *AgentCommandService) ReadBrowseResult(commandID uint, serverID, operato
 	return result, nil
 }
 
-// ClearExpiredBrowseResults 清理已到期未消费授权关联的浏览正文，命令元数据仍保留。
+// ClearExpiredBrowseResults 清理所有已到独立过期时间且未消费的浏览正文，命令元数据仍保留。
 func (s *AgentCommandService) ClearExpiredBrowseResults(now time.Time) (int64, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.db == nil || s.repo == nil {
 		return 0, apperr.ErrForbidden
 	}
-	var grants []model.SensitiveAccessGrant
-	if err := s.db.Where("operation = ? AND status = ? AND expires_at <= ?", authz.OperationAgentCommandFSBrowse, model.SensitiveAccessGrantStatusActive, now.UTC()).Find(&grants).Error; err != nil {
-		return 0, err
-	}
-	ids := make([]uint, 0, len(grants))
-	for _, grant := range grants {
-		id, ok := browseCommandID(grant.TargetRef)
-		if ok {
-			ids = append(ids, id)
-		}
-	}
-	return s.repo.ClearBrowseResults(ids)
-}
-
-func browseCommandID(targetRef string) (uint, bool) {
-	const prefix = "agent-command/"
-	if !strings.HasPrefix(targetRef, prefix) {
-		return 0, false
-	}
-	id, err := strconv.ParseUint(strings.TrimPrefix(targetRef, prefix), 10, 0)
-	if err != nil || id == 0 {
-		return 0, false
-	}
-	return uint(id), true
+	return s.repo.ClearExpiredBrowseResults(now.UTC())
 }

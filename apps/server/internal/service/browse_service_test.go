@@ -240,22 +240,78 @@ func TestConsumeApprovedBrowseRollsBackOnClearFailure(t *testing.T) {
 	}
 }
 
-// TestClearExpiredBrowseResults 清理已到期且未消费授权对应的 done 浏览正文。
+// TestClearExpiredBrowseResults 无论关联授权是否过期，都按浏览正文独立到期时间清理。
 func TestClearExpiredBrowseResults(t *testing.T) {
 	db := newCommandSvcTestDB(t)
+	ensureBrowseResultExpiryColumn(t, db)
 	svc := newCommandSvc(db)
 	grants := NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db))
 	svc.SetSensitiveAccessGrants(grants)
-	cmd, grant, _ := seedActiveBrowseResult(t, db, grants)
-	if err := db.Model(&model.SensitiveAccessGrant{}).Where("grant_id = ?", grant.GrantID).Update("expires_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
-		t.Fatalf("设置授权过期失败: %v", err)
-	}
+	cmd, _, _ := seedActiveBrowseResult(t, db, grants)
+	setBrowseResultExpiry(t, db, cmd.ID, time.Now().UTC().Add(-time.Second))
 	if n, err := svc.ClearExpiredBrowseResults(time.Now().UTC()); err != nil || n != 1 {
 		t.Fatalf("应清理一条到期浏览结果: n=%d err=%v", n, err)
 	}
 	stored, _ := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
 	if stored.BrowseResult != "" {
 		t.Fatalf("到期未消费正文必须清空，实际 %q", stored.BrowseResult)
+	}
+}
+
+// TestClearExpiredBrowseResultsWithoutGrant 直执浏览没有 grant 时，过期正文仍必须清理。
+func TestClearExpiredBrowseResultsWithoutGrant(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	ensureBrowseResultExpiryColumn(t, db)
+	svc := newCommandSvc(db)
+	cmd := &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusFetched, Operator: "alice"}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建浏览命令失败: %v", err)
+	}
+	if err := svc.ReceiveBrowseResult(agentauth.Identity{Namespace: "prod", ServerID: "lobby-1", IdentityID: "identity"}, cmd.ID, true, `{"content":"敏感正文"}`, ""); err != nil {
+		t.Fatalf("无 grant 回传浏览结果失败: %v", err)
+	}
+	setBrowseResultExpiry(t, db, cmd.ID, time.Now().UTC().Add(-time.Second))
+	if n, err := svc.ClearExpiredBrowseResults(time.Now().UTC()); err != nil || n != 1 {
+		t.Fatalf("无 grant 的过期浏览正文应清理，n=%d err=%v", n, err)
+	}
+	stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if err != nil || stored.BrowseResult != "" || stored.Status != model.CommandStatusDone {
+		t.Fatalf("应只清正文并保留 done 元数据，命令=%+v err=%v", stored, err)
+	}
+}
+
+// TestClearCompletedUnreadBrowseResults 已完成但尚未读取的正文按独立到期时间清理。
+func TestClearCompletedUnreadBrowseResults(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	ensureBrowseResultExpiryColumn(t, db)
+	svc := newCommandSvc(db)
+	cmd := &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, BrowseResult: `{"content":"未读取正文"}`, Operator: "alice"}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建未读取的 done 浏览命令失败: %v", err)
+	}
+	setBrowseResultExpiry(t, db, cmd.ID, time.Now().UTC().Add(-time.Second))
+	if n, err := svc.ClearExpiredBrowseResults(time.Now().UTC()); err != nil || n != 1 {
+		t.Fatalf("已完成未读取正文应清理，n=%d err=%v", n, err)
+	}
+	stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if err != nil || stored.BrowseResult != "" || stored.Status != model.CommandStatusDone {
+		t.Fatalf("过期后应清正文并保留 done 状态，命令=%+v err=%v", stored, err)
+	}
+}
+
+func ensureBrowseResultExpiryColumn(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if !db.Migrator().HasColumn("agent_command", "browse_result_expires_at") {
+		if err := db.Exec("ALTER TABLE agent_command ADD COLUMN browse_result_expires_at datetime").Error; err != nil {
+			t.Fatalf("添加浏览结果过期测试列失败: %v", err)
+		}
+	}
+}
+
+func setBrowseResultExpiry(t *testing.T, db *gorm.DB, commandID uint, expiresAt time.Time) {
+	t.Helper()
+	if err := db.Model(&model.AgentCommand{}).Where("id = ?", commandID).Update("browse_result_expires_at", expiresAt).Error; err != nil {
+		t.Fatalf("设置浏览结果过期时间失败: %v", err)
 	}
 }
 

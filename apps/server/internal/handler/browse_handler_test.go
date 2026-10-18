@@ -2,21 +2,26 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
@@ -163,5 +168,29 @@ func TestBrowseHandlerMissingNamespace(t *testing.T) {
 	h.Browse(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("缺少 namespace 应返回 400，实际 %d", w.Code)
+	}
+}
+
+// TestBrowseHandlerGetWithoutCommandIDDoesNotCreate GET 只能读取指定命令结果，不能创建浏览命令。
+func TestBrowseHandlerGetWithoutCommandIDDoesNotCreate(t *testing.T) {
+	svc, db := newBrowseTestSvc(t)
+	registry := runtime.NewRegistry()
+	if _, err := registry.Register(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Address: "127.0.0.1:25565"}, time.Minute, time.Now().UTC()); err != nil {
+		t.Fatalf("注册在线实例失败: %v", err)
+	}
+	instSvc := service.NewInstanceService(nil, registry, nil, nil, nil, time.Second, time.Minute)
+	h := NewBrowseHandler(svc, instSvc)
+	r := httptest.NewRequest(http.MethodGet, "/admin/v1/instances/lobby-1/browse?namespace=prod&op=list", nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("serverId", "lobby-1")
+	r = r.WithContext(context.WithValue(auth.WithOperator(r.Context(), "alice"), chi.RouteCtxKey, routeContext))
+	w := httptest.NewRecorder()
+	h.Browse(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("缺 commandId 的 GET 应拒绝而非创建命令，实际 %d：%s", w.Code, w.Body.String())
+	}
+	var count int64
+	if err := db.Model(&model.AgentCommand{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("GET 不得创建浏览命令，数量=%d err=%v", count, err)
 	}
 }
