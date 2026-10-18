@@ -146,7 +146,7 @@ export default function DataTable<T>({
                     <TableCell className="w-8 text-right">
                       <ChevronRight
                         aria-hidden
-                        className="size-4 text-ink-4 transition-transform group-hover/row:translate-x-0.5 group-hover/row:text-ink-2"
+                        className="size-4 text-ink-4 transition-transform group-hover/row:translate-x-0.5 group-hover/row:text-ink-2 motion-reduce:translate-x-0 motion-reduce:transition-none"
                       />
                     </TableCell>
                   )}

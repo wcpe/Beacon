@@ -7,6 +7,8 @@ import { ClipboardList, RefreshCw } from 'lucide-react'
 
 import { Button } from '@beacon/ui'
 
+import EmptyGuideFrame from '../../features/shared/empty-guide-frame'
+
 interface EmptyGuideProps {
   // 重新拉取清单探测与各面板数据（agent 刚上报完不必刷新整页）
   onRefresh: () => void
@@ -15,11 +17,7 @@ interface EmptyGuideProps {
 export default function EmptyGuide({ onRefresh }: EmptyGuideProps) {
   const { t } = useTranslation()
   return (
-    <div className="grid justify-items-center gap-4 px-4 py-10 text-center">
-      <div className="grid justify-items-center gap-1">
-        <h3 className="text-sm font-semibold text-ink-1">{t('delivery.guides.assets.title')}</h3>
-        <p className="max-w-xl text-sm text-muted-foreground">{t('delivery.guides.assets.desc')}</p>
-      </div>
+    <EmptyGuideFrame title={t('delivery.guides.assets.title')} description={t('delivery.guides.assets.desc')}>
       <div className="flex flex-wrap items-center justify-center gap-2">
         <Button size="lg" variant="outline" asChild>
           <Link to="/changes">
@@ -32,6 +30,6 @@ export default function EmptyGuide({ onRefresh }: EmptyGuideProps) {
           {t('delivery.guides.assets.refresh')}
         </Button>
       </div>
-    </div>
+    </EmptyGuideFrame>
   )
 }

@@ -6,6 +6,7 @@ import { Sparkles } from 'lucide-react'
 
 import { Button } from '@beacon/ui'
 
+import EmptyGuideFrame from '../../features/shared/empty-guide-frame'
 import { CONTENT_TYPES, ContentTypeCard } from './wizard-step-content'
 import type { WizardContent } from './wizard-state'
 
@@ -17,11 +18,10 @@ interface EmptyGuideProps {
 export default function EmptyGuide({ onStart }: EmptyGuideProps) {
   const { t } = useTranslation()
   return (
-    <div className="grid justify-items-center gap-4 px-4 py-10 text-center">
-      <div className="grid justify-items-center gap-1">
-        <h3 className="text-sm font-semibold text-ink-1">{t('delivery.changes.list.emptyGuide.title')}</h3>
-        <p className="max-w-xl text-sm text-muted-foreground">{t('delivery.changes.list.emptyGuide.desc')}</p>
-      </div>
+    <EmptyGuideFrame
+      title={t('delivery.changes.list.emptyGuide.title')}
+      description={t('delivery.changes.list.emptyGuide.desc')}
+    >
       <div className="grid w-full max-w-2xl gap-2.5 text-left sm:grid-cols-3">
         {CONTENT_TYPES.map((type) => (
           <ContentTypeCard
@@ -43,6 +43,6 @@ export default function EmptyGuide({ onStart }: EmptyGuideProps) {
         <Sparkles className="size-4" />
         {t('delivery.changes.list.emptyGuide.cta')}
       </Button>
-    </div>
+    </EmptyGuideFrame>
   )
 }
