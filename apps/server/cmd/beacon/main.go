@@ -723,6 +723,7 @@ func run() error {
 	connQueryService := service.NewConnQueryService(connDetailRepo)
 	v2ConnectionAdminHandler := handler.NewV2ConnectionAdminHandler(connQueryService, settingsService)
 	messagePayloadService := service.NewMessagePayloadService(messageRepo, auditRepo)
+	messagePayloadService.SetNamespaceRepository(nsRepo)
 	messageQueryService := service.NewMessageQueryService(messageRepo)
 	v2MessageAdminHandler := handler.NewV2MessageAdminHandler(
 		messageQueryService,

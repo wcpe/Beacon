@@ -296,7 +296,7 @@ func TestAssetContentReadsAreDirectAndAudited(t *testing.T) {
 		t.Fatalf("preview 应可直读：result=%+v err=%v", preview, err)
 	}
 	diff, err := svc.Diff(context.Background(), DiffParams{
-		Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "alice",
+		Left: AssetRef{ServerID: "lobby-1", Path: "a.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.yml"}, Operator: "alice",
 	})
 	if err != nil || diff == nil || diff.Identical || diff.Left == nil || diff.Right == nil {
 		t.Fatalf("diff 应可直读：result=%+v err=%v", diff, err)
@@ -308,6 +308,48 @@ func TestAssetContentReadsAreDirectAndAudited(t *testing.T) {
 		auditDetailContains(t, db, model.ActionAssetDiff, diff.Left.Content) ||
 		auditDetailContains(t, db, model.ActionAssetDiff, diff.Right.Content) {
 		t.Fatal("文件正文不得进入审计 detail")
+	}
+}
+
+// TestPreviewAndDiffResolveSameServerIDByNamespace 同名 serverId 在不同 namespace 下须分别定位正确文件。
+func TestPreviewAndDiffResolveSameServerIDByNamespace(t *testing.T) {
+	db := newAssetSvcTestDB(t)
+	svc := newAssetSvc(db, true)
+	leftServerRow := seedPreviewServer(t, db, "prod", "shared")
+	rightServerRow := seedPreviewServer(t, db, "staging", "shared")
+	var leftNS, rightNS model.Namespace
+	if err := db.Where("code = ?", "prod").First(&leftNS).Error; err != nil {
+		t.Fatalf("读取 prod namespace 失败: %v", err)
+	}
+	if err := db.Where("code = ?", "staging").First(&rightNS).Error; err != nil {
+		t.Fatalf("读取 staging namespace 失败: %v", err)
+	}
+	seedAsset(t, db, leftServerRow, "same.yml", "left-hash", 10, true)
+	seedAsset(t, db, rightServerRow, "same.yml", "right-hash", 10, true)
+	stop := startAgentSim(t, db, svc, textReply)
+	defer stop()
+
+	leftPreview, err := svc.Preview(context.Background(), PreviewParams{
+		NamespaceID: leftNS.ID, ServerID: "shared", Path: "same.yml", Operator: "alice",
+	})
+	if err != nil || leftPreview == nil || leftPreview.SHA256 != "left-hash" {
+		t.Fatalf("prod 同名 serverId 应解析到 prod 文件，结果=%+v err=%v", leftPreview, err)
+	}
+	rightPreview, err := svc.Preview(context.Background(), PreviewParams{
+		NamespaceID: rightNS.ID, ServerID: "shared", Path: "same.yml", Operator: "alice",
+	})
+	if err != nil || rightPreview == nil || rightPreview.SHA256 != "right-hash" {
+		t.Fatalf("staging 同名 serverId 应解析到 staging 文件，结果=%+v err=%v", rightPreview, err)
+	}
+
+	diff, err := svc.Diff(context.Background(), DiffParams{
+		Left:     AssetRef{NamespaceID: leftNS.ID, ServerID: "shared", Path: "same.yml"},
+		Right:    AssetRef{NamespaceID: rightNS.ID, ServerID: "shared", Path: "same.yml"},
+		Operator: "alice",
+	})
+	if err != nil || diff == nil || diff.Identical || diff.Left == nil || diff.Right == nil ||
+		diff.Left.SHA256 != "left-hash" || diff.Right.SHA256 != "right-hash" {
+		t.Fatalf("diff 两侧应分别按 namespaceId 定位，结果=%+v err=%v", diff, err)
 	}
 }
 
@@ -341,7 +383,7 @@ func TestDiffIdentical(t *testing.T) {
 	seedAsset(t, db, rr, "a.yml", "same", 10, true)
 
 	res, err := svc.applyDiffForTest(context.Background(), DiffParams{
-		Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "a",
+		Left: AssetRef{ServerID: "lobby-1", Path: "a.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.yml"}, Operator: "a",
 	})
 	if err != nil || !res.Identical {
 		t.Fatalf("同哈希应 identical，实际 res=%+v err=%v", res, err)
@@ -366,7 +408,7 @@ func TestDiffDifferent(t *testing.T) {
 	defer stop()
 
 	res, err := svc.applyDiffForTest(context.Background(), DiffParams{
-		Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "a",
+		Left: AssetRef{ServerID: "lobby-1", Path: "a.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.yml"}, Operator: "a",
 	})
 	if err != nil || res.Identical || res.Left == nil || res.Right == nil {
 		t.Fatalf("不同哈希应返回双侧内容，实际 res=%+v err=%v", res, err)
@@ -384,7 +426,7 @@ func TestDiffUnsupported(t *testing.T) {
 	rr := seedPreviewServer(t, db, "prod", "lobby-2")
 	seedAsset(t, db, l, "a.jar", "h1", 10, false) // 二进制
 	seedAsset(t, db, rr, "a.jar", "h2", 10, true)
-	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "a.jar"}, Right: AssetRef{"lobby-2", "a.jar"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
+	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{ServerID: "lobby-1", Path: "a.jar"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.jar"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
 		t.Fatalf("二进制侧应 asset_diff_unsupported，实际 %v", err)
 	}
 
@@ -394,7 +436,7 @@ func TestDiffUnsupported(t *testing.T) {
 	r2 := seedPreviewServer(t, db2, "prod", "s2")
 	seedAsset(t, db2, l2, "big.yml", "h1", 1<<20, true) // 超 512KiB
 	seedAsset(t, db2, r2, "big.yml", "h2", 10, true)
-	if _, err := svc2.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{"s1", "big.yml"}, Right: AssetRef{"s2", "big.yml"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
+	if _, err := svc2.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{ServerID: "s1", Path: "big.yml"}, Right: AssetRef{ServerID: "s2", Path: "big.yml"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
 		t.Fatalf("超限侧应 asset_diff_unsupported，实际 %v", err)
 	}
 	if len(allCommands(t, db2)) != 0 {
@@ -410,7 +452,7 @@ func TestDiffSensitiveGuard(t *testing.T) {
 	rr := seedPreviewServer(t, db, "prod", "lobby-2")
 	seedAsset(t, db, l, "plugins/Beacon/config.yml", "h1", 10, true) // 敏感
 	seedAsset(t, db, rr, "plugins/Beacon/config.yml", "h2", 10, true)
-	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "plugins/Beacon/config.yml"}, Right: AssetRef{"lobby-2", "plugins/Beacon/config.yml"}, Operator: "a"}); err != apperr.ErrAssetSensitivePath {
+	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{ServerID: "lobby-1", Path: "plugins/Beacon/config.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "plugins/Beacon/config.yml"}, Operator: "a"}); err != apperr.ErrAssetSensitivePath {
 		t.Fatalf("敏感无 reason 应 asset_sensitive_path，实际 %v", err)
 	}
 }

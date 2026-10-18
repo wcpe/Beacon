@@ -35,19 +35,21 @@ type assetInstanceGetter interface {
 	Get(ns, serverID string) (*runtime.Instance, error)
 }
 
-// AssetRef 定位一个文件资产（业务 serverId + 相对路径）。
+// AssetRef 按可选 namespaceId、serverId 与相对路径定位一个文件资产。
 type AssetRef struct {
-	ServerID string
-	Path     string
+	NamespaceID uint
+	ServerID    string
+	Path        string
 }
 
 // PreviewParams 是一次文件内容预览请求（operator/clientIp 由鉴权链与请求上下文注入）。
 type PreviewParams struct {
-	ServerID string
-	Path     string
-	Reason   string
-	Operator string
-	ClientIP string
+	NamespaceID uint
+	ServerID    string
+	Path        string
+	Reason      string
+	Operator    string
+	ClientIP    string
 }
 
 // DiffParams 是一次两侧文件内容 diff 请求。
@@ -217,14 +219,14 @@ func (s *AssetPreviewService) PreviewFromCommand(ctx context.Context, serverID s
 	if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
 		return nil, apperr.ErrCommandNotFound
 	}
-	_, namespace, err := s.resolveServer(serverID)
+	srv, namespace, err := resolveAssetPreviewServerByNamespaceCode(s.db, serverID, cmd.NamespaceCode)
 	if err != nil {
-		return nil, err
+		return nil, apperr.ErrCommandNotFound
 	}
 	if namespace != cmd.NamespaceCode {
 		return nil, apperr.ErrCommandNotFound
 	}
-	return s.Preview(ctx, PreviewParams{ServerID: serverID, Path: read.Path, Reason: reason, Operator: operator, ClientIP: clientIP})
+	return s.Preview(ctx, PreviewParams{NamespaceID: srv.NamespaceID, ServerID: serverID, Path: read.Path, Reason: reason, Operator: operator, ClientIP: clientIP})
 }
 
 // applyPreview 在受控单文件读取路径中读取并审计内容。
@@ -232,7 +234,7 @@ func (s *AssetPreviewService) applyPreview(ctx context.Context, p PreviewParams)
 	if p.ServerID == "" || p.Path == "" {
 		return nil, apperr.ErrInvalidParam
 	}
-	srv, nsCode, err := s.resolveServer(p.ServerID)
+	srv, nsCode, err := s.resolveServer(p.ServerID, p.NamespaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -285,11 +287,11 @@ func (s *AssetPreviewService) applyDiff(ctx context.Context, p DiffParams) (*Ass
 	if p.Left.ServerID == "" || p.Left.Path == "" || p.Right.ServerID == "" || p.Right.Path == "" {
 		return nil, apperr.ErrInvalidParam
 	}
-	leftSrv, leftNS, err := s.resolveServer(p.Left.ServerID)
+	leftSrv, leftNS, err := s.resolveServer(p.Left.ServerID, p.Left.NamespaceID)
 	if err != nil {
 		return nil, err
 	}
-	rightSrv, rightNS, err := s.resolveServer(p.Right.ServerID)
+	rightSrv, rightNS, err := s.resolveServer(p.Right.ServerID, p.Right.NamespaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -564,9 +566,9 @@ func (s *AssetPreviewService) awaitContent(ctx context.Context, handle *assetRea
 	}
 }
 
-// resolveServer 把业务 serverId 解析为 server 行 + 所属 namespace code（契约无 namespaceId，按 serverId 全局解析首条命中）。
-func (s *AssetPreviewService) resolveServer(serverID string) (*model.Server, string, error) {
-	return resolveAssetPreviewServer(s.db, serverID)
+// resolveServer 按 namespaceId 与 serverId 联合解析服务器；未提供范围时仅允许全局唯一命中。
+func (s *AssetPreviewService) resolveServer(serverID string, namespaceID uint) (*model.Server, string, error) {
+	return resolveAssetPreviewServer(s.db, serverID, namespaceID)
 }
 
 // AssetPairDiffSide 是双侧授权消费后允许返回的文件元数据；不含正文。
@@ -586,26 +588,41 @@ type AssetPairDiffResult struct {
 	Right       AssetPairDiffSide
 }
 
-func resolveAssetPreviewServer(db *gorm.DB, serverID string) (*model.Server, string, error) {
-	var srv model.Server
-	err := db.Where("server_id = ?", serverID).First(&srv).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, "", apperr.ErrAssetNotFound
+func resolveAssetPreviewServer(db *gorm.DB, serverID string, namespaceID uint) (*model.Server, string, error) {
+	query := db.Model(&model.Server{}).Where("server_id = ?", serverID)
+	if namespaceID != 0 {
+		query = query.Where("namespace_id = ?", namespaceID)
 	}
-	if err != nil {
+	var servers []model.Server
+	if err := query.Order("namespace_id asc").Limit(2).Find(&servers).Error; err != nil {
 		return nil, "", err
 	}
+	if len(servers) == 0 || len(servers) > 1 {
+		return nil, "", apperr.ErrAssetNotFound
+	}
+	srv := servers[0]
 	var ns model.Namespace
-	if e := db.Where("id = ?", srv.NamespaceID).First(&ns).Error; e != nil {
-		if errors.Is(e, gorm.ErrRecordNotFound) {
+	if err := db.Where("id = ?", srv.NamespaceID).First(&ns).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, "", apperr.ErrAssetNotFound
 		}
-		return nil, "", e
+		return nil, "", err
 	}
-	if e := ensureNamespaceRuntimeActive(&ns); e != nil {
-		return nil, "", e
+	if err := ensureNamespaceRuntimeActive(&ns); err != nil {
+		return nil, "", err
 	}
 	return &srv, ns.Code, nil
+}
+
+func resolveAssetPreviewServerByNamespaceCode(db *gorm.DB, serverID, namespaceCode string) (*model.Server, string, error) {
+	var namespace model.Namespace
+	if err := db.Where("code = ?", namespaceCode).First(&namespace).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, "", apperr.ErrAssetNotFound
+		}
+		return nil, "", err
+	}
+	return resolveAssetPreviewServer(db, serverID, namespace.ID)
 }
 
 // sensitiveMatcher 读当前敏感规则并编译为匹配器；已落库规则坏（理论上不会，PUT 已校验）时回退内置默认，保证保护不失效。

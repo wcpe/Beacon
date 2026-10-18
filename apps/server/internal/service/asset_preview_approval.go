@@ -61,7 +61,7 @@ func (s *AssetPreviewService) RequestAccess(serverID, path, reason, idempotencyK
 		strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
 		return model.ApprovalRequest{}, apperr.ErrInvalidParam
 	}
-	srv, namespace, err := s.resolveServer(serverID)
+	srv, namespace, err := s.resolveServer(serverID, 0)
 	if err != nil {
 		return model.ApprovalRequest{}, err
 	}
@@ -92,11 +92,11 @@ func (s *AssetPreviewService) RequestPairAccess(left, right AssetRef, reason, id
 		left.ServerID == right.ServerID || strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
 		return model.ApprovalRequest{}, model.ApprovalRequest{}, apperr.ErrInvalidParam
 	}
-	leftServer, leftNamespace, err := s.resolveServer(left.ServerID)
+	leftServer, leftNamespace, err := s.resolveServer(left.ServerID, left.NamespaceID)
 	if err != nil {
 		return model.ApprovalRequest{}, model.ApprovalRequest{}, err
 	}
-	rightServer, rightNamespace, err := s.resolveServer(right.ServerID)
+	rightServer, rightNamespace, err := s.resolveServer(right.ServerID, right.NamespaceID)
 	if err != nil {
 		return model.ApprovalRequest{}, model.ApprovalRequest{}, err
 	}
@@ -148,7 +148,7 @@ func (a assetPreviewApprovalAdapter) ExecuteInTx(tx *gorm.DB, req authz.Approval
 	if err != nil {
 		return nil, err
 	}
-	srv, namespace, err := resolveAssetPreviewServer(tx, payload.ServerID)
+	srv, namespace, err := resolveAssetPreviewServerByNamespaceCode(tx, payload.ServerID, payload.Namespace)
 	if err != nil || namespace != payload.Namespace || srv.NamespaceID != dereferenceNamespaceID(req.Operation.NamespaceID) {
 		return nil, apperr.ErrApprovalTargetChanged
 	}
@@ -203,7 +203,7 @@ func (a assetPreviewApprovalAdapter) validatePairPeer(tx *gorm.DB, payload asset
 	if (payload.PairSide != "left" && payload.PairSide != "right") || payload.Peer == nil || payload.Peer.Namespace == "" || payload.Peer.ServerID == "" || payload.Peer.Path == "" || payload.Peer.SHA256 == "" || payload.Peer.ServerID == payload.ServerID {
 		return apperr.ErrInvalidParam
 	}
-	peerServer, peerNamespace, err := resolveAssetPreviewServer(tx, payload.Peer.ServerID)
+	peerServer, peerNamespace, err := resolveAssetPreviewServerByNamespaceCode(tx, payload.Peer.ServerID, payload.Peer.Namespace)
 	if err != nil || peerNamespace != payload.Peer.Namespace {
 		return apperr.ErrApprovalTargetChanged
 	}
@@ -235,7 +235,7 @@ func (s *AssetPreviewService) ConsumeApproved(grantID string, commandID uint, pr
 	if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
 		return nil, apperr.ErrForbidden
 	}
-	srv, _, err := s.resolveServer(cmd.ServerID)
+	srv, _, err := resolveAssetPreviewServerByNamespaceCode(s.db, cmd.ServerID, cmd.NamespaceCode)
 	if err != nil {
 		return nil, err
 	}
@@ -345,8 +345,8 @@ func (s *AssetPreviewService) DiffFromPairGrant(ctx context.Context, grantID str
 		return nil, err
 	}
 	params := DiffParams{
-		Left:   AssetRef{ServerID: left.ref.ServerID, Path: left.ref.Path},
-		Right:  AssetRef{ServerID: right.ref.ServerID, Path: right.ref.Path},
+		Left:   left.ref,
+		Right:  right.ref,
 		Reason: reason, Operator: operator, ClientIP: clientIP,
 	}
 	diff, err := s.Diff(ctx, params)
@@ -391,7 +391,7 @@ func (s *AssetPreviewService) pairReadSide(grant *model.SensitiveAccessGrant, co
 	if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
 		return pairReadSide{}, apperr.ErrForbidden
 	}
-	server, namespace, err := s.resolveServer(cmd.ServerID)
+	server, namespace, err := resolveAssetPreviewServerByNamespaceCode(s.db, cmd.ServerID, cmd.NamespaceCode)
 	if err != nil {
 		return pairReadSide{}, err
 	}
@@ -399,7 +399,7 @@ func (s *AssetPreviewService) pairReadSide(grant *model.SensitiveAccessGrant, co
 	if err != nil || asset == nil || asset.SHA256 != grant.ContentVersionHash {
 		return pairReadSide{}, apperr.ErrApprovalTargetChanged
 	}
-	return pairReadSide{server: server, namespace: namespace, ref: AssetRef{ServerID: cmd.ServerID, Path: read.Path}, asset: asset}, nil
+	return pairReadSide{server: server, namespace: namespace, ref: AssetRef{NamespaceID: server.NamespaceID, ServerID: cmd.ServerID, Path: read.Path}, asset: asset}, nil
 }
 
 func (s *AssetPreviewService) pairReadSideForDirect(commandID uint) (pairReadSide, error) {
@@ -417,7 +417,7 @@ func (s *AssetPreviewService) pairReadSideForDirect(commandID uint) (pairReadSid
 	if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
 		return pairReadSide{}, apperr.ErrCommandNotFound
 	}
-	server, namespace, err := s.resolveServer(cmd.ServerID)
+	server, namespace, err := resolveAssetPreviewServerByNamespaceCode(s.db, cmd.ServerID, cmd.NamespaceCode)
 	if err != nil {
 		return pairReadSide{}, err
 	}
@@ -428,7 +428,7 @@ func (s *AssetPreviewService) pairReadSideForDirect(commandID uint) (pairReadSid
 	if asset == nil {
 		return pairReadSide{}, apperr.ErrAssetNotFound
 	}
-	return pairReadSide{server: server, namespace: namespace, ref: AssetRef{ServerID: cmd.ServerID, Path: read.Path}, asset: asset}, nil
+	return pairReadSide{server: server, namespace: namespace, ref: AssetRef{NamespaceID: server.NamespaceID, ServerID: cmd.ServerID, Path: read.Path}, asset: asset}, nil
 }
 
 func pairCommandIDs(left, right *model.SensitiveAccessGrant, requestedGrantID string, requestedCommandID uint) (uint, uint, error) {

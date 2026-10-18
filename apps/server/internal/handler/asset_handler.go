@@ -35,30 +35,33 @@ type assetPreviewJS struct {
 	Sensitive bool    `json:"sensitive"`
 }
 
-// Preview 直接读取一个文件资产并由 service 先记元数据审计。
+// Preview 直接读取一个文件资产并由 service 先记元数据审计；请求可用 namespaceId 与 serverId 联合定位。
 func (h *AssetHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ServerID string `json:"serverId"`
-		Path     string `json:"path"`
-		Reason   string `json:"reason"`
+		NamespaceID uint   `json:"namespaceId"`
+		ServerID    string `json:"serverId"`
+		Path        string `json:"path"`
+		Reason      string `json:"reason"`
 	}
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	h.writePreview(w, r, body.ServerID, body.Path, body.Reason)
+	h.writePreview(w, r, body.NamespaceID, body.ServerID, body.Path, body.Reason)
 }
 
-// Diff 直接比较两侧文件资产，正文只随本次响应返回。
+// Diff 直接比较两侧文件资产，left/right 可分别提供 namespaceId 与 serverId，正文只随本次响应返回。
 func (h *AssetHandler) Diff(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Left struct {
-			ServerID string `json:"serverId"`
-			Path     string `json:"path"`
+			NamespaceID uint   `json:"namespaceId"`
+			ServerID    string `json:"serverId"`
+			Path        string `json:"path"`
 		} `json:"left"`
 		Right struct {
-			ServerID string `json:"serverId"`
-			Path     string `json:"path"`
+			NamespaceID uint   `json:"namespaceId"`
+			ServerID    string `json:"serverId"`
+			Path        string `json:"path"`
 		} `json:"right"`
 		Reason string `json:"reason"`
 	}
@@ -67,8 +70,8 @@ func (h *AssetHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeDiff(w, r, service.DiffParams{
-		Left:   service.AssetRef{ServerID: body.Left.ServerID, Path: body.Left.Path},
-		Right:  service.AssetRef{ServerID: body.Right.ServerID, Path: body.Right.Path},
+		Left:   service.AssetRef{NamespaceID: body.Left.NamespaceID, ServerID: body.Left.ServerID, Path: body.Left.Path},
+		Right:  service.AssetRef{NamespaceID: body.Right.NamespaceID, ServerID: body.Right.ServerID, Path: body.Right.Path},
 		Reason: body.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 }
@@ -76,27 +79,30 @@ func (h *AssetHandler) Diff(w http.ResponseWriter, r *http.Request) {
 // RequestPreviewApproval 保留旧路径名，直接返回文件预览结果。
 func (h *AssetHandler) RequestPreviewApproval(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ServerID string `json:"serverId"`
-		Path     string `json:"path"`
-		Reason   string `json:"reason"`
+		NamespaceID uint   `json:"namespaceId"`
+		ServerID    string `json:"serverId"`
+		Path        string `json:"path"`
+		Reason      string `json:"reason"`
 	}
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	h.writePreview(w, r, body.ServerID, body.Path, body.Reason)
+	h.writePreview(w, r, body.NamespaceID, body.ServerID, body.Path, body.Reason)
 }
 
 // RequestPairReadApproval 保留旧路径名，直接返回两侧文件差异。
 func (h *AssetHandler) RequestPairReadApproval(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Left struct {
-			ServerID string `json:"serverId"`
-			Path     string `json:"path"`
+			NamespaceID uint   `json:"namespaceId"`
+			ServerID    string `json:"serverId"`
+			Path        string `json:"path"`
 		} `json:"left"`
 		Right struct {
-			ServerID string `json:"serverId"`
-			Path     string `json:"path"`
+			NamespaceID uint   `json:"namespaceId"`
+			ServerID    string `json:"serverId"`
+			Path        string `json:"path"`
 		} `json:"right"`
 		Reason string `json:"reason"`
 	}
@@ -105,8 +111,8 @@ func (h *AssetHandler) RequestPairReadApproval(w http.ResponseWriter, r *http.Re
 		return
 	}
 	h.writeDiff(w, r, service.DiffParams{
-		Left:   service.AssetRef{ServerID: body.Left.ServerID, Path: body.Left.Path},
-		Right:  service.AssetRef{ServerID: body.Right.ServerID, Path: body.Right.Path},
+		Left:   service.AssetRef{NamespaceID: body.Left.NamespaceID, ServerID: body.Left.ServerID, Path: body.Left.Path},
+		Right:  service.AssetRef{NamespaceID: body.Right.NamespaceID, ServerID: body.Right.ServerID, Path: body.Right.Path},
 		Reason: body.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 }
@@ -155,13 +161,14 @@ func (h *AssetHandler) ConsumePairReadGrant(w http.ResponseWriter, r *http.Reque
 	writePairDiffResult(w, result)
 }
 
-func (h *AssetHandler) writePreview(w http.ResponseWriter, r *http.Request, serverID, path, reason string) {
+func (h *AssetHandler) writePreview(w http.ResponseWriter, r *http.Request, namespaceID uint, serverID, path, reason string) {
 	if h == nil || h.svc == nil {
 		render.WriteError(w, r, apperr.ErrInternal)
 		return
 	}
 	result, err := h.svc.Preview(r.Context(), service.PreviewParams{
-		ServerID: serverID, Path: path, Reason: reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+		NamespaceID: namespaceID, ServerID: serverID, Path: path, Reason: reason,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 	if err != nil {
 		writeAssetError(w, r, err)
