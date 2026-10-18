@@ -792,8 +792,7 @@ export const system = {
   },
   lifecycle: {
     subject: { namespace: 'namespace', server: 'server' },
-    // The "(Mock)" suffix is no longer part of the page title: mock identity is
-    // signalled by the floating Mock dev tools in the bottom-right corner.
+    // 页面标题不再带「（Mock）」后缀；右下角的 Mock 开发工具浮球会标明演示身份。
     title: '{{subject}} lifecycle review',
     mockLabel: '{{subject}} lifecycle review mock',
     scenarios: 'Lifecycle review scenarios',

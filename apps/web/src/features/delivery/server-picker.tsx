@@ -8,7 +8,7 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { Combobox, type ComboboxOption } from '@beacon/ui'
+import { Button, Combobox, type ComboboxOption } from '@beacon/ui'
 import type { ServerItem, ServerKind } from '@beacon/contracts'
 
 import { fetchServers } from '../../api/cluster'
@@ -77,22 +77,40 @@ export default function ServerPicker({
     return list
   }, [query.data, onlineOnly, value, t])
 
+  const loadError = query.error instanceof Error ? query.error.message : String(query.error)
+
   return (
-    <Combobox
-      id={id}
-      aria-label={ariaLabel ?? t('delivery.pickers.server.search')}
-      value={value}
-      onChange={onChange}
-      options={options}
-      // 这些位置必须选到系统内真实存在的服，不允许提交候选外的新值
-      allowCustom={false}
-      placeholder={placeholder ?? t('delivery.pickers.server.search')}
-      emptyText={t('delivery.pickers.server.empty')}
-      clearable={clearable}
-      clearLabel={t('delivery.pickers.server.clear')}
-      disabled={disabled}
-      className={className}
-    />
+    <div className="grid min-w-0 gap-1.5">
+      <Combobox
+        id={id}
+        aria-label={ariaLabel ?? t('delivery.pickers.server.search')}
+        value={value}
+        onChange={onChange}
+        options={options}
+        // 这些位置必须选到系统内真实存在的服，不允许提交候选外的新值
+        allowCustom={false}
+        placeholder={placeholder ?? t('delivery.pickers.server.search')}
+        emptyText={query.isLoading ? t('delivery.pickers.server.loading') : query.isError ? t('delivery.pickers.server.emptyError') : t('delivery.pickers.server.empty')}
+        clearable={clearable}
+        clearLabel={t('delivery.pickers.server.clear')}
+        disabled={disabled}
+        className={className}
+      />
+      {query.isError ? (
+        <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive">
+          <span className="min-w-0 flex-1">{t('delivery.pickers.server.loadError', { message: loadError })}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-auto px-1 py-0 text-xs text-destructive"
+            onClick={() => { void query.refetch() }}
+          >
+            {t('delivery.pickers.server.retry')}
+          </Button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 

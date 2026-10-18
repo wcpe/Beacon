@@ -16,7 +16,8 @@ import { ApiClientError } from '../api/delivery'
 import { fetchChangeOrder } from '../api/delivery-changes'
 import MasterDetail from '../features/shared/master-detail'
 import DocHelp from '../features/delivery/doc-help'
-import { useDefaultObservationNamespaceState } from '../features/env/use-default-namespace'
+import { useObservationNamespaceState } from '../features/env/use-default-namespace'
+import DeliveryScopeError from '../features/delivery/scope-error'
 import ListView from './changes/list-view'
 import DetailView from './changes/detail-view'
 import FlowHelp from './changes/flow-help'
@@ -43,12 +44,14 @@ export default function ChangesPage() {
   // 「交付流程」帮助卡开合（非模态说明卡）
   const [helpOpen, setHelpOpen] = useState(false)
 
-  // 命名空间范围唯一真源是页眉的观测范围选择器（页内不再有自己的选择器）。
-  // 进页面时若页眉还停在「全部命名空间」，由 useDefaultObservationNamespaceState 自动补第一个
-  // 可用命名空间并写回页眉范围；用户已选定的范围不会被覆盖。
-  // 本页含建单 / 提审 / 放行 / 回滚等写操作，写目标必须明确：namespaceId 仍为 0（解析中或
-  // 确实没有可用命名空间）时禁写并给出引导。
-  const { namespaceId, pending: scopePending } = useDefaultObservationNamespaceState()
+  // 命名空间范围唯一真源是页眉观测范围选择器；未选具体命名空间时保留全局范围并禁用写操作。
+  // 本页含建单 / 提审 / 放行 / 回滚等写操作，写目标必须明确。
+  const {
+    namespaceId,
+    pending: scopePending,
+    error: scopeError,
+    retry: retryScopeOptions,
+  } = useObservationNamespaceState()
   const scopeReady = namespaceId > 0
 
   // 页眉命名空间变化时清空右侧选中：避免详情停在上一个命名空间的单据上。
@@ -70,7 +73,7 @@ export default function ChangesPage() {
   const deepLinkQuery = useQuery({
     queryKey: ['change-orders', 'deep-link', deepLinkId],
     queryFn: () => fetchChangeOrder(deepLinkId ?? 0),
-    enabled: deepLinkId !== null && !deepLinkConsumedRef.current,
+    enabled: scopeReady && deepLinkId !== null && !deepLinkConsumedRef.current,
   })
   const deepLinkOrder = deepLinkQuery.data
   useEffect(() => {
@@ -94,6 +97,7 @@ export default function ChangesPage() {
             <Button
               size="sm"
               disabled={!scopeReady}
+              title={scopeReady || scopeError !== null ? undefined : t('delivery.scope.requiredTitle')}
               onClick={() => {
                 setWizardPreset('files')
                 setWizardOpen(true)
@@ -106,6 +110,7 @@ export default function ChangesPage() {
               size="sm"
               variant="outline"
               disabled={!scopeReady}
+              title={scopeReady || scopeError !== null ? undefined : t('delivery.scope.requiredTitle')}
               onClick={() => {
                 setCreateOpen(true)
               }}
@@ -145,7 +150,9 @@ export default function ChangesPage() {
 
       <FlowHelp open={helpOpen} onOpenChange={setHelpOpen} />
 
-      {scopeReady ? (
+      {scopeError !== null ? (
+        <DeliveryScopeError error={scopeError} onRetry={retryScopeOptions} />
+      ) : scopeReady ? (
         <MasterDetail
           fill
           master={
@@ -173,13 +180,13 @@ export default function ChangesPage() {
           }}
         />
       ) : scopePending ? (
-        // 范围解析中（env 选项加载 / 默认值回流）：给骨架，不要闪出「请先选命名空间」的引导
+        // 环境选项加载中：给骨架，不要提前闪出「请先选命名空间」的引导
         <div className="md:min-h-0 md:flex-1 md:overflow-y-auto" data-slot="delivery-scope-pending">
           <TableSkeleton columns={5} rows={6} />
         </div>
       ) : (
-        // 确实没有可用命名空间（或页眉范围失效）：不渲染列表与详情（列表按命名空间取数、详情内含
-        // 提审 / 放行 / 回滚等写操作），也不伪造「全部命名空间」的数据，直接把用户指回页眉选择器
+        // 尚未选具体命名空间：不渲染列表与详情（列表按命名空间取数、详情内含提审 / 放行 / 回滚等写操作），
+        // 也不伪造「全部命名空间」的数据，直接把用户指回页眉选择器
         <div
           data-slot="delivery-scope-required"
           className="grid gap-1 rounded-lg border border-dashed border-border bg-surface-2/40 px-4 py-6"

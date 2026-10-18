@@ -35,47 +35,83 @@ export default function EnvFilter() {
     void queryClient.invalidateQueries()
   }
 
+  const selectNamespace = (namespaceId: number) => {
+    if (selection.kind === 'invalid') {
+      if (namespaceId === ALL_OBSERVATION_NAMESPACE) {
+        update({ kind: 'all' })
+        return
+      }
+      const owner = envs.find((env) => env.namespaces.some((namespace) => namespace.id === namespaceId))
+      if (owner) update({ kind: 'env', envId: owner.id, namespaceId })
+      return
+    }
+    update(selectObservationNamespace(selection, namespaceId))
+  }
+
   return (
     <div data-slot="observation-scope-filter" className="flex min-w-0 items-center gap-1.5">
-      {/* 宽度随断点递增：小屏 7rem 够放「全部环境」，sm 起 12rem。
-          lg 档资源组出现会挤占空间，但实测仍余 48px，故不再放窄
-          （此前 lg:max-w-[6rem] 反而比 sm 窄，导致「全部环境」被截断）。 */}
-      <ScopeMenu
-        triggerClassName="max-w-[7rem] sm:max-w-[12rem]"
-        label={t('common.envFilter.envLabel')}
-        icon={<Layers className="size-3.5 text-ink-4" aria-hidden />}
-        value={scope.kind === 'invalid' ? t('common.envFilter.invalid') : selectedEnv?.name ?? t('common.envFilter.all')}
-        badge={scope.kind === 'invalid' ? t('common.envFilter.needReselect') : scope.kind === 'env' ? t('common.envFilter.badgeEnv') : t('common.envFilter.badgeAll')}
-        invalid={scope.kind === 'invalid'}
-      >
-        <ScopeItem active={scope.kind === 'all'} label={t('common.envFilter.all')} onSelect={() => { update(selectObservationEnv(selection, ALL_OBSERVATION_ENV)) }} />
-        {envs.map((env) => (
-          <ScopeItem key={env.id} active={scope.kind === 'env' && scope.envId === env.id} label={env.name} meta={t('common.envFilter.nsCount', { count: env.namespaces.length })} onSelect={() => { update(selectObservationEnv(selection, env.id)) }} />
-        ))}
-      </ScopeMenu>
-      <div data-slot="observation-scope-namespace" className="hidden sm:flex">
+      <div className="hidden min-w-0 items-center gap-1.5 sm:flex">
+        {/* 桌面端保留环境与命名空间两个并列下拉。 */}
         <ScopeMenu
-          triggerClassName="max-w-[12rem]"
-          label={t('common.envFilter.nsLabel')}
+          triggerClassName="max-w-[7rem] sm:max-w-[12rem]"
+          label={t('common.envFilter.envLabel')}
+          icon={<Layers className="size-3.5 text-ink-4" aria-hidden />}
+          value={scope.kind === 'invalid' ? t('common.envFilter.invalid') : selectedEnv?.name ?? t('common.envFilter.all')}
+          badge={scope.kind === 'invalid' ? t('common.envFilter.needReselect') : scope.kind === 'env' ? t('common.envFilter.badgeEnv') : t('common.envFilter.badgeAll')}
+          invalid={scope.kind === 'invalid'}
+        >
+          <ScopeItem active={scope.kind === 'all'} label={t('common.envFilter.all')} onSelect={() => { update(selectObservationEnv(selection, ALL_OBSERVATION_ENV)) }} />
+          {envs.map((env) => (
+            <ScopeItem key={env.id} active={scope.kind === 'env' && scope.envId === env.id} label={env.name} meta={t('common.envFilter.nsCount', { count: env.namespaces.length })} onSelect={() => { update(selectObservationEnv(selection, env.id)) }} />
+          ))}
+        </ScopeMenu>
+        <div data-slot="observation-scope-namespace" className="hidden sm:flex">
+          <ScopeMenu
+            triggerClassName="max-w-[12rem]"
+            label={t('common.envFilter.nsLabel')}
+            icon={<Network className="size-3.5 text-ink-4" aria-hidden />}
+            value={scope.kind === 'invalid' ? t('common.envFilter.invalidPick') : selectedNamespace?.name ?? (scope.kind === 'env' ? t('common.envFilter.envAllNamespaces') : t('common.envFilter.allNamespaces'))}
+            badge={scope.empty ? t('common.envFilter.emptyMapping') : scope.kind === 'invalid' ? t('common.envFilter.stopped') : t('common.envFilter.scopeBadge')}
+            invalid={scope.kind === 'invalid'}
+            disabled={scope.kind === 'invalid'}
+          >
+            <ScopeItem active={scope.namespaceId === ALL_OBSERVATION_NAMESPACE} label={scope.kind === 'env' ? t('common.envFilter.envAllNamespaces') : t('common.envFilter.allNamespaces')} onSelect={() => { selectNamespace(ALL_OBSERVATION_NAMESPACE) }} />
+            {namespaces.map((namespace) => (
+              <ScopeItem key={namespace.id} active={scope.namespaceId === namespace.id} label={namespace.name} meta={`#${String(namespace.id)}`} onSelect={() => { selectNamespace(namespace.id) }} />
+            ))}
+            {scope.empty ? <p className="px-2 py-2 text-xs text-ink-4">{t('common.envFilter.emptyNote')}</p> : null}
+          </ScopeMenu>
+        </div>
+      </div>
+      <div className="sm:hidden">
+        <ScopeMenu
+          triggerClassName="max-w-[7rem]"
+          label={t('common.envFilter.scopeLabel')}
           icon={<Network className="size-3.5 text-ink-4" aria-hidden />}
           value={scope.kind === 'invalid' ? t('common.envFilter.invalidPick') : selectedNamespace?.name ?? (scope.kind === 'env' ? t('common.envFilter.envAllNamespaces') : t('common.envFilter.allNamespaces'))}
-          badge={scope.empty ? t('common.envFilter.emptyMapping') : scope.kind === 'invalid' ? t('common.envFilter.stopped') : t('common.envFilter.scopeBadge')}
+          badge={scope.kind === 'invalid' ? t('common.envFilter.needReselect') : t('common.envFilter.scopeBadge')}
           invalid={scope.kind === 'invalid'}
-          disabled={scope.kind === 'invalid'}
+          contentClassName="max-h-[min(70vh,32rem)] overflow-y-auto"
         >
-          <ScopeItem active={scope.namespaceId === ALL_OBSERVATION_NAMESPACE} label={scope.kind === 'env' ? t('common.envFilter.envAllNamespaces') : t('common.envFilter.allNamespaces')} onSelect={() => { update(selectObservationNamespace(selection, ALL_OBSERVATION_NAMESPACE)) }} />
+          <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-4">{t('common.envFilter.environmentGroup')}</p>
+          <ScopeItem active={scope.kind === 'all' && scope.namespaceId === ALL_OBSERVATION_NAMESPACE} label={t('common.envFilter.all')} onSelect={() => { update(selectObservationEnv(selection, ALL_OBSERVATION_ENV)) }} />
+          {envs.map((env) => (
+            <ScopeItem key={env.id} active={scope.kind === 'env' && scope.envId === env.id} label={env.name} meta={t('common.envFilter.nsCount', { count: env.namespaces.length })} onSelect={() => { update(selectObservationEnv(selection, env.id)) }} />
+          ))}
+          <p className="mt-1 border-t border-border px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-4">{t('common.envFilter.namespaceGroup')}</p>
+          <ScopeItem active={scope.namespaceId === ALL_OBSERVATION_NAMESPACE} label={scope.kind === 'env' ? t('common.envFilter.envAllNamespaces') : t('common.envFilter.allNamespaces')} onSelect={() => { selectNamespace(ALL_OBSERVATION_NAMESPACE) }} />
           {namespaces.map((namespace) => (
-            <ScopeItem key={namespace.id} active={scope.namespaceId === namespace.id} label={namespace.name} meta={`#${String(namespace.id)}`} onSelect={() => { update(selectObservationNamespace(selection, namespace.id)) }} />
+            <ScopeItem key={namespace.id} active={scope.namespaceId === namespace.id} label={namespace.name} meta={`#${String(namespace.id)}`} onSelect={() => { selectNamespace(namespace.id) }} />
           ))}
           {scope.empty ? <p className="px-2 py-2 text-xs text-ink-4">{t('common.envFilter.emptyNote')}</p> : null}
         </ScopeMenu>
       </div>
-      {scope.kind === 'invalid' ? <TriangleAlert className="size-4 text-warning" aria-label={t('common.envFilter.invalidRangeAria')} /> : null}
+      {scope.kind === 'invalid' ? <TriangleAlert className="size-4 shrink-0 text-warning" aria-label={t('common.envFilter.invalidRangeAria')} /> : null}
     </div>
   )
 }
 
-function ScopeMenu({ label, icon, value, badge, invalid = false, disabled = false, triggerClassName = 'max-w-[12rem]', children }: { label: string; icon: ReactNode; value: string; badge: string; invalid?: boolean; disabled?: boolean; triggerClassName?: string; children: ReactNode }) {
+function ScopeMenu({ label, icon, value, badge, invalid = false, disabled = false, triggerClassName = 'max-w-[12rem]', contentClassName, children }: { label: string; icon: ReactNode; value: string; badge: string; invalid?: boolean; disabled?: boolean; triggerClassName?: string; contentClassName?: string; children: ReactNode }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -86,7 +122,7 @@ function ScopeMenu({ label, icon, value, badge, invalid = false, disabled = fals
           <ChevronDown className="size-3.5 shrink-0 text-ink-4" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={6} collisionPadding={12} className="min-w-[238px] max-w-[calc(100vw-1.5rem)] p-1.5" data-slot="observation-scope-menu">
+      <DropdownMenuContent align="start" sideOffset={6} collisionPadding={12} className={['min-w-[238px] max-w-[calc(100vw-1.5rem)] p-1.5', contentClassName ?? ''].join(' ')} data-slot="observation-scope-menu">
         {children}
       </DropdownMenuContent>
     </DropdownMenu>

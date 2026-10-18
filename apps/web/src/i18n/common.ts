@@ -68,6 +68,9 @@ export const common = {
     emptyMapping: '空映射',
     stopped: '已停止',
     scopeBadge: '范围',
+    scopeLabel: '环境与命名空间',
+    environmentGroup: '环境',
+    namespaceGroup: '命名空间',
     emptyNote: '该环境没有映射命名空间，观测页将显示空态。',
     invalidRangeAria: '观测范围失效，请重新选择环境',
   },
@@ -144,7 +147,7 @@ export const common = {
     activeChanges: '进行中变更单',
   },
   resources: {
-    title: '控制面 CPU 与堆内存，点击查看健康详情',
+    ariaLabel: '控制面 CPU {{cpu}}，堆内存 {{memory}}，点击查看健康详情',
     openHealth: '查看控制面健康',
     cpu: 'CPU',
     memory: '内存',

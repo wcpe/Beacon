@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { delay, http, HttpResponse } from 'msw'
@@ -8,6 +8,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import ApprovalsPage from '../pages/approvals'
 import { setObservationScope } from '../features/env/observation-scope'
+import { i18next } from '../i18n'
+import { setLocale } from '../state/locale'
 import { allHandlers, resetMockData, setMockScenario, type MockScenario } from '@beacon/devmock'
 
 import '../i18n'
@@ -18,10 +20,12 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' })
 })
 
-afterEach(() => {
+afterEach(async () => {
   server.resetHandlers()
   // 观测范围是模块级单例，测试之间必须复位，否则会串味
   setObservationScope({ kind: 'all' })
+  setLocale('zh-CN')
+  await i18next.changeLanguage('zh-CN')
 })
 
 afterAll(() => {
@@ -52,10 +56,10 @@ describe('/approvals 审批中心', () => {
 
     expect(await screen.findByText('提审变更单 #5002：经济系统配置调优')).toBeInTheDocument()
     expect(screen.getByText('归档离线 backend-37，退出默认观测范围')).toBeInTheDocument()
-    // 页面骨架：大标题 + 一行说明；说明里明确作用域跟随页眉筛选器（页内不再有自己的命名空间下拉）
+    // 页面骨架：大标题 + 一行说明；说明明确本页不继承页眉范围（页内也不重复设置命名空间筛选）。
     expect(screen.getByRole('heading', { level: 1, name: '审批' })).toBeInTheDocument()
     expect(screen.getByText(/统一审批入口/)).toBeInTheDocument()
-    expect(screen.getByText(/作用域跟随顶部所选环境与命名空间/)).toBeInTheDocument()
+    expect(screen.getByText(/不继承页眉环境或命名空间筛选/)).toBeInTheDocument()
     // 筛选区为「常显一行 + 高级筛选折叠」：分组标题已移除，默认只露状态与关键字
     expect(screen.getByRole('button', { name: /高级筛选/ })).toBeInTheDocument()
     const statusFilter = screen.getByRole('textbox', { name: '审批状态' })
@@ -63,8 +67,20 @@ describe('/approvals 审批中心', () => {
     expect(screen.getByRole('textbox', { name: '审批关键字' })).toBeInTheDocument()
     // 高级字段默认收起：时间窗输入不应外露
     expect(screen.queryByLabelText('创建时间起')).not.toBeInTheDocument()
-    // 页内不再重复放命名空间下拉，「目标命名空间」只剩页眉筛选器一个来源
+    // 审批页不提供命名空间筛选控件，统一查看全局申请
     expect(screen.queryByRole('combobox', { name: '目标命名空间' })).not.toBeInTheDocument()
+  })
+
+  it('审批表头在英文界面显示英文列名', async () => {
+    setLocale('en')
+    await act(async () => {
+      await i18next.changeLanguage('en')
+    })
+    renderPage()
+
+    for (const label of ['Request ID', 'Summary', 'Domain', 'Requester', 'Status', 'Created at']) {
+      expect(await screen.findByText(label)).toBeInTheDocument()
+    }
   })
 
   it('桌面列表使用卡片内滚动并吸顶自定义表头', async () => {
@@ -134,7 +150,7 @@ describe('/approvals 审批中心', () => {
     })
   })
 
-  it('列表按页眉选中的环境与命名空间收窄', async () => {
+  it('全局审批列表不继承页眉命名空间范围，仍保留自身筛选和分页', async () => {
     const urls: string[] = []
     server.use(
       http.get('*/admin/v2/approval-requests', ({ request }) => {
@@ -142,13 +158,17 @@ describe('/approvals 审批中心', () => {
         return HttpResponse.json({ items: [], total: 0 })
       }),
     )
-    // 页眉选中「生产 → prod(#1)」：审批列表查询必须带上 namespaceId=1
     setObservationScope({ kind: 'env', envId: 1, namespaceId: 1 })
     renderPage()
 
     await waitFor(() => {
-      expect(urls.some((url) => url.includes('namespaceId=1'))).toBe(true)
+      expect(urls.length).toBeGreaterThan(0)
     })
+    const requestUrl = new URL(urls[urls.length - 1] ?? '')
+    expect(requestUrl.searchParams.has('namespaceId')).toBe(false)
+    expect(requestUrl.searchParams.get('status')).toBe('pending')
+    expect(requestUrl.searchParams.get('page')).toBe('1')
+    expect(requestUrl.searchParams.get('pageSize')).toBe('20')
   })
 
   it('通过详情 deep-link 打开指定审批申请', async () => {

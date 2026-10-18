@@ -64,6 +64,9 @@ export const enCommon = {
     emptyMapping: 'No mapping',
     stopped: 'Stopped',
     scopeBadge: 'Scope',
+    scopeLabel: 'Environment and namespace',
+    environmentGroup: 'Environment',
+    namespaceGroup: 'Namespace',
     emptyNote: 'This environment has no mapped namespaces; observation pages will show an empty state.',
     invalidRangeAria: 'Observation scope is invalid; please reselect an environment',
   },
@@ -135,7 +138,7 @@ export const enCommon = {
     activeChanges: 'Active changes',
   },
   resources: {
-    title: 'Control-plane CPU and heap memory; click to view health details',
+    ariaLabel: 'Control-plane CPU {{cpu}}, heap memory {{memory}}; click to view health details',
     openHealth: 'View control-plane health',
     cpu: 'CPU',
     memory: 'Memory',

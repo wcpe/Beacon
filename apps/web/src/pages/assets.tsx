@@ -12,7 +12,8 @@ import { Button, PageHeader, TableSkeleton, Tabs, TabsContent, TabsList, TabsTri
 
 import DocHelp from '../features/delivery/doc-help'
 import { fetchScanStatus } from '../api/delivery-assets'
-import { useDefaultObservationNamespaceState } from '../features/env/use-default-namespace'
+import { useObservationNamespaceState } from '../features/env/use-default-namespace'
+import DeliveryScopeError from '../features/delivery/scope-error'
 import ScanPanel from './assets/scan-panel'
 import ManifestPanel from './assets/manifest-panel'
 import ComparePanel from './assets/compare-panel'
@@ -26,12 +27,14 @@ export default function AssetsPage() {
   const [view, setView] = useState('manifest')
   const [rulesOpen, setRulesOpen] = useState(false)
 
-  // 命名空间范围唯一真源是页眉的观测范围选择器（页内不再有自己的选择器）。
-  // 进页面时若页眉还停在「全部命名空间」，由 useDefaultObservationNamespaceState 自动补第一个
-  // 可用命名空间并写回页眉范围（页眉与页面因此始终一致）；用户已选定的范围不会被覆盖。
-  // namespaceId 仍为 0 只有两种情况：范围还在解析（pending → 骨架），或确实没有可用命名空间（走引导）。
+  // 命名空间范围唯一真源是页眉观测范围选择器；未选具体命名空间时保留全局范围并显示引导。
   // 各面板的查询均为 `enabled: namespaceId > 0`，为 0 时不发请求。
-  const { namespaceId, pending: scopePending } = useDefaultObservationNamespaceState()
+  const {
+    namespaceId,
+    pending: scopePending,
+    error: scopeError,
+    retry: retryScopeOptions,
+  } = useObservationNamespaceState()
 
   // 清单独有探测：扫描概要每服一行，total 为 0 说明该命名空间还没有任何 agent 清单上报。
   // 只取 1 行，成本可忽略；清单面板本身不改，空态引导统一在容器层判定与渲染。
@@ -70,6 +73,8 @@ export default function AssetsPage() {
             <Button
               variant="outline"
               size="sm"
+              disabled={namespaceId <= 0}
+              title={namespaceId > 0 || scopeError !== null ? undefined : t('delivery.assets.scopeRequired')}
               onClick={() => {
                 setRulesOpen(true)
               }}
@@ -90,7 +95,11 @@ export default function AssetsPage() {
           <TabsTrigger value="compare">{t('delivery.assets.compare.title')}</TabsTrigger>
           <TabsTrigger value="diff">{t('delivery.assets.diff.title')}</TabsTrigger>
         </TabsList>
-        {namespaceId > 0 ? (
+        {scopeError !== null ? (
+          <div className="pt-4" data-slot="assets-scope-error">
+            <DeliveryScopeError error={scopeError} onRetry={retryScopeOptions} />
+          </div>
+        ) : namespaceId > 0 ? (
           <>
             <TabsContent value="manifest" className="pt-4 md:min-h-0 md:flex-1 md:overflow-y-auto md:data-[state=active]:flex md:data-[state=active]:flex-col">
               {noManifest ? (
@@ -115,13 +124,13 @@ export default function AssetsPage() {
             </TabsContent>
           </>
         ) : scopePending ? (
-          // 范围解析中（env 选项加载 / 默认值回流）：给骨架，不要闪出「请先选命名空间」的引导
+          // 环境选项加载中：给骨架，不要提前闪出「请先选命名空间」的引导
           <div className="pt-4 md:min-h-0 md:flex-1 md:overflow-y-auto" data-slot="assets-scope-pending">
             <TableSkeleton columns={4} rows={6} />
           </div>
         ) : (
-          // 确实没有可用命名空间（或页眉范围失效）：不渲染面板（面板按 namespaceId 取数，0 会取不到
-          // 任何数据），也不伪造数据，直接指向页眉的选择器
+          // 尚未选具体命名空间：不渲染面板（面板按 namespaceId 取数，0 会取不到任何数据），
+          // 也不伪造数据，直接指向页眉的选择器
           <p data-slot="assets-scope-required" className="pt-4 text-sm text-ink-3">
             {t('delivery.assets.scopeRequired')}
           </p>

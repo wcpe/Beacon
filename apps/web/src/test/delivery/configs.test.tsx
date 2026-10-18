@@ -206,30 +206,22 @@ describe('/configs 配置中心页', () => {
     })
   })
 
-  // 交付域默认命名空间：页眉停在「全部命名空间」时页面自动补第一个可用命名空间并写回页眉范围，
-  // 用户进页面就能用，不再被「请先选命名空间」挡住（默认选中而不是引导）
-  it('页眉未选命名空间时自动选中第一个可用命名空间，列表与写操作即刻可用', async () => {
+  it('页眉未选具体命名空间时保留全局范围、显示引导并禁用写操作', async () => {
     useScenario('normal')
     setObservationScope({ kind: 'all' })
     renderPage(<ConfigsPage />)
 
-    // 自动取到 mock 的 prod 命名空间（env 1 的首个 namespace，id=1）→ 列表直接可用
-    expect(await screen.findByText('plugins/Essentials/config.yml')).toBeInTheDocument()
-    expect(screen.queryByText('请先在页眉左侧选择命名空间')).not.toBeInTheDocument()
-    // 写操作不再被禁用
-    expect(screen.getByRole('button', { name: '新建配置文件' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '回收站' })).toBeEnabled()
-    // 默认值写回全局观测范围：页眉选择器读同一份快照，不会「页眉全部 / 页面第一个命名空间」错位
-    await waitFor(() => {
-      expect(getObservationScopeSelection()).toMatchObject({ namespaceId: 1 })
-    })
+    expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '新建配置文件' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '回收站' })).toBeDisabled()
+    expect(screen.queryByText('plugins/Essentials/config.yml')).not.toBeInTheDocument()
+    expect(getObservationScopeSelection()).toEqual({ kind: 'all' })
   })
 
-  // 页眉与页面必须显示同一个命名空间：默认值是写回全局观测范围的，页眉选择器读同一份快照，
-  // 因此不会出现「页眉显示全部、页面却按第一个命名空间取数」的错位
-  it('自动补默认命名空间后页眉选择器同步显示该命名空间', async () => {
+  it('页眉范围未选具体命名空间时仍显示全部命名空间', async () => {
     useScenario('normal')
     setObservationScope({ kind: 'all' })
+    const user = userEvent.setup()
     renderPage(
       <>
         <EnvFilter />
@@ -237,13 +229,15 @@ describe('/configs 配置中心页', () => {
       </>,
     )
 
-    // 页眉命名空间选择器（初始为「全部命名空间」）在默认值生效后变为 mock 的 prod 命名空间
-    const namespaceTrigger = await screen.findByRole('button', { name: '观测命名空间' })
-    await waitFor(() => {
-      expect(within(namespaceTrigger).getByText('prod')).toBeInTheDocument()
-    })
-    // 页面同时按该命名空间取数（同一份范围的两种呈现）
+    const scopeTrigger = await screen.findByRole('button', { name: '环境与命名空间' })
+    expect(within(scopeTrigger).getByText('全部命名空间')).toBeInTheDocument()
+    expect(getObservationScopeSelection()).toEqual({ kind: 'all' })
+    expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
+
+    await user.click(scopeTrigger)
+    await user.click(await screen.findByRole('menuitem', { name: /prod/ }))
     expect(await screen.findByText('plugins/Essentials/config.yml')).toBeInTheDocument()
+    expect(getObservationScopeSelection()).toMatchObject({ namespaceId: 1 })
   })
 
   // 范围解析中不得闪出「请先选命名空间」：加载态给骨架占位，引导只在确实没有命名空间时出现
@@ -266,7 +260,36 @@ describe('/configs 配置中心页', () => {
     expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
   })
 
-  // 兜底：确实没有任何可用命名空间（env 列表为空）时仍引导去页眉选择，并禁写、不伪造数据
+  it('环境选项请求失败时显示错误与重试，不伪装成未选择命名空间', async () => {
+    useScenario('normal')
+    setObservationScope({ kind: 'all' })
+    let attempts = 0
+    let retryAllowed = false
+    server.use(
+      http.get('*/admin/v2/envs', () => {
+        attempts += 1
+        return retryAllowed
+          ? HttpResponse.json({ items: [], total: 0 })
+          : HttpResponse.json({ message: '环境服务暂不可用' }, { status: 503 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<ConfigsPage />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('环境与命名空间加载失败：环境服务暂不可用')
+    expect(screen.queryByText('请先在页眉左侧选择命名空间')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '新建配置文件' })).toBeDisabled()
+
+    retryAllowed = true
+    await user.click(within(alert).getByRole('button', { name: '重试加载' }))
+    await waitFor(() => {
+      expect(attempts).toBeGreaterThan(1)
+    })
+    expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
+  })
+
+  // 环境列表为空时仍引导去页眉选择，并禁写、不伪造数据
   it('无可用命名空间时给出引导并禁用写操作', async () => {
     useScenario('normal')
     setObservationScope({ kind: 'all' })

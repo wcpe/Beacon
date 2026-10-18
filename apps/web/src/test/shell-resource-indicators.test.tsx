@@ -61,7 +61,7 @@ describe('页眉控制面资源指示器（FR-272）', () => {
 
   it('展示控制面进程 CPU 与堆内存', async () => {
     renderResources()
-    const group = screen.getByRole('link', { name: '控制面 CPU 与堆内存，点击查看健康详情' })
+    const group = await screen.findByRole('link', { name: '控制面 CPU 42%，堆内存 64/128 MB，点击查看健康详情' })
     expect(group).toHaveAttribute('href', '/system')
     expect(group).toHaveAttribute('title', '查看控制面健康')
     expect(group).toHaveClass(
@@ -80,6 +80,7 @@ describe('页眉控制面资源指示器（FR-272）', () => {
 
     expect(await screen.findByText('42%')).toBeInTheDocument()
     expect(screen.getByTitle('42.4%')).toHaveClass('h-1.5', 'w-10', 'bg-ink-3/25')
+    expect(screen.getByTitle('42.4%').firstElementChild?.classList.contains('motion-reduce:transition-none')).toBe(true)
     expect(screen.getByText('64/128 MB')).toBeInTheDocument()
   })
 
@@ -148,7 +149,7 @@ describe('页眉控制面资源指示器（FR-272）', () => {
     })
     renderResources()
     const resourcesLink = await screen.findByRole('link', {
-      name: 'Control-plane CPU and heap memory; click to view health details',
+      name: 'Control-plane CPU 42%, heap memory 64/128 MB; click to view health details',
     })
     expect(resourcesLink).toHaveAttribute('title', 'View control-plane health')
     expect(await screen.findByText('Memory')).toBeInTheDocument()

@@ -2,11 +2,13 @@
 export const delivery = {
   // 交付域作用域：统一由页眉段 2 的观测范围选择器提供，交付域各页不再有页面级命名空间选择器
   scope: {
-    // 页眉为「全部命名空间」时，三个写操作页（配置中心 / 变更单 / 交付历史）共用的引导标题
+    // 未选具体命名空间时的交付页引导
     requiredTitle: '请先在页眉左侧选择命名空间',
-    // 引导正文：解释为什么写操作页必须有具体命名空间，并说明选中后即可正常使用
+    // 说明交付操作需要明确的命名空间目标
     required:
       '读取与写入都按命名空间生效。本页含创建 / 变更 / 回滚等写操作，不会对「全部命名空间」执行；在页眉选定具体命名空间后，列表与操作即可用。',
+    loadError: '环境与命名空间加载失败：{{message}}',
+    retry: '重试加载',
   },
   // 通用分页
   pager: {
@@ -1096,9 +1098,13 @@ export const delivery = {
   pickers: {
     server: {
       search: '搜索服务器 ID / 小区',
-      // 候选显示 text：serverId 为主，大区 / 小区作为辅助信息
+      // 候选显示文本以 serverId 为主，大区 / 小区作为辅助信息
       optionLabel: '{{serverId}}（{{scope}}）',
       empty: '无匹配服务器',
+      loading: '正在加载服务器候选…',
+      emptyError: '服务器候选加载失败，无法确认匹配结果',
+      loadError: '服务器候选加载失败：{{message}}',
+      retry: '重试',
       clear: '清空服务器',
     },
     path: {
@@ -1196,11 +1202,18 @@ export const delivery = {
     configsVersionsEffect: '回退只存成新版本，不会立刻改线上；真要下发请走变更单',
     historyStatusScope: '「已完成」= 全部批次都生效；「已回滚」= 整单退回原版本',
   },
-  // /approvals 审批中心页的页面级说明（标题复用 nav.approvals，这里只补 Title 下的一行解释；
-  // 本页作用域跟随页眉选中的环境与命名空间，不再声明「不受筛选影响」）
+  // /approvals 是汇总全部待审批申请的唯一入口，不继承页眉观测筛选。
   approvals: {
     pageDesc:
-      '统一审批入口：汇总变更单、配置、文件、身份与生命周期等全部待审批申请，支持批准执行、驳回与撤回，并提供审计追溯；作用域跟随顶部所选环境与命名空间。',
+      '统一审批入口：汇总变更单、配置、文件、身份与生命周期等全部待审批申请，支持批准执行、驳回与撤回，并提供审计追溯；不继承页眉环境或命名空间筛选。',
+    columns: {
+      requestId: '申请编号',
+      summary: '摘要',
+      domain: '领域',
+      requester: '申请主体',
+      status: '状态',
+      createdAt: '创建时间',
+    },
     filters: {
       advanced: '高级筛选',
       groups: {

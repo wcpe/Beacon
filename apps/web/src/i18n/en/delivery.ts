@@ -1,13 +1,15 @@
-// English delivery domain copy (full mirror of zh-CN)
-// Delivery domain copy (/assets /configs /changes /changes/history, FR-170): maintained by the delivery domain page agent, do not edit from other domains
+// 英文交付域文案，与简体中文文案保持完整镜像。
+// 交付域文案由交付域页面代理维护，其他领域修改前需先核对职责边界。
 export const delivery = {
-  // Delivery scope: provided globally by the header (segment 2) observation selector; no page-level namespace pickers
+  // 交付范围统一由页眉观测选择器提供，页面不再设置独立命名空间选择器。
   scope: {
-    // Shared guidance title for the three write pages (config center / change orders / delivery history) when the header is on "all namespaces"
+    // 未选具体命名空间时的交付页引导
     requiredTitle: 'Pick a namespace in the header first',
-    // Guidance body: why write pages need a concrete namespace, and what becomes available once picked
+    // 说明交付操作需要明确的命名空间目标
     required:
       'Reads and writes are both scoped by namespace. This page performs writes such as creating, changing and rolling back, so it never acts on “all namespaces”; pick a specific namespace in the header to enable the list and its actions.',
+    loadError: 'Failed to load environments and namespaces: {{message}}',
+    retry: 'Retry loading',
   },
   // Common pager
   pager: {
@@ -1098,9 +1100,14 @@ export const delivery = {
   // 共用选择器（服务器 ID / 文件路径 / 扩展名）：把原先手填的输入框换成可搜索下拉
   pickers: {
     server: {
-      search: 'Search server ID / zone',
+      search: 'Search Server ID / zone',
+      // 候选项以 serverId 为主，大区 / 小区作为辅助信息。
       optionLabel: '{{serverId}} ({{scope}})',
-      empty: 'No matching server',
+      empty: 'No matching servers',
+      loading: 'Loading server options…',
+      emptyError: 'Server options failed to load; matching results are unavailable',
+      loadError: 'Failed to load server options: {{message}}',
+      retry: 'Retry',
       clear: 'Clear server',
     },
     path: {
@@ -1199,11 +1206,18 @@ export const delivery = {
     configsVersionsEffect: 'Rollback only saves a new version — nothing changes online until a Change order publishes it',
     historyStatusScope: 'Completed = every batch went live; Rolled back = the whole order was reverted',
   },
-  // Page-level copy for /approvals (title reuses nav.approvals; this is the one-line explainer under it;
-  // the page scope follows the environment and namespace selected at the top)
+  // /approvals 汇总全部待审批申请，是唯一审批入口，不继承页眉观测筛选。
   approvals: {
     pageDesc:
-      'Unified approval entry: all pending requests across change orders, configs, files, identities and lifecycle are collected here for approve-and-execute, reject or withdraw, with a full audit trail. Scope follows the environment and namespace selected at the top.',
+      'Unified approval entry: all pending requests across change orders, configs, files, identities and lifecycle are collected here for approve-and-execute, reject or withdraw, with a full audit trail. It does not inherit the header environment or namespace filters.',
+    columns: {
+      requestId: 'Request ID',
+      summary: 'Summary',
+      domain: 'Domain',
+      requester: 'Requester',
+      status: 'Status',
+      createdAt: 'Created at',
+    },
     filters: {
       advanced: 'Advanced filters',
       groups: {

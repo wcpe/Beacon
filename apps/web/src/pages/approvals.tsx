@@ -1,7 +1,5 @@
-// 审批中心（/approvals）：全局审批的收件箱 + 详情主从视图。
-// 命名空间范围唯一真源是页眉的环境 / 命名空间筛选器（本页不再自带命名空间下拉）：
-// 页眉选中具体命名空间时按该 id 收窄，选「全部命名空间」时不传参即查全部——这同时覆盖了
-// namespaceId 为 null 的「全局操作」审批，因此无需再为它单列一个前端哨兵。
+// 审批中心（/approvals）：汇总所有范围待审批申请的全局收件箱与详情主从视图。
+// 本页是唯一审批入口，不继承页眉环境 / 命名空间筛选；保留申请自身的命名空间信息供辨识。
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -24,8 +22,6 @@ import {
   withdrawApproval,
   type ApprovalListQuery,
 } from '../api/approvals'
-import { deriveObservationScope, useObservationScopeSelection } from '../features/env/observation-scope'
-import { useEnvOptions } from '../features/env/use-env-scope'
 import ConfirmDialog from './changes/confirm-dialog'
 import DocHelp from '../features/delivery/doc-help'
 import MasterDetail from '../features/shared/master-detail'
@@ -126,19 +122,14 @@ function isDefaultPendingFilter(filters: Filters): boolean {
   )
 }
 
-// 列表查询参数。命名空间范围只来自页眉筛选器（页面级下拉已移除）：
-// - namespaceId > 0：页眉选中了具体命名空间，按该 id 收窄；
-// - namespaceId === 0：页眉选的是「全部命名空间」（或范围无效），不传参即查全部。
-// 「全局操作」审批（namespaceId 为 null）本就包含在「查全部」里，因此
-// 原先那个 'global' 前端哨兵不再需要，改造后不必保留该分支。
-function queryFromFilters(filters: Filters, page: number, namespaceId: number): ApprovalListQuery {
+// 审批列表始终跨命名空间查询；这里只保留审批中心自己的筛选和分页参数。
+function queryFromFilters(filters: Filters, page: number): ApprovalListQuery {
   return {
     status: filters.status,
     operationKey: filters.operationKey || undefined,
     riskLevel: filters.riskLevel || undefined,
     requesterType: filters.requesterType || undefined,
     requesterId: filters.requesterId || undefined,
-    namespaceId: namespaceId > 0 ? namespaceId : undefined,
     keyword: filters.keyword || undefined,
     createdFrom: toIso(filters.createdFrom),
     createdTo: toIso(filters.createdTo),
@@ -172,7 +163,7 @@ function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFil
     filters.expiresFrom !== '' ||
     filters.expiresTo !== ''
 
-  // 命名空间不在本页筛选：作用域唯一真源是页眉的环境 / 命名空间筛选器（见 queryFromFilters）。
+  // 命名空间信息只用于申请上下文辨识，不参与本页筛选。
   return (
     // 筛选表单作为列表卡的工具栏，与其他交付列表共享卡面、滚动区与分页布局。
     <div className="grid gap-2.5">
@@ -343,6 +334,7 @@ const APPROVAL_GRID = 'md:grid-cols-[11rem_minmax(0,1.6fr)_minmax(0,1fr)_8rem_5.
 
 /** 表头：桌面显示列名，小屏隐藏（小屏行内自带语义） */
 function ApprovalTableHead() {
+  const { t } = useTranslation()
   return (
     <div
       // 与 @beacon/ui 的 TableHead 保持同一套视觉参数：底色 surface-2/70、行高 h-9、
@@ -353,12 +345,12 @@ function ApprovalTableHead() {
         APPROVAL_GRID,
       ].join(' ')}
     >
-      <span>申请编号</span>
-      <span>摘要</span>
-      <span>领域</span>
-      <span>申请主体</span>
-      <span>状态</span>
-      <span className="text-right">创建时间</span>
+      <span>{t('delivery.approvals.columns.requestId')}</span>
+      <span>{t('delivery.approvals.columns.summary')}</span>
+      <span>{t('delivery.approvals.columns.domain')}</span>
+      <span>{t('delivery.approvals.columns.requester')}</span>
+      <span>{t('delivery.approvals.columns.status')}</span>
+      <span className="text-right">{t('delivery.approvals.columns.createdAt')}</span>
       <span aria-hidden />
     </div>
   )
@@ -594,13 +586,9 @@ export default function ApprovalsPage() {
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [page, setPage] = useState(1)
   const [action, setAction] = useState<ApprovalAction | null>(null)
-  // 命名空间范围与其它运维页一致，取自页眉观测范围选择器；0 表示「全部命名空间」或范围无效。
-  const scopeSelection = useObservationScopeSelection()
-  const envs = useEnvOptions()
-  const namespaceId = deriveObservationScope(scopeSelection, envs).namespaceId
   const listParams = useMemo(
-    () => queryFromFilters(filters, page, namespaceId),
-    [filters, page, namespaceId],
+    () => queryFromFilters(filters, page),
+    [filters, page],
   )
   const listQuery = useQuery({
     queryKey: ['approvals', 'list', listParams],
@@ -639,9 +627,9 @@ export default function ApprovalsPage() {
   })
 
   useEffect(() => {
-    // 页内筛选或页眉命名空间范围变化都要回到第 1 页，避免停在已越界的高页码上。
+    // 页内筛选变化时回到第 1 页，避免停在已越界的高页码上。
     setPage(1)
-  }, [filters, namespaceId])
+  }, [filters])
 
   const selected = detailQuery.data
   const list = listQuery.data?.items ?? []
@@ -658,8 +646,7 @@ export default function ApprovalsPage() {
 
   return (
     <section className="grid gap-4 md:flex md:h-full md:min-h-0 md:flex-col">
-      {/* 页面身份标识：标题与说明统一由 PageHeader 承担，文档入口挂在右侧操作区。
-          本页的作用域跟随页眉选中的环境与命名空间，这条口径用人话写进 description。 */}
+      {/* 页面身份标识：标题与说明统一由 PageHeader 承担，文档入口挂在右侧操作区。 */}
       <PageHeader
         icon={<ClipboardCheck />}
         title={t('nav.approvals')}
@@ -712,12 +699,8 @@ export default function ApprovalsPage() {
               <div className="grid justify-items-center gap-4 px-4 py-10 text-center text-sm text-ink-3">
                 <AlertTriangle className="mx-auto size-6" aria-hidden />
                 <p>
-                  {/* 默认 pending 筛选下的空态：页眉缩小到具体命名空间时，说的是「这个范围里没有」，不是「全局没有」 */}
-                  {isDefaultPendingFilter(filters)
-                    ? namespaceId > 0
-                      ? '当前命名空间暂无待审批'
-                      : '全局暂无待审批'
-                    : '当前筛选无结果'}
+                  {/* 默认 pending 筛选下的全局空态；本页不继承页眉命名空间范围。 */}
+                  {isDefaultPendingFilter(filters) ? '全局暂无待审批' : '当前筛选无结果'}
                 </p>
                 <Button
                   type="button"

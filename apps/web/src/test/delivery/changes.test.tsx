@@ -544,22 +544,16 @@ describe('/changes 变更单页', () => {
     expect(await screen.findByText('还没有变更单')).toBeInTheDocument()
   })
 
-  // 交付域默认命名空间：页眉停在「全部命名空间」时页面自动补第一个可用命名空间并写回页眉范围
-  it('页眉未选命名空间时自动选中第一个可用命名空间，列表与建单入口即刻可用', async () => {
+  it('页眉未选具体命名空间时保留全局范围、显示引导并禁用建单入口', async () => {
     useScenario('normal')
     setObservationScope({ kind: 'all' })
     renderPage(<ChangesPage />)
 
-    // 自动取到 mock 的 prod 命名空间（env 1 的首个 namespace，id=1）→ 列表直接可用
-    expect(await screen.findByText('大厅插件升级 v2.4')).toBeInTheDocument()
-    expect(screen.queryByText('请先在页眉左侧选择命名空间')).not.toBeInTheDocument()
-    // 两个建单入口都不再被禁用
-    expect(screen.getByRole('button', { name: '引导创建' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '高级创建' })).toBeEnabled()
-    // 默认值写回全局观测范围：页眉选择器读同一份快照，不会「页眉全部 / 页面第一个命名空间」错位
-    await waitFor(() => {
-      expect(getObservationScopeSelection()).toMatchObject({ namespaceId: 1 })
-    })
+    expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
+    expect(screen.queryByText('大厅插件升级 v2.4')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '引导创建' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '高级创建' })).toBeDisabled()
+    expect(getObservationScopeSelection()).toEqual({ kind: 'all' })
   })
 
   // 兜底：确实没有任何可用命名空间（env 列表为空）时仍引导去页眉选择，并禁用写操作、不伪造数据

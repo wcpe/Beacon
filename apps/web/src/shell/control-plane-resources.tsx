@@ -48,7 +48,9 @@ export default function ControlPlaneResources() {
   const heapPercent = heapSys > 0 ? Math.min((heapAlloc / heapSys) * 100, 100) : 0
   const heapWarning = heapSys > 0 && heapPercent > 80
   const cpuBarWidth = cpuAvailable ? Math.min(Math.max(cpuPercent, 0), 100) : 0
-  const groupLabel = t('common.resources.title')
+  const cpuLabel = cpuAvailable ? `${cpuPercent.toFixed(0)}%` : '—'
+  const memoryLabel = formatHeapUsage(heapAlloc, heapSys)
+  const groupLabel = t('common.resources.ariaLabel', { cpu: cpuLabel, memory: memoryLabel })
 
   return (
     <Link
@@ -67,7 +69,7 @@ export default function ControlPlaneResources() {
           title={cpuAvailable ? `${cpuPercent.toFixed(1)}%` : '—'}
         >
           <span
-            className={['block h-full rounded-full transition-[width] duration-500', cpuWarning ? 'bg-warn' : 'bg-brand'].join(' ')}
+            className={['block h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none', cpuWarning ? 'bg-warn' : 'bg-brand'].join(' ')}
             style={{ width: `${String(cpuBarWidth)}%` }}
           />
         </span>

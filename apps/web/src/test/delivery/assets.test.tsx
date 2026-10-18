@@ -63,24 +63,19 @@ describe('/assets 文件资产页', () => {
     expect(screen.queryByRole('region', { name: '跨服比对' })).not.toBeInTheDocument()
   })
 
-  // 交付域默认命名空间：页眉停在「全部命名空间」时页面自动补第一个可用命名空间并写回页眉范围，
-  // 四个视图都按这个命名空间取数，用户不必先被引导挡住
-  it('页眉未选命名空间时自动选中第一个可用命名空间，清单直接可用', async () => {
+  it('页眉未选具体命名空间时保留全局范围并显示引导', async () => {
     useScenario('normal')
     setObservationScope({ kind: 'all' })
     renderPage(<AssetsPage />)
 
-    // 自动取到 mock 的 prod 命名空间（env 1 的首个 namespace，id=1）→ 清单直接出数据
-    expect((await screen.findAllByText('lobby-1')).length).toBeGreaterThan(0)
     expect(
-      screen.queryByText(
+      await screen.findByText(
         '请先在页眉左侧选择命名空间：文件清单、扫描概要、跨服比对与两侧差异都按命名空间取数。',
       ),
-    ).not.toBeInTheDocument()
-    // 默认值写回全局观测范围：页眉选择器读同一份快照，不会「页眉全部 / 页面第一个命名空间」错位
-    await waitFor(() => {
-      expect(getObservationScopeSelection()).toMatchObject({ namespaceId: 1 })
-    })
+    ).toBeInTheDocument()
+    expect(screen.queryByText('lobby-1')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '敏感路径规则' })).toBeDisabled()
+    expect(getObservationScopeSelection()).toEqual({ kind: 'all' })
   })
 
   // 清单空态引导：命名空间存在但还没有任何 agent 清单上报时，主 Tab 给出下一步动作
@@ -148,6 +143,62 @@ describe('/assets 文件资产页', () => {
     await user.click(within(alert).getByRole('button', { name: '重试加载' }))
     expect(await screen.findByText('当前筛选条件下无文件；请调整服务器 / 路径前缀 / 扩展名后重试')).toBeInTheDocument()
     expect(requestCount).toBeGreaterThan(1)
+  })
+
+  it('服务器候选加载中显示独立加载态', async () => {
+    useScenario('normal')
+    let releaseResponse: (() => void) | undefined
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve
+    })
+    server.use(
+      http.get('*/admin/v2/servers', async () => {
+        await responseGate
+        return HttpResponse.json({ items: [], total: 0 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<AssetsPage />)
+
+    const serverFilter = await screen.findByRole('textbox', { name: '按子服过滤' })
+    try {
+      await user.click(serverFilter)
+      expect(screen.getByText('正在加载服务器候选…')).toBeInTheDocument()
+    } finally {
+      releaseResponse?.()
+    }
+    expect(await screen.findByText('无匹配服务器')).toBeInTheDocument()
+  })
+
+  it('服务器候选加载失败时显示错误与重试，不误报为无匹配结果', async () => {
+    useScenario('normal')
+    let attempts = 0
+    let retryAllowed = false
+    server.use(
+      http.get('*/admin/v2/servers', () => {
+        attempts += 1
+        return retryAllowed
+          ? HttpResponse.json({ items: [], total: 0 })
+          : HttpResponse.json({ message: '服务器接口暂不可用' }, { status: 503 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<AssetsPage />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('服务器候选加载失败：服务器接口暂不可用')
+    const serverFilter = screen.getByRole('textbox', { name: '按子服过滤' })
+    await user.click(serverFilter)
+    expect(await screen.findByText('服务器候选加载失败，无法确认匹配结果')).toBeInTheDocument()
+    expect(screen.queryByText('无匹配服务器')).not.toBeInTheDocument()
+
+    retryAllowed = true
+    await user.click(within(alert).getByRole('button', { name: '重试' }))
+    await waitFor(() => {
+      expect(attempts).toBeGreaterThan(1)
+    })
+    await user.click(serverFilter)
+    expect(await screen.findByText('无匹配服务器')).toBeInTheDocument()
   })
 
   it('点清单行打开右侧非模态详情面板展示元数据（无 dialog 遮罩）', async () => {

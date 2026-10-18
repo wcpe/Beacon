@@ -164,19 +164,15 @@ describe('/changes/history 交付历史页', () => {
     expect(screen.getAllByText('已完成').length).toBeGreaterThan(0)
   }, 20_000)
 
-  // 交付域默认命名空间：页眉停在「全部命名空间」时页面自动补第一个可用命名空间并写回页眉范围
-  it('页眉未选命名空间时自动选中第一个可用命名空间，历史单列表即刻可用', async () => {
+  it('页眉未选具体命名空间时保留全局范围并隐藏历史列表与回滚入口', async () => {
     useScenario('normal')
     setObservationScope({ kind: 'all' })
     renderPage(<ChangesHistoryPage />)
 
-    // 自动取到 mock 的 prod 命名空间（env 1 的首个 namespace，id=1）→ 列表直接可用
-    expect(await screen.findByText('全网核心配置基线对齐')).toBeInTheDocument()
-    expect(screen.queryByText('请先在页眉左侧选择命名空间')).not.toBeInTheDocument()
-    // 默认值写回全局观测范围：页眉选择器读同一份快照，不会「页眉全部 / 页面第一个命名空间」错位
-    await waitFor(() => {
-      expect(getObservationScopeSelection()).toMatchObject({ namespaceId: 1 })
-    })
+    expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
+    expect(screen.queryByText('全网核心配置基线对齐')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '整单回滚' })).not.toBeInTheDocument()
+    expect(getObservationScopeSelection()).toEqual({ kind: 'all' })
   })
 
   // 兜底：确实没有任何可用命名空间（env 列表为空）时不给列表 / 详情，只引导去页眉选择

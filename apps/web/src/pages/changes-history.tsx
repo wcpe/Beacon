@@ -11,7 +11,8 @@ import type { ChangeOrderSummary } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
 import DocHelp from '../features/delivery/doc-help'
-import { useDefaultObservationNamespaceState } from '../features/env/use-default-namespace'
+import { useObservationNamespaceState } from '../features/env/use-default-namespace'
+import DeliveryScopeError from '../features/delivery/scope-error'
 import ListView from './changes-history/list-view'
 import DetailView from './changes-history/detail-view'
 
@@ -20,12 +21,14 @@ export default function ChangesHistoryPage() {
   // 选中的历史变更单（打开右侧非模态详情面板）
   const [selected, setSelected] = useState<ChangeOrderSummary | null>(null)
 
-  // 命名空间范围唯一真源是页眉的观测范围选择器（页内不再有自己的选择器）。
-  // 进页面时若页眉还停在「全部命名空间」，由 useDefaultObservationNamespaceState 自动补第一个
-  // 可用命名空间并写回页眉范围；用户已选定的范围不会被覆盖。
-  // 本页详情含整单回滚 / 结束回滚等写操作，目标必须明确：namespaceId 仍为 0（解析中或确实没有
-  // 可用命名空间）时不给列表与详情入口，先引导去页眉选择。
-  const { namespaceId, pending: scopePending } = useDefaultObservationNamespaceState()
+  // 命名空间范围唯一真源是页眉观测范围选择器；未选具体命名空间时保留全局范围并隐藏详情写入口。
+  // 本页详情含整单回滚 / 结束回滚等写操作，目标必须明确。
+  const {
+    namespaceId,
+    pending: scopePending,
+    error: scopeError,
+    retry: retryScopeOptions,
+  } = useObservationNamespaceState()
   const scopeReady = namespaceId > 0
 
   // 页眉命名空间变化时清空右侧选中：避免详情停在上一个命名空间的单据上。
@@ -55,7 +58,9 @@ export default function ChangesHistoryPage() {
         }
       />
 
-      {scopeReady ? (
+      {scopeError !== null ? (
+        <DeliveryScopeError error={scopeError} onRetry={retryScopeOptions} />
+      ) : scopeReady ? (
         <MasterDetail
           fill
           master={
@@ -73,12 +78,12 @@ export default function ChangesHistoryPage() {
           }}
         />
       ) : scopePending ? (
-        // 范围解析中（env 选项加载 / 默认值回流）：给骨架，不要闪出「请先选命名空间」的引导
+        // 环境选项加载中：给骨架，不要提前闪出「请先选命名空间」的引导
         <div className="md:min-h-0 md:flex-1 md:overflow-y-auto" data-slot="delivery-scope-pending">
           <TableSkeleton columns={5} rows={6} />
         </div>
       ) : (
-        // 确实没有可用命名空间（或页眉范围失效）：不渲染列表与详情（详情内含整单回滚等写操作），
+        // 尚未选具体命名空间：不渲染列表与详情（详情内含整单回滚等写操作），
         // 也不伪造「全部命名空间」的数据，直接把用户指回页眉选择器
         <div
           data-slot="delivery-scope-required"

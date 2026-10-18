@@ -65,7 +65,7 @@ describe('页眉工具 FR-193～196', () => {
   it('单层页眉显示独立的控制面资源指示器', async () => {
     renderHeader()
     const resourcesLink = await screen.findByRole('link', {
-      name: '控制面 CPU 与堆内存，点击查看健康详情',
+      name: '控制面 CPU —，堆内存 1/1 B，点击查看健康详情',
     })
     expect(resourcesLink).toHaveAttribute('href', '/system')
   })
@@ -86,6 +86,7 @@ describe('页眉工具 FR-193～196', () => {
     expect(status).toHaveAttribute('aria-label')
     expect(statusLabel).toHaveClass('hidden', 'xl:inline')
     expect(namespace).toHaveClass('hidden', 'sm:flex')
+    expect(screen.getByRole('button', { name: '环境与命名空间' })).toBeInTheDocument()
     // 语言是硬功能入口，sm 起就保留（平板/手机横屏可用）；刷新仅 lg 起，小屏靠下拉整页刷新。
     expect(document.querySelector('[data-slot="header-language-compact"]')).toHaveClass('hidden', 'sm:inline-flex')
     expect(document.querySelector('[data-slot="header-refresh-compact"]')).toHaveClass('hidden', 'lg:inline-flex')
