@@ -15,6 +15,8 @@ import { Button } from '@beacon/ui'
 import { X } from 'lucide-react'
 
 interface MasterDetailProps {
+  // 桌面端让主列填满父级剩余高度，供列表卡内部滚动
+  fill?: boolean
   master: ReactNode
   detail: ReactNode | null
   detailTitle?: ReactNode
@@ -23,6 +25,7 @@ interface MasterDetailProps {
 }
 
 export default function MasterDetail({
+  fill = false,
   master,
   detail,
   detailTitle,
@@ -89,7 +92,7 @@ export default function MasterDetail({
 
   return (
     <>
-      <div className="min-w-0">{master}</div>
+      <div className={`min-w-0 ${fill ? 'md:flex md:min-h-0 md:flex-1 md:flex-col' : ''}`}>{master}</div>
 
       {open &&
         createPortal(
@@ -100,19 +103,19 @@ export default function MasterDetail({
             className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[min(32rem,90vw)] flex-col border-l border-border bg-card text-sm text-card-foreground shadow-[var(--sh-pop)] animate-in fade-in-0 slide-in-from-right-10 duration-200"
             aria-label={typeof detailTitle === 'string' ? detailTitle : closeLabel}
           >
-            <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+            <div data-slot="master-detail-title" className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
               <span className="text-[13px] font-semibold text-ink-1">{detailTitle ?? '\u00a0'}</span>
               <Button
-                size="sm"
+                size="icon-sm"
                 variant="ghost"
-                className="size-7 shrink-0 p-0"
+                className="shrink-0"
                 onClick={onClose}
                 aria-label={closeLabel}
               >
                 <X className="size-4" />
               </Button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{detail}</div>
+            <div data-slot="master-detail-scroll" className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{detail}</div>
           </aside>,
           document.body,
         )}

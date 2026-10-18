@@ -81,13 +81,21 @@ export default function RollbackDialog({
   const canConfirm = typed.trim() === phrase && reason.trim() !== '' && !pending
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!pending) {
+          onOpenChange(next)
+        }
+      }}
+    >
+      <AlertDialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <AlertDialogHeader>
           <AlertDialogTitle>{t(`${base}.title`)}</AlertDialogTitle>
           <AlertDialogDescription>{t(`${base}.desc`)}</AlertDialogDescription>
         </AlertDialogHeader>
 
+        <div className="min-h-0 grid gap-4 overflow-y-auto pr-1">
         {/* 回滚预检（FR-255r）：先说明哪些台不可文件回滚，再让人填原因 */}
         {precheck != null && (
           <div className="rounded-md border border-warn-bd bg-warn-bg px-3 py-2 text-xs text-warn">
@@ -153,11 +161,13 @@ export default function RollbackDialog({
           />
         </div>
 
-        {errorText && <p className="text-sm text-destructive">{errorText}</p>}
+        {errorText && <p role="alert" className="text-sm text-destructive">{errorText}</p>}
+        </div>
 
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('delivery.changes.create.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel disabled={pending}>{t('delivery.changes.create.cancel')}</AlertDialogCancel>
           <AlertDialogAction
+            variant={textKey === 'rollback.retry' ? 'default' : 'destructive'}
             disabled={!canConfirm}
             onClick={(e) => {
               e.preventDefault()

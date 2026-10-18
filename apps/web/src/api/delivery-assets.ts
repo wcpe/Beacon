@@ -1,8 +1,10 @@
-// 文件资产域数据获取（/assets）：清单元数据、扫描概要、跨服哈希比对与敏感内容审批入口。
+// 文件资产域数据获取（/assets）：清单元数据、扫描概要、跨服哈希比对与敏感内容读取入口。
 
 import type {
   AssetCompareResponse,
+  AssetDiffResponse,
   AssetListResponse,
+  AssetPreviewResponse,
   AssetRescanResponse,
   AssetScanStatusItem,
   AssetSensitiveRulesResponse,
@@ -88,7 +90,7 @@ export function rescanAssets(body: RescanBody): Promise<AssetRescanResponse> {
   return request('POST', '/admin/v2/assets/rescan', body)
 }
 
-// ---- 敏感路径规则（FR-164）：读 / 整体替换；命中 glob 的内容读取走审批流程。 ----
+// ---- 敏感路径规则（FR-164）：读 / 整体替换；正文读取直执并记审计。 ----
 
 export function fetchSensitiveRules(): Promise<AssetSensitiveRulesResponse> {
   return request('GET', '/admin/v2/assets/sensitive-rules')
@@ -98,14 +100,33 @@ export function updateSensitiveRules(patterns: string[]): Promise<AssetSensitive
   return request('PUT', '/admin/v2/assets/sensitive-rules', { patterns })
 }
 
-/** 创建单文件读取专用审批，批准前不读取正文。 */
+/** 直接读取单文件正文，读取结果由后端先行写入元数据审计。 */
+export function fetchAssetPreview(serverId: string, path: string, reason: string): Promise<AssetPreviewResponse> {
+  return request('POST', '/admin/v2/assets/preview', { serverId, path, reason })
+}
+
+export type AssetPairDiffResponse = Omit<AssetDiffResponse, 'left' | 'right'> & {
+  left?: NonNullable<AssetDiffResponse['left']> | null
+  right?: NonNullable<AssetDiffResponse['right']> | null
+}
+
+/** 直接读取并比较两侧文件；正文仅随本次响应返回。 */
+export function fetchAssetPairDiff(
+  left: { serverId: string; path: string },
+  right: { serverId: string; path: string },
+  reason: string,
+): Promise<AssetPairDiffResponse> {
+  return request('POST', '/admin/v2/assets/diff', { left, right, reason })
+}
+
+/** 保留旧兼容路径封装；当前服务端直接读取正文，不再创建审批。 */
 export function requestAssetPreviewApproval(serverId: string, path: string, reason: string, idempotencyKey: string): Promise<SensitiveAccessApprovalResponse> {
   return request('POST', '/admin/v2/assets/preview/approval-requests', { serverId, path, reason }, {
     headers: { 'Idempotency-Key': idempotencyKey },
   })
 }
 
-/** 创建左右两侧各自独立的文件读取审批；审批本身不读取正文。 */
+/** 保留旧兼容路径封装；当前服务端经此路径直接读取并返回差异。 */
 export function requestAssetPairReadApprovals(
   left: { serverId: string; path: string },
   right: { serverId: string; path: string },
@@ -117,12 +138,12 @@ export function requestAssetPairReadApprovals(
   })
 }
 
-/** 单次消费 Agent 已回传的文件内容；调用方不得保存或渲染响应正文。 */
+/** 保留旧 grant 路径封装；当前服务端忽略 grant 授权并重新读取正文。 */
 export async function consumeAssetPreviewGrant(grantId: string, commandId: number): Promise<void> {
   await request('POST', `/admin/v2/assets/preview/grants/${encodeURIComponent(grantId)}/consume`, { commandId })
 }
 
-/** 消费任一侧 grant 时服务端会原子校验并消费双侧授权，只返回可展示的元数据差异摘要。 */
+/** 保留旧 pair grant 路径封装；当前服务端按旧记录定位目标并返回脱敏差异摘要。 */
 export async function consumeAssetPairReadGrant(grantId: string, commandId: number): Promise<AssetPairDiffSummary> {
   const result = await request<AssetPairDiffSummary>('POST', `/admin/v2/assets/pair-read/grants/${encodeURIComponent(grantId)}/consume`, { commandId })
   return {

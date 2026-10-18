@@ -9,13 +9,9 @@ import { FileCheck } from 'lucide-react'
 import {
   AsyncSection,
   Button,
+  Combobox,
   Label,
   SectionHeader,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   cn,
 } from '@beacon/ui'
 import type { ConfigFileDetail, ConfigScopeLevel } from '@beacon/contracts'
@@ -72,28 +68,23 @@ export default function EffectiveTab({ fileId, file }: EffectiveTabProps) {
           <Label htmlFor="config-effective-target-type">
             {t('delivery.configs.detail.effective.targetTypeLabel')}
           </Label>
-          <Select
+          <Combobox
+            id="config-effective-target-type"
+            className="w-56"
+            aria-label={t('delivery.configs.detail.effective.targetTypeLabel')}
             value={targetType}
-            onValueChange={(value) => {
+            onChange={(value) => {
               setTargetType(value as ConfigScopeLevel)
               setPickedRef(null)
             }}
-          >
-            <SelectTrigger
-              id="config-effective-target-type"
-              className="w-56"
-              aria-label={t('delivery.configs.detail.effective.targetTypeLabel')}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SCOPE_LEVELS.map((level) => (
-                <SelectItem key={level} value={level}>
-                  {t(`delivery.configs.detail.effective.targetTypes.${level}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={SCOPE_LEVELS.map((level) => ({
+              value: level,
+              label: t(`delivery.configs.detail.effective.targetTypes.${level}`),
+            }))}
+            allowCustom={false}
+            placeholder={t('delivery.configs.detail.effective.targetTypeLabel')}
+            emptyText={t('common.combobox.noMatch')}
+          />
         </div>
         {targetType !== 'namespace' && (
           <div className="w-64 space-y-1.5">

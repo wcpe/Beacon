@@ -37,6 +37,7 @@ interface ConfirmDialogProps {
   title: string
   description: string
   confirmLabel: string
+  confirmVariant?: 'default' | 'destructive'
   // 影响预览行
   impacts?: string[]
   // 是否要求填写原因
@@ -55,6 +56,7 @@ export default function ConfirmDialog({
   title,
   description,
   confirmLabel,
+  confirmVariant = 'default',
   impacts,
   requireReason = false,
   requireMode = false,
@@ -78,69 +80,79 @@ export default function ConfirmDialog({
   const canConfirm = reasonOk && !pending
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!pending) {
+          onOpenChange(next)
+        }
+      }}
+    >
+      <AlertDialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
 
-        {impacts && impacts.length > 0 && (
-          <ul className="list-disc space-y-1 rounded-md bg-muted/50 px-5 py-3 text-sm text-muted-foreground">
-            {impacts.map((line, i) => (
-              <li key={i}>{line}</li>
-            ))}
-          </ul>
-        )}
+        <div className="min-h-0 overflow-y-auto pr-1">
+          {impacts && impacts.length > 0 && (
+            <ul className="mb-4 list-disc space-y-1 rounded-md bg-muted/50 px-5 py-3 text-sm text-muted-foreground">
+              {impacts.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          )}
 
-        {requireMode && (
-          <div className="space-y-1.5">
-            <Label htmlFor="change-confirm-mode" className="text-sm font-medium">
-              {t('delivery.changes.confirm.resumeMode')}
-            </Label>
-            <Select
-              value={mode}
-              onValueChange={(next) => {
-                setMode(next as ResumeMode)
-              }}
-            >
-              <SelectTrigger
-                id="change-confirm-mode"
-                aria-label={t('delivery.changes.confirm.resumeMode')}
+          {requireMode && (
+            <div className="mb-4 space-y-1.5">
+              <Label htmlFor="change-confirm-mode" className="text-sm font-medium">
+                {t('delivery.changes.confirm.resumeMode')}
+              </Label>
+              <Select
+                value={mode}
+                onValueChange={(next) => {
+                  setMode(next as ResumeMode)
+                }}
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="retry_failed">{t('delivery.changes.confirm.retryFailed')}</SelectItem>
-                <SelectItem value="skip_failed">{t('delivery.changes.confirm.skipFailed')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+                <SelectTrigger
+                  id="change-confirm-mode"
+                  aria-label={t('delivery.changes.confirm.resumeMode')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="retry_failed">{t('delivery.changes.confirm.retryFailed')}</SelectItem>
+                  <SelectItem value="skip_failed">{t('delivery.changes.confirm.skipFailed')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
-        {requireReason && (
-          <div className="space-y-1.5">
-            <Label htmlFor="change-confirm-reason">{t('cluster.servers.reason.label')}</Label>
-            <Textarea
-              id="change-confirm-reason"
-              aria-label={t('cluster.servers.reason.label')}
-              value={reason}
-              onChange={(e) => {
-                setReason(e.target.value)
-              }}
-              placeholder={t('cluster.servers.reason.placeholder')}
-              rows={2}
-            />
-          </div>
-        )}
+          {requireReason && (
+            <div className="space-y-1.5">
+              <Label htmlFor="change-confirm-reason">{t('cluster.servers.reason.label')}</Label>
+              <Textarea
+                id="change-confirm-reason"
+                aria-label={t('cluster.servers.reason.label')}
+                value={reason}
+                onChange={(e) => {
+                  setReason(e.target.value)
+                }}
+                placeholder={t('cluster.servers.reason.placeholder')}
+                rows={2}
+              />
+            </div>
+          )}
 
-        {errorText !== null && errorText !== undefined && errorText !== '' && (
-          <p className="text-sm text-destructive">{errorText}</p>
-        )}
+          {errorText !== null && errorText !== undefined && errorText !== '' && (
+            <p role="alert" className="mt-3 text-sm text-destructive">{errorText}</p>
+          )}
+        </div>
 
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('delivery.changes.create.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel disabled={pending}>{t('delivery.changes.create.cancel')}</AlertDialogCancel>
           <AlertDialogAction
+            variant={confirmVariant}
             disabled={!canConfirm}
             onClick={(e) => {
               // 阻止 radix 默认关闭，交由调用方在成功后关闭

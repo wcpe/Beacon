@@ -169,7 +169,7 @@ export function OrderRollbackActions({ order }: OrderRollbackProps) {
             setRollbackOpen(true)
           }}
         >
-          <RotateCcw className="size-4" />
+          <RotateCcw className="size-3.5" />
           {t('delivery.rollback.action')}
         </Button>
       )}
@@ -182,7 +182,7 @@ export function OrderRollbackActions({ order }: OrderRollbackProps) {
             setRetryOpen(true)
           }}
         >
-          <RotateCcw className="size-4" />
+          <RotateCcw className="size-3.5" />
           {t('delivery.rollback.retry.action')}
         </Button>
       )}
@@ -252,10 +252,10 @@ export function OrderRollbackActions({ order }: OrderRollbackProps) {
         title={t('delivery.rollback.finishTitle')}
         description={t('delivery.rollback.finishDesc')}
         confirmLabel={t('delivery.rollback.finishConfirm')}
+        cancelLabel={t('delivery.changes.create.cancel')}
         pending={finishMutation.isPending}
-        onConfirm={() => {
-          finishMutation.mutate()
-        }}
+        errorText={finishMutation.isError ? errorText : null}
+        onConfirm={() => finishMutation.mutateAsync()}
       />
     </div>
   )

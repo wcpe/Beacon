@@ -91,9 +91,9 @@ rollback-pending → rollback-running → rollback-succeeded / rollback-failed
 - `GET /admin/v1/file-sync/tasks`：历史任务列表。
 - `GET /admin/v1/file-sync/tasks/{id}`：任务详情，含源清单就绪字段、批次、目标和日志。
 - `POST /admin/v1/file-sync/tasks/{id}/plan`：保存目标筛选并生成批次，返回最后一步展示的规划预览。
-- `POST /admin/v1/file-sync/tasks/{id}/start`：规划预览确认后开始执行；要求任务为 `planned` 且源清单已就绪。
+- `POST /admin/v1/file-sync/tasks/{id}/start`：规划预览确认后开始执行；要求任务为 `planned` 且源清单已就绪；按 ADR-0093 直执并由状态转换事务强审计。
 - `POST /admin/v1/file-sync/tasks/{id}/pause`：暂停后续批次。
-- `POST /admin/v1/file-sync/tasks/{id}/resume`：继续。
+- `POST /admin/v1/file-sync/tasks/{id}/resume`：继续暂停任务；按 ADR-0093 直执并由状态转换事务强审计。
 - `POST /admin/v1/file-sync/tasks/{id}/terminate`：紧急终止。
 - `POST /admin/v1/file-sync/tasks/{id}/rollback`：按整次 / 批次 / 单服回滚。
 - `GET /admin/v1/file-sync/tasks/{id}/events`：浏览器 SSE。

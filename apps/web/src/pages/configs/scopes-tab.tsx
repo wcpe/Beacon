@@ -171,6 +171,7 @@ export default function ScopesTab({ fileId, file }: ScopesTabProps) {
                           <Button
                             size="sm"
                             variant="ghost"
+                            className="text-ink-3 hover:bg-destructive/10 hover:text-destructive"
                             onClick={() => {
                               setRevokeError(null)
                               setRevokeTarget(row)
@@ -241,6 +242,7 @@ export default function ScopesTab({ fileId, file }: ScopesTabProps) {
           description={t('delivery.configs.revoke.desc')}
           notice={t('delivery.configs.noLiveEffect')}
           confirmLabel={t('delivery.configs.revoke.confirm')}
+          confirmVariant="destructive"
           impacts={[`${revokeTarget.scopeLevel} / ${revokeTarget.scopeName}`]}
           pending={revokeMutation.isPending}
           errorText={revokeError}

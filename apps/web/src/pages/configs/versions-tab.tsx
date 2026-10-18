@@ -9,14 +9,11 @@ import {
   AsyncSection,
   Badge,
   Button,
+  Combobox,
   DataTable,
   Label,
   SectionHeader,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
 import type { ConfigScopeLevel, ConfigScopeSummary, ConfigVersionListItem } from '@beacon/contracts'
@@ -95,8 +92,10 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
   const columns: DataTableColumn<ConfigVersionListItem>[] = [
     {
       header: t('delivery.configs.detail.versions.columns.version'),
+      headClassName: 'text-right',
+      className: 'text-right tabular-nums',
       cell: (row) => (
-        <span className="flex items-center gap-1.5 tnum text-ink-1">
+        <span className="flex items-center justify-end gap-1.5 tnum text-ink-1">
           v{String(row.versionNo)}
           {row.isRemoval && (
             <Badge variant="off" className="gap-1.5">
@@ -109,11 +108,11 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
     },
     {
       header: t('delivery.configs.detail.versions.columns.hash'),
-      cell: (row) => <span className="tnum font-mono text-xs text-ink-3">{row.contentHash.slice(0, 12)}</span>,
+      cell: (row) => <span className="tnum font-mono text-xs text-ink-3" title={row.contentHash}>{row.contentHash.slice(0, 12)}</span>,
     },
     {
       header: t('delivery.configs.detail.versions.columns.remark'),
-      cell: (row) => <span className="text-ink-2">{row.remark || '-'}</span>,
+      cell: (row) => <span className="block max-w-48 truncate text-ink-2" title={row.remark}>{row.remark || '-'}</span>,
     },
     {
       header: t('delivery.configs.detail.versions.columns.createdBy'),
@@ -125,8 +124,10 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
     },
     {
       header: '',
+      headClassName: 'w-40 text-right',
+      className: 'w-40 text-right',
       cell: (row) => (
-        <div className="flex flex-wrap justify-end gap-1.5">
+        <div className="flex justify-end gap-1.5">
           <Button
             size="sm"
             variant="ghost"
@@ -140,6 +141,7 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
             <Button
               size="sm"
               variant="ghost"
+              className="text-ink-3 hover:bg-destructive/10 hover:text-destructive"
               onClick={() => {
                 setRollbackError(null)
                 setRollbackTarget(row)
@@ -159,34 +161,31 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
         icon={<History className="size-4" />}
         title={t('delivery.configs.detail.versions.title')}
       />
+      {/* 白话提示：说明回退≠立即生效，真正下发仍要走变更单 */}
+      <p className="text-xs text-ink-3">{t('delivery.tips.configsVersionsEffect')}</p>
 
       <div className="flex flex-wrap items-end gap-2">
         <div className="space-y-1.5">
           <Label htmlFor="config-versions-scope">
             {t('delivery.configs.detail.versions.pickScope')}
           </Label>
-          <Select
+          <Combobox
+            id="config-versions-scope"
+            className="w-72"
+            aria-label={t('delivery.configs.detail.versions.pickScope')}
             value={selectedKey}
-            onValueChange={(value) => {
+            onChange={(value) => {
               setSelectedKey(value)
               setPage(1)
             }}
-          >
-            <SelectTrigger
-              id="config-versions-scope"
-              className="w-72"
-              aria-label={t('delivery.configs.detail.versions.pickScope')}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {scopes.map((s) => (
-                <SelectItem key={scopeKey(s)} value={scopeKey(s)}>
-                  {s.scopeLevel} / {s.scopeName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={scopes.map((s) => ({
+              value: scopeKey(s),
+              label: `${s.scopeLevel} / ${s.scopeName}`,
+            }))}
+            allowCustom={false}
+            placeholder={t('delivery.configs.detail.versions.pickScope')}
+            emptyText={t('common.combobox.noMatch')}
+          />
         </div>
       </div>
 
@@ -194,6 +193,7 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
         isLoading={scopesQuery.isLoading || versionsQuery.isLoading}
         isError={scopesQuery.isError || versionsQuery.isError}
         error={scopesQuery.error ?? versionsQuery.error}
+        skeleton={<TableSkeleton columns={6} rows={6} />}
       >
         <DataTable
           columns={columns}
@@ -236,6 +236,7 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
           description={t('delivery.configs.rollback.desc')}
           notice={t('delivery.configs.noLiveEffect')}
           confirmLabel={t('delivery.configs.rollback.confirm')}
+          confirmVariant="destructive"
           impacts={[`v${String(rollbackTarget.versionNo)}`]}
           pending={rollbackMutation.isPending}
           errorText={rollbackError}

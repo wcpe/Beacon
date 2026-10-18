@@ -93,7 +93,7 @@ export default function DetailView({ fileId }: DetailViewProps) {
       >
         {detailQuery.data && (
           <Tabs value={tab} onValueChange={setTab}>
-            <TabsList>
+            <TabsList variant="line">
               <TabsTrigger value="scopes">{t('delivery.configs.detail.tabs.scopes')}</TabsTrigger>
               <TabsTrigger value="effective">{t('delivery.configs.detail.tabs.effective')}</TabsTrigger>
               <TabsTrigger value="versions">{t('delivery.configs.detail.tabs.versions')}</TabsTrigger>

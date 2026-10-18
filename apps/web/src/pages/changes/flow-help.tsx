@@ -18,12 +18,12 @@ export default function FlowHelp({ open, onOpenChange }: FlowHelpProps) {
   const { t } = useTranslation()
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl">
+      <DialogContent className="grid-rows-[auto_minmax(0,1fr)] max-h-[calc(100dvh-2rem)] overflow-hidden sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t('delivery.changes.flow.title')}</DialogTitle>
           <DialogDescription>{t('delivery.changes.flow.subtitle')}</DialogDescription>
         </DialogHeader>
-        <ol className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-stretch">
+        <ol className="min-h-0 overflow-y-auto pr-1 flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-stretch">
           {FLOW_STEPS.map((step, index) => (
             <li key={step} className="flex min-w-0 flex-1 basis-40 items-center gap-1.5">
               <div className="grid min-w-0 flex-1 gap-0.5 rounded-lg border border-border bg-surface-2 px-3 py-2">

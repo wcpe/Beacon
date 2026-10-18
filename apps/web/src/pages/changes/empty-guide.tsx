@@ -35,6 +35,7 @@ export default function EmptyGuide({ onStart }: EmptyGuideProps) {
       </div>
       <Button
         size="lg"
+        variant="outline"
         onClick={() => {
           onStart('files')
         }}

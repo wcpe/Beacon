@@ -82,7 +82,7 @@ export default function BatchesTab({ order, onQuickAction }: BatchesTabProps) {
             <Button
               key={kind}
               size="sm"
-              variant={kind === 'cancel' ? 'outline' : 'default'}
+              variant={kind === 'cancel' ? 'destructive' : 'default'}
               onClick={() => {
                 onQuickAction(kind)
               }}

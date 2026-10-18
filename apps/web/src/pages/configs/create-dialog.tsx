@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import {
   Button,
+  Combobox,
   Dialog,
   DialogContent,
   DialogFooter,
@@ -11,11 +12,6 @@ import {
   DialogTitle,
   Input,
   Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
 } from '@beacon/ui'
 import type { ConfigFormat } from '@beacon/contracts'
 
@@ -50,18 +46,44 @@ export default function CreateDialog({
     }
   }, [open])
 
+  const canSubmit = name.trim() !== '' && !pending
+  const submit = (): void => {
+    if (canSubmit) {
+      onSubmit(name.trim(), format, description.trim())
+    }
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!pending) {
+          onOpenChange(next)
+        }
+      }}
+    >
+      <DialogContent
+        className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] overflow-hidden"
+        showCloseButton={!pending}
+        onInteractOutside={(event) => {
+          event.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="text-ink-1">{t('delivery.configs.create.title')}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-3">
+        <div className="min-h-0 grid gap-3 overflow-y-auto pr-1">
           <div className="space-y-1.5">
             <Label htmlFor="config-create-name">{t('delivery.configs.create.nameLabel')}</Label>
             <Input
               id="config-create-name"
               value={name}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  submit()
+                }
+              }}
               onChange={(e) => {
                 setName(e.target.value)
               }}
@@ -70,27 +92,19 @@ export default function CreateDialog({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="config-create-format">{t('delivery.configs.create.formatLabel')}</Label>
-            <Select
+            <Combobox
+              id="config-create-format"
+              className="w-40"
+              aria-label={t('delivery.configs.create.formatLabel')}
               value={format}
-              onValueChange={(value) => {
+              onChange={(value) => {
                 setFormat(value as ConfigFormat)
               }}
-            >
-              <SelectTrigger
-                id="config-create-format"
-                className="w-40"
-                aria-label={t('delivery.configs.create.formatLabel')}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {FORMATS.map((f) => (
-                  <SelectItem key={f} value={f}>
-                    {f}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={[...FORMATS]}
+              allowCustom={false}
+              placeholder={t('delivery.configs.create.formatLabel')}
+              emptyText={t('common.combobox.noMatch')}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="config-create-desc">{t('delivery.configs.create.descLabel')}</Label>
@@ -102,23 +116,20 @@ export default function CreateDialog({
               }}
             />
           </div>
-          {errorText && <p className="text-sm text-crit">{errorText}</p>}
+          {errorText && <p role="alert" className="text-sm text-crit">{errorText}</p>}
         </div>
         <DialogFooter>
           <Button
+            type="button"
             variant="outline"
+            disabled={pending}
             onClick={() => {
               onOpenChange(false)
             }}
           >
             {t('delivery.configs.create.cancel')}
           </Button>
-          <Button
-            disabled={name.trim() === '' || pending}
-            onClick={() => {
-              onSubmit(name.trim(), format, description.trim())
-            }}
-          >
+          <Button type="button" disabled={!canSubmit} onClick={submit}>
             {t('delivery.configs.create.confirm')}
           </Button>
         </DialogFooter>

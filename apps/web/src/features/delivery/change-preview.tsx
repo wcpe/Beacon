@@ -111,7 +111,7 @@ export default function ChangePreview({
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="h-6 shrink-0 px-2 text-xs"
+                                className="shrink-0 px-2 text-xs"
                                 aria-expanded={expanded}
                                 onClick={() => {
                                   toggleExpanded(item.id)
@@ -184,7 +184,7 @@ export default function ChangePreview({
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 shrink-0 px-2 text-xs"
+                        className="shrink-0 px-2 text-xs"
                         aria-expanded={expanded}
                         onClick={() => {
                           toggleExpanded(item.id)

@@ -122,24 +122,13 @@ export default function DetailView({ orderId }: DetailViewProps) {
   const order = query.data
 
   return (
-    <div className="grid gap-4">
+    <div className="flex min-h-full flex-col gap-4">
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         {order && (
           <div className="grid gap-4">
-            {/* 状态徽标 + 生命周期操作区（面板标题已由 MasterDetail 头部承担，此处只留状态与可做动作） */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
+            {/* 状态先行展示；生命周期操作固定在详情滚动区底部 */}
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
               <OrderStatusBadge status={order.status} />
-              <div className="flex flex-wrap items-center gap-2">
-                <LifecycleActions
-                  order={order}
-                  onPick={(kind) => {
-                    setErrorText(null)
-                    setAction(kind)
-                  }}
-                />
-                {/* 合法终态（已完成 / 已暂停 / 已终止）整单回滚申请；回滚中申请结束回滚 */}
-                <OrderRollbackActions order={order} />
-              </div>
             </div>
 
             {/* 审批进度：本单关联的统一审批申请（状态 / 审批人 / 驳回理由） */}
@@ -151,20 +140,20 @@ export default function DetailView({ orderId }: DetailViewProps) {
 
             {/* Tabs */}
             <Tabs defaultValue="items">
-              <TabsList>
+              <TabsList variant="line">
                 <TabsTrigger value="items">{t('delivery.changes.detail.tabs.items')}</TabsTrigger>
                 <TabsTrigger value="impact">{t('delivery.changes.detail.tabs.impact')}</TabsTrigger>
                 <TabsTrigger value="batches">{t('delivery.changes.detail.tabs.batches')}</TabsTrigger>
                 <TabsTrigger value="observe">{t('delivery.changes.detail.tabs.observe')}</TabsTrigger>
                 <TabsTrigger value="events">{t('delivery.changes.detail.tabs.events')}</TabsTrigger>
               </TabsList>
-              <TabsContent value="items" className="pt-3">
+              <TabsContent value="items" className="pt-4">
                 <ItemsTab order={order} />
               </TabsContent>
-              <TabsContent value="impact" className="pt-3">
+              <TabsContent value="impact" className="pt-4">
                 <ImpactTab order={order} />
               </TabsContent>
-              <TabsContent value="batches" className="pt-3">
+              <TabsContent value="batches" className="pt-4">
                 <BatchesTab
                   order={order}
                   onQuickAction={(kind) => {
@@ -173,16 +162,33 @@ export default function DetailView({ orderId }: DetailViewProps) {
                   }}
                 />
               </TabsContent>
-              <TabsContent value="observe" className="pt-3">
+              <TabsContent value="observe" className="pt-4">
                 <ObserveTab orderId={orderId} />
               </TabsContent>
-              <TabsContent value="events" className="pt-3">
+              <TabsContent value="events" className="pt-4">
                 <EventsTab orderId={orderId} />
               </TabsContent>
             </Tabs>
           </div>
         )}
       </AsyncSection>
+
+      {order && (
+        <div data-slot="detail-actions-footer" className="sticky bottom-0 z-10 mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card/95 px-3 py-2.5 backdrop-blur">
+          <OrderStatusBadge status={order.status} />
+          <div className="flex flex-wrap items-center gap-2">
+            <LifecycleActions
+              order={order}
+              onPick={(kind) => {
+                setErrorText(null)
+                setAction(kind)
+              }}
+            />
+            {/* 合法终态（已完成 / 已暂停 / 已终止）整单回滚申请；回滚中申请结束回滚 */}
+            <OrderRollbackActions order={order} />
+          </div>
+        </div>
+      )}
 
       {order && action !== null && (
         <ConfirmDialog
@@ -197,6 +203,7 @@ export default function DetailView({ orderId }: DetailViewProps) {
           title={confirmConfig(action, t).title}
           description={confirmConfig(action, t).description}
           confirmLabel={confirmConfig(action, t).confirmLabel}
+          confirmVariant={action === 'delete' || action === 'cancel' ? 'destructive' : 'default'}
           requireReason={needsReason(action) || needsResumeReason(action, order)}
           requireMode={action === 'resume' && order.pauseKind !== 'manual'}
           pending={runMutation.isPending}
@@ -239,7 +246,7 @@ function LifecycleActions({
           <Button
             key={kind}
             size="sm"
-            variant={kind === 'delete' || kind === 'cancel' ? 'outline' : 'default'}
+            variant={kind === 'delete' || kind === 'cancel' ? 'destructive' : 'default'}
             onClick={() => {
               onPick(kind)
             }}

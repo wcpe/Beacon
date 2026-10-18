@@ -3,22 +3,30 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { CircleAlert, RefreshCw } from 'lucide-react'
 
 import {
   AsyncSection,
   Badge,
   Button,
+  Card,
+  CardContent,
+  CardDescription,
   Checkbox,
+  Combobox,
   DataTable,
   Input,
   TableSkeleton,
   type DataTableColumn,
+  type ComboboxOption,
 } from '@beacon/ui'
 import type { AssetItem, AssetRescanResponse } from '@beacon/contracts'
 
 import MasterDetail from '../../features/shared/master-detail'
 import Pager from '../../features/delivery/pager'
 import ListCard from '../../features/shared/list-card'
+import AssetPathPicker from '../../features/delivery/asset-path-picker'
+import ServerPicker from '../../features/delivery/server-picker'
 import { ApiClientError } from '../../api/delivery'
 import { fetchAssets, rescanAssets } from '../../api/delivery-assets'
 import ManifestDetailPanel from './manifest-detail-panel'
@@ -26,6 +34,18 @@ import RescanDialog from './rescan-dialog'
 import { formatBytes, formatTime, shortHash } from './format'
 
 const PAGE_SIZE = 15
+
+// 扩展名候选：值与清单索引一致（不带点，按 ext 精确匹配），显示带点更符合用户直觉
+const EXT_OPTIONS: ComboboxOption[] = [
+  'jar',
+  'yml',
+  'yaml',
+  'json',
+  'properties',
+  'toml',
+  'conf',
+  'txt',
+].map((ext) => ({ value: ext, label: `.${ext}` }))
 
 export default function ManifestPanel({ namespaceId }: { namespaceId: number }) {
   const { t } = useTranslation()
@@ -45,7 +65,8 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
     serverId: serverId.trim() === '' ? undefined : serverId.trim(),
     pathPrefix: pathPrefix.trim() === '' ? undefined : pathPrefix.trim(),
     name: name.trim() === '' ? undefined : name.trim(),
-    ext: ext.trim() === '' ? undefined : ext.trim(),
+    // 清单索引里的 ext 不带点：手输 ".yml" 与选择项 "yml" 归一成同一查询值
+    ext: ext.trim() === '' ? undefined : ext.trim().replace(/^\./, '').toLowerCase(),
   }
   // 后端约束：按文件名搜索需同时带一个索引条件（serverId / pathPrefix / ext / sha256）
   const nameNeedsIndex =
@@ -93,6 +114,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
       {
         header: '',
         headClassName: 'w-8',
+        className: 'w-8',
         cell: (row) => (
           <span
             className="inline-flex"
@@ -113,17 +135,22 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
       },
       {
         header: t('delivery.assets.list.columns.serverId'),
-        cell: (row) => <span className="font-mono">{row.serverId}</span>,
+        cell: (row) => <span className="block max-w-32 truncate font-mono" title={row.serverId}>{row.serverId}</span>,
       },
       {
         header: t('delivery.assets.list.columns.path'),
-        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.path}</span>,
+        cell: (row) => <span className="block max-w-56 truncate font-mono text-xs text-ink-2" title={row.path}>{row.path}</span>,
       },
       { header: t('delivery.assets.list.columns.ext'), cell: (row) => row.ext || '-' },
-      { header: t('delivery.assets.list.columns.size'), cell: (row) => formatBytes(row.size) },
+      {
+        header: t('delivery.assets.list.columns.size'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
+        cell: (row) => formatBytes(row.size),
+      },
       {
         header: t('delivery.assets.list.columns.sha256'),
-        cell: (row) => <span className="font-mono text-xs text-ink-3">{shortHash(row.sha256)}</span>,
+        cell: (row) => <span className="font-mono text-xs text-ink-3" title={row.sha256}>{shortHash(row.sha256)}</span>,
       },
       {
         header: t('delivery.assets.list.columns.mtime'),
@@ -154,22 +181,30 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
     <div className="grid gap-2.5">
       {/* 筛选条 */}
       <div className="flex flex-wrap items-center gap-2">
-        <Input
+        {/* 子服筛选：候选为后端服（清单只覆盖后端服），可清空回「全部」 */}
+        <ServerPicker
           aria-label={t('delivery.assets.list.filters.serverId')}
           placeholder={t('delivery.assets.list.filters.serverId')}
+          namespaceId={namespaceId}
           value={serverId}
-          onChange={(e) => {
-            setFilter(setServerId, e.target.value)
+          onChange={(next) => {
+            setFilter(setServerId, next)
           }}
-          className="w-36"
+          clearable
+          className="w-40"
         />
-        <Input
+        {/* 路径前缀：随子服筛选级联，选定服后列出该服真实目录，未选服时列常用目录 + 可手输 */}
+        <AssetPathPicker
           aria-label={t('delivery.assets.list.filters.pathPrefix')}
           placeholder={t('delivery.assets.list.filters.pathPrefix')}
+          namespaceId={namespaceId}
+          serverId={serverId}
           value={pathPrefix}
-          onChange={(e) => {
-            setFilter(setPathPrefix, e.target.value)
+          onChange={(next) => {
+            setFilter(setPathPrefix, next)
           }}
+          mode="directory"
+          clearable
           className="w-44"
         />
         <Input
@@ -181,14 +216,20 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           }}
           className="w-36"
         />
-        <Input
+        {/* 扩展名：常见类型直接选（值不带点，与清单索引口径一致），特殊类型仍可手输 */}
+        <Combobox
           aria-label={t('delivery.assets.list.filters.ext')}
           placeholder={t('delivery.assets.list.filters.ext')}
           value={ext}
-          onChange={(e) => {
-            setFilter(setExt, e.target.value)
+          onChange={(next) => {
+            setFilter(setExt, next)
           }}
-          className="w-24"
+          options={EXT_OPTIONS}
+          allowCustom
+          clearable
+          clearLabel={t('delivery.pickers.ext.clear')}
+          emptyText={t('delivery.pickers.ext.empty')}
+          className="w-28"
         />
       </div>
 
@@ -228,6 +269,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
 
   const master = (
     <ListCard
+      fill
       toolbar={toolbar}
       footer={
         !nameNeedsIndex && total > PAGE_SIZE ? (
@@ -235,30 +277,43 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
         ) : undefined
       }
     >
-      <AsyncSection
-        isLoading={query.isLoading && !nameNeedsIndex}
-        isError={query.isError}
-        error={query.error}
-        skeleton={<TableSkeleton columns={8} rows={6} />}
-      >
-        <DataTable
-          columns={columns}
-          rows={nameNeedsIndex ? [] : query.data?.items}
-          rowKey={(row, index) => `${row.serverId}:${row.path}:${String(index)}`}
-          emptyText={t('delivery.assets.list.empty')}
-          density="compact"
-          onRowClick={(row) => {
-            setDetail(row)
-          }}
-          rowClassName={(row) => (detail && rowKeyOf(row) === rowKeyOf(detail) ? 'bg-brand-50/60' : undefined)}
-        />
-      </AsyncSection>
+      {query.isError ? (
+        <Card size="sm" className="mx-4 my-3 rounded-none border-0 bg-transparent py-0 shadow-none" role="alert" aria-live="polite">
+          <CardContent className="flex flex-wrap items-center gap-3 px-0 py-3">
+            <CircleAlert className="size-4 shrink-0 text-destructive" aria-hidden />
+            <CardDescription className="min-w-0 flex-1">{t('delivery.assets.list.loadFailed')}</CardDescription>
+            <Button size="sm" variant="outline" onClick={() => { void query.refetch() }}>
+              <RefreshCw className="size-3.5" aria-hidden />
+              {t('delivery.assets.list.retry')}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <AsyncSection
+          isLoading={query.isLoading && !nameNeedsIndex}
+          skeleton={<TableSkeleton columns={8} rows={6} />}
+        >
+          <DataTable
+            columns={columns}
+            rows={nameNeedsIndex ? [] : query.data?.items}
+            rowKey={(row, index) => `${row.serverId}:${row.path}:${String(index)}`}
+            emptyText={t('delivery.assets.list.empty')}
+            density="compact"
+            stickyHeader
+            onRowClick={(row) => {
+              setDetail(row)
+            }}
+            rowClassName={(row) => (detail && rowKeyOf(row) === rowKeyOf(detail) ? 'bg-brand-50 hover:bg-brand-50' : undefined)}
+          />
+        </AsyncSection>
+      )}
     </ListCard>
   )
 
   return (
     <>
       <MasterDetail
+        fill
         master={master}
         detail={detail ? <ManifestDetailPanel item={detail} /> : null}
         detailTitle={detail ? <span className="font-mono">{detail.path}</span> : ''}

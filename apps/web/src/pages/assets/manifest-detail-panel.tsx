@@ -1,4 +1,4 @@
-// 文件清单详情（右侧非模态详情面板内容）：只展示元数据；正文经审批申请与一次性授权获取。
+// 文件清单详情（右侧非模态详情面板内容）：展示元数据，正文按需直读并由后端审计。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -52,16 +52,15 @@ export default function ManifestDetailPanel({ item }: { item: AssetItem }) {
         </MetaRow>
       </section>
 
-      {/* 文件正文由审批后的 Agent 命令与一次性授权提供，详情面板只保留元数据。 */}
+      {/* 正文在用户触发后直读，详情面板不预取内容 */}
       <section className="grid gap-2">
         <h4 className="text-[13px] font-semibold text-ink-1">{t('delivery.assets.detail.previewTitle')}</h4>
-        <p className="text-sm text-ink-3">{t('delivery.assets.detail.approvalHint')}</p>
         <Button size="sm" className="w-fit" onClick={() => { setPreviewTarget({ serverId: item.serverId, path: item.path }) }}>
           {t('delivery.assets.detail.requestPreview')}
         </Button>
       </section>
 
-      {/* 专用审批表单不调用旧预览接口。 */}
+      {/* 预览弹窗按需调用文件正文直读接口。 */}
       <PreviewDialog
         target={previewTarget}
         onOpenChange={(open) => {

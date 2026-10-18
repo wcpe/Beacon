@@ -38,7 +38,12 @@ export default function AddScopeDialog({ namespaceId, level, excludeIds, onOpenC
         }
       }}
     >
-      <DialogContent>
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)]"
+        onInteractOutside={(event) => {
+          event.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="text-ink-1">
             {t('delivery.configs.addScope.title', { level: t(`delivery.configs.detail.scopes.levels.${level}`) })}

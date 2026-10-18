@@ -91,12 +91,14 @@ export default function GuidedWizard({
   const [reason, setReason] = useState('')
   const [prepared, setPrepared] = useState(0)
   const [errorText, setErrorText] = useState<string | null>(null)
+  const [discardPending, setDiscardPending] = useState(false)
   // 提交成功后关闭时不再删除草稿
   const keepOrderRef = useRef(false)
   // 提审幂等键：同一次提审重试复用同一键（后端据此去重），重开向导即作废重来
   const submitKeyRef = useRef<string | null>(null)
   // 放弃草稿的幂等键按草稿号缓存：同一次放弃重试复用同键，换单则重新生成
   const discardKeysRef = useRef<Map<number, string>>(new Map())
+  const discardingRef = useRef(false)
 
   // 每次打开重置全部状态并应用预选类型
   useEffect(() => {
@@ -148,14 +150,29 @@ export default function GuidedWizard({
 
   const invalidateList = () => queryClient.invalidateQueries({ queryKey: ['change-orders'] })
 
-  // 放弃已建 draft（取消 / 改交付内容时）：删除也走审批（202 票据 + 幂等键），
-  // 提交失败仅残留可见草稿，列表中可再申请删除
-  const discardDraft = (id: number): void => {
+  // 放弃已建 draft（取消 / 改交付内容时）：删除也走审批（202 票据 + 幂等键）。
+  // 提交失败时保留向导并内联展示错误，不静默丢弃失败原因。
+  const discardDraft = async (id: number): Promise<boolean> => {
+    if (discardingRef.current) {
+      return false
+    }
+    discardingRef.current = true
+    setDiscardPending(true)
     const key = discardKeysRef.current.get(id) ?? randomId()
     discardKeysRef.current.set(id, key)
-    void deleteChangeOrder(id, t('delivery.changes.wizard.discardDraftReason'), key)
-      .catch(() => undefined)
-      .then(() => invalidateList())
+    try {
+      const ticket = await deleteChangeOrder(id, t('delivery.changes.wizard.discardDraftReason'), key)
+      await invalidateList()
+      notifyTicket(ticket)
+      discardKeysRef.current.delete(id)
+      return true
+    } catch (error) {
+      setErrorText(toMessage(error))
+      return false
+    } finally {
+      discardingRef.current = false
+      setDiscardPending(false)
+    }
   }
 
   // 第 2 步「扫描差异」：懒建 draft（或回填模板源与扫描范围）后调 diff-scan
@@ -244,13 +261,15 @@ export default function GuidedWizard({
     },
   })
 
+  const pending = scanMutation.isPending || prepareMutation.isPending || submitMutation.isPending || discardPending
+
   // 改交付内容：已建 draft 作废重来（避免残留过期的模板源 / 差异项）
   const handleContentChange = (next: WizardContent): void => {
-    if (next === content) {
+    if (next === content || pending) {
       return
     }
     if (orderId !== null) {
-      discardDraft(orderId)
+      void discardDraft(orderId)
     }
     setContent(next)
     setOrderId(null)
@@ -261,10 +280,18 @@ export default function GuidedWizard({
 
   // 关闭（取消 / ESC / 右上角 X）：未成单则清掉已建 draft
   const handleOpenChange = (next: boolean): void => {
-    if (!next && !keepOrderRef.current && orderId !== null) {
-      discardDraft(orderId)
+    if (pending) {
+      return
     }
-    onOpenChange(next)
+    if (next || keepOrderRef.current || orderId === null) {
+      onOpenChange(next)
+      return
+    }
+    void discardDraft(orderId).then((discarded) => {
+      if (discarded) {
+        onOpenChange(false)
+      }
+    })
   }
 
   // 当前步是否允许「下一步 / 提交」
@@ -285,8 +312,6 @@ export default function GuidedWizard({
     }
   }
 
-  const pending = scanMutation.isPending || prepareMutation.isPending || submitMutation.isPending
-
   const handleNext = (): void => {
     setErrorText(null)
     if (current === 'scope') {
@@ -302,17 +327,25 @@ export default function GuidedWizard({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-3xl">
-        <DialogHeader>
+      <DialogContent
+        className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-hidden sm:max-w-3xl"
+        showCloseButton={!pending}
+        onInteractOutside={(event) => {
+          event.preventDefault()
+        }}
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>{t('delivery.changes.wizard.title')}</DialogTitle>
         </DialogHeader>
 
-        <Stepper content={content} current={current} />
+        <div className="shrink-0">
+          <Stepper content={content} current={current} />
+        </div>
 
         {/* 步骤主体：往返切换保留各步状态。
             overflow-y-auto 会连带裁切横向溢出，故左右各留内边距容纳卡片阴影 / ring，
             再以等量负外边距抵消，保持与上方步骤条对齐。 */}
-        <div className="-mx-1.5 max-h-[62vh] min-h-[280px] overflow-y-auto px-1.5">
+        <div className="-mx-1.5 min-h-0 flex-1 overflow-y-auto px-1.5">
           {current === 'content' && <WizardStepContent value={content} onChange={handleContentChange} />}
           {current === 'source' && (
             <WizardStepSource
@@ -383,13 +416,15 @@ export default function GuidedWizard({
         </div>
 
         {errorText !== null && current !== 'source' && (
-          <p className="text-sm text-destructive">{errorText}</p>
+          <p role="alert" className="shrink-0 text-sm text-destructive">{errorText}</p>
         )}
 
         {/* 底部导航：上一步 / 取消 / 下一步（末步为提交审批） */}
-        <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border pt-3">
           <Button
+            type="button"
             variant="ghost"
+            disabled={pending}
             onClick={() => {
               handleOpenChange(false)
             }}

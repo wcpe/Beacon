@@ -1,23 +1,17 @@
-// 交付历史列表（主从布局主列）：ListCard 吸顶工具条（标题 / 状态筛选 / 标题搜索）+ 自区滚列表 + 吸底分页。
+// 交付历史列表（主从布局主列）：ListCard 吸顶工具条（条数 / 状态筛选 / 标题搜索）+ 自区滚列表 + 吸底分页。
+// 页面级标题与文档入口已上移页头（PageHeader），此处只留列表自己的筛选与计数。
 // 点行选中（右侧非模态详情面板打开）；行「在变更单中打开」跳 /changes。
-import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
-import { History } from 'lucide-react'
-
 import {
   AsyncSection,
   Button,
+  Combobox,
   DataTable,
   Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -30,6 +24,7 @@ import {
   type ChangeOrderSummary,
 } from '../../api/delivery-changes'
 import StatusBadge from './status-badge'
+import EmptyGuide from './empty-guide'
 import { formatTime } from './format'
 
 const PAGE_SIZE = 15
@@ -48,11 +43,9 @@ interface ListViewProps {
   namespaceId: number
   selectedId: number | null
   onView: (order: ChangeOrderSummary) => void
-  // 页级操作（命名空间选择器等）：并入列表工具条标题行右侧，不另起独立操作行
-  actions?: ReactNode
 }
 
-export default function ListView({ namespaceId, selectedId, onView, actions }: ListViewProps) {
+export default function ListView({ namespaceId, selectedId, onView }: ListViewProps) {
   const { t } = useTranslation()
   const [keyword, setKeyword] = useState('')
   const [status, setStatus] = useState('all')
@@ -78,9 +71,14 @@ export default function ListView({ namespaceId, selectedId, onView, actions }: L
     () => [
       {
         header: t('delivery.changesHistory.list.columns.id'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
         cell: (row) => <span className="tnum text-xs text-ink-3">#{String(row.id)}</span>,
       },
-      { header: t('delivery.changesHistory.list.columns.title'), cell: (row) => row.title },
+      {
+        header: t('delivery.changesHistory.list.columns.title'),
+        cell: (row) => <span className="block max-w-64 truncate" title={row.title}>{row.title}</span>,
+      },
       {
         header: t('delivery.changesHistory.list.columns.status'),
         cell: (row) => <StatusBadge status={row.status} />,
@@ -92,6 +90,8 @@ export default function ListView({ namespaceId, selectedId, onView, actions }: L
       { header: t('delivery.changesHistory.list.columns.createdBy'), cell: (row) => row.createdBy },
       {
         header: '',
+        headClassName: 'w-40 text-right',
+        className: 'w-40 text-right',
         cell: (row) => (
           <div className="flex justify-end">
             <Button size="sm" variant="ghost" asChild>
@@ -115,16 +115,6 @@ export default function ListView({ namespaceId, selectedId, onView, actions }: L
   const toolbar = (
     <div className="grid gap-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-1">
-          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
-            <History className="size-[15px]" />
-          </span>
-          {t('delivery.changesHistory.list.title')}
-          {total > 0 && <span className="text-xs font-normal text-ink-3">{total}</span>}
-        </span>
-        {actions != null && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('delivery.changesHistory.list.keyword')}
           placeholder={t('delivery.changesHistory.list.keyword')}
@@ -135,52 +125,71 @@ export default function ListView({ namespaceId, selectedId, onView, actions }: L
           }}
           className="w-52"
         />
-        <Select
+        <Combobox
+          className="w-40"
+          aria-label={t('delivery.changesHistory.list.filterStatus')}
           value={status}
-          onValueChange={(value) => {
+          onChange={(value) => {
             setStatus(value)
             setPage(1)
           }}
-        >
-          <SelectTrigger className="w-40" aria-label={t('delivery.changesHistory.list.filterStatus')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('delivery.changesHistory.list.allStatus')}</SelectItem>
-            {STATUS_OPTIONS.map((s) => (
-              <SelectItem key={s} value={s}>
-                {t(`delivery.changes.status.${s}`)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          options={[
+            { value: 'all', label: t('delivery.changesHistory.list.allStatus') },
+            ...STATUS_OPTIONS.map((s) => ({ value: s, label: t(`delivery.changes.status.${s}`) })),
+          ]}
+          allowCustom={false}
+          emptyText={t('common.combobox.noMatch')}
+        />
+        {/* 标题已上移到页头，工具条只留条数，让「当前筛选命中几单」始终可见 */}
+        {total > 0 && (
+          <span className="tnum ml-auto text-xs text-ink-3">
+            {t('delivery.changesHistory.list.total', { total })}
+          </span>
+        )}
       </div>
+      {/* 白话提示：交代本页状态口径（已完成 / 已回滚各代表什么） */}
+      <p className="text-xs text-ink-3">{t('delivery.tips.historyStatusScope')}</p>
     </div>
   )
 
+  // 空态引导：所属命名空间确无任何变更单（非筛选造成的空、且作用域已就绪）时给出下一步
+  const showEmptyGuide =
+    namespaceId > 0 &&
+    !query.isLoading &&
+    !query.isError &&
+    total === 0 &&
+    keyword.trim() === '' &&
+    status === 'all'
+
   return (
     <ListCard
+      fill
       toolbar={toolbar}
       footer={total > PAGE_SIZE ? <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} /> : undefined}
     >
-      <AsyncSection
-        isLoading={query.isLoading}
-        isError={query.isError}
-        error={query.error}
-        skeleton={<TableSkeleton columns={6} rows={6} />}
-      >
-        <DataTable
-          columns={columns}
-          rows={query.data?.items}
-          rowKey={(row) => String(row.id)}
-          emptyText={t('delivery.changesHistory.list.empty')}
-          density="compact"
-          onRowClick={(row) => {
-            onView(row)
-          }}
-          rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
-        />
-      </AsyncSection>
+      {showEmptyGuide ? (
+        <EmptyGuide />
+      ) : (
+        <AsyncSection
+          isLoading={query.isLoading}
+          isError={query.isError}
+          error={query.error}
+          skeleton={<TableSkeleton columns={6} rows={6} />}
+        >
+          <DataTable
+            columns={columns}
+            rows={query.data?.items}
+            rowKey={(row) => String(row.id)}
+            emptyText={t('delivery.changesHistory.list.empty')}
+            density="compact"
+            stickyHeader
+            onRowClick={(row) => {
+              onView(row)
+            }}
+            rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50 hover:bg-brand-50' : undefined)}
+          />
+        </AsyncSection>
+      )}
     </ListCard>
   )
 }

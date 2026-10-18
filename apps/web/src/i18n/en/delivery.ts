@@ -1,10 +1,13 @@
 // English delivery domain copy (full mirror of zh-CN)
 // Delivery domain copy (/assets /configs /changes /changes/history, FR-170): maintained by the delivery domain page agent, do not edit from other domains
 export const delivery = {
-  // Top scope selector (shared across pages)
+  // Delivery scope: provided globally by the header (segment 2) observation selector; no page-level namespace pickers
   scope: {
-    namespace: 'Namespace',
-    pickNamespace: 'Pick a namespace',
+    // Shared guidance title for the three write pages (config center / change orders / delivery history) when the header is on "all namespaces"
+    requiredTitle: 'Pick a namespace in the header first',
+    // Guidance body: why write pages need a concrete namespace, and what becomes available once picked
+    required:
+      'Reads and writes are both scoped by namespace. This page performs writes such as creating, changing and rolling back, so it never acts on “all namespaces”; pick a specific namespace in the header to enable the list and its actions.',
   },
   // Common pager
   pager: {
@@ -14,8 +17,10 @@ export const delivery = {
   },
   assets: {
     title: 'File assets',
-    // Routing hint: file diffs are dispatched through Change orders (same style as /configs hint)
-    deliveryHint: 'File diffs are delivered via Change orders; this page is only view, not edit',
+    // Page-level description: one line under the page title explaining what this page does and its read-only boundary
+    pageDesc: 'File inventory, scan summaries and cross-server diffs for verification and audit. File changes must be delivered through a Change order.',
+    // Guidance when no namespace is selected (the namespace scope comes from the header observation selector)
+    scopeRequired: 'Pick a namespace in the header first — inventory, scan summary, cross-server comparison and diffs are all scoped by namespace.',
     goChanges: 'Go to Change orders',
     // Scan summary
     scan: {
@@ -36,12 +41,21 @@ export const delivery = {
         duration: 'Duration',
       },
       truncated: 'Truncated',
+      tableTitle: 'Server scan records',
+      tableCount: '{{total}} servers',
+      loadFailed: 'Failed to load scan summary. Check the connection and try again.',
+      retry: 'Retry loading',
+      emptyTitle: 'No scan records on this page',
+      emptyDescription: 'There are no server scan summaries to show right now. Refresh to try again.',
+      refresh: 'Refresh scan summary',
     },
     // File listing
     list: {
       title: 'File listing',
       empty: 'No files under the current filters. Adjust server / path prefix / extension and retry.',
       needIndex: 'Filename search requires at least one of: server / path prefix / extension / hash',
+      loadFailed: 'Failed to load the file listing. Check the connection and try again.',
+      retry: 'Retry loading',
       columns: {
         serverId: 'Server ID',
         path: 'Path',
@@ -67,10 +81,9 @@ export const delivery = {
     detail: {
       metaTitle: 'Metadata',
       previewTitle: 'Content preview',
-      previewLoading: 'Loading preview…',
-      sensitiveOpen: 'Provide a reason to view',
-      approvalHint: 'File content requires approval first. After approval, the system queues the browse command and issues a one-time grant.',
-      requestPreview: 'Request file content',
+      previewLoading: 'Reading content…',
+      sensitiveOpen: 'View directly',
+      requestPreview: 'View file content',
       fields: {
         serverId: 'Server ID',
         path: 'Path',
@@ -84,10 +97,7 @@ export const delivery = {
     preview: {
       title: 'Content preview',
       sensitiveTitle: 'Sensitive file preview',
-      sensitiveHint: 'This path matches a sensitive rule. Viewing content requires a reason (logged for audit).',
-      reasonLabel: 'Reason to view',
-      reasonPlaceholder: 'e.g. investigating economy data anomaly',
-      confirm: 'View content',
+      retry: 'Retry reading',
       binaryOnly: 'Binary file — only metadata is shown',
       truncated: 'Content is too large; only the beginning is shown',
       meta: 'Size {{size}} · Hash {{sha256}}',
@@ -106,48 +116,56 @@ export const delivery = {
       missingTitle: 'Servers missing this file',
       noMissing: 'All servers have this file',
       empty: 'No compare results yet. Enter a path and click "Compare".',
+      formTitle: 'Choose a file path',
+      loading: 'Comparing…',
+      needPath: 'Choose or enter a file path to enable comparison',
+      loadFailedTitle: 'Comparison could not be completed',
+      retry: 'Retry comparison',
+      emptyTitle: 'Start a cross-server comparison',
+      emptyDescription: 'Choose or enter a file path to view hash groups and missing files across servers.',
+      emptyAction: 'Choose a file path',
+      groupCount: '{{count}} hash groups',
+      resultPath: 'Compared path: {{path}}',
+      noGroupsTitle: 'No comparable files found',
+      noGroupsDescription: 'There are no manifest records for this path yet. Check the path or wait for servers to report their manifests, then retry.',
+      missingCount: '{{count}} missing',
+      columns: {
+        digest: 'Hash digest',
+        size: 'File size',
+        servers: 'Servers with matching content',
+      },
     },
     // Two-side diff
     diff: {
       title: 'Two-side diff',
-      hint: 'Pick the same file on two servers. Each side needs its own approval before a diff summary is available.',
+      hint: 'Choose the same file on two servers to view its text diff directly; reads are recorded in the audit log.',
       leftServer: 'Left server',
       rightServer: 'Right server',
       pathLabel: 'File path',
-      run: 'Run diff',
+      run: 'View diff',
+      loading: 'Reading diff…',
       identical: 'Both sides are identical (same hash)',
+      identicalHint: 'The file contents match, so there is no body to display.',
       changed: 'The two files differ',
       leftHeading: 'Left',
       rightHeading: 'Right',
       empty: 'No diff result yet',
-      unsupported: 'Diff is not supported for binary or oversized files',
-      // Reason input when either side hits a sensitive rule (diff is 403 without a reason; fill one to retry)
-      sensitiveHint: 'Either side matches a sensitive rule. Diff requires a reason (logged for audit).',
-      reasonLabel: 'Diff reason',
-      reasonPlaceholder: 'e.g. reconciling economy config differences across two servers',
-      confirm: 'Compare with reason',
-      request: 'Request both approvals',
-      requesting: 'Creating both approvals…',
-      refresh: 'Refresh approval status',
-      approvalHint: 'The two sides are approved independently. If either approval is not granted, expired, or withdrawn, no file content is read or displayed.',
-      approvalStatus: 'Two-side approval status',
-      openApproval: 'Open approval center',
-      approvalState: {
-        pending: 'Waiting for approval or Agent return',
-        ready: 'Grant ready',
-        unavailable: 'Not approved, expired, or grant unavailable',
-      },
-      consume: 'Consume both grants and view diff summary',
-      consuming: 'Consuming both grants…',
-      summaryTitle: 'Diff summary',
-      summaryHint: 'Only the server-generated path, hash, and size summary is shown. File content never enters this page.',
-      summaryMeta: 'Hash {{sha256}} · Size {{size}}',
+      needBothSides: 'Select both servers and a file path to enable viewing',
+      summaryTitle: 'Diff result',
+      summaryHint: 'File contents are shown only in this direct response; the audit log stores target metadata only.',
+      sideHash: 'Hash {{sha256}}',
+      contentUnavailable: 'Diff content is unavailable. Retry the read.',
+      formTitle: 'Choose files to compare',
+      errorTitle: 'The read is not complete',
+      retry: 'Retry reading',
+      emptyTitle: 'No diff has been viewed',
+      emptyDescription: 'Choose both servers and their shared file path, then read the comparison directly.',
     },
     // Sensitive path rules editor (FR-164): files matching a glob require a reason for preview/diff; whole-list replace semantics
     sensitiveRules: {
       manage: 'Sensitive path rules',
       title: 'Sensitive path rules',
-      hint: 'Files matching the globs below have content preview/diff disabled by default and require a reason for one-time access (logged for audit). One glob per line; saving replaces the whole list.',
+      hint: 'Files matching these globs are sensitive; reads still require permission and are audited without storing the file contents. One glob per line; saving replaces the whole list.',
       label: 'Rule list (one glob per line, e.g. **/*.pem, plugins/Beacon/**)',
       placeholder: '**/*secret*',
       save: 'Save rules',
@@ -171,7 +189,9 @@ export const delivery = {
   },
   configs: {
     title: 'Config center',
-    deliveryHint: 'Config changes are not pushed instantly. Apply them by creating a Change order.',
+    // Page-level description under the H1 on the page header
+    pageDesc:
+      'Manage config file versions and scope overrides. Edits are saved as new versions; applying them requires a Change order.',
     goChanges: 'Go to Change orders',
     // Listing
     list: {
@@ -180,6 +200,8 @@ export const delivery = {
       keyword: 'Search filename',
       create: 'New config file',
       trash: 'Trash',
+      // Count on the right of the list toolbar (the heading moved up to the page header)
+      total: '{{total}} files',
       // Summary bar metrics
       summary: {
         files: 'Config files',
@@ -389,12 +411,17 @@ export const delivery = {
   },
   changes: {
     title: 'Change orders',
+    // Page-level description under the H1 on the page header
+    pageDesc:
+      'A change order is the delivery execution unit, covering approval, staged rollout, observation and rollback with a full audit trail.',
     // ?order= deep link (history page "Open in Change orders") load failure notice
     deepLinkError: 'Failed to open Change order #{{id}}: {{message}}',
     // Listing
     list: {
       title: 'Change orders',
       empty: 'No Change orders match the current filters',
+      // Count on the right of the list toolbar (the heading moved up to the page header)
+      total: '{{total}} orders',
       createGuided: 'Guided create',
       createAdvanced: 'Advanced create',
       keyword: 'Search title',
@@ -489,6 +516,9 @@ export const delivery = {
         actionAdd: 'Add',
         actionUpdate: 'Modify',
         actionDelete: 'Delete',
+        // 候选口径与差异语义说明
+        candidateHint: 'Only online backend servers that have a placement are listed — the system reads their actual files to compute the diff; submit also re-checks the server is still online and identity-bound.',
+        diffIndicative: 'This diff is an indicative result computed against the "All" scope. Once the delivery scope is set, the real impact is the impact preview shown before submit in step 5.',
       },
       // Step 3: pick config changes
       config: {
@@ -540,6 +570,12 @@ export const delivery = {
         selectedCount: '{{count}} selected',
         regionZones: '{{count}} zones',
         pickEmpty: 'No options available',
+        // 目标资格与在线口径说明
+        targetEligibility: 'Deliveries only reach backend servers that are assigned to a zone and have a bound identity: servers without a zone never appear here, and the template source itself is never delivered to even if selected.',
+        targetOfflineHint: 'Targets do not need to be online — currently offline servers can still be selected; but the push needs the target agent online to acknowledge it, and staying offline for the whole timeout window is recorded as a push failure.',
+        // 单服候选总量与截断（pageSize 之外的服只能靠搜索命中，必须明示）
+        serverCount: '{{total}} candidates, {{shown}} shown',
+        serverTruncated: 'The list shows at most {{limit}} servers at a time, {{hidden}} more are not listed — narrow it down with the search box above (server ID or zone name) before selecting.',
         batchLabel: 'Batch plan',
         batchSingle: 'Single batch',
         batchSingleHint: 'All targets activate in one batch — best for low-impact or well-validated changes',
@@ -1059,8 +1095,29 @@ export const delivery = {
       reasonPlaceholder: 'e.g. local backups restored, retry the rollback',
     },
   },
+  // 共用选择器（服务器 ID / 文件路径 / 扩展名）：把原先手填的输入框换成可搜索下拉
+  pickers: {
+    server: {
+      search: 'Search server ID / zone',
+      optionLabel: '{{serverId}} ({{scope}})',
+      empty: 'No matching server',
+      clear: 'Clear server',
+    },
+    path: {
+      placeholder: 'Pick or type a path',
+      empty: 'No matching path in the manifest — type it directly',
+      clear: 'Clear path',
+    },
+    ext: {
+      empty: 'No matching extension',
+      clear: 'Clear extension',
+    },
+  },
   changesHistory: {
     title: 'Delivery history',
+    // Page-level description under the H1 on the page header
+    pageDesc:
+      'Archive of completed change orders, queryable by task, batch and target-level results including rollback records.',
     // Listing
     list: {
       title: 'Historical Change orders',
@@ -1068,6 +1125,8 @@ export const delivery = {
       keyword: 'Search title',
       filterStatus: 'Filter by status',
       allStatus: 'All statuses',
+      // Count on the right of the list toolbar (the heading moved up to the page header)
+      total: '{{total}} orders',
       columns: {
         id: 'ID',
         title: 'Title',
@@ -1101,6 +1160,56 @@ export const delivery = {
         rolled_back: 'Rolled back',
         failed: 'Rollback failed',
         none: '-',
+      },
+    },
+  },
+  // "Docs" entry button on every delivery page header
+  // Doc URLs live in features/delivery/doc-help.tsx; anchors match the explicit heading ids in the docs
+  help: {
+    docButton: 'Docs',
+  },
+  // Empty-state guides for three pages (/assets /configs /changes/history): always offer a next step
+  // Added as one block so it never intersects the per-page sections other agents edit
+  guides: {
+    // /assets: the namespace has no agent-reported inventory yet
+    assets: {
+      title: 'No file inventory in this namespace yet',
+      desc: 'Inventories are scanned and reported by the Beacon agent on each server, then show up here. To push files right away, start a file delivery in Change orders.',
+      cta: 'Go to Change orders',
+      refresh: 'Refresh',
+    },
+    // /configs: no config files at all
+    configs: {
+      title: 'No config files yet',
+      desc: 'Config files keep their versions here and stack scope by scope. Edits do not go live by themselves — publish them through a Change order.',
+      cta: 'Create the first config file',
+    },
+    // /changes/history: nothing archived yet
+    history: {
+      title: 'No history yet',
+      desc: 'Change orders are archived here once they finish, roll back or get cancelled, so you can trace who changed what and when. Start your first one.',
+      cta: 'Go to Change orders',
+    },
+  },
+  // One plain-language tip per tricky area (each explains a single easily-misread idea)
+  tips: {
+    assetsListSource: 'Inventory comes from the last agent report, not live scanning; if it looks stale, select servers and rescan',
+    assetsScanHint: 'One row per server; "Truncated" means too many files, so only part was reported',
+    configsListLayers: 'One file per row; the effective config is what you get after every scope is merged',
+    configsVersionsEffect: 'Rollback only saves a new version — nothing changes online until a Change order publishes it',
+    historyStatusScope: 'Completed = every batch went live; Rolled back = the whole order was reverted',
+  },
+  // Page-level copy for /approvals (title reuses nav.approvals; this is the one-line explainer under it;
+  // the page scope follows the environment and namespace selected at the top)
+  approvals: {
+    pageDesc:
+      'Unified approval entry: all pending requests across change orders, configs, files, identities and lifecycle are collected here for approve-and-execute, reject or withdraw, with a full audit trail. Scope follows the environment and namespace selected at the top.',
+    filters: {
+      advanced: 'Advanced filters',
+      groups: {
+        statusRisk: 'Status and risk',
+        applicant: 'Applicant',
+        timeRange: 'Time range',
       },
     },
   },

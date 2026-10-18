@@ -35,6 +35,10 @@ interface StepScopeProps {
 
 const SCOPE_MODES: WizardScope['mode'][] = ['all', 'regions', 'zones', 'servers']
 
+// 单服候选一次取回的条数（与第 2 步模板源候选一致）：
+// 超出部分不静默丢弃——列表上方明示「共 N 台 / 已显示 M 台」，并提示用搜索缩小范围。
+const SCOPE_SERVER_PAGE_SIZE = 200
+
 export default function WizardStepScope({
   namespaceId,
   scope,
@@ -64,10 +68,15 @@ export default function WizardStepScope({
         kind: 'backend',
         assigned: true,
         keyword: pickSearch.trim() === '' ? undefined : pickSearch.trim(),
-        pageSize: 50,
+        pageSize: SCOPE_SERVER_PAGE_SIZE,
       }),
     enabled: scope.mode === 'servers',
   })
+
+  // 单服候选的返回量与服务端总量：两者不等即说明列表被截断，必须明示而非静默丢数据
+  const serverItems = serversQuery.data?.items ?? []
+  const serverTotal = serversQuery.data?.total ?? serverItems.length
+  const serverHidden = Math.max(0, serverTotal - serverItems.length)
 
   const regions = useMemo(
     () => (treeQuery.data?.clusters ?? []).flatMap((c) => c.regions.map((r) => ({ id: r.id, name: r.name, zoneCount: r.zones.length }))),
@@ -111,6 +120,8 @@ export default function WizardStepScope({
             />
           ))}
         </div>
+        {/* 目标资格说明：后端只对「已分配小区 + 身份已绑定」的后端服下发，且模板源自身被自动排除 */}
+        <p className="text-xs text-ink-3">{t('delivery.changes.wizard.scope.targetEligibility')}</p>
       </div>
 
       {/* 按模式出现的多选列表 */}
@@ -144,7 +155,7 @@ export default function WizardStepScope({
         <PickList
           label={t('delivery.changes.wizard.scope.pickServers')}
           emptyText={t('delivery.changes.wizard.scope.pickEmpty')}
-          items={(serversQuery.data?.items ?? []).map((s) => ({
+          items={serverItems.map((s) => ({
             key: s.serverId,
             label: s.serverId,
             extra: s.zoneName ?? undefined,
@@ -155,6 +166,17 @@ export default function WizardStepScope({
           }}
           searchValue={pickSearch}
           onSearchChange={setPickSearch}
+          // 候选总量与已显示量明示（数据未就绪时不显示，避免闪现 0 台）
+          summary={
+            serversQuery.data === undefined
+              ? undefined
+              : t('delivery.changes.wizard.scope.serverCount', { total: serverTotal, shown: serverItems.length })
+          }
+          truncatedHint={
+            serverHidden > 0
+              ? t('delivery.changes.wizard.scope.serverTruncated', { hidden: serverHidden, limit: SCOPE_SERVER_PAGE_SIZE })
+              : undefined
+          }
         />
       )}
 
@@ -214,6 +236,8 @@ export default function WizardStepScope({
             }}
           />
         </div>
+        {/* 在线与否不影响可选性，但推送需要目标 agent 在线回执 */}
+        <p className="text-xs text-ink-3">{t('delivery.changes.wizard.scope.targetOfflineHint')}</p>
         {activation === 'hot_reload' && hasJar && (
           <p
             className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs leading-relaxed text-ink-2"
@@ -283,26 +307,25 @@ function BatchPlanEditor({
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex overflow-hidden rounded-md border border-border" role="group" aria-label={t('delivery.changes.wizard.scope.unitLabel')}>
           {(['count', 'percent'] as const).map((unit) => (
-            <button
+            // 分段切换器：选中态用 Button 的 default 变体、未选中用 ghost，容器统一描边圆角
+            <Button
               key={unit}
               type="button"
+              size="sm"
+              variant={batch.unit === unit ? 'default' : 'ghost'}
               aria-pressed={batch.unit === unit}
               onClick={() => {
                 switchUnit(unit)
               }}
-              className={cn(
-                'px-2.5 py-1 text-xs transition-colors',
-                batch.unit === unit ? 'bg-brand text-white' : 'bg-background text-ink-2 hover:bg-muted',
-              )}
+              className="rounded-none px-2.5 shadow-none"
             >
               {t(`delivery.changes.wizard.scope.units.${unit}`)}
-            </button>
+            </Button>
           ))}
         </div>
         <Button
           size="sm"
           variant="outline"
-          className="h-7"
           onClick={() => {
             onBatchChange(recommendedBatch(targetEstimate))
           }}
@@ -346,9 +369,9 @@ function BatchPlanEditor({
                     })}
               </span>
               <Button
-                size="sm"
+                size="icon-sm"
                 variant="ghost"
-                className="ml-auto size-7 p-0"
+                className="ml-auto"
                 aria-label={t('delivery.changes.wizard.scope.removeBatch', { no: index + 1 })}
                 disabled={batch.rows.length <= 1}
                 onClick={() => {
@@ -363,7 +386,7 @@ function BatchPlanEditor({
       </ul>
 
       <div className="flex items-center gap-2">
-        <Button size="sm" variant="ghost" className="h-7" onClick={addRow}>
+        <Button size="sm" variant="ghost" onClick={addRow}>
           <Plus className="size-3.5" />
           {t('delivery.changes.wizard.scope.addBatch')}
         </Button>
@@ -397,24 +420,30 @@ function ModeCard({
   onClick: () => void
 }) {
   return (
-    <button
+    // 卡片型选择器：整卡即按钮，选中态由 aria-pressed 暴露；用 ghost 变体复用 Button 的
+    // 焦点环与按压反馈，尺寸与纵向排布在此覆写
+    <Button
       type="button"
+      variant="ghost"
       aria-pressed={selected}
       onClick={onClick}
       className={cn(
-        'grid gap-0.5 rounded-lg border px-3 py-2 text-left transition-colors',
-        selected ? 'border-brand bg-brand-50/60 ring-1 ring-brand' : 'border-border hover:border-brand-200',
+        'grid h-auto w-full justify-start gap-0.5 rounded-lg border px-3 py-2 text-left whitespace-normal',
+        selected
+          ? 'border-brand bg-brand-50/60 ring-1 ring-brand hover:bg-brand-50'
+          : 'border-border hover:border-brand-200',
       )}
     >
       <span className="text-[13px] font-semibold text-ink-1">{title}</span>
       <span className="text-xs text-ink-3">{hint}</span>
-    </button>
+    </Button>
   )
 }
 
 // 带搜索与批量操作的复选列表（大区 / 小区 / 子服共用）：
 // 搜索即输即滤（items 已由父级过滤）、全选 / 反选作用于当前可见项、清空清掉全部已选、
 // 按住 Shift 点击按行下标连选区间。
+// summary / truncatedHint 可选：服务端分页的候选（单服模式）用它明示总量与截断，避免静默丢项。
 function PickList({
   label,
   emptyText,
@@ -423,6 +452,8 @@ function PickList({
   onSelectedChange,
   searchValue,
   onSearchChange,
+  summary,
+  truncatedHint,
 }: {
   label: string
   emptyText: string
@@ -431,6 +462,8 @@ function PickList({
   onSelectedChange: (next: string[]) => void
   searchValue: string
   onSearchChange: (next: string) => void
+  summary?: string
+  truncatedHint?: string
 }) {
   const { t } = useTranslation()
   // Shift 连选：记录上一次点选的行下标与本次点击是否按住 Shift
@@ -512,6 +545,17 @@ function PickList({
           {t('delivery.changes.wizard.scope.selectedCount', { count: selectedKeys.length })}
         </span>
       </div>
+      {/* 候选总量与截断提示（仅服务端分页的候选传入）：先讲清「还有多少台没列出来」，再引导用户用搜索缩小范围 */}
+      {summary !== undefined && <p className="text-xs text-ink-3">{summary}</p>}
+      {truncatedHint !== undefined && (
+        <p
+          className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs leading-relaxed text-ink-2"
+          role="status"
+        >
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden />
+          {truncatedHint}
+        </p>
+      )}
       {items.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
           {emptyText}

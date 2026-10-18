@@ -2,11 +2,12 @@
 // 空态任务卡带预选类型进向导、步骤校验（未选模板源不能下一步）、末步提审原因与幂等键必填。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { delay, http, HttpResponse } from 'msw'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import ChangesPage from '../../pages/changes'
 import { fetchChangeOrders } from '../../api/delivery-changes'
+import { setObservationScope } from '../../features/env/observation-scope'
 import { createTestServer, renderPage, useScenario } from './harness'
 
 const server = createTestServer()
@@ -16,6 +17,10 @@ const WIZARD_TEST_TIMEOUT = 20_000
 
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' })
+})
+// 命名空间范围取自页眉观测范围选择器：固定到 mock 的 prod 命名空间（env 1 → namespace 1）
+beforeEach(() => {
+  setObservationScope({ kind: 'env', envId: 1, namespaceId: 1 })
 })
 afterEach(() => {
   server.resetHandlers()
@@ -190,7 +195,9 @@ describe('/changes 引导创建向导', () => {
   })
 
   it('空态任务卡带预选类型直接进向导', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
-    useScenario('empty')
+    useScenario('normal')
+    // 空态引导需要「有命名空间但一单都没有」：用常规场景把列表接口打成空
+    server.use(http.get('*/admin/v2/change-orders', () => HttpResponse.json({ items: [], total: 0 })))
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
 
@@ -310,6 +317,65 @@ describe('/changes 引导创建向导', () => {
     // 清空清掉全部（含不可见已选）
     await user.click(within(dialog).getByRole('button', { name: '清空' }))
     await within(dialog).findByText('已选 0 个')
+  })
+
+  it('范围步单服候选超过单页上限时明示总量与截断，并可用搜索缩小范围', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    // 250 台已分配 backend：服务端按 pageSize 截断返回，total 仍是候选总量
+    const manyServers = Array.from({ length: 250 }, (_, index) => ({
+      id: index + 1,
+      namespaceId: 1,
+      serverId: `srv-${String(index + 1).padStart(3, '0')}`,
+      kind: 'backend' as const,
+      bcClusterId: 10,
+      bcClusterName: 'bc-main',
+      zoneId: 1001,
+      zoneName: 'area-1',
+      regionName: '华东大区',
+      lobbyClusterId: null,
+      pendingZoneId: null,
+      pendingZoneName: null,
+      isDefaultEntry: false,
+      draining: false,
+      online: true,
+      assigned: true,
+      createdAt: '2025-01-01T00:00:00Z',
+    }))
+    // 只接管向导的候选查询（kind=backend + assigned=true），其余 server 读请求仍走 devmock
+    server.use(
+      http.get('*/admin/v2/servers', ({ request }) => {
+        const url = new URL(request.url)
+        if (url.searchParams.get('assigned') !== 'true' || url.searchParams.get('kind') !== 'backend') {
+          return undefined
+        }
+        const pageSize = Number(url.searchParams.get('pageSize') ?? '20')
+        const keyword = (url.searchParams.get('keyword') ?? '').toLowerCase()
+        const matched =
+          keyword === '' ? manyServers : manyServers.filter((s) => s.serverId.includes(keyword))
+        return HttpResponse.json({ items: matched.slice(0, pageSize), total: matched.length })
+      }),
+    )
+
+    // 纯配置路径到第 4 步，切「单服」
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: /更新配置文件/ }))
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await pickConfigFile(user, dialog)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await within(dialog).findByText('交付范围')
+    await user.click(within(dialog).getByRole('button', { name: /^单服/ }))
+
+    // 不再静默丢数据：明示「共 250 台 / 已显示 200 台」，并说明还有多少台未列出
+    await within(dialog).findByText('共 250 台候选，已显示 200 台')
+    await within(dialog).findByText(/还有 50 台未列出/)
+
+    // 搜索即筛：命中 10 台后总数与截断提示同步收敛，提示消失
+    await user.type(within(dialog).getByLabelText('搜索候选'), 'srv-01')
+    await within(dialog).findByText('共 10 台候选，已显示 10 台')
+    expect(within(dialog).queryByText(/还有 \d+ 台未列出/)).not.toBeInTheDocument()
   })
 
   it('批次编排：推荐批次一键应用，台数总和不符即红字并禁下一步', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
@@ -484,6 +550,30 @@ describe('/changes 引导创建向导', () => {
     expect(keys[0]).not.toBeNull()
     expect(keys[0] ?? '').not.toBe('')
     expect((keys[0] ?? '').length).toBeLessThanOrEqual(64)
+  })
+
+  it('放弃已建草稿失败时保留向导并展示错误', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    server.use(
+      http.delete('*/admin/v2/change-orders/:id', async () => {
+        await delay(400)
+        return HttpResponse.json({ code: 'temporary_failure', message: '模拟放弃失败' }, { status: 503 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await pickSourceAndScan(user, dialog)
+
+    const cancel = within(dialog).getByRole('button', { name: '取消' })
+    await user.click(cancel)
+    await waitFor(() => expect(cancel).toBeDisabled())
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(await within(dialog).findByText('模拟放弃失败')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   it('模板源列表搜索即输即滤，选中态跨筛选保留', { timeout: WIZARD_TEST_TIMEOUT }, async () => {

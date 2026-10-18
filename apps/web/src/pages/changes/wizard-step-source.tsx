@@ -11,6 +11,7 @@ import { Badge, Button, Input, cn } from '@beacon/ui'
 
 import { fetchServers } from '../../api/cluster'
 import type { ChangeOrderItem } from '../../api/delivery-changes'
+import AssetPathPicker from '../../features/delivery/asset-path-picker'
 import FileDiffPreview from '../../features/delivery/file-diff-preview'
 import { formatBytes, formatTime } from './format'
 
@@ -78,6 +79,8 @@ export default function WizardStepSource({
   return (
     <div className="grid gap-3">
       <p className="text-sm text-muted-foreground">{t('delivery.changes.wizard.source.lead')}</p>
+      {/* 候选口径说明：与交付目标不同，模板源必须在线（要读它的实际文件） */}
+      <p className="text-xs text-ink-3">{t('delivery.changes.wizard.source.candidateHint')}</p>
 
       {/* 搜索框 + 扫描目录范围 + 扫描按钮 */}
       <div className="flex flex-wrap items-center gap-2">
@@ -92,18 +95,20 @@ export default function WizardStepSource({
         />
         <label className="flex items-center gap-1.5 text-xs text-ink-3">
           {t('delivery.changes.wizard.source.scanDirLabel')}
-          <Input
+          {/* 扫描目录随已选模板源级联：列出该服真实目录，未选服时用常用目录兜底且仍可手输 */}
+          <AssetPathPicker
             aria-label={t('delivery.changes.wizard.source.scanDirLabel')}
-            placeholder="plugins/"
+            namespaceId={namespaceId}
+            serverId={source}
             value={scanDir}
-            onChange={(e) => {
-              onScanDirChange(e.target.value)
-            }}
-            className="h-9 w-32 font-mono text-xs"
+            onChange={onScanDirChange}
+            mode="directory"
+            placeholder="plugins/"
+            className="w-36"
           />
         </label>
         <Button size="sm" disabled={source === '' || scanning} onClick={onScan}>
-          <ScanSearch className="size-4" />
+          <ScanSearch className="size-3.5" />
           {scanning
             ? t('delivery.changes.wizard.source.scanning')
             : scan === null
@@ -134,16 +139,19 @@ export default function WizardStepSource({
             const selected = s.serverId === source
             return (
               <li key={s.serverId}>
-                <button
+                {/* 单选列表项：保留 role="radio" + aria-checked 暴露选中语义，
+                    ghost 变体复用 Button 的焦点环 / 按压反馈，行高与排布在此覆写 */}
+                <Button
                   type="button"
+                  variant="ghost"
                   role="radio"
                   aria-checked={selected}
                   onClick={() => {
                     onSourceChange(s.serverId)
                   }}
                   className={cn(
-                    'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-muted',
-                    selected && 'bg-brand-50/60 ring-1 ring-brand',
+                    'h-auto w-full justify-start gap-2 rounded-md px-2 py-1 text-left text-sm font-normal',
+                    selected && 'bg-brand-50/60 ring-1 ring-brand hover:bg-brand-50/60',
                   )}
                 >
                   <span
@@ -161,14 +169,14 @@ export default function WizardStepSource({
                       {s.regionName === null ? s.zoneName : `${s.regionName} / ${s.zoneName}`}
                     </span>
                   )}
-                </button>
+                </Button>
               </li>
             )
           })}
         </ul>
       )}
 
-      {errorText !== null && <p className="text-sm text-destructive">{errorText}</p>}
+      {errorText !== null && <p role="alert" className="text-sm text-destructive">{errorText}</p>}
 
       {scan === null ? (
         <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
@@ -189,6 +197,8 @@ export default function WizardStepSource({
               {t('delivery.changes.wizard.source.snapshotAt', { at: formatTime(scan.snapshotAt) })}
             </span>
           </div>
+          {/* 差异是「范围未设时按全量对照」算出的指示性结果，最终影响面要到提交前的影响预览才定 */}
+          <p className="text-xs text-ink-3">{t('delivery.changes.wizard.source.diffIndicative')}</p>
           {/* 差异文件清单（可点开预览文件内容） */}
           <ul className="max-h-56 divide-y divide-border overflow-y-auto rounded-lg border border-border">
             {scan.items.map((item) => {
@@ -209,7 +219,7 @@ export default function WizardStepSource({
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-6 shrink-0 px-2 text-xs"
+                        className="shrink-0 px-2 text-xs"
                         aria-expanded={expanded}
                         onClick={() => {
                           setExpandedIds((prev) =>

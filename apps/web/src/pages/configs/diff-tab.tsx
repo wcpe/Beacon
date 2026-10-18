@@ -10,6 +10,7 @@ import { SplitSquareHorizontal } from 'lucide-react'
 import {
   AsyncSection,
   Button,
+  Combobox,
   Label,
   SectionHeader,
   Select,
@@ -42,11 +43,6 @@ interface DiffSide {
 }
 
 const EMPTY_SIDE: DiffSide = { kind: 'scope', scopeKey: '', versionId: null, targetType: 'namespace', targetRef: null }
-
-// 侧标识串：scope:<level>:<refId>
-function scopeSpec(scope: ConfigScopeSummary): string {
-  return `scope:${scope.scopeLevel}:${String(scope.scopeRefId)}`
-}
 
 /** 组装一侧的 diff 描述串；未选全返回 null */
 function specOf(side: DiffSide, file: ConfigFileDetail): string | null {
@@ -252,27 +248,22 @@ function SideSelector({ idPrefix, label, side, onChange, scopes, fileId, file }:
       {(side.kind === 'scope' || side.kind === 'version') && (
         <div className="space-y-1.5">
           <Label htmlFor={`${idPrefix}-scope`}>{t('delivery.configs.detail.diff.pickScope')}</Label>
-          <Select
+          <Combobox
+            id={`${idPrefix}-scope`}
+            className="w-full"
+            aria-label={`${label}${t('delivery.configs.detail.diff.pickScope')}`}
             value={side.scopeKey}
-            onValueChange={(value) => {
+            onChange={(value) => {
               onChange({ ...side, scopeKey: value, versionId: null })
             }}
-          >
-            <SelectTrigger
-              id={`${idPrefix}-scope`}
-              className="w-full"
-              aria-label={`${label}${t('delivery.configs.detail.diff.pickScope')}`}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {scopes.map((s) => (
-                <SelectItem key={scopeSpec(s)} value={`${s.scopeLevel}:${String(s.scopeRefId)}`}>
-                  {s.scopeLevel} / {s.scopeName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={scopes.map((s) => ({
+              value: `${s.scopeLevel}:${String(s.scopeRefId)}`,
+              label: `${s.scopeLevel} / ${s.scopeName}`,
+            }))}
+            allowCustom={false}
+            placeholder={t('delivery.configs.detail.diff.pickScope')}
+            emptyText={t('common.combobox.noMatch')}
+          />
         </div>
       )}
 
@@ -284,28 +275,22 @@ function SideSelector({ idPrefix, label, side, onChange, scopes, fileId, file }:
             isError={versionsQuery.isError}
             error={versionsQuery.error}
           >
-            <Select
+            <Combobox
+              id={`${idPrefix}-version`}
+              className="w-full"
+              aria-label={`${label}${t('delivery.configs.detail.diff.pickVersion')}`}
               value={side.versionId === null ? '' : String(side.versionId)}
-              onValueChange={(value) => {
+              onChange={(value) => {
                 onChange({ ...side, versionId: Number(value) })
               }}
-            >
-              <SelectTrigger
-                id={`${idPrefix}-version`}
-                className="w-full"
-                aria-label={`${label}${t('delivery.configs.detail.diff.pickVersion')}`}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(versionsQuery.data?.items ?? []).map((v) => (
-                  <SelectItem key={v.versionId} value={String(v.versionId)}>
-                    v{String(v.versionNo)} · {v.contentHash.slice(0, 8)}
-                    {v.isRemoval ? ` · ${t('delivery.configs.detail.versions.removal')}` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={(versionsQuery.data?.items ?? []).map((v) => ({
+                value: String(v.versionId),
+                label: `v${String(v.versionNo)} · ${v.contentHash.slice(0, 8)}${v.isRemoval ? ` · ${t('delivery.configs.detail.versions.removal')}` : ''}`,
+              }))}
+              allowCustom={false}
+              placeholder={t('delivery.configs.detail.diff.pickVersion')}
+              emptyText={t('common.combobox.noMatch')}
+            />
           </AsyncSection>
         </div>
       )}
@@ -316,27 +301,22 @@ function SideSelector({ idPrefix, label, side, onChange, scopes, fileId, file }:
             <Label htmlFor={`${idPrefix}-target-type`}>
               {t('delivery.configs.detail.effective.targetTypeLabel')}
             </Label>
-            <Select
+            <Combobox
+              id={`${idPrefix}-target-type`}
+              className="w-full"
+              aria-label={`${label}${t('delivery.configs.detail.effective.targetTypeLabel')}`}
               value={side.targetType}
-              onValueChange={(value) => {
+              onChange={(value) => {
                 onChange({ ...side, targetType: value as ConfigScopeLevel, targetRef: null })
               }}
-            >
-              <SelectTrigger
-                id={`${idPrefix}-target-type`}
-                className="w-full"
-                aria-label={`${label}${t('delivery.configs.detail.effective.targetTypeLabel')}`}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {SCOPE_LEVELS.map((level) => (
-                  <SelectItem key={level} value={level}>
-                    {t(`delivery.configs.detail.effective.targetTypes.${level}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={SCOPE_LEVELS.map((level) => ({
+                value: level,
+                label: t(`delivery.configs.detail.effective.targetTypes.${level}`),
+              }))}
+              allowCustom={false}
+              placeholder={t('delivery.configs.detail.effective.targetTypeLabel')}
+              emptyText={t('common.combobox.noMatch')}
+            />
           </div>
           {side.targetType !== 'namespace' && (
             <div className="space-y-1.5">

@@ -116,20 +116,28 @@ export default function EditDialog({ fileId, target, sensitivePaths, onOpenChang
     },
   })
 
+  const pending = validateMutation.isPending || saveMutation.isPending
+
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) {
+        if (!open && !pending) {
           onOpenChange(false)
         }
       }}
     >
-      <DialogContent className="max-w-2xl">
+      <DialogContent
+        className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] overflow-hidden max-w-2xl"
+        showCloseButton={!pending}
+        onInteractOutside={(event) => {
+          event.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="text-ink-1">{t('delivery.configs.detail.edit.title')}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-3">
+        <div className="min-h-0 grid gap-3 overflow-y-auto pr-1">
           <div className="text-sm text-ink-3">
             {t('delivery.configs.detail.edit.scopeLabel')}：
             <span className="font-mono text-ink-1">
@@ -191,12 +199,14 @@ export default function EditDialog({ fileId, target, sensitivePaths, onOpenChang
               </ul>
             </div>
           )}
-          {validateError !== null && <p className="text-sm text-crit">{validateError}</p>}
-          {saveError !== null && <p className="text-sm text-crit">{saveError}</p>}
+          {validateError !== null && <p role="alert" className="text-sm text-crit">{validateError}</p>}
+          {saveError !== null && <p role="alert" className="text-sm text-crit">{saveError}</p>}
         </div>
         <DialogFooter>
           <Button
+            type="button"
             variant="outline"
+            disabled={pending}
             onClick={() => {
               onOpenChange(false)
             }}
@@ -204,8 +214,9 @@ export default function EditDialog({ fileId, target, sensitivePaths, onOpenChang
             {t('delivery.configs.detail.edit.cancel')}
           </Button>
           <Button
+            type="button"
             variant="outline"
-            disabled={validateMutation.isPending}
+            disabled={pending}
             onClick={() => {
               runValidate(content)
             }}
@@ -213,7 +224,8 @@ export default function EditDialog({ fileId, target, sensitivePaths, onOpenChang
             {t('delivery.configs.detail.edit.validate')}
           </Button>
           <Button
-            disabled={saveMutation.isPending}
+            type="button"
+            disabled={pending}
             onClick={() => {
               setSaveError(null)
               saveMutation.mutate()

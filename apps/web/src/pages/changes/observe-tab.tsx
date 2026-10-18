@@ -12,6 +12,7 @@ import {
   Button,
   DataTable,
   SummaryStrip,
+  TableSkeleton,
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
@@ -112,18 +113,24 @@ export default function ObserveTab({ orderId }: ObserveTabProps) {
     () => [
       {
         header: t('delivery.changes.detail.observe.columns.serverId'),
-        cell: (row) => <span className="font-mono">{row.serverId}</span>,
+        cell: (row) => <span className="font-mono" title={row.serverId}>{row.serverId}</span>,
       },
       {
         header: t('delivery.changes.detail.observe.columns.score'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
         cell: (row) => currentOf(row).score ?? '-',
       },
       {
         header: t('delivery.changes.detail.observe.columns.tps'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
         cell: (row) => currentOf(row).tps ?? '-',
       },
       {
         header: t('delivery.changes.detail.observe.columns.alerts'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
         cell: (row) => currentOf(row).alerts,
       },
     ],
@@ -131,7 +138,12 @@ export default function ObserveTab({ orderId }: ObserveTabProps) {
   )
 
   return (
-    <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+    <AsyncSection
+      isLoading={query.isLoading}
+      isError={query.isError}
+      error={query.error}
+      skeleton={<TableSkeleton columns={4} rows={6} />}
+    >
       <section className="grid gap-3">
         {/* 观察窗说明：确认放行前先看这些指标 */}
         <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs leading-relaxed text-ink-2">

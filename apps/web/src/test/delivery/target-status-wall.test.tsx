@@ -1,6 +1,7 @@
 // 单服级状态墙（FR-254）组件级断言：逐台展示正推状态、失败原因、回滚状态与备份标记，
 // 让「执行中哪台到哪一步、哪台失败为什么」可见（此前 error / rollbackError 全站无渲染）。
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
@@ -61,7 +62,8 @@ describe('TargetStatusWall 单服级状态墙', () => {
 
     renderPage(<TargetStatusWall orderId={orderId} orderStatus={detail.status} />)
 
-    const table = await screen.findByRole('table')
+    await screen.findByRole('columnheader', { name: '批次' })
+    const table = screen.getByRole('table')
     // 表头：正推状态 / 回滚状态 / 失败原因 / 回滚失败原因 / 备份
     expect(within(table).getByRole('columnheader', { name: '正推状态' })).toBeInTheDocument()
     expect(within(table).getByRole('columnheader', { name: '失败原因' })).toBeInTheDocument()
@@ -117,7 +119,8 @@ describe('TargetStatusWall 单服级状态墙', () => {
 
     renderPage(<TargetStatusWall orderId={orderId} orderStatus={detail.status} />)
 
-    const table = await screen.findByRole('table')
+    await screen.findByRole('columnheader', { name: '批次' })
+    const table = screen.getByRole('table')
     expect(within(table).getByText('game-1')).toBeInTheDocument()
     expect(within(table).getByText('回滚失败')).toBeInTheDocument()
     expect(within(table).getByText('备份不存在（已被保留策略清理），无法文件回滚')).toBeInTheDocument()
@@ -204,7 +207,8 @@ describe('目标级回滚与回滚预检', () => {
     stubSubsetOrder()
     renderPage(<TargetStatusWall orderId={subsetOrder.orderId} orderStatus="completed" />)
 
-    const table = await screen.findByRole('table')
+    await screen.findByRole('columnheader', { name: '批次' })
+    const table = screen.getByRole('table')
     expect(within(table).getByRole('columnheader', { name: '当前交付版本' })).toBeInTheDocument()
     expect(within(table).getByText(/单 #9000/)).toBeInTheDocument()
     expect(within(table).getByText('无交付记录')).toBeInTheDocument()
@@ -215,7 +219,8 @@ describe('目标级回滚与回滚预检', () => {
     stubSubsetOrder()
     renderPage(<TargetStatusWall orderId={subsetOrder.orderId} orderStatus="completed" />)
 
-    const table = await screen.findByRole('table')
+    await screen.findByRole('columnheader', { name: '批次' })
+    const table = screen.getByRole('table')
     fireEvent.click(within(table).getByRole('checkbox', { name: 't-2' }))
     fireEvent.click(screen.getByRole('button', { name: /回滚选中目标/ }))
 
@@ -230,7 +235,8 @@ describe('目标级回滚与回滚预检', () => {
     const { bodies, headers } = stubSubsetOrder()
     renderPage(<TargetStatusWall orderId={subsetOrder.orderId} orderStatus="completed" />)
 
-    const table = await screen.findByRole('table')
+    await screen.findByRole('columnheader', { name: '批次' })
+    const table = screen.getByRole('table')
     fireEvent.click(within(table).getByRole('checkbox', { name: 't-1' }))
     fireEvent.click(screen.getByRole('button', { name: /回滚选中目标/ }))
 
@@ -327,7 +333,8 @@ describe('全选判定基数（可回滚口径）', () => {
     )
     renderPage(<TargetStatusWall orderId={9002} orderStatus="completed" />)
 
-    const table = await screen.findByRole('table')
+    await screen.findByRole('columnheader', { name: '批次' })
+    const table = screen.getByRole('table')
     fireEvent.click(within(table).getByRole('checkbox', { name: 't-1' }))
     fireEvent.click(within(table).getByRole('checkbox', { name: 't-2' }))
     // 未推送台不可勾选（disabled）
@@ -340,6 +347,7 @@ describe('全选判定基数（可回滚口径）', () => {
 
   it('按批筛选勾满该批：仍按子集执行（提示配置不回退），不得因本页勾满而误判整单', async () => {
     useScenario('normal')
+    const user = userEvent.setup()
     server.use(
       http.get('*/admin/v2/change-orders/:id/targets', ({ request }) => {
         const batch = new URL(request.url).searchParams.get('batch')
@@ -354,9 +362,11 @@ describe('全选判定基数（可回滚口径）', () => {
       <TargetStatusWall orderId={9003} orderStatus="completed" batches={[1, 2]} />,
     )
 
-    const table = await screen.findByRole('table')
-    // 先筛到第 1 批（2 台），再勾满本批
-    fireEvent.change(screen.getByLabelText('批次'), { target: { value: '1' } })
+    await screen.findByRole('columnheader', { name: '批次' })
+    const table = screen.getByRole('table')
+    // 先筛到第 1 批（2 台），再勾满本批：按批筛选是组件库 Select，需展开后点选项
+    await user.click(screen.getByRole('combobox', { name: '批次' }))
+    await user.click(await screen.findByRole('option', { name: '#1' }))
     await waitFor(() => {
       expect(within(table).queryByText('t-3')).not.toBeInTheDocument()
     })

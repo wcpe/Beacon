@@ -1,9 +1,12 @@
 // 交付域文案（/assets /configs /changes /changes/history，FR-170）：由交付域页面 agent 维护，其他域勿改
 export const delivery = {
-  // 顶部作用域选择（各页共用）
+  // 交付域作用域：统一由页眉段 2 的观测范围选择器提供，交付域各页不再有页面级命名空间选择器
   scope: {
-    namespace: '命名空间',
-    pickNamespace: '选择 命名空间',
+    // 页眉为「全部命名空间」时，三个写操作页（配置中心 / 变更单 / 交付历史）共用的引导标题
+    requiredTitle: '请先在页眉左侧选择命名空间',
+    // 引导正文：解释为什么写操作页必须有具体命名空间，并说明选中后即可正常使用
+    required:
+      '读取与写入都按命名空间生效。本页含创建 / 变更 / 回滚等写操作，不会对「全部命名空间」执行；在页眉选定具体命名空间后，列表与操作即可用。',
   },
   // 通用分页
   pager: {
@@ -13,8 +16,10 @@ export const delivery = {
   },
   assets: {
     title: '文件资产',
-    // 去向提示：文件差异的下发统一走变更单（与 /configs 提示同款式）
-    deliveryHint: '文件差异经变更单统一交付，本页只看不改',
+    // 页面级说明：页头大标题下的一行小字，交代本页做什么与「只读」边界
+    pageDesc: '展示各子服的文件清单、扫描摘要与跨服差异，供核对与审计；文件变更须经变更单流程下发。',
+    // 未选命名空间时的引导（命名空间范围由页眉观测选择器统一提供）
+    scopeRequired: '请先在页眉左侧选择命名空间：文件清单、扫描概要、跨服比对与两侧差异都按命名空间取数。',
     goChanges: '前往变更单',
     // 扫描概要
     scan: {
@@ -35,12 +40,21 @@ export const delivery = {
         duration: '耗时',
       },
       truncated: '已截断',
+      tableTitle: '子服扫描列表',
+      tableCount: '共 {{total}} 台',
+      loadFailed: '扫描概要加载失败，请检查连接后重试。',
+      retry: '重试加载',
+      emptyTitle: '当前页暂无扫描记录',
+      emptyDescription: '暂时没有可展示的子服扫描概要，请刷新后重试。',
+      refresh: '刷新扫描概要',
     },
     // 清单列表
     list: {
       title: '文件清单',
       empty: '当前筛选条件下无文件；请调整服务器 / 路径前缀 / 扩展名后重试',
       needIndex: '按文件名搜索需同时指定服务器 / 路径前缀 / 扩展名 / 哈希之一',
+      loadFailed: '文件清单加载失败，请检查连接后重试。',
+      retry: '重试加载',
       columns: {
         serverId: '子服',
         path: '路径',
@@ -66,10 +80,9 @@ export const delivery = {
     detail: {
       metaTitle: '元数据',
       previewTitle: '内容预览',
-      previewLoading: '加载预览中…',
-      sensitiveOpen: '填写原因查看',
-      approvalHint: '文件正文必须先申请审批；批准后由系统自动下发浏览命令并签发一次性授权。',
-      requestPreview: '申请查看文件内容',
+      previewLoading: '正在读取正文…',
+      sensitiveOpen: '直接查看',
+      requestPreview: '查看文件内容',
       fields: {
         serverId: '子服',
         path: '路径',
@@ -83,10 +96,7 @@ export const delivery = {
     preview: {
       title: '内容预览',
       sensitiveTitle: '敏感文件预览',
-      sensitiveHint: '该路径命中敏感规则，查看内容需填写原因（将记入审计）',
-      reasonLabel: '查看原因',
-      reasonPlaceholder: '例如：排查经济数据异常',
-      confirm: '查看内容',
+      retry: '重试读取',
       binaryOnly: '二进制文件，仅展示元数据',
       truncated: '内容过大，仅展示前段',
       meta: '大小 {{size}} · 哈希 {{sha256}}',
@@ -105,48 +115,56 @@ export const delivery = {
       missingTitle: '缺失该文件的子服',
       noMissing: '所有子服均存在该文件',
       empty: '暂无比对结果，输入路径后点「比对」',
+      formTitle: '选择文件路径',
+      loading: '正在比对…',
+      needPath: '请先选择或输入文件路径，比对按钮才可用',
+      loadFailedTitle: '比对未完成',
+      retry: '重试比对',
+      emptyTitle: '开始一次跨服比对',
+      emptyDescription: '选择或输入文件路径后，查看各子服的哈希分组与缺失情况。',
+      emptyAction: '选择文件路径',
+      groupCount: '{{count}} 个哈希分组',
+      resultPath: '比对路径：{{path}}',
+      noGroupsTitle: '没有可比对的文件',
+      noGroupsDescription: '当前路径尚无可用清单记录；可检查路径，或等待子服上报清单后重试。',
+      missingCount: '{{count}} 台缺失',
+      columns: {
+        digest: '哈希摘要',
+        size: '文件大小',
+        servers: '相同内容的子服',
+      },
     },
     // 两侧 diff
     diff: {
       title: '两侧差异',
-      hint: '选两台子服的同名文件；左右两侧须分别审批后才能读取差异摘要',
+      hint: '选择两台子服的同名文件，直接查看文本差异；读取行为会记入审计。',
       leftServer: '左侧子服',
       rightServer: '右侧子服',
       pathLabel: '文件路径',
-      run: '比对差异',
+      run: '查看差异',
+      loading: '正在读取差异…',
       identical: '两侧内容一致（哈希相同）',
+      identicalHint: '两侧文件内容一致，无需展示正文。',
       changed: '两侧文件存在差异',
       leftHeading: '左侧',
       rightHeading: '右侧',
       empty: '暂无差异结果',
-      unsupported: '二进制或超大文件不支持 diff',
-      // 任一侧命中敏感规则时的原因输入（无原因 diff 被 403，填原因重试）
-      sensitiveHint: '任一侧命中敏感规则，diff 需填写原因（将记入审计）',
-      reasonLabel: 'diff 原因',
-      reasonPlaceholder: '例如：核对两服经济配置差异',
-      confirm: '带原因比对',
-      request: '申请两侧审批',
-      requesting: '正在创建两侧审批…',
-      refresh: '刷新审批状态',
-      approvalHint: '左右两侧是独立审批：任一侧未批准、失效或撤回时，均不会读取或展示任何文件正文。',
-      approvalStatus: '两侧审批状态',
-      openApproval: '前往审批中心',
-      approvalState: {
-        pending: '等待审批或 Agent 回传',
-        ready: '授权已就绪',
-        unavailable: '未批准、已失效或授权不可用',
-      },
-      consume: '原子消费两侧授权并查看差异摘要',
-      consuming: '正在消费两侧授权…',
-      summaryTitle: '差异摘要',
-      summaryHint: '仅显示服务端生成的路径、哈希和大小摘要；文件正文不会进入页面。',
-      summaryMeta: '哈希 {{sha256}} · 大小 {{size}}',
+      needBothSides: '请先选定左右两侧子服与文件路径，查看按钮才可用',
+      summaryTitle: '差异结果',
+      summaryHint: '文件正文仅随本次直读响应展示；审计只记录目标与元数据。',
+      sideHash: '哈希 {{sha256}}',
+      contentUnavailable: '差异正文暂不可用，请重试读取。',
+      formTitle: '选择两侧文件进行差异比较',
+      errorTitle: '读取未完成',
+      retry: '重试读取',
+      emptyTitle: '尚未查看差异',
+      emptyDescription: '选择左右两侧子服与共同文件路径，然后直接读取比较结果。',
     },
     // 敏感路径规则编辑（FR-164）：命中 glob 的文件预览 / diff 需原因，整体替换语义
     sensitiveRules: {
       manage: '敏感路径规则',
       title: '敏感路径规则',
-      hint: '命中以下 glob 的文件，预览 / diff 默认禁止查看内容、需填写原因单次放行（记入审计）。每行一个 glob，保存即整体替换。',
+      hint: '命中以下 glob 的文件属于敏感内容；读取需通过权限校验并记录审计，审计中不保存正文。每行一个 glob，保存即整体替换。',
       label: '规则清单（每行一个 glob，如 **/*.pem、plugins/Beacon/**）',
       placeholder: '**/*secret*',
       save: '保存规则',
@@ -170,7 +188,8 @@ export const delivery = {
   },
   configs: {
     title: '配置中心',
-    deliveryHint: '配置修改不即时下发，生效请到「变更单」发起',
+    // 页面级说明：页头大标题下的一行小字，交代「改动存这里、上线要走变更单」
+    pageDesc: '按作用域管理配置文件版本与覆盖关系；修改保存为新版本，实际下发须经变更单流程执行。',
     goChanges: '前往变更单',
     // 列表
     list: {
@@ -179,6 +198,8 @@ export const delivery = {
       keyword: '搜索文件名',
       create: '新建配置文件',
       trash: '回收站',
+      // 列表工具条右侧的条数（标题已上移到页头，这里只留计数）
+      total: '共 {{total}} 个文件',
       // 概要条指标
       summary: {
         files: '配置文件',
@@ -388,12 +409,16 @@ export const delivery = {
   },
   changes: {
     title: '变更单',
+    // 页面级说明：页头大标题下的一行小字，交代「一单到底」的交付语义
+    pageDesc: '变更单为交付执行单元，涵盖提交审批、分批灰度、生效观察与回滚，全过程留痕可追溯。',
     // ?order= 深链（历史页「在变更单中打开」）加载失败提示
     deepLinkError: '打开变更单 #{{id}} 失败：{{message}}',
     // 列表
     list: {
       title: '变更单列表',
       empty: '当前筛选条件下无匹配变更单',
+      // 列表工具条右侧的条数（标题已上移到页头，这里只留计数）
+      total: '共 {{total}} 单',
       createGuided: '引导创建',
       createAdvanced: '高级创建',
       keyword: '搜索标题',
@@ -488,6 +513,9 @@ export const delivery = {
         actionAdd: '新增',
         actionUpdate: '修改',
         actionDelete: '删除',
+        // 候选口径与差异语义说明
+        candidateHint: '只列出在线、且已分配归属的后端服——系统要读取它的实际文件来算差异；提交时还会复核它仍在线且身份已绑定。',
+        diffIndicative: '此处的差异是参照「全量」范围算出的指示性结果；定好交付范围后，真正的影响面以第 5 步提交前的影响预览为准。',
       },
       // 第 3 步：选配置变更
       config: {
@@ -539,6 +567,12 @@ export const delivery = {
         selectedCount: '已选 {{count}} 个',
         regionZones: '{{count}} 个小区',
         pickEmpty: '暂无可选项',
+        // 目标资格与在线口径说明
+        targetEligibility: '只会下发到「已分配小区 + 身份已绑定」的后端服：未分配小区的裸服不会出现在候选里，模板源本身即使被勾选也不会作为目标下发。',
+        targetOfflineHint: '目标不要求在线——当前离线的子服也能被选中；但推送需目标 agent 在线回执，整个超时窗口内一直离线会记为推送失败。',
+        // 单服候选总量与截断（pageSize 之外的服只能靠搜索命中，必须明示）
+        serverCount: '共 {{total}} 台候选，已显示 {{shown}} 台',
+        serverTruncated: '列表一次最多显示 {{limit}} 台，还有 {{hidden}} 台未列出——请在上方搜索框输入服务器 ID 或小区名缩小范围后再勾选。',
         batchLabel: '批次编排',
         batchSingle: '一次性全量',
         batchSingleHint: '全部目标一批生效，适合影响面小或已充分验证的变更',
@@ -1058,8 +1092,29 @@ export const delivery = {
       reasonPlaceholder: '例如：已补做本地备份，重试还原',
     },
   },
+  // 共用选择器（服务器 ID / 文件路径 / 扩展名）：把原先手填的输入框换成可搜索下拉
+  pickers: {
+    server: {
+      search: '搜索服务器 ID / 小区',
+      // 候选显示 text：serverId 为主，大区 / 小区作为辅助信息
+      optionLabel: '{{serverId}}（{{scope}}）',
+      empty: '无匹配服务器',
+      clear: '清空服务器',
+    },
+    path: {
+      placeholder: '选择或输入路径',
+      empty: '清单里没有匹配路径，可直接输入',
+      clear: '清空路径',
+    },
+    ext: {
+      empty: '无匹配扩展名',
+      clear: '清空扩展名',
+    },
+  },
   changesHistory: {
     title: '交付历史',
+    // 页面级说明：页头大标题下的一行小字，交代本页是「交付台账」
+    pageDesc: '归档已结束的变更单，支持按任务、批次与目标级查询执行结果及回滚记录。',
     // 列表
     list: {
       title: '历史变更单',
@@ -1067,6 +1122,8 @@ export const delivery = {
       keyword: '搜索标题',
       filterStatus: '按状态过滤',
       allStatus: '全部状态',
+      // 列表工具条右侧的条数（标题已上移到页头，这里只留计数）
+      total: '共 {{total}} 单',
       columns: {
         id: '单号',
         title: '标题',
@@ -1100,6 +1157,56 @@ export const delivery = {
         rolled_back: '已回滚',
         failed: '回滚失败',
         none: '-',
+      },
+    },
+  },
+  // 交付域各页页头右侧的「文档」入口按钮文案
+  // 文档地址集中在 features/delivery/doc-help.tsx 维护，锚点对应文档标题上的显式英文 id
+  help: {
+    docButton: '文档',
+  },
+  // 三页空态引导（/assets /configs /changes/history）：无数据时给出明确下一步动作
+  // 集中在本区块新增，避免与各页原有文案区块交叉改动
+  guides: {
+    // /assets 文件资产：该命名空间还没有任何 agent 清单上报
+    assets: {
+      title: '这个命名空间还没有文件清单',
+      desc: '清单由各子服上的 Beacon agent 扫描上报，接入后自动出现在这里。想直接发文件，去变更单发起一次文件交付即可。',
+      cta: '去变更单',
+      refresh: '刷新',
+    },
+    // /configs 配置中心：没有任何配置文件
+    configs: {
+      title: '还没有配置文件',
+      desc: '配置文件在这里存版本、按作用域层层叠加。改完不会自己上线，要生效得走变更单下发。',
+      cta: '新建第一个配置文件',
+    },
+    // /changes/history 交付历史：还没有归档记录
+    history: {
+      title: '还没有历史记录',
+      desc: '变更单走完、整单回滚或被取消后会归档到这里，能查到谁在什么时候改了什么。先去发起第一单吧。',
+      cta: '去变更单',
+    },
+  },
+  // 页面内关键功能区的一句白话提示（每句只解释一个最容易卡住的口径）
+  tips: {
+    assetsListSource: '清单来自 agent 上次上报，不是实时结果；对不上就勾选子服触发重扫',
+    assetsScanHint: '一台子服一行；标「已截断」表示文件太多，只上报了一部分',
+    configsListLayers: '一行一个文件；多个作用域叠加后，才得到最终的「有效配置」',
+    configsVersionsEffect: '回退只存成新版本，不会立刻改线上；真要下发请走变更单',
+    historyStatusScope: '「已完成」= 全部批次都生效；「已回滚」= 整单退回原版本',
+  },
+  // /approvals 审批中心页的页面级说明（标题复用 nav.approvals，这里只补 Title 下的一行解释；
+  // 本页作用域跟随页眉选中的环境与命名空间，不再声明「不受筛选影响」）
+  approvals: {
+    pageDesc:
+      '统一审批入口：汇总变更单、配置、文件、身份与生命周期等全部待审批申请，支持批准执行、驳回与撤回，并提供审计追溯；作用域跟随顶部所选环境与命名空间。',
+    filters: {
+      advanced: '高级筛选',
+      groups: {
+        statusRisk: '状态与风险',
+        applicant: '申请人',
+        timeRange: '时间范围',
       },
     },
   },

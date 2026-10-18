@@ -190,7 +190,7 @@ export default function WizardStepConfig({ namespaceId, picks, onAddMany, onRemo
                       <Button
                         size="sm"
                         variant="ghost"
-                        className={cn('h-7 px-2 text-xs', previewing && 'bg-brand-50 text-brand')}
+                        className={cn('px-2 text-xs', previewing && 'bg-brand-50 text-brand')}
                         aria-expanded={previewing}
                         onClick={() => {
                           setPreviewId(previewing ? null : file.id)

@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Info } from 'lucide-react'
 
-import { AsyncSection, Input, Label, SummaryStrip, Textarea, cn, type SummaryItem } from '@beacon/ui'
+import { AsyncSection, Button, Input, Label, SummaryStrip, Textarea, type SummaryItem } from '@beacon/ui'
 
 import { fetchZoneTree } from '../../api/cluster'
 import { fetchChangeImpact, fetchChangeOrder, type ChangeOrderItem } from '../../api/delivery-changes'
@@ -161,20 +161,20 @@ export default function WizardStepReview({
         aria-label={t('delivery.changes.wizard.review.modeLabel')}
       >
         {(['simple', 'detailed'] as const).map((value) => (
-          <button
+          // 分段切换器：选中态用 Button 的 default 变体、未选中用 ghost，容器统一描边圆角
+          <Button
             key={value}
             type="button"
+            size="xs"
+            variant={mode === value ? 'default' : 'ghost'}
             aria-pressed={mode === value}
             onClick={() => {
               setMode(value)
             }}
-            className={cn(
-              'px-3 py-1 text-xs transition-colors',
-              mode === value ? 'bg-brand text-white' : 'bg-background text-ink-2 hover:bg-muted',
-            )}
+            className="rounded-none px-3 shadow-none"
           >
             {t(`delivery.changes.wizard.review.mode.${value}`)}
-          </button>
+          </Button>
         ))}
       </div>
 

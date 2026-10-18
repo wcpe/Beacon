@@ -1,23 +1,17 @@
-// 变更单列表（主从布局主列）：ListCard 吸顶工具条（标题 / 引导创建 / 高级创建 / 状态筛选 /
-// 标题搜索）+ 自区滚列表 + 吸底分页。点行选中（右侧非模态详情面板打开）。
+// 变更单列表（主从布局主列）：ListCard 吸顶工具条（条数 / 状态筛选 / 标题搜索）+ 自区滚列表 + 吸底分页。
+// 页面级标题与创建入口已上移页头（PageHeader），此处只留列表自己的筛选与计数；
+// 两个弹窗（高级创建 / 引导向导）本体仍在本视图内，开关由页面持有。点行选中（右侧非模态详情面板打开）。
 // 引导创建走五步向导（新手主入口），高级创建保留原有直建表单；空态用任务卡引导进向导。
-import type { ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { ClipboardList, Plus, Sparkles } from 'lucide-react'
-
 import {
   AsyncSection,
-  Button,
+  Combobox,
   DataTable,
   Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
 
@@ -56,22 +50,41 @@ interface ListViewProps {
   namespaceId: number
   selectedId: number | null
   onOpen: (order: ChangeOrderSummary) => void
-  // 页级操作（命名空间选择器等）：并入列表工具条标题行右侧，不另起独立操作行
-  actions?: ReactNode
+  // 高级创建弹窗开关（页头按钮驱动）
+  createOpen: boolean
+  onCreateOpenChange: (open: boolean) => void
+  // 引导向导开关与预选交付内容（页头按钮与空态任务卡共用）
+  wizardOpen: boolean
+  onWizardOpenChange: (open: boolean) => void
+  wizardPreset: WizardContent
+  onWizardPresetChange: (preset: WizardContent) => void
 }
 
-export default function ListView({ namespaceId, selectedId, onOpen, actions }: ListViewProps) {
+export default function ListView({
+  namespaceId,
+  selectedId,
+  onOpen,
+  createOpen,
+  onCreateOpenChange,
+  wizardOpen,
+  onWizardOpenChange,
+  wizardPreset,
+  onWizardPresetChange,
+}: ListViewProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
 
   const [keyword, setKeyword] = useState('')
   const [status, setStatus] = useState<string>('all')
   const [page, setPage] = useState(1)
-  const [createOpen, setCreateOpen] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-  // 引导向导开合与预选交付内容（空态任务卡带类型进入）
-  const [wizardOpen, setWizardOpen] = useState(false)
-  const [wizardPreset, setWizardPreset] = useState<WizardContent>('files')
+
+  // 弹窗每次打开都清掉上一次的失败提示（开关由页头按钮控制，这里只跟随开合清理）
+  useEffect(() => {
+    if (createOpen) {
+      setCreateError(null)
+    }
+  }, [createOpen])
 
   const query = useQuery({
     queryKey: ['change-orders', 'list', namespaceId, keyword, status, page],
@@ -83,6 +96,8 @@ export default function ListView({ namespaceId, selectedId, onOpen, actions }: L
         page,
         pageSize: PAGE_SIZE,
       }),
+    // 未选到具体命名空间（0＝全部 / 范围失效）不发请求：列表按命名空间取数，不跨范围兜底
+    enabled: namespaceId > 0,
     placeholderData: keepPreviousData,
   })
 
@@ -98,7 +113,7 @@ export default function ListView({ namespaceId, selectedId, onOpen, actions }: L
       }),
     onSuccess: async (detail) => {
       await queryClient.invalidateQueries({ queryKey: ['change-orders'] })
-      setCreateOpen(false)
+      onCreateOpenChange(false)
       // 创建成功直接进入新单详情面板
       onOpen(detail)
     },
@@ -111,9 +126,14 @@ export default function ListView({ namespaceId, selectedId, onOpen, actions }: L
     () => [
       {
         header: t('delivery.changes.list.columns.id'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
         cell: (row) => <span className="tnum text-xs text-ink-3">#{String(row.id)}</span>,
       },
-      { header: t('delivery.changes.list.columns.title'), cell: (row) => row.title },
+      {
+        header: t('delivery.changes.list.columns.title'),
+        cell: (row) => <span className="block max-w-64 truncate" title={row.title}>{row.title}</span>,
+      },
       {
         header: t('delivery.changes.list.columns.status'),
         cell: (row) => <OrderStatusBadge status={row.status} />,
@@ -137,40 +157,6 @@ export default function ListView({ namespaceId, selectedId, onOpen, actions }: L
 
   const toolbar = (
     <div className="grid gap-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-1">
-          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
-            <ClipboardList className="size-[15px]" />
-          </span>
-          {t('delivery.changes.list.title')}
-          {total > 0 && <span className="text-xs font-normal text-ink-3">{total}</span>}
-        </span>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            onClick={() => {
-              setWizardPreset('files')
-              setWizardOpen(true)
-            }}
-          >
-            <Sparkles className="size-4" />
-            {t('delivery.changes.list.createGuided')}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setCreateError(null)
-              setCreateOpen(true)
-            }}
-          >
-            <Plus className="size-4" />
-            {t('delivery.changes.list.createAdvanced')}
-          </Button>
-          {/* 页级操作（命名空间选择器等）并入同一行右侧，不另起独立操作行 */}
-          {actions}
-        </div>
-      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('delivery.changes.list.keyword')}
@@ -182,66 +168,79 @@ export default function ListView({ namespaceId, selectedId, onOpen, actions }: L
           }}
           className="w-52"
         />
-        <Select
+        <Combobox
+          className="w-40"
+          aria-label={t('delivery.changes.list.filterStatus')}
           value={status}
-          onValueChange={(value) => {
+          onChange={(value) => {
             setStatus(value)
             setPage(1)
           }}
-        >
-          <SelectTrigger className="w-40" aria-label={t('delivery.changes.list.filterStatus')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('delivery.changes.list.allStatus')}</SelectItem>
-            {STATUS_OPTIONS.map((s) => (
-              <SelectItem key={s} value={s}>
-                {t(`delivery.changes.status.${s}`)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          options={[
+            { value: 'all', label: t('delivery.changes.list.allStatus') },
+            ...STATUS_OPTIONS.map((s) => ({ value: s, label: t(`delivery.changes.status.${s}`) })),
+          ]}
+          allowCustom={false}
+          emptyText={t('common.combobox.noMatch')}
+        />
+        {/* 标题已上移到页头，工具条只留条数，让「当前筛选命中几单」始终可见 */}
+        {total > 0 && (
+          <span className="tnum ml-auto text-xs text-ink-3">{t('delivery.changes.list.total', { total })}</span>
+        )}
       </div>
     </div>
   )
 
-  // 空态引导：确无任何变更单（非筛选造成的空）时用任务卡代替空表格
+  // 空态引导：所属命名空间确无任何变更单（非筛选造成的空、且作用域已就绪）时用任务卡代替空表格
   const showEmptyGuide =
-    !query.isLoading && !query.isError && total === 0 && keyword.trim() === '' && status === 'all'
+    namespaceId > 0 &&
+    !query.isLoading &&
+    !query.isError &&
+    total === 0 &&
+    keyword.trim() === '' &&
+    status === 'all'
 
   const startWizard = (preset: WizardContent): void => {
-    setWizardPreset(preset)
-    setWizardOpen(true)
+    onWizardPresetChange(preset)
+    onWizardOpenChange(true)
   }
 
   return (
-    <div className="grid gap-3.5">
+    <div className="grid gap-3.5 md:min-h-0 md:flex-1 md:flex md:flex-col">
       <ListCard
+        fill
         toolbar={toolbar}
         footer={total > PAGE_SIZE ? <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} /> : undefined}
       >
         {showEmptyGuide ? (
           <EmptyGuide onStart={startWizard} />
         ) : (
-          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+          <AsyncSection
+            isLoading={query.isLoading}
+            isError={query.isError}
+            error={query.error}
+            skeleton={<TableSkeleton columns={6} rows={6} />}
+          >
             <DataTable
               columns={columns}
               rows={query.data?.items}
               rowKey={(row) => String(row.id)}
               emptyText={t('delivery.changes.list.empty')}
               density="compact"
+              stickyHeader
               onRowClick={(row) => {
                 onOpen(row)
               }}
-              rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
+              rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50 hover:bg-brand-50' : undefined)}
             />
           </AsyncSection>
         )}
       </ListCard>
 
       <CreateDialog
+        namespaceId={namespaceId}
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={onCreateOpenChange}
         pending={createMutation.isPending}
         errorText={createError}
         onSubmit={(input) => {
@@ -252,7 +251,7 @@ export default function ListView({ namespaceId, selectedId, onOpen, actions }: L
 
       <GuidedWizard
         open={wizardOpen}
-        onOpenChange={setWizardOpen}
+        onOpenChange={onWizardOpenChange}
         namespaceId={namespaceId}
         initialContent={wizardPreset}
         onCreated={onOpen}

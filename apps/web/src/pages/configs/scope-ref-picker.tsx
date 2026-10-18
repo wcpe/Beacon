@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Check, Search } from 'lucide-react'
 
-import { AsyncSection, Combobox, Input, cn } from '@beacon/ui'
+import { AsyncSection, Button, Combobox, Input, cn } from '@beacon/ui'
 import type { ConfigScopeLevel } from '@beacon/contracts'
 
 import { fetchServers, fetchZoneTree } from '../../api/cluster'
@@ -151,10 +151,13 @@ function ServerSearchPicker({ namespaceId, value, onChange, excludeIds, id }: Se
           <div className="grid max-h-48 gap-1 overflow-y-auto" role="listbox">
             {items.map((s) => {
               const checked = value?.id === s.id
+              // 自定义 listbox 项：保留 role="option" + aria-selected 维护组合语义，
+              // ghost 变体复用 Button 的焦点环与按压反馈，行高与排布在此覆写
               return (
-                <button
+                <Button
                   key={s.id}
                   type="button"
+                  variant="ghost"
                   role="option"
                   aria-selected={checked}
                   aria-label={s.serverId}
@@ -162,9 +165,9 @@ function ServerSearchPicker({ namespaceId, value, onChange, excludeIds, id }: Se
                     onChange(checked ? null : { id: s.id, name: s.serverId })
                   }}
                   className={cn(
-                    'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors',
+                    'h-auto w-full justify-start gap-2 rounded-lg border px-2.5 py-1.5 text-left font-normal',
                     checked
-                      ? 'border-brand-300 bg-brand-50/60'
+                      ? 'border-brand-300 bg-brand-50/60 hover:bg-brand-50/60'
                       : 'border-transparent hover:border-brand-200 hover:bg-brand-50/30',
                   )}
                 >
@@ -180,7 +183,7 @@ function ServerSearchPicker({ namespaceId, value, onChange, excludeIds, id }: Se
                     <span className="block truncate font-mono text-xs font-medium text-ink-1">{s.serverId}</span>
                     <span className="block truncate text-[11px] text-ink-4">{s.zoneName ?? '—'}</span>
                   </span>
-                </button>
+                </Button>
               )
             })}
           </div>
