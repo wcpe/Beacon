@@ -111,6 +111,15 @@ describe('审批申请写闭环', () => {
     expect(response.size).toBe(response.payload.length)
   })
 
+  it('消息 payload 查看拒绝纯空白原因', async () => {
+    const messageId = uuidFrom('msg:0')
+    const result = await callJson('POST', `/admin/v2/messages/${encodeURIComponent(messageId)}/payload`, {
+      reason: ' \t\n ',
+    })
+    expect(result.status).toBe(400)
+    expect((result.json as { code: string }).code).toBe('missing_reason')
+  })
+
   it('批准待审批申请时按路径参数定位并记录 executing 时间线', async () => {
     const requestId = 'apr_change_9101'
     const detail = await callJson('GET', `/admin/v2/approval-requests/${requestId}`)

@@ -5,7 +5,7 @@ import { HttpResponse, type HttpHandler } from 'msw'
 import type {
   AssetCompareGroup,
   AssetCompareResponse,
-  AssetDiffResponse,
+  AssetDiffResponse as ContractAssetDiffResponse,
   AssetItem,
   AssetListResponse,
   AssetPreviewResponse,
@@ -18,6 +18,9 @@ import { getClusterState } from '../data/cluster'
 import { getMockDataVolumeCount, type MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { BASE_MS, hashString, isoOffset, pseudoSha256, uuidFrom } from '../support'
+
+// 直接复用共享契约：left/right 为必填可空，与后端 writeDiff 的实际输出一致。
+type AssetDiffResponse = ContractAssetDiffResponse
 
 // 默认敏感路径规则（spec §4.6 默认清单）
 const DEFAULT_SENSITIVE_PATTERNS = [
@@ -348,7 +351,7 @@ export const fileAssetsHandlers: HttpHandler[] = [
       return jsonError(403, 'asset_sensitive_path', '命中敏感路径规则，diff 必须填写原因', { sensitive: true })
     }
     if (left.sha256 === right.sha256) {
-      return HttpResponse.json({ identical: true } satisfies AssetDiffResponse)
+      return HttpResponse.json({ identical: true, left: null, right: null } satisfies AssetDiffResponse)
     }
     const response: AssetDiffResponse = {
       identical: false,

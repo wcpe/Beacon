@@ -182,7 +182,8 @@ async function readMessagePayload(info: MockRequestInfo): Promise<Response> {
     return jsonError(404, 'message_not_found', '消息不存在')
   }
   const body = await readBody<{ reason?: string }>(info.request)
-  if (!body.reason || body.reason.length > 255) {
+  const reason = (body.reason ?? '').trim()
+  if (reason === '' || reason.length > 255) {
     return jsonError(400, 'missing_reason', '查看 payload 必须填写原因（≤255 字）')
   }
   const payload = state.payloads.get(messageId) ?? ''

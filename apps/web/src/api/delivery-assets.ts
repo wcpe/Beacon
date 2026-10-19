@@ -91,10 +91,8 @@ export function previewAsset(target: AssetReadTarget, reason: string): Promise<A
   return request<AssetPreviewResponse>('POST', '/admin/v2/assets/preview', { ...target, reason })
 }
 
-export type AssetPairDiffResponse = Omit<AssetDiffResponse, 'left' | 'right'> & {
-  left?: NonNullable<AssetDiffResponse['left']> | null
-  right?: NonNullable<AssetDiffResponse['right']> | null
-}
+/** 两侧差异响应；left/right 键始终存在，内容相同则为 null（契约见 @beacon/contracts）。 */
+export type AssetPairDiffResponse = AssetDiffResponse
 
 /** 直读并比较两侧文件；两侧各自携带命名空间，正文仅随本次响应返回。 */
 export function readAssetPair(

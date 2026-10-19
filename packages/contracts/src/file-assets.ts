@@ -61,8 +61,10 @@ export interface AssetPreviewResponse {
 /** diff 响应：两侧内容或 identical 短路 */
 export interface AssetDiffResponse {
   identical: boolean
-  left?: { serverId: string; path: string; content: string; sha256: string }
-  right?: { serverId: string; path: string; content: string; sha256: string }
+  // 两侧键始终存在：内容不同时为对象，内容相同则为 null。
+  // 不用可选（?:）——那会让调用方误以为键可能整个缺失，与后端实际输出不符。
+  left: { serverId: string; path: string; content: string; sha256: string } | null
+  right: { serverId: string; path: string; content: string; sha256: string } | null
 }
 
 /** 敏感路径规则清单（GET/PUT /admin/v2/assets/sensitive-rules；整体替换语义，命中即禁止预览 / diff 内容） */

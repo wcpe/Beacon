@@ -163,6 +163,25 @@ describe('normal 场景：真实感中文运维数据', () => {
     })
     expect(allowed.status).toBe(200)
   })
+
+  it('文件哈希一致时 diff 仍返回必填的两侧 null', async () => {
+    const assets = asPaged(
+      (await callJson('GET', '/admin/v2/assets?namespaceId=1&pathPrefix=plugins/Beacon/config.yml&pageSize=100')).json,
+    ) as { items: { namespaceId: number; serverId: string; path: string; sha256: string }[] }
+    expect(assets.items.length).toBeGreaterThan(0)
+    const first = assets.items[0]
+    const second = assets.items.find((item) => item.serverId !== first.serverId && item.sha256 === first.sha256)
+    if (second === undefined) throw new Error('fixture 缺少哈希相同的另一台服务器文件')
+
+    const result = await callJson('POST', '/admin/v2/assets/diff', {
+      left: { namespaceId: first.namespaceId, serverId: first.serverId, path: first.path },
+      right: { namespaceId: second.namespaceId, serverId: second.serverId, path: second.path },
+      reason: '验证两侧文件一致性',
+    })
+
+    expect(result.status).toBe(200)
+    expect(result.json).toEqual({ identical: true, left: null, right: null })
+  })
 })
 
 describe('数据量与接口延时正交切换', () => {
