@@ -128,7 +128,7 @@ human 批准后 worker 携 ExecutionPermit 调领域 adapter：
 | POST | `/admin/v2/assets/preview`、`/admin/v2/assets/preview/approval-requests` | 直接预览 `{serverId,path,reason?}`，原因仅在敏感路径时必填 |
 | POST | `/admin/v2/assets/preview/grants/{grantId}/consume` | 兼容旧路径，body `{commandId,reason?}` 定位文件后 direct 重读，grantId 不作授权 |
 | POST | `/admin/v2/assets/diff` | 直接比较 `{left:{serverId,path},right:{serverId,path},reason?}` 并返回差异两侧内容 |
-| GET/POST | `/admin/v1/instances/{serverId}/logs`、`/admin/v1/instances/{serverId}/browse` | management.read 直执日志/受限目录读取；POST 创建读取命令，GET 查询/启动浏览，结果读取写专项审计 |
+| GET/POST | `/admin/v1/instances/{serverId}/logs`、`/admin/v1/instances/{serverId}/browse` | management.read 直执日志/受限目录读取：`POST` 创建读取命令（返回 `202 {commandId,status}`），`GET` 只按 `commandId` 读结果、**不创建也不启动**（缺 `commandId` → `400`；`GET /logs` 返回该实例最近一次日志读取结果，`namespace` 必填）；结果读取前先写专项审计 |
 | POST | `/admin/v1/instances/{serverId}/logs/grants/{grantId}/consume`、`/admin/v1/instances/{serverId}/browse/grants/{grantId}/consume` | 兼容旧 grant 路径，以 commandId 读取结果，不校验 grant 申请主体 |
 | POST | `/admin/v2/messages/{messageId}/payload`、`/admin/v2/messages/{messageId}/payload/approval-requests` | 直接读取 payload，body `{reason}`，返回正文/哈希/大小并先写元数据审计 |
 | POST | `/admin/v2/sensitive-access-grants/{grantId}/consume` | 兼容旧路径名，body `{messageId,reason}` 按 `content.read` 直接读取 payload，`grantId` 不作授权依据 |
