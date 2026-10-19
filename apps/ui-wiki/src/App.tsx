@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -70,6 +70,7 @@ import {
   type HealthSegment,
   IconStat,
   Input,
+  JumpValue,
   KpiCard,
   Label,
   MarkdownLite,
@@ -199,6 +200,40 @@ function ButtonPreview() {
           离线
         </Badge>
         <Badge variant="brand">品牌</Badge>
+      </div>
+    </ComponentShell>
+  )
+}
+
+// 数值跳动：值变化时放大 + 高亮一次，用于「会随轮询更新的数字」，
+// 让更新本身可被看见（单纯变色或透明度变化在小幅波动下无法察觉）。
+function JumpValuePreview() {
+  const [cpu, setCpu] = useState(12)
+  const [heap, setHeap] = useState(64)
+
+  useEffect(() => {
+    // 每 2 秒造一次数值变化，演示跳动效果
+    const timer = setInterval(() => {
+      setCpu(() => Math.floor(Math.random() * 40) + 5)
+      setHeap(() => Math.floor(Math.random() * 60) + 40)
+    }, 2000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [])
+
+  return (
+    <ComponentShell>
+      <div className="flex flex-wrap items-center gap-6 text-sm">
+        <div className="flex items-center gap-1.5">
+          <span className="text-ink-3">CPU</span>
+          <JumpValue value={`${String(cpu)}%`} className="font-medium tabular-nums text-ink-1" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-ink-3">堆内存</span>
+          <JumpValue value={`${String(heap)}/128 MB`} className="font-medium tabular-nums text-ink-1" />
+        </div>
+        <p className="text-xs text-ink-4">数值每 2 秒变化一次，变化瞬间跳动并短暂转为品牌色。</p>
       </div>
     </ComponentShell>
   )
@@ -797,6 +832,15 @@ const items: MuseumItem[] = [
     ],
     states: ['ok', 'warn', 'danger', 'muted', 'empty sparkline'],
     preview: <DashboardPreview />,
+  },
+  {
+    id: 'jump-value',
+    title: '数值跳动',
+    group: '展示组件',
+    description: '值变化时放大并短暂转为品牌色，用于会随轮询更新的数字（如控制面 CPU / 堆内存）。',
+    exports: ['JumpValue', 'JumpValueProps'],
+    states: ['首次渲染不跳动', '值变化时跳动', 'prefers-reduced-motion 降级为变色'],
+    preview: <JumpValuePreview />,
   },
   {
     id: 'section-header',

@@ -6,6 +6,8 @@ export const UI_WIKI_COVERED_EXPORTS = [
   'DataTable',
   'DataTableColumn',
   'DestructiveConfirmDialog',
+  'JumpValue',
+  'JumpValueProps',
   'MarkdownLite',
   'SectionHeader',
   'SummaryStrip',

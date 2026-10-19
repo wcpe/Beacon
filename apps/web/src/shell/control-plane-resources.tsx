@@ -1,8 +1,9 @@
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
+import { JumpValue } from '@beacon/ui'
+
 import { useControlPlaneResources } from './use-control-plane-resources'
-import JumpValue from './jump-value'
 
 const KIB = 1024
 const MIB = KIB * 1024

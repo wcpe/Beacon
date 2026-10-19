@@ -1,3 +1,11 @@
+/* 应用层样式：只放「与 apps/web 的 DOM 结构或路由强绑定」的东西。
+   — html/body 基础
+   — 壳层专属动画（路由切换 shell-route-enter、侧栏状态点 status-breathe）
+
+   通用视觉原语（任何消费 @beacon/ui 的应用都该有的动效/工具类）一律放
+   packages/ui/src/styles.css 的 @theme，用 --animate-* 注册后由工具类消费。
+   入场/退场类预设动画由 tw-animate-css 提供，不要在这里重复定义。 */
+
 html {
   background: var(--background);
 }
@@ -50,50 +58,5 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .animate-status-breathe {
     animation-duration: 6s;
-  }
-}
-
-/* 数值更新时的「跳动」：数字变化瞬间放大并高亮，让「刚更新过」可被看见。
-   只作用于单个数值（inline 元素），不影响周围布局：用 transform 缩放，
-   不改变盒模型尺寸。 */
-@keyframes value-jump {
-  0% {
-    transform: scale(1);
-    color: inherit;
-  }
-
-  35% {
-    transform: scale(1.28);
-    color: var(--brand);
-  }
-
-  100% {
-    transform: scale(1);
-    color: inherit;
-  }
-}
-
-.animate-value-jump {
-  /* inline-block 才能让 transform 生效；transform-origin 居中避免文字偏移 */
-  display: inline-block;
-  transform-origin: center;
-  animation: value-jump 420ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* 减少动态效果：不缩放，只用短暂变色提示更新 */
-  @keyframes value-jump {
-    0%,
-    100% {
-      color: inherit;
-    }
-
-    50% {
-      color: var(--brand);
-    }
-  }
-
-  .animate-value-jump {
-    animation-duration: 300ms;
   }
 }

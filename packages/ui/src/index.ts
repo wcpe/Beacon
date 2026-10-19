@@ -2,6 +2,7 @@ export { default as AnchorRailLayout, AnchorSectionBlock, type AnchorSection } f
 export { default as AsyncSection } from './components/AsyncSection'
 export { default as DataTable, type DataTableColumn } from './components/DataTable'
 export { default as DestructiveConfirmDialog } from './components/DestructiveConfirmDialog'
+export { default as JumpValue, type JumpValueProps } from './components/JumpValue'
 export { default as MarkdownLite } from './components/MarkdownLite'
 export { default as SectionHeader } from './components/SectionHeader'
 export { default as SummaryStrip, type SummaryItem, type SummaryTone } from './components/SummaryStrip'
