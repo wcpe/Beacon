@@ -5,7 +5,6 @@ import { Link } from 'react-router-dom'
 import { RefreshCw, UserPlus } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   CardGridSkeleton,
@@ -21,6 +20,7 @@ import {
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { LobbyMember, ServerItem } from '@beacon/contracts'
 
 import {
@@ -196,7 +196,7 @@ export default function LobbyClustersPage() {
         </div>
       </div>
 
-      <AsyncSection
+      <PageAsyncSection
         isLoading={loading}
         isError={hasError}
         error={error}
@@ -269,7 +269,7 @@ export default function LobbyClustersPage() {
             无大厅成员时，BC 首次连接拒绝；先确认 Bukkit 身份，再迁入。
           </div>
         ) : null}
-      </AsyncSection>
+      </PageAsyncSection>
 
       <Dialog
         open={moveInOpen}

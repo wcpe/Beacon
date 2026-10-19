@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 import { CircleAlert, RefreshCw } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Card,
@@ -20,6 +19,7 @@ import {
   type DataTableColumn,
   type ComboboxOption,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { AssetItem, AssetRescanResponse } from '@beacon/contracts'
 
 import MasterDetail from '../../features/shared/master-detail'
@@ -289,7 +289,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           </CardContent>
         </Card>
       ) : (
-        <AsyncSection
+        <PageAsyncSection
           isLoading={query.isLoading && !nameNeedsIndex}
           skeleton={<TableSkeleton columns={8} rows={6} />}
         >
@@ -305,7 +305,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
             }}
             rowClassName={(row) => (detail && rowKeyOf(row) === rowKeyOf(detail) ? 'bg-brand-50 hover:bg-brand-50' : undefined)}
           />
-        </AsyncSection>
+        </PageAsyncSection>
       )}
     </ListCard>
   )

@@ -7,13 +7,13 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { useTranslation } from 'react-i18next'
 
 import {
-  AsyncSection,
   Combobox,
   DataTable,
   Input,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { ApiClientError } from '../../api/delivery'
 import {
@@ -215,7 +215,7 @@ export default function ListView({
         {showEmptyGuide ? (
           <EmptyGuide onStart={startWizard} />
         ) : (
-          <AsyncSection
+          <PageAsyncSection
             isLoading={query.isLoading}
             isError={query.isError}
             error={query.error}
@@ -233,7 +233,7 @@ export default function ListView({
               }}
               rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50 hover:bg-brand-50' : undefined)}
             />
-          </AsyncSection>
+          </PageAsyncSection>
         )}
       </ListCard>
 

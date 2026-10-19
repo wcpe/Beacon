@@ -9,7 +9,8 @@
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 
-import { AsyncSection, Skeleton } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { MCPInvocationItem } from '@beacon/contracts'
 
 import { fetchMCPInvocation } from '../../api/mcp'
@@ -24,7 +25,8 @@ export default function InvocationDetailPanel({ invocationId }: { invocationId: 
   })
 
   return (
-    <AsyncSection
+    <PageAsyncSection
+      keepContentWhileRefreshing
       error={query.error}
       isError={query.isError}
       isLoading={query.isLoading}
@@ -32,7 +34,7 @@ export default function InvocationDetailPanel({ invocationId }: { invocationId: 
       skeleton={<Skeleton className="h-40 w-full" />}
     >
       {query.data === undefined ? null : <InvocationFields item={query.data} />}
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }
 

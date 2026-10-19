@@ -9,7 +9,6 @@ import { useSearchParams } from 'react-router-dom'
 import { Cable, Search } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
@@ -18,6 +17,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { ConnectionItem } from '@beacon/contracts'
 
 import { fetchConnections, type ConnectionsQuery } from '../api/connections'
@@ -294,7 +294,7 @@ export default function ConnectionsPage() {
               ) : undefined
             }
           >
-            <AsyncSection
+            <PageAsyncSection
               isLoading={query.isLoading}
               isError={query.isError}
               error={query.error}
@@ -311,7 +311,7 @@ export default function ConnectionsPage() {
                 }}
                 rowClassName={(row) => (row.connId === selectedId ? 'bg-brand-50/60' : undefined)}
               />
-            </AsyncSection>
+            </PageAsyncSection>
           </ListCard>
         }
         detail={selected === null ? null : <ConnDetailPanel row={selected} />}

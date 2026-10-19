@@ -33,7 +33,6 @@ import {
 } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
@@ -61,6 +60,7 @@ import {
   type DataTableColumn,
   type KpiTone,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { HealthItem, MetricsSeriesPoint, ServerItem } from '@beacon/contracts'
 import {
   ApiClientError,
@@ -901,7 +901,7 @@ export default function AssetsPanel({
 
         {/* 列表区：自身滚动（max-height），页面整体高度可控，1000+ 台亦不无限增高 */}
         <div className="max-h-[calc(100vh-20rem)] overflow-y-auto px-4 pt-2 pb-1">
-          <AsyncSection
+          <PageAsyncSection
             isLoading={query.isPending}
             isError={query.isError}
             error={query.error}
@@ -923,7 +923,7 @@ export default function AssetsPanel({
               // 遗留行（无活跃身份）整行淡化，与正常在线资产一眼区分
               rowClassName={(row) => (!canTransitionIdentity(row) ? 'opacity-60' : undefined)}
             />
-          </AsyncSection>
+          </PageAsyncSection>
         </div>
 
         {/* 服务端分页控件（吸底于卡片） */}

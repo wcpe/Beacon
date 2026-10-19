@@ -7,7 +7,6 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
 import {
-  AsyncSection,
   Button,
   Combobox,
   DataTable,
@@ -15,6 +14,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import ListCard from '../../features/shared/list-card'
 import Pager from '../../features/delivery/pager'
@@ -170,7 +170,7 @@ export default function ListView({ namespaceId, selectedId, onView }: ListViewPr
       {showEmptyGuide ? (
         <EmptyGuide />
       ) : (
-        <AsyncSection
+        <PageAsyncSection
           isLoading={query.isLoading}
           isError={query.isError}
           error={query.error}
@@ -188,7 +188,7 @@ export default function ListView({ namespaceId, selectedId, onView }: ListViewPr
             }}
             rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50 hover:bg-brand-50' : undefined)}
           />
-        </AsyncSection>
+        </PageAsyncSection>
       )}
     </ListCard>
   )

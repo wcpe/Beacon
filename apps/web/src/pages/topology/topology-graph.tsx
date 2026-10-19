@@ -16,7 +16,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { ArrowRight, Boxes, DoorOpen, Maximize, Network, TriangleAlert, Waves, ZoomIn, ZoomOut } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, cn, Skeleton } from '@beacon/ui'
+import { Badge, Button, cn, Skeleton } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { HealthItem, MessageEdgeStat, ZoneTreeResponse } from '@beacon/contracts'
 
 import { fetchMessageEdges, fetchServers, fetchZoneTree } from '../../api/cluster'
@@ -941,7 +942,7 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
         </Button>
       </div>
 
-      <AsyncSection
+      <PageAsyncSection
         isLoading={treeQuery.isLoading}
         isError={treeQuery.isError}
         error={treeQuery.error}
@@ -1580,7 +1581,7 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
             )}
           </>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

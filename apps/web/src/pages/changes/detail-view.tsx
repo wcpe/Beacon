@@ -8,13 +8,13 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
 import {
-  AsyncSection,
   Button,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { ApiClientError } from '../../api/delivery'
 import {
@@ -123,7 +123,12 @@ export default function DetailView({ orderId }: DetailViewProps) {
 
   return (
     <div className="flex min-h-full flex-col gap-4">
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+      <PageAsyncSection
+        keepContentWhileRefreshing
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+      >
         {order && (
           <div className="grid gap-4">
             {/* 状态先行展示；生命周期操作固定在详情滚动区底部 */}
@@ -171,7 +176,7 @@ export default function DetailView({ orderId }: DetailViewProps) {
             </Tabs>
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
 
       {order && (
         <div data-slot="detail-actions-footer" className="sticky bottom-0 z-10 mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card/95 px-3 py-2.5 backdrop-blur">

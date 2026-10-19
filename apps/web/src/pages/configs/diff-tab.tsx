@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next'
 import { SplitSquareHorizontal } from 'lucide-react'
 
 import {
-  AsyncSection,
   Button,
   Combobox,
   Label,
@@ -19,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigFileDetail, ConfigScopeLevel, ConfigScopeSummary } from '@beacon/contracts'
 
 import { fetchConfigDiff, fetchConfigScopes, fetchConfigVersions } from '../../api/delivery-configs'
@@ -87,7 +87,8 @@ export default function DiffTab({ fileId, file }: DiffTabProps) {
         title={t('delivery.configs.detail.diff.title')}
       />
 
-      <AsyncSection
+      <PageAsyncSection
+        keepContentWhileRefreshing
         isLoading={scopesQuery.isLoading}
         isError={scopesQuery.isError}
         error={scopesQuery.error}
@@ -124,12 +125,17 @@ export default function DiffTab({ fileId, file }: DiffTabProps) {
             {t('delivery.configs.detail.diff.run')}
           </Button>
         </div>
-      </AsyncSection>
+      </PageAsyncSection>
 
       {applied === null ? (
         <p className="text-sm text-ink-3">{t('delivery.configs.detail.diff.pickHint')}</p>
       ) : (
-        <AsyncSection isLoading={diffQuery.isLoading} isError={diffQuery.isError} error={diffQuery.error}>
+        <PageAsyncSection
+          keepContentWhileRefreshing
+          isLoading={diffQuery.isLoading}
+          isError={diffQuery.isError}
+          error={diffQuery.error}
+        >
           {diffQuery.data && (
             <div className="grid gap-3">
               <p className="font-mono text-xs text-ink-3">
@@ -183,7 +189,7 @@ export default function DiffTab({ fileId, file }: DiffTabProps) {
               )}
             </div>
           )}
-        </AsyncSection>
+        </PageAsyncSection>
       )}
     </section>
   )
@@ -270,7 +276,8 @@ function SideSelector({ idPrefix, label, side, onChange, scopes, fileId, file }:
       {side.kind === 'version' && side.scopeKey !== '' && (
         <div className="space-y-1.5">
           <Label htmlFor={`${idPrefix}-version`}>{t('delivery.configs.detail.diff.pickVersion')}</Label>
-          <AsyncSection
+          <PageAsyncSection
+            keepContentWhileRefreshing
             isLoading={versionsQuery.isLoading}
             isError={versionsQuery.isError}
             error={versionsQuery.error}
@@ -291,7 +298,7 @@ function SideSelector({ idPrefix, label, side, onChange, scopes, fileId, file }:
               placeholder={t('delivery.configs.detail.diff.pickVersion')}
               emptyText={t('common.combobox.noMatch')}
             />
-          </AsyncSection>
+          </PageAsyncSection>
         </div>
       )}
 

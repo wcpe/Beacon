@@ -6,7 +6,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Copy, Network, Server, ShieldCheck, Unlink } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, cn } from '@beacon/ui'
+import { Badge, Button, cn } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { AgentIdentityItem, ConflictPeer } from '@beacon/contracts'
 
 import {
@@ -114,7 +115,7 @@ export default function ConflictCard({ identity, namespaceName }: ConflictCardPr
       </div>
 
       {/* 卡体：左右两栏平铺冲突双方 */}
-      <AsyncSection
+      <PageAsyncSection
         isLoading={detailQuery.isLoading}
         isError={detailQuery.isError}
         error={detailQuery.error}
@@ -171,7 +172,7 @@ export default function ConflictCard({ identity, namespaceName }: ConflictCardPr
             })}
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
 
       {/* 卡底：解绑此身份 */}
       <div className="flex justify-end border-t border-border pt-3">

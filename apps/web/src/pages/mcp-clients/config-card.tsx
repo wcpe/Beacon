@@ -6,7 +6,8 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ExternalLink, Info, Settings2 } from 'lucide-react'
 
-import { AsyncSection, Badge, Skeleton } from '@beacon/ui'
+import { Badge, Skeleton } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { MCPConfigView } from '@beacon/contracts'
 
 // 部署文档地址：后端不提供仓库内文档 URL，故指向仓库文档页；集中定义便于后续调整为内网镜像。
@@ -41,14 +42,15 @@ export default function ConfigCard({ data, isLoading, isError, error }: ConfigCa
         </a>
       </div>
 
-      <AsyncSection
+      <PageAsyncSection
+        keepContentWhileRefreshing
         isLoading={isLoading}
         isError={isError}
         error={error}
         skeleton={<Skeleton className="h-24 w-full" />}
       >
         {data && (data.enabled ? <EnabledRows data={data} /> : <DisabledHint />)}
-      </AsyncSection>
+      </PageAsyncSection>
 
       {/* 文档外链可能不可达（内网部署无外网），故同时给出可复制的文档路径；
           启动项提示常驻，避免误以为可在本页修改。 */}

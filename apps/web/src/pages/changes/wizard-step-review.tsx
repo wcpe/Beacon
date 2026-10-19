@@ -9,7 +9,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Info } from 'lucide-react'
 
-import { AsyncSection, Button, Input, Label, SummaryStrip, Textarea, type SummaryItem } from '@beacon/ui'
+import { Button, Input, Label, SummaryStrip, Textarea, type SummaryItem } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchZoneTree } from '../../api/cluster'
 import { fetchChangeImpact, fetchChangeOrder, type ChangeOrderItem } from '../../api/delivery-changes'
@@ -178,7 +179,8 @@ export default function WizardStepReview({
         ))}
       </div>
 
-      <AsyncSection
+      <PageAsyncSection
+        keepContentWhileRefreshing
         isLoading={impactQuery.isLoading || detailQuery.isLoading}
         isError={impactQuery.isError || detailQuery.isError}
         error={impactQuery.error ?? detailQuery.error}
@@ -228,7 +230,7 @@ export default function WizardStepReview({
             )}
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
 
       {/* 提交去向说明：审批 → 启动 → 逐批放行 */}
       <p className="flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-xs leading-relaxed text-ink-2">

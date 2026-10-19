@@ -4,7 +4,8 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { AsyncSection, Badge, DataTable, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import { Badge, DataTable, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import {
   fetchChangeImpact,
@@ -110,7 +111,8 @@ export default function ImpactTab({ order }: ImpactTabProps) {
   const targetsTotal = query.data?.targets.total ?? 0
 
   return (
-    <AsyncSection
+    <PageAsyncSection
+      keepContentWhileRefreshing
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}
@@ -139,6 +141,6 @@ export default function ImpactTab({ order }: ImpactTabProps) {
           />
         </div>
       </section>
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }

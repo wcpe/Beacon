@@ -9,7 +9,6 @@ import { Link } from 'react-router-dom'
 import { Layers, Server } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   DataTable,
@@ -21,6 +20,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ChangeTarget } from '@beacon/contracts'
 
 import Pager from '../../features/delivery/pager'
@@ -68,7 +68,8 @@ export default function DetailView({ orderId }: DetailViewProps) {
       {detail && <RollbackBanner order={detail} />}
       {detail && <RollbackRecordsSection orderId={detail.id} />}
 
-      <AsyncSection
+      <PageAsyncSection
+        keepContentWhileRefreshing
         isLoading={detailQuery.isLoading}
         isError={detailQuery.isError}
         error={detailQuery.error}
@@ -99,7 +100,7 @@ export default function DetailView({ orderId }: DetailViewProps) {
             </TabsContent>
           </Tabs>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
 
       {detail && (
         <div data-slot="detail-actions-footer" className="sticky bottom-0 z-10 mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card/95 px-3 py-2.5 backdrop-blur">
@@ -184,7 +185,12 @@ function ReplayTab({ detail }: { detail: ChangeOrderDetail }) {
           icon={<Server className="size-4" />}
           title={t('delivery.changesHistory.detail.targetsTitle')}
         />
-        <AsyncSection isLoading={targetsQuery.isLoading} isError={targetsQuery.isError} error={targetsQuery.error}>
+        <PageAsyncSection
+          keepContentWhileRefreshing
+          isLoading={targetsQuery.isLoading}
+          isError={targetsQuery.isError}
+          error={targetsQuery.error}
+        >
           <DataTable
             columns={targetColumns}
             rows={targetsQuery.data?.items}
@@ -192,7 +198,7 @@ function ReplayTab({ detail }: { detail: ChangeOrderDetail }) {
             emptyText={t('delivery.changes.detail.batches.empty')}
             density="compact"
           />
-        </AsyncSection>
+        </PageAsyncSection>
         <Pager page={page} total={targetsTotal} pageSize={TARGET_PAGE_SIZE} onPageChange={setPage} />
       </div>
     </div>
@@ -207,9 +213,14 @@ function OrchestrationTab({ detail }: { detail: ChangeOrderDetail }) {
     queryFn: () => fetchChangeImpact(detail.id, 1, 1),
   })
   return (
-    <AsyncSection isLoading={impactQuery.isLoading} isError={impactQuery.isError} error={impactQuery.error}>
+    <PageAsyncSection
+      keepContentWhileRefreshing
+      isLoading={impactQuery.isLoading}
+      isError={impactQuery.isError}
+      error={impactQuery.error}
+    >
       {impactQuery.data && <OrderOrchestration order={detail} summary={impactQuery.data.summary} />}
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }
 
@@ -220,8 +231,13 @@ function TimelineTab({ orderId }: { orderId: number }) {
     queryFn: () => fetchChangeEvents(orderId),
   })
   return (
-    <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+    <PageAsyncSection
+      keepContentWhileRefreshing
+      isLoading={query.isLoading}
+      isError={query.isError}
+      error={query.error}
+    >
       <EventsTimeline events={query.data?.events ?? []} />
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }

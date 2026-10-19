@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Trash2 } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   DataTable,
@@ -13,6 +12,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import type { TrashItem } from '@beacon/contracts'
 
@@ -148,7 +148,7 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
       />
 
 
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
@@ -161,7 +161,7 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
           emptyText={t('delivery.configs.trash.empty')}
           density="compact"
         />
-      </AsyncSection>
+      </PageAsyncSection>
 
       <Pager
         page={page}

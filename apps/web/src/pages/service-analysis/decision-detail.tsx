@@ -4,7 +4,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { AsyncSection, Badge, CardGridSkeleton } from '@beacon/ui'
+import { Badge, CardGridSkeleton } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchSchedDecisionDetail } from '../../api/metrics'
 
@@ -24,7 +25,8 @@ export default function DecisionDetail({ traceId }: DecisionDetailProps) {
   const fields = 'observability.serviceAnalysis.decisions.fields'
 
   return (
-    <AsyncSection
+    <PageAsyncSection
+      keepContentWhileRefreshing
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}
@@ -102,7 +104,7 @@ export default function DecisionDetail({ traceId }: DecisionDetailProps) {
           </div>
         </div>
       )}
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }
 

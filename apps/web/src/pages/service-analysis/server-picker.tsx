@@ -7,12 +7,12 @@ import { useTranslation } from 'react-i18next'
 import { Check, Search, Server, ServerOff } from 'lucide-react'
 
 import {
-  AsyncSection,
   Button,
   CardGridSkeleton,
   Input,
   cn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ServerItem } from '@beacon/contracts'
 
 import { fetchServers } from '../../api/cluster'
@@ -116,7 +116,7 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
 
       {/* 可选服务器列表（自身滚动） */}
       <div className="overflow-y-auto p-2">
-        <AsyncSection
+        <PageAsyncSection
           isLoading={query.isPending}
           isError={query.isError}
           error={query.error}
@@ -229,7 +229,7 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
               )}
             </div>
           )}
-        </AsyncSection>
+        </PageAsyncSection>
       </div>
     </div>
   )

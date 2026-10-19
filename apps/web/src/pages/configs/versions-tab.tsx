@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 import { History } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Combobox,
@@ -16,6 +15,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigScopeLevel, ConfigScopeSummary, ConfigVersionListItem } from '@beacon/contracts'
 
 import Pager from '../../features/delivery/pager'
@@ -189,7 +189,8 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
         </div>
       </div>
 
-      <AsyncSection
+      <PageAsyncSection
+        keepContentWhileRefreshing
         isLoading={scopesQuery.isLoading || versionsQuery.isLoading}
         isError={scopesQuery.isError || versionsQuery.isError}
         error={scopesQuery.error ?? versionsQuery.error}
@@ -202,7 +203,7 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
           emptyText={t('delivery.configs.detail.versions.empty')}
           density="compact"
         />
-      </AsyncSection>
+      </PageAsyncSection>
 
       <Pager
         page={page}

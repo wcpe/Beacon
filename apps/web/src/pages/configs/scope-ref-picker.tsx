@@ -7,7 +7,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Check, Search } from 'lucide-react'
 
-import { AsyncSection, Button, Combobox, Input, cn } from '@beacon/ui'
+import { Button, Combobox, Input, cn } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigScopeLevel } from '@beacon/contracts'
 
 import { fetchServers, fetchZoneTree } from '../../api/cluster'
@@ -85,7 +86,12 @@ function TreeLevelPicker({ namespaceId, level, value, onChange, excludeIds, id }
   }, [treeQuery.data, level, excludeIds])
 
   return (
-    <AsyncSection isLoading={treeQuery.isLoading} isError={treeQuery.isError} error={treeQuery.error}>
+    <PageAsyncSection
+      keepContentWhileRefreshing
+      isLoading={treeQuery.isLoading}
+      isError={treeQuery.isError}
+      error={treeQuery.error}
+    >
       <Combobox
         id={id}
         aria-label={t('delivery.configs.scopePicker.pickLabel')}
@@ -99,7 +105,7 @@ function TreeLevelPicker({ namespaceId, level, value, onChange, excludeIds, id }
         placeholder={t('delivery.configs.scopePicker.pickLabel')}
         emptyText={t('delivery.configs.scopePicker.empty')}
       />
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }
 
@@ -144,7 +150,12 @@ function ServerSearchPicker({ namespaceId, value, onChange, excludeIds, id }: Se
           className="h-8 w-full pl-8 text-xs"
         />
       </div>
-      <AsyncSection isLoading={serversQuery.isLoading} isError={serversQuery.isError} error={serversQuery.error}>
+      <PageAsyncSection
+        keepContentWhileRefreshing
+        isLoading={serversQuery.isLoading}
+        isError={serversQuery.isError}
+        error={serversQuery.error}
+      >
         {items.length === 0 ? (
           <p className="px-1 py-2 text-xs text-ink-3">{t('delivery.configs.scopePicker.serverEmpty')}</p>
         ) : (
@@ -188,7 +199,7 @@ function ServerSearchPicker({ namespaceId, value, onChange, excludeIds, id }: Se
             })}
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </div>
   )
 }

@@ -2,7 +2,8 @@
 // 数据来自 Legacy /admin/v1/system/status 与 /system/observability，定期轮询刷新。
 import { useQuery } from '@tanstack/react-query'
 
-import { AsyncSection, CardGridSkeleton } from '@beacon/ui'
+import { CardGridSkeleton } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 
 import { fetchSystemObservability, fetchSystemStatus } from '../api/system'
 import RuntimeCard from './system/runtime-card'
@@ -26,23 +27,23 @@ export default function SystemPage() {
   return (
     <section className="grid gap-4">
 
-      <AsyncSection
+      <PageAsyncSection
         isLoading={statusQuery.isLoading}
         isError={statusQuery.isError}
         error={statusQuery.error}
         skeleton={<CardGridSkeleton count={1} />}
       >
         {statusQuery.data && <RuntimeCard status={statusQuery.data} />}
-      </AsyncSection>
+      </PageAsyncSection>
 
-      <AsyncSection
+      <PageAsyncSection
         isLoading={observabilityQuery.isLoading}
         isError={observabilityQuery.isError}
         error={observabilityQuery.error}
         skeleton={<CardGridSkeleton count={3} />}
       >
         {observabilityQuery.data && <SubsystemPanel observability={observabilityQuery.data} />}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

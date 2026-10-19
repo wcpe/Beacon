@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 import { Gauge } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Input,
@@ -23,6 +22,7 @@ import {
   TableRow,
   TableSkeleton,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { SettingItem } from '@beacon/contracts'
 
 import { ApiClientError, fetchSettings, updateSetting } from '../../api/system'
@@ -117,7 +117,8 @@ export default function SettingsBlock() {
   }
 
   return (
-    <AsyncSection
+    <PageAsyncSection
+      keepContentWhileRefreshing
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}
@@ -210,6 +211,6 @@ export default function SettingsBlock() {
           )
         })}
       </div>
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }

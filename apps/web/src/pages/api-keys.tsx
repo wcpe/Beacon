@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next'
 import { KeyRound } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   DataTable,
@@ -18,6 +17,7 @@ import {
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { ApiKeyItem } from '@beacon/contracts'
 
 import { randomId } from '../lib/random-id'
@@ -199,7 +199,7 @@ export default function ApiKeysPage() {
         toolbar={toolbar}
         footer={total > PAGE_SIZE ? <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} /> : undefined}
       >
-        <AsyncSection
+        <PageAsyncSection
           isLoading={query.isLoading}
           isError={query.isError}
           error={query.error}
@@ -216,7 +216,7 @@ export default function ApiKeysPage() {
             }}
             rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
           />
-        </AsyncSection>
+        </PageAsyncSection>
       </ListCard>
     </div>
   )

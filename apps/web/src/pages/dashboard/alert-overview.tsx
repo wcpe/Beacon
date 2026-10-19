@@ -7,7 +7,8 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { CircleAlert, Info, TriangleAlert } from 'lucide-react'
 
-import { AsyncSection, Badge, CardGridSkeleton, SectionHeader, cn } from '@beacon/ui'
+import { Badge, CardGridSkeleton, SectionHeader, cn } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { AlertEventItem } from '@beacon/contracts'
 
 import { fetchAlertEvents } from '../../api/observability'
@@ -88,7 +89,7 @@ export default function AlertOverview() {
   return (
     <section className="grid grid-cols-1 grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-3.5 shadow-card">
       {header}
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isPending}
         isError={query.isError}
         error={query.error}
@@ -122,7 +123,7 @@ export default function AlertOverview() {
             </ul>
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

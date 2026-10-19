@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next'
 import { Layers, Search } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   DataTable,
@@ -17,6 +16,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { EnvItem } from '@beacon/contracts'
 
 import {
@@ -212,7 +212,7 @@ export default function EnvsPage() {
         total > PAGE_SIZE ? <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} /> : undefined
       }
     >
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
@@ -229,7 +229,7 @@ export default function EnvsPage() {
           }}
           rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
         />
-      </AsyncSection>
+      </PageAsyncSection>
     </ListCard>
   )
 

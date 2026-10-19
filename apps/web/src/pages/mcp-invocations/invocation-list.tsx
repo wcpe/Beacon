@@ -14,7 +14,6 @@ import { useTranslation } from 'react-i18next'
 import { ListFilter } from 'lucide-react'
 
 import {
-  AsyncSection,
   Checkbox,
   DataTable,
   Input,
@@ -23,6 +22,7 @@ import {
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type {
   MCPInvocationItem,
   MCPInvocationReason,
@@ -320,7 +320,7 @@ export default function InvocationList({ onView, selectedId }: InvocationListPro
           ) : undefined
         }
       >
-        <AsyncSection
+        <PageAsyncSection
           error={query.error}
           isError={query.isError}
           isLoading={query.isLoading}
@@ -347,7 +347,7 @@ export default function InvocationList({ onView, selectedId }: InvocationListPro
             rowKey={(row) => row.invocationId}
             onRowClick={onView}
           />
-        </AsyncSection>
+        </PageAsyncSection>
       </ListCard>
     </div>
   )

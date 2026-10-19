@@ -8,7 +8,6 @@ import { Link } from 'react-router-dom'
 import { Boxes, Search, ShieldCheck } from 'lucide-react'
 
 import {
-  AsyncSection,
   Button,
   DataTable,
   DestructiveConfirmDialog,
@@ -24,6 +23,7 @@ import {
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { NamespaceItem, NamespaceTrustItem, TrustCapability } from '@beacon/contracts'
 
 import {
@@ -276,7 +276,7 @@ export default function NamespacesPage() {
       toolbar={toolbar}
       footer={total > PAGE_SIZE ? <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} /> : undefined}
     >
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
@@ -293,7 +293,7 @@ export default function NamespacesPage() {
           }}
           rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
         />
-      </AsyncSection>
+      </PageAsyncSection>
     </ListCard>
   )
 

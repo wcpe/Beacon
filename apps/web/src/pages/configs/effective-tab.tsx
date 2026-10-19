@@ -7,13 +7,13 @@ import { useTranslation } from 'react-i18next'
 import { FileCheck } from 'lucide-react'
 
 import {
-  AsyncSection,
   Button,
   Combobox,
   Label,
   SectionHeader,
   cn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigFileDetail, ConfigScopeLevel } from '@beacon/contracts'
 
 import { fetchConfigEffective, type EffectiveQuery } from '../../api/delivery-configs'
@@ -117,7 +117,12 @@ export default function EffectiveTab({ fileId, file }: EffectiveTabProps) {
         </Button>
       </div>
 
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+      <PageAsyncSection
+        keepContentWhileRefreshing
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+      >
         {query.data && (
           <div className="grid gap-4">
             <p className="tnum text-sm text-ink-3">
@@ -208,7 +213,7 @@ export default function EffectiveTab({ fileId, file }: EffectiveTabProps) {
             </div>
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

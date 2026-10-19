@@ -9,7 +9,6 @@ import { Link } from 'react-router-dom'
 import { ArrowRight, ArrowRightLeft, ExternalLink, GitCompareArrows, Info } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   DataTable,
   SummaryStrip,
@@ -18,6 +17,7 @@ import {
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { MessageEdgeStat } from '@beacon/contracts'
 
 import { fetchMessageEdges, fetchMessageTypeStats } from '../../api/cluster'
@@ -136,7 +136,7 @@ export default function EdgesPanel() {
           { label: t('cluster.topology.data.maxP95'), value: `${String(aggregates.maxP95)}ms` },
         ]}
       />
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
@@ -256,7 +256,7 @@ export default function EdgesPanel() {
             )}
           </aside>
         </div>
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

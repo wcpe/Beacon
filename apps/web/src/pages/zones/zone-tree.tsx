@@ -21,7 +21,8 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, cn, DestructiveConfirmDialog, Skeleton } from '@beacon/ui'
+import { Badge, Button, cn, DestructiveConfirmDialog, Skeleton } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ServerItem, ZoneTreeResponse } from '@beacon/contracts'
 
 import {
@@ -586,7 +587,7 @@ export default function ZoneTree({
       )}
 
       <div className="max-h-[calc(100vh-16rem)] overflow-y-auto p-3">
-        <AsyncSection
+        <PageAsyncSection
           isLoading={query.isLoading}
           isError={query.isError}
           error={query.error}
@@ -807,7 +808,7 @@ export default function ZoneTree({
               })}
             </ul>
           )}
-        </AsyncSection>
+        </PageAsyncSection>
       </div>
 
       <CreateNodeDialog

@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next'
 import { CircleAlert, Files, HardDrive, RefreshCw, ScanLine, Server } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   CardDescription,
@@ -17,6 +16,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import ListCard from '../../features/shared/list-card'
 import type { AssetScanStatusItem } from '@beacon/contracts'
@@ -156,7 +156,7 @@ export default function ScanPanel({ namespaceId }: { namespaceId: number }) {
             </Button>
           </div>
         ) : (
-          <AsyncSection isLoading={query.isLoading} skeleton={<TableSkeleton columns={6} rows={4} />}>
+          <PageAsyncSection isLoading={query.isLoading} skeleton={<TableSkeleton columns={6} rows={4} />}>
             {items.length === 0 ? (
               <div className="grid justify-items-center gap-3 py-8 text-center">
                 <ScanLine className="size-8 text-ink-4" aria-hidden />
@@ -181,7 +181,7 @@ export default function ScanPanel({ namespaceId }: { namespaceId: number }) {
                 stickyHeader
               />
             )}
-          </AsyncSection>
+          </PageAsyncSection>
         )}
       </ListCard>
     </section>

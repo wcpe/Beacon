@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Activity } from 'lucide-react'
 
-import { AsyncSection, TableSkeleton } from '@beacon/ui'
+import { TableSkeleton } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import EventsTimeline from '../../features/delivery/events-timeline'
 import { useChangeEvents } from '../../features/delivery/use-change-events'
@@ -17,7 +18,8 @@ export default function EventsTab({ orderId }: EventsTabProps) {
   const { events, isLoading, isError, error, live } = useChangeEvents(orderId)
 
   return (
-    <AsyncSection
+    <PageAsyncSection
+      keepContentWhileRefreshing
       isLoading={isLoading}
       isError={isError}
       error={error}
@@ -31,6 +33,6 @@ export default function EventsTab({ orderId }: EventsTabProps) {
         </p>
         <EventsTimeline events={events} />
       </div>
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }

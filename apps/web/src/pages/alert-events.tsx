@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next'
 import { Check, CheckCheck, TriangleAlert } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
@@ -23,6 +22,7 @@ import {
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { AlertEventItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../api/http'
@@ -624,7 +624,7 @@ export default function AlertEventsPage() {
           ) : undefined
         }
       >
-        <AsyncSection
+        <PageAsyncSection
           isLoading={query.isPending}
           isError={query.isError}
           error={query.error}
@@ -642,7 +642,7 @@ export default function AlertEventsPage() {
             }}
             rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
           />
-        </AsyncSection>
+        </PageAsyncSection>
       </ListCard>
     </div>
   )

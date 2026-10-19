@@ -11,7 +11,6 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   DataTable,
@@ -21,6 +20,7 @@ import {
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { CreateMCPClientBody, MCPClientItem } from '@beacon/contracts'
 
 import { randomId } from '../lib/random-id'
@@ -278,7 +278,7 @@ export default function McpClientsPage() {
               </div>
             }
           >
-            <AsyncSection
+            <PageAsyncSection
               error={query.error}
               isError={query.isError}
               isLoading={query.isLoading}
@@ -297,7 +297,7 @@ export default function McpClientsPage() {
                   rowKey={(row) => row.clientId}
                 />
               )}
-            </AsyncSection>
+            </PageAsyncSection>
           </ListCard>
         }
         onClose={() => {

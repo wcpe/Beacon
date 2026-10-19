@@ -7,7 +7,6 @@ import { useTranslation } from 'react-i18next'
 import { Pencil, ShieldAlert } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Tabs,
@@ -15,6 +14,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchConfigFileDetail } from '../../api/delivery-configs'
 import ScopesTab from './scopes-tab'
@@ -86,7 +86,8 @@ export default function DetailView({ fileId }: DetailViewProps) {
         />
       )}
 
-      <AsyncSection
+      <PageAsyncSection
+        keepContentWhileRefreshing
         isLoading={detailQuery.isLoading}
         isError={detailQuery.isError}
         error={detailQuery.error}
@@ -113,7 +114,7 @@ export default function DetailView({ fileId }: DetailViewProps) {
             </TabsContent>
           </Tabs>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </div>
   )
 }

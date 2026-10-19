@@ -6,13 +6,13 @@ import { useTranslation } from 'react-i18next'
 import { CheckCircle2, Cloud, DownloadCloud, Rocket, Wifi } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   MarkdownLite,
   SectionHeader,
   Skeleton,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 
 import {
   ApiClientError,
@@ -134,7 +134,7 @@ export default function SystemVersionPage() {
     <section className="grid gap-4">
 
       {/* 版本信息卡（紧凑：版本号 + 渠道 / 状态 + 检查 + 更新说明，不含操作按钮） */}
-      <AsyncSection
+      <PageAsyncSection
         isLoading={checkQuery.isLoading}
         isError={checkQuery.isError}
         error={checkQuery.error}
@@ -236,7 +236,7 @@ export default function SystemVersionPage() {
             )}
           </div>
         </section>
-      </AsyncSection>
+      </PageAsyncSection>
 
       {/* 更新与渠道 / 维护操作：紧凑双栏，避免长页堆叠 */}
       <div className="grid gap-5 lg:grid-cols-2">

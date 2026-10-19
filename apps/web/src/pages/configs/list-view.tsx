@@ -7,7 +7,6 @@ import { useTranslation } from 'react-i18next'
 import { Files, Layers, Trash2 } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   DataTable,
@@ -17,6 +16,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigFileItem } from '@beacon/contracts'
 
 import ListCard from '../../features/shared/list-card'
@@ -221,7 +221,7 @@ export default function ListView({
             }}
           />
         ) : (
-          <AsyncSection
+          <PageAsyncSection
             isLoading={query.isLoading}
             isError={query.isError}
             error={query.error}
@@ -239,7 +239,7 @@ export default function ListView({
               }}
               rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50 hover:bg-brand-50' : undefined)}
             />
-          </AsyncSection>
+          </PageAsyncSection>
         )}
       </ListCard>
 

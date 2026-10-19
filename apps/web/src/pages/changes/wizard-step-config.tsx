@@ -5,7 +5,8 @@ import { useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { AsyncSection, Badge, Button, Checkbox, cn } from '@beacon/ui'
+import { Badge, Button, Checkbox, cn } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigFileItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
@@ -120,7 +121,7 @@ export default function WizardStepConfig({ namespaceId, picks, onAddMany, onRemo
     <div className="grid gap-3">
       <p className="text-sm text-muted-foreground">{t('delivery.changes.wizard.config.lead')}</p>
 
-      <AsyncSection isLoading={filesQuery.isLoading} isError={filesQuery.isError} error={filesQuery.error}>
+      <PageAsyncSection keepContentWhileRefreshing isLoading={filesQuery.isLoading} isError={filesQuery.isError} error={filesQuery.error}>
         {files.length === 0 ? (
           <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
             {t('delivery.changes.wizard.config.empty')}
@@ -208,7 +209,7 @@ export default function WizardStepConfig({ namespaceId, picks, onAddMany, onRemo
             </ul>
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
 
       {errorText !== null && <p className="text-sm text-destructive">{errorText}</p>}
     </div>
@@ -230,7 +231,8 @@ function PreviewPanel({ file, pick }: { file: ConfigFileItem; pick: WizardConfig
 
   return (
     <div className="grid gap-2 border-t border-dashed border-border bg-surface-2/50 px-3 py-2.5">
-      <AsyncSection
+      <PageAsyncSection
+        keepContentWhileRefreshing
         isLoading={pick === undefined && resolveQuery.isLoading}
         isError={pick === undefined && resolveQuery.isError}
         error={resolveQuery.error}
@@ -261,7 +263,7 @@ function PreviewPanel({ file, pick }: { file: ConfigFileItem; pick: WizardConfig
             />
           </>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </div>
   )
 }

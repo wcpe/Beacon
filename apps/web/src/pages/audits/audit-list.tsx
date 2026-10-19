@@ -11,7 +11,6 @@ import { useSearchParams } from 'react-router-dom'
 import { Download, ListFilter } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
@@ -20,6 +19,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { AuditItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/cluster'
@@ -453,7 +453,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
             : undefined
       }
     >
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isPending}
         isError={query.isError}
         error={query.error}
@@ -468,7 +468,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           onRowClick={onView}
           rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
         />
-      </AsyncSection>
+      </PageAsyncSection>
     </ListCard>
   )
 }

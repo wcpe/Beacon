@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next'
 import { MessagesSquare, Search } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
@@ -18,6 +17,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { MessageItem, MsgStatus } from '@beacon/contracts'
 
 import { fetchMessageDetail, fetchMessages, type MessagesQuery } from '../api/connections'
@@ -295,7 +295,7 @@ export default function MessagesPage() {
               ) : undefined
             }
           >
-            <AsyncSection
+            <PageAsyncSection
               isLoading={query.isLoading}
               isError={query.isError}
               error={query.error}
@@ -312,7 +312,7 @@ export default function MessagesPage() {
                 }}
                 rowClassName={(row) => (row.messageId === selectedId ? 'bg-brand-50/60' : undefined)}
               />
-            </AsyncSection>
+            </PageAsyncSection>
           </ListCard>
         }
         detail={selected === null ? null : <MessageDetailPanel row={selected} />}
@@ -432,7 +432,7 @@ function MessageHops({ messageId }: { messageId: string }) {
   return (
     <div className="border-t border-border pt-2.5">
       <p className="mb-1.5 text-xs font-semibold text-ink-2">{t('observability.messages.hopsTitle')}</p>
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
@@ -474,7 +474,7 @@ function MessageHops({ messageId }: { messageId: string }) {
         ) : (
           <span className="text-xs text-ink-4">{t('observability.messages.dash')}</span>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </div>
   )
 }

@@ -6,7 +6,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Activity, CircleCheck, CircleX, ListTree, ScrollText, TrendingUp } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton, KpiCard, type KpiTone } from '@beacon/ui'
+import { CardGridSkeleton, KpiCard, type KpiTone } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchAuditAnalytics } from '../../api/observability'
 import { auditActionLabel } from '../../features/observability/audit-action-label'
@@ -46,7 +47,7 @@ export default function AuditKpi() {
   }, [query.data, t])
 
   return (
-    <AsyncSection
+    <PageAsyncSection
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}
@@ -67,6 +68,6 @@ export default function AuditKpi() {
           )
         })}
       </div>
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }

@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next'
 import { RefreshCcw } from 'lucide-react'
 
 import {
-  AsyncSection,
   Button,
   DataTable,
   SummaryStrip,
@@ -16,6 +15,7 @@ import {
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchChangeObserve, type ChangeObserveResponse } from '../../api/delivery-changes'
 import { EVENTS_FALLBACK_POLL_MS, useChangeEvents } from '../../features/delivery/use-change-events'
@@ -138,7 +138,8 @@ export default function ObserveTab({ orderId }: ObserveTabProps) {
   )
 
   return (
-    <AsyncSection
+    <PageAsyncSection
+      keepContentWhileRefreshing
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}
@@ -177,6 +178,6 @@ export default function ObserveTab({ orderId }: ObserveTabProps) {
           density="compact"
         />
       </section>
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }

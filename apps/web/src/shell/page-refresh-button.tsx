@@ -7,6 +7,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@beacon/ui'
 
+import { beginPageRefreshing, endPageRefreshing } from './page-refreshing'
+
 /**
  * 当前路径 → 应失效的 queryKey 前缀列表。
  * 匹配页面内 useQuery 的主 key，尽量保留 URL/筛选（筛选在组件 state，invalidate 只重拉数据）。
@@ -112,6 +114,8 @@ export default function PageRefreshButton({
     if (activeRefreshes.current === 0) {
       refreshStartedAt.current = Date.now()
       onRefreshingChange(true)
+      // 同步通知页面内容区：刷新期间展示加载态（否则点刷新页面毫无变化）
+      beginPageRefreshing()
     }
     activeRefreshes.current += 1
     setSpinning(true)
@@ -138,6 +142,8 @@ export default function PageRefreshButton({
             onRefreshingChange(false)
           }, remaining)
         }
+        // 页面内容区的加载态同步收尾（同样带最短窗口）
+        endPageRefreshing()
         // 保留短暂的图标旋转反馈；指标忙碌态按上面的最短时长收尾。
         spinTimer.current = setTimeout(() => {
           setSpinning(false)

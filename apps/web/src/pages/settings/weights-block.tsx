@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 import { History } from 'lucide-react'
 
 import {
-  AsyncSection,
   Button,
   Input,
   Label,
@@ -18,6 +17,7 @@ import {
   TableRow,
   TableSkeleton,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { HealthWeightsConfig } from '@beacon/contracts'
 
 import { ApiClientError, fetchHealthWeights, putHealthWeights } from '../../api/system'
@@ -96,7 +96,8 @@ export default function WeightsBlock() {
         )}
       </div>
       <div className="grid gap-4">
-        <AsyncSection
+        <PageAsyncSection
+          keepContentWhileRefreshing
           isLoading={query.isLoading}
           isError={query.isError}
           error={query.error}
@@ -234,7 +235,7 @@ export default function WeightsBlock() {
               </div>
             </>
           )}
-        </AsyncSection>
+        </PageAsyncSection>
       </div>
     </div>
   )
