@@ -1,5 +1,5 @@
 // 两侧差异面板：直读并展示服务端返回的文本差异，读取行为由后端记入审计。
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { CircleAlert, RefreshCw, SplitSquareHorizontal } from 'lucide-react'
@@ -31,30 +31,60 @@ const DIFF_REASON = '管理台文件差异直读'
 
 export default function DiffPanel({ namespaceId }: { namespaceId: number }) {
   const { t } = useTranslation()
-  const [leftServer, setLeftServer] = useState('')
-  const [rightServer, setRightServer] = useState('')
+  const [leftSelection, setLeftSelection] = useState<{ namespaceId: number; serverId: string } | null>(null)
+  const [rightSelection, setRightSelection] = useState<{ namespaceId: number; serverId: string } | null>(null)
   const [path, setPath] = useState('')
-  const [result, setResult] = useState<AssetPairDiffResponse | null>(null)
+  const [result, setResult] = useState<{ namespaceId: number; response: AssetPairDiffResponse } | null>(null)
+  const previousNamespaceId = useRef(namespaceId)
+  const namespaceIdRef = useRef(namespaceId)
+  namespaceIdRef.current = namespaceId
+  const leftServer = leftSelection?.namespaceId === namespaceId ? leftSelection.serverId : ''
+  const rightServer = rightSelection?.namespaceId === namespaceId ? rightSelection.serverId : ''
+  const visibleResult = result?.namespaceId === namespaceId ? result.response : null
   const canCompare = leftServer.trim() !== '' && rightServer.trim() !== '' && path.trim() !== ''
 
   const diffMutation = useMutation({
-    mutationFn: () => readAssetPair(
-      { namespaceId, serverId: leftServer.trim(), path: path.trim() },
-      { namespaceId, serverId: rightServer.trim(), path: path.trim() },
-      DIFF_REASON,
-    ),
-    onSuccess: setResult,
+    mutationFn: (variables: { namespaceId: number; leftServer: string; rightServer: string; path: string }) =>
+      readAssetPair(
+        { namespaceId: variables.namespaceId, serverId: variables.leftServer, path: variables.path },
+        { namespaceId: variables.namespaceId, serverId: variables.rightServer, path: variables.path },
+        DIFF_REASON,
+      ),
+    onSuccess: (response, variables) => {
+      if (variables.namespaceId === namespaceIdRef.current) {
+        setResult({ namespaceId: variables.namespaceId, response })
+      }
+    },
   })
-  const error = diffMutation.error
+  const error = diffMutation.variables?.namespaceId === namespaceId ? diffMutation.error : null
+  const isPending = diffMutation.variables?.namespaceId === namespaceId && diffMutation.isPending
+
+  useEffect(() => {
+    if (previousNamespaceId.current === namespaceId) return
+    previousNamespaceId.current = namespaceId
+    setLeftSelection(null)
+    setRightSelection(null)
+    setPath('')
+    setResult(null)
+    diffMutation.reset()
+  }, [namespaceId, diffMutation.reset])
 
   const compare = (): void => {
     setResult(null)
     diffMutation.reset()
-    diffMutation.mutate()
+    diffMutation.mutate({
+      namespaceId,
+      leftServer: leftServer.trim(),
+      rightServer: rightServer.trim(),
+      path: path.trim(),
+    })
   }
 
   const retryError = (): void => {
-    diffMutation.mutate()
+    const variables = diffMutation.variables
+    if (variables?.namespaceId === namespaceId) {
+      diffMutation.mutate(variables)
+    }
   }
 
   return (
@@ -84,7 +114,9 @@ export default function DiffPanel({ namespaceId }: { namespaceId: number }) {
                 aria-label={t('delivery.assets.diff.leftServer')}
                 namespaceId={namespaceId}
                 value={leftServer}
-                onChange={setLeftServer}
+                onChange={(serverId) => {
+                  setLeftSelection(serverId === '' ? null : { namespaceId, serverId })
+                }}
                 className="w-full"
               />
             </div>
@@ -95,7 +127,9 @@ export default function DiffPanel({ namespaceId }: { namespaceId: number }) {
                 aria-label={t('delivery.assets.diff.rightServer')}
                 namespaceId={namespaceId}
                 value={rightServer}
-                onChange={setRightServer}
+                onChange={(serverId) => {
+                  setRightSelection(serverId === '' ? null : { namespaceId, serverId })
+                }}
                 className="w-full"
               />
             </div>
@@ -120,8 +154,8 @@ export default function DiffPanel({ namespaceId }: { namespaceId: number }) {
           <CardDescription className="min-w-0 flex-1">
             {!canCompare ? t('delivery.assets.diff.needBothSides') : ''}
           </CardDescription>
-          <Button variant="default" disabled={!canCompare || diffMutation.isPending} onClick={compare}>
-            {diffMutation.isPending ? t('delivery.assets.diff.loading') : t('delivery.assets.diff.run')}
+          <Button variant="default" disabled={!canCompare || isPending} onClick={compare}>
+            {isPending ? t('delivery.assets.diff.loading') : t('delivery.assets.diff.run')}
           </Button>
         </CardFooter>
       </Card>
@@ -137,7 +171,7 @@ export default function DiffPanel({ namespaceId }: { namespaceId: number }) {
             <Button
               size="sm"
               variant="outline"
-              disabled={diffMutation.isPending}
+              disabled={isPending}
               onClick={retryError}
             >
               <RefreshCw className="size-3.5" aria-hidden />
@@ -147,7 +181,7 @@ export default function DiffPanel({ namespaceId }: { namespaceId: number }) {
         </Card>
       )}
 
-      {result === null && !error && (
+      {visibleResult === null && !error && (
         <Card size="sm">
           <CardContent className="flex items-start gap-3 py-4">
             <SplitSquareHorizontal className="mt-0.5 size-5 shrink-0 text-brand" aria-hidden />
@@ -159,7 +193,7 @@ export default function DiffPanel({ namespaceId }: { namespaceId: number }) {
         </Card>
       )}
 
-      {result !== null && <DiffResult result={result} />}
+      {visibleResult !== null && <DiffResult result={visibleResult} />}
     </section>
   )
 }

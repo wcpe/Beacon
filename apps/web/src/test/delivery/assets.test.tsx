@@ -2,7 +2,7 @@
 // 清单主从布局点行出非模态详情面板、空态引导、比对交互。
 // 命名空间范围自本页移除选择器后取自页眉观测范围选择器（真源 features/env/observation-scope），
 // 因此用例统一在 beforeEach 里把范围固定到 mock 的 prod 命名空间（id=1）。
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { delay, http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -486,5 +486,39 @@ describe('/assets 文件资产页', () => {
     expect(within(region).getByText('currency: 10')).toBeInTheDocument()
     expect(within(region).getByText('currency: 20')).toBeInTheDocument()
     expect(within(region).getByText('文件正文仅随本次直读响应展示；审计只记录目标与元数据。')).toBeInTheDocument()
+  }, 20_000)
+
+  it('切换页眉命名空间后清空两侧选择、路径和已加载差异', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    server.use(
+      http.post('*/admin/v2/assets/diff', () =>
+        HttpResponse.json({ identical: true, left: null, right: null }),
+      ),
+    )
+    renderPage(<AssetsPage />)
+
+    await user.click(await screen.findByRole('tab', { name: '两侧差异' }))
+    const region = await screen.findByRole('region', { name: '两侧差异' })
+    await user.click(within(region).getByLabelText('左侧子服'))
+    await user.click(await screen.findByRole('option', { name: 'lobby-1' }))
+    await user.click(within(region).getByLabelText('右侧子服'))
+    await user.click(await screen.findByRole('option', { name: 'lobby-2' }))
+    await user.type(within(region).getByLabelText('文件路径'), 'plugins/Beacon/config.yml')
+    await user.click(within(region).getByRole('button', { name: '查看差异' }))
+    expect(await within(region).findByText('两侧文件内容一致，无需展示正文。')).toBeInTheDocument()
+
+    act(() => {
+      setObservationScope({ kind: 'env', envId: 2, namespaceId: 2 })
+    })
+
+    await waitFor(() => {
+      expect(within(region).getByLabelText('左侧子服')).toHaveValue('')
+      expect(within(region).getByLabelText('右侧子服')).toHaveValue('')
+      expect(within(region).getByLabelText('文件路径')).toHaveValue('')
+      expect(within(region).queryByText('两侧文件内容一致，无需展示正文。')).not.toBeInTheDocument()
+      expect(within(region).getByText('尚未查看差异')).toBeInTheDocument()
+      expect(within(region).getByRole('button', { name: '查看差异' })).toBeDisabled()
+    })
   }, 20_000)
 })
