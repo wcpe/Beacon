@@ -35,6 +35,16 @@ func TestAgentLogTailFullChain(t *testing.T) {
 		t.Fatalf("agent 应拉到指定 tail-logs 命令，实际 %d：%v", code, pulled)
 	}
 
+	// 身份不符（另一台 agent 猜中 commandId）必须被拒，且不得改写命令内容。
+	// 这一步必须放在命令仍处 fetched 时进行：若放在合法回传之后，命令已是 done，
+	// 状态校验本身就会拒绝，断言将无法鉴别归属校验是否还存在（会空过）。
+	code, forged := doAgentJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/logs",
+		map[string]string{"X-Beacon-Token": v2Token, "X-Beacon-Identity": otherIdentityID, "X-Beacon-Boot": "boot-1"},
+		map[string]any{"commandId": cmdID, "lines": []map[string]any{{"level": "INFO", "text": "越权写入"}}})
+	if code != http.StatusNotFound {
+		t.Fatalf("非归属 agent 回传应 404，实际 %d：%v", code, forged)
+	}
+
 	code, recv := doAgentJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/logs", agentHeaders, map[string]any{
 		"commandId": cmdID,
 		"lines": []map[string]any{
@@ -44,14 +54,6 @@ func TestAgentLogTailFullChain(t *testing.T) {
 	})
 	if code != http.StatusOK {
 		t.Fatalf("回传日志应 200，实际 %d：%v", code, recv)
-	}
-
-	// 身份不符（另一台 agent 猜中 commandId）必须被拒，且不得改写命令内容。
-	code, forged := doAgentJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/logs",
-		map[string]string{"X-Beacon-Token": v2Token, "X-Beacon-Identity": otherIdentityID, "X-Beacon-Boot": "boot-1"},
-		map[string]any{"commandId": cmdID, "lines": []map[string]any{{"level": "INFO", "text": "越权写入"}}})
-	if code == http.StatusOK {
-		t.Fatalf("非归属 agent 回传不得成功，实际 %d：%v", code, forged)
 	}
 
 	code, view := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-1/logs/grants/legacy/consume", map[string]any{"commandId": cmdID})

@@ -325,7 +325,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 			// 跨服消息管理面查询端点（FR-149/150，见 spec §5.2）：messageId/correlationId 直查或条件游标分页 /
 			// 详情（hops + 关联摘要）/ 异常链路聚合（/topology 数据源）/ payload 受控查看（权限点 message.payload.view：
-			// POST 属写方法，readonly 经上面 readonlyWriteGuard 403）+ 必填原因 + 先审计后返回。列表与详情永不含 payload。
+			// 按 content.read 直执，凭 management.read 能力判定——readonly 具该能力即放行，不再按角色拦写方法）
+			// + 必填原因 + 先审计后返回。列表与详情永不含 payload。
 			// payload 端点由 service 自记 message.payload.view 专项审计（detail 不含 payload）。
 			if h.V2MessageAdmin != nil {
 				r.Get("/messages", h.V2MessageAdmin.List)
@@ -375,8 +376,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// 已登记 coveredWriteRoutes 使兜底审计跳过、避免双记。抽成函数注册（内部 nil 守卫），避免内联 if 触发 nestif。
 			registerV2AssetsAdminRoutes(r, h)
 			// 文件资产内容预览 / diff / 敏感规则（FR-164，见 spec §5.2）：控制面不存文件内容，preview/diff 经命令
-			// 下发向 agent 现取。preview/diff 为 POST（有建命令 / 唤醒 agent 写副作用，readonly 经 readonlyWriteGuard 403），
-			// service 内在成功读取后自记 asset.preview / asset.diff 专项审计（先审计后返回，detail 绝不含文件内容）。
+			// 下发向 agent 现取。preview/diff 为 POST（有建命令 / 唤醒 agent 写副作用），按 content.read 直执、
+			// 凭 management.read 能力判定（readonly 具该能力即放行），service 内在成功读取后自记
+			// asset.preview / asset.diff 专项审计（先审计后返回，detail 绝不含文件内容）。
 			// 敏感规则读写底层设置项 assets.sensitive-path-patterns（/settings 不重复暴露），PUT 自记 asset.sensitive_rule_update。
 			// 三个写端点登记 coveredWriteRoutes 使兜底审计跳过、避免双记。与 archive / config-center 一致无条件注册
 			// （assetHandler 在 main.go 恒构造；handler 仅请求期解引用，构造期不调用）。

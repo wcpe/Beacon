@@ -83,7 +83,6 @@ export const delivery = {
       metaTitle: '元数据',
       previewTitle: '内容预览',
       previewLoading: '正在读取正文…',
-      sensitiveOpen: '直接查看',
       requestPreview: '查看文件内容',
       fields: {
         serverId: '子服',
@@ -1217,9 +1216,6 @@ export const delivery = {
     filters: {
       advanced: '高级筛选',
       groups: {
-        statusRisk: '状态与风险',
-        applicant: '申请人',
-        timeRange: '时间范围',
       },
     },
   },

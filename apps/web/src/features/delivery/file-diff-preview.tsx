@@ -36,6 +36,8 @@ export default function FileDiffPreview({ orderId, item }: FileDiffPreviewProps)
     queryFn: () => fetchChangeItemFileDiff(orderId, item.id),
     // 409 是预期形态，自动重试无意义
     retry: false,
+    // 响应含文件正文：与资产 preview/diff 的 mutation 同口径，不留在 QueryCache 里供事后回退查看。
+    gcTime: 0,
   })
 
   const apiError = query.error instanceof ApiClientError ? query.error : null

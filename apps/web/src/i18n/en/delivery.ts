@@ -84,7 +84,6 @@ export const delivery = {
       metaTitle: 'Metadata',
       previewTitle: 'Content preview',
       previewLoading: 'Reading content…',
-      sensitiveOpen: 'View directly',
       requestPreview: 'View file content',
       fields: {
         serverId: 'Server ID',
@@ -1221,9 +1220,6 @@ export const delivery = {
     filters: {
       advanced: 'Advanced filters',
       groups: {
-        statusRisk: 'Status and risk',
-        applicant: 'Applicant',
-        timeRange: 'Time range',
       },
     },
   },
