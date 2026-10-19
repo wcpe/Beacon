@@ -45,9 +45,14 @@ const TONE_CLASS: Record<KpiTone, string> = {
 }
 
 export default function KpiCard({ label, value, unit, icon, tone = 'brand', meta, visual, jump = true }: KpiCardProps) {
-  // 只有字符串主数值才能比较前值触发跳动；ReactNode 无法判断是否变化，原样渲染。
+  // 字符串与数字都能比较前值触发跳动（数字转字符串后比较）；ReactNode 无法判断是否变化，原样渲染。
+  // 若不把 number 一并纳入，绝大多数 KPI 在数据刷新时不会有任何可见反馈。
   const valueNode =
-    jump && typeof value === 'string' ? <JumpValue value={value} /> : value
+    jump && (typeof value === 'string' || typeof value === 'number') ? (
+      <JumpValue value={String(value)} />
+    ) : (
+      value
+    )
 
   return (
     <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-card px-3 py-2.5 shadow-card">
