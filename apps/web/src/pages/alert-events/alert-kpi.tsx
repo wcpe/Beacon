@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next'
 import { Bell, CircleAlert, CircleCheck, CircleHelp, Inbox, TriangleAlert } from 'lucide-react'
 
 import { KpiCard, type KpiTone } from '@beacon/ui'
-import { useRefreshLoading } from '../../features/shared/page-async-section'
 import type { AlertEventItem } from '@beacon/contracts'
 
 interface AlertKpiProps {
@@ -17,7 +16,6 @@ interface AlertKpiProps {
 
 export default function AlertKpi({ total, items }: AlertKpiProps) {
   const { t } = useTranslation()
-  const refreshing = useRefreshLoading()
   const countWhere = (pred: (i: AlertEventItem) => boolean) => items.filter(pred).length
   const openCount = countWhere((i) => i.status === 'open')
   const ackedCount = countWhere((i) => i.status === 'acknowledged')
@@ -46,7 +44,7 @@ export default function AlertKpi({ total, items }: AlertKpiProps) {
           <KpiCard
             key={c.key}
             label={t(`observability.alertEvents.kpi.${c.key}`)}
-            value={<span className={refreshing ? 'opacity-50 transition-opacity' : 'transition-opacity'}>{c.value}</span>}
+            value={c.value}
             icon={<Icon className="size-4" />}
             tone={c.tone}
           />

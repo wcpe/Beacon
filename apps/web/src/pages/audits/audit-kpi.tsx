@@ -1,18 +1,13 @@
 // 审计 KPI：审计总数 + 成功 / 失败 / 成功率 + 动作种类 / 最高频动作，取自 audits/analytics。
 // 前四张给规模与结果，后两张给「审计面有多广、最常发生什么」。
 
-import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Activity, CircleCheck, CircleX, ListTree, ScrollText, TrendingUp } from 'lucide-react'
 
-import { CardGridSkeleton, KpiCard, cn, type KpiTone } from '@beacon/ui'
-import PageAsyncSection, { useRefreshLoading } from '../../features/shared/page-async-section'
-
-function RefreshValue({ children, refreshing }: { children: ReactNode; refreshing: boolean }) {
-  return <span className={cn('transition-opacity', refreshing && 'opacity-50')}>{children}</span>
-}
+import { CardGridSkeleton, KpiCard, type KpiTone } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchAuditAnalytics } from '../../api/observability'
 import { auditActionLabel } from '../../features/observability/audit-action-label'
@@ -20,7 +15,6 @@ import { auditActionLabel } from '../../features/observability/audit-action-labe
 export default function AuditKpi() {
   const { t } = useTranslation()
   const query = useQuery({ queryKey: ['audits', 'analytics'], queryFn: fetchAuditAnalytics })
-  const refreshing = useRefreshLoading()
 
   // KPI 六卡：总数（品牌）/ 成功（正常）/ 失败（危急）/ 成功率 / 动作种类 / 最高频动作。
   const cards = useMemo<
@@ -66,10 +60,10 @@ export default function AuditKpi() {
             <KpiCard
               key={c.key}
               label={t(`observability.audits.kpi.${c.key}`)}
-              value={<RefreshValue refreshing={refreshing}>{c.value}</RefreshValue>}
+              value={c.value}
               icon={<Icon className="size-4" />}
               tone={c.tone}
-              meta={c.meta === undefined ? undefined : <RefreshValue refreshing={refreshing}>{c.meta}</RefreshValue>}
+              meta={c.meta}
             />
           )
         })}

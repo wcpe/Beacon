@@ -60,7 +60,7 @@ import {
   type KpiTone,
 } from '@beacon/ui'
 import PageDataTable from '../../features/shared/page-data-table'
-import PageAsyncSection, { useRefreshLoading } from '../../features/shared/page-async-section'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { HealthItem, MetricsSeriesPoint, ServerItem } from '@beacon/contracts'
 import {
   ApiClientError,
@@ -158,7 +158,6 @@ function AssetsPanelContent({
   initialKeyword = '',
 }: AssetsPanelProps) {
   const { t } = useTranslation()
-  const refreshing = useRefreshLoading()
   const queryClient = useQueryClient()
   // FR-178：顶栏 env 作用域与页内命名空间合成受限请求范围。
   const envScope = useEnvNamespaceScope()
@@ -788,7 +787,7 @@ function AssetsPanelContent({
           <KpiCard
             key={c.key}
             label={c.label}
-            value={<span className={cn('transition-opacity', refreshing && 'opacity-50')}>{c.value}</span>}
+            value={c.value}
             icon={c.icon}
             tone={c.tone}
           />

@@ -1,7 +1,6 @@
 // 命令观测 KPI：命令总数 + 按状态计数（待取走 / 已完成 / 失败 / 过期）+ 命令类型数 / 涉及服务器数，
 // 取自 commands/analytics。前五张给吞吐与结果，后两张给覆盖面。
 
-import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -15,12 +14,8 @@ import {
   Terminal,
 } from 'lucide-react'
 
-import { CardGridSkeleton, KpiCard, cn, type KpiTone } from '@beacon/ui'
-import PageAsyncSection, { useRefreshLoading } from '../../features/shared/page-async-section'
-
-function RefreshValue({ children, refreshing }: { children: ReactNode; refreshing: boolean }) {
-  return <span className={cn('transition-opacity', refreshing && 'opacity-50')}>{children}</span>
-}
+import { CardGridSkeleton, KpiCard, type KpiTone } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchCommandAnalytics } from '../../api/observability'
 
@@ -46,7 +41,6 @@ const KPIS: KpiDef[] = [
 export default function CommandKpi() {
   const { t } = useTranslation()
   const query = useQuery({ queryKey: ['commands', 'analytics'], queryFn: fetchCommandAnalytics })
-  const refreshing = useRefreshLoading()
 
   const values = useMemo(() => {
     const data = query.data
@@ -79,7 +73,7 @@ export default function CommandKpi() {
             <KpiCard
               key={k.key}
               label={t(`observability.commands.kpi.${k.key}`)}
-              value={<RefreshValue refreshing={refreshing}>{values[i]}</RefreshValue>}
+              value={values[i]}
               icon={<Icon className="size-4" />}
               tone={k.tone}
             />
