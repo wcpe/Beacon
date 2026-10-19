@@ -204,29 +204,34 @@ func (s *AssetPreviewService) Preview(ctx context.Context, p PreviewParams) (*As
 }
 
 // PreviewFromCommand 兼容旧 grant 路径：以完成的 asset-read 命令定位文件，再按 direct 路径重新读取。
-func (s *AssetPreviewService) PreviewFromCommand(ctx context.Context, serverID string, commandID uint, reason, operator, clientIP string) (*AssetPreviewResult, error) {
-	if s == nil || s.cmdRepo == nil || commandID == 0 || serverID == "" {
+// PreviewFromCommand 以已完成的 asset-read 命令定位目标，直读并审计。
+// 目标 server 与 namespace 一律取自命令本身——调用方无法指定，避免拿别的 server 的命令读本机文件。
+func (s *AssetPreviewService) PreviewFromCommand(ctx context.Context, commandID uint, reason, operator, clientIP string) (*AssetPreviewResult, error) {
+	if s == nil || s.cmdRepo == nil || commandID == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
 	cmd, err := s.cmdRepo.FindByID(commandID)
 	if err != nil {
 		return nil, err
 	}
-	if cmd == nil || cmd.Type != model.CommandTypeAssetRead || cmd.Status != model.CommandStatusDone || cmd.ServerID != serverID {
+	if cmd == nil || cmd.Type != model.CommandTypeAssetRead || cmd.Status != model.CommandStatusDone || cmd.ServerID == "" {
 		return nil, apperr.ErrCommandNotFound
 	}
 	var read assetReadPayload
 	if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
 		return nil, apperr.ErrCommandNotFound
 	}
-	srv, namespace, err := resolveAssetPreviewServerByNamespaceCode(s.db, serverID, cmd.NamespaceCode)
+	srv, namespace, err := resolveAssetPreviewServerByNamespaceCode(s.db, cmd.ServerID, cmd.NamespaceCode)
 	if err != nil {
 		return nil, apperr.ErrCommandNotFound
 	}
 	if namespace != cmd.NamespaceCode {
 		return nil, apperr.ErrCommandNotFound
 	}
-	return s.Preview(ctx, PreviewParams{NamespaceID: srv.NamespaceID, ServerID: serverID, Path: read.Path, Reason: reason, Operator: operator, ClientIP: clientIP})
+	return s.Preview(ctx, PreviewParams{
+		NamespaceID: srv.NamespaceID, ServerID: cmd.ServerID, Path: read.Path,
+		Reason: reason, Operator: operator, ClientIP: clientIP,
+	})
 }
 
 // applyPreview 在受控单文件读取路径中读取并审计内容。
@@ -400,8 +405,10 @@ func (s *AssetPreviewService) ReceiveContent(ns, serverID string, commandID uint
 		if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
 			return apperr.ErrForbidden
 		}
-		var server model.Server
-		if findErr := tx.Where("server_id = ?", cmd.ServerID).First(&server).Error; findErr != nil {
+		// 按 (server_id, namespace) 联合解析目标服务器：serverId 可跨 namespace 重名，
+		// 只按裸 server_id 取首条会命中别的环境的同名实例，把资产绑定到错误的行上。
+		server, _, resolveErr := resolveAssetPreviewServerByNamespaceCode(tx, cmd.ServerID, cmd.NamespaceCode)
+		if resolveErr != nil {
 			return apperr.ErrForbidden
 		}
 		asset, findErr := s.assetRepo.WithTx(tx).FindByServerPath(server.ID, read.Path)
@@ -659,12 +666,37 @@ func (s *AssetPreviewService) loadSensitivePatterns() ([]string, error) {
 	return patterns, nil
 }
 
-// recordPreviewAudit 落一条 asset.preview 审计，仅记目标和结果元数据，不记录正文或原因文本。
+// auditReasonMaxRunes 是写进审计 detail 的原因文本上限（与入参校验的 255 字符一致）。
+// 超出即截断，避免超长用户输入把审计行撑大；只记这一段，不附加其它信息。
+const auditReasonMaxRunes = 255
+
+// auditReasonText 归一审计用的原因文本：去首尾空白并截断到 255 个字符；无原因时返回空串。
+//
+// 为什么要把 reason 写进审计 detail：强制填 reason 若只校验不入库，「谁为什么看了这份正文」
+// 就无从追溯，强制填 reason 会退化成形式。正文仍然绝不入 detail。
+//
+// 同包内 message_payload_service.go 的 payload 查看路径也复用它，保证各处口径一致。
+func auditReasonText(reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) > auditReasonMaxRunes {
+		runes = runes[:auditReasonMaxRunes]
+	}
+	return string(runes)
+}
+
+// recordPreviewAudit 落一条 asset.preview 审计，只记目标、结果元数据与原因文本，绝不记录正文。
 // 审计写失败拒绝返回内容，杜绝「看了没记录」。
 func (s *AssetPreviewService) recordPreviewAudit(p PreviewParams, serverID, nsCode string, c *assetContent, sensitive bool) error {
 	detail := map[string]any{"serverId": serverID, "path": p.Path, "truncated": c.truncated, "binary": c.binary}
 	if sensitive {
 		detail["sensitiveOverride"] = true
+	}
+	if reason := auditReasonText(p.Reason); reason != "" {
+		detail["reason"] = reason
 	}
 	raw, _ := json.Marshal(detail)
 	entry := &model.AuditLog{
@@ -682,7 +714,7 @@ func (s *AssetPreviewService) recordPreviewAudit(p PreviewParams, serverID, nsCo
 	return nil
 }
 
-// recordDiffAudit 落一条 asset.diff 审计，仅记两侧目标、比较结果和敏感标记，不记录正文或原因文本。
+// recordDiffAudit 落一条 asset.diff 审计，只记两侧目标、比较结果、敏感标记与原因文本，绝不记录正文。
 func (s *AssetPreviewService) recordDiffAudit(p DiffParams, leftServerID, rightServerID, nsCode string, identical, sensitive bool) error {
 	detail := map[string]any{
 		"left":      map[string]string{"serverId": leftServerID, "path": p.Left.Path},
@@ -691,6 +723,9 @@ func (s *AssetPreviewService) recordDiffAudit(p DiffParams, leftServerID, rightS
 	}
 	if sensitive {
 		detail["sensitiveOverride"] = true
+	}
+	if reason := auditReasonText(p.Reason); reason != "" {
+		detail["reason"] = reason
 	}
 	raw, _ := json.Marshal(detail)
 	entry := &model.AuditLog{

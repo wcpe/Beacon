@@ -71,7 +71,8 @@ type PayloadResult struct {
 	Size    int
 }
 
-// View 直接读取 payload；先写入仅含消息引用、哈希与大小的审计，再返回正文。
+// View 直接读取 payload；先写入仅含消息引用、哈希、大小与原因文本的审计，再返回正文。
+// 审计写失败即拒绝返回正文，保证「看了必留痕」。
 func (s *MessagePayloadService) View(p ViewPayloadParams) (PayloadResult, error) {
 	if s == nil || s.repo == nil || s.auditWriter == nil {
 		return PayloadResult{}, apperr.ErrInternal
@@ -112,7 +113,14 @@ func (s *MessagePayloadService) View(p ViewPayloadParams) (PayloadResult, error)
 	}
 	hash := payloadSHA256(payload.Payload)
 	result := PayloadResult{Payload: payload.Payload, SHA256: hash, Size: len(payload.Payload)}
-	detail, _ := json.Marshal(map[string]any{"messageId": p.MessageID, "sha256": hash, "size": len(payload.Payload)})
+	// detail 只记消息引用、哈希、大小与原因文本（合规追溯「谁为什么看了正文」），
+	// 绝不记 payload 正文；用 json.Marshal 保证 detail 恒为合法 JSON。
+	detail, err := json.Marshal(map[string]any{
+		"messageId": p.MessageID, "sha256": hash, "size": len(payload.Payload), "reason": auditReasonText(reason),
+	})
+	if err != nil {
+		return PayloadResult{}, err
+	}
 	if err := s.auditWriter.Create(&model.AuditLog{
 		NamespaceCode: namespace.Code, Operator: p.Operator, Action: model.ActionMessagePayloadView, TargetType: model.TargetTypeMessage,
 		TargetRef: p.MessageID, Detail: string(detail), Result: model.ResultOK, ClientIP: p.ClientIP,

@@ -509,6 +509,9 @@ const (
 	ActionFileImprint = "file.imprint"
 	// 取 agent 日志（FR-88，见 ADR-0040）：admin 触发命令在线实例回传自身脱敏日志（detail 仅 commandId/serverId，不含日志内容）
 	ActionInstanceTailLogs = "instance.tail-logs"
+	// ActionInstanceTailLogsRead 是「读取已回传日志正文」的独立动作（detail 仅 commandId/serverId/status/lineCount）。
+	// 与触发动作 ActionInstanceTailLogs 分开，审计页才能按 action 过滤「谁读过正文」。
+	ActionInstanceTailLogsRead = "instance.tail-logs-read"
 	// 强制重同步（FR-91）：admin 触发命令在线实例重拉有效配置/文件树/覆盖集（detail 仅 commandId/serverId，无内容）
 	ActionInstanceResync = "instance.resync"
 	// BC 受管目录立即重同步（FR-201）：单 BC 与 namespace 两种触发作用域。
@@ -516,6 +519,9 @@ const (
 	ActionNamespaceBCDirectoryResync = "namespace.bc-directory-resync"
 	// 文件浏览（FR-110，见 ADR-0049）：admin 触发命令在线实例列目录 / 读子树 / 读单文件（detail 仅 commandId/op/path，绝不含文件内容）
 	ActionFileBrowse = "file.browse"
+	// ActionFileBrowseRead 是「读取已回传浏览正文」的独立动作（detail 仅 commandId/serverId/op/path/bytes）。
+	// 与触发动作 ActionFileBrowse 分开，审计页才能按 action 过滤「谁读过正文」。
+	ActionFileBrowseRead = "file.browse-read"
 	// 文件资产内容预览 / diff / 敏感规则修改（FR-164，见 v2-file-assets.md §4.7）：
 	// preview/diff 的 detail 记 serverId/path/truncated/binary/sensitiveOverride/reason，**绝不含文件内容**；
 	// sensitive_rule_update 记规则前后差异（glob 清单，非凭据）。

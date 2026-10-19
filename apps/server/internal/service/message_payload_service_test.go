@@ -3,6 +3,7 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -149,7 +150,7 @@ func TestPayloadViewRejectsOutsideObservationScope(t *testing.T) {
 	}
 }
 
-// TestPayloadViewSuccessAuditsFirst 验证返回 payload 前已有只含元数据且归属正确 namespace 的审计。
+// TestPayloadViewSuccessAuditsFirst 验证返回 payload 前已有只含元数据与原因、归属正确 namespace 的审计。
 func TestPayloadViewSuccessAuditsFirst(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_ok"))
 	audit := &fakeAuditWriter{}
@@ -165,13 +166,21 @@ func TestPayloadViewSuccessAuditsFirst(t *testing.T) {
 	if strings.Contains(audit.entries[0].Detail, secret) || !strings.Contains(audit.entries[0].Detail, res.SHA256) {
 		t.Fatalf("审计只能含哈希等元数据，detail=%q", audit.entries[0].Detail)
 	}
+	// reason 必须落进审计 detail：强制填 reason 却只校验不入库，事后无法追溯谁为什么读了正文。
+	if !strings.Contains(audit.entries[0].Detail, "跨域排查") {
+		t.Fatalf("审计 detail 必须记录原因文本，detail=%q", audit.entries[0].Detail)
+	}
+	if !json.Valid([]byte(audit.entries[0].Detail)) {
+		t.Fatalf("审计 detail 必须是合法 JSON，detail=%q", audit.entries[0].Detail)
+	}
 	if audit.entries[0].NamespaceCode != "prod" {
 		t.Fatalf("payload 读取审计应归属消息 namespace prod，实际 %q", audit.entries[0].NamespaceCode)
 	}
 }
 
-// TestPayloadViewRequiresApprovedGrant 验证消息正文直读不再依赖审批 grant，但仍先写审计。
-func TestPayloadViewRequiresApprovedGrant(t *testing.T) {
+// TestPayloadViewDirectReadWithAudit 验证消息正文直读不再依赖审批 grant，但仍先写审计。
+// 直读是产品意图（不恢复旧审批语义）；本用例只锁「直读 + 必留痕」这条契约。
+func TestPayloadViewDirectReadWithAudit(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_grant_required"))
 	audit := &fakeAuditWriter{}
 	svc := newPayloadServiceForTest(repo, audit)
@@ -181,6 +190,9 @@ func TestPayloadViewRequiresApprovedGrant(t *testing.T) {
 	res, err := svc.View(ViewPayloadParams{MessageID: id, Reason: "排查", Operator: "alice"})
 	if err != nil || res.Payload != "允许直读" || len(audit.entries) != 1 {
 		t.Fatalf("正文读取应无需 grant 且写审计：res=%+v audits=%d err=%v", res, len(audit.entries), err)
+	}
+	if audit.entries[0].Action != model.ActionMessagePayloadView {
+		t.Fatalf("直读必须写 message.payload.view 审计，实际 %q", audit.entries[0].Action)
 	}
 }
 

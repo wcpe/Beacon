@@ -131,7 +131,7 @@ func (h *AssetHandler) ConsumePreviewGrant(w http.ResponseWriter, r *http.Reques
 		render.WriteError(w, r, apperr.ErrInternal)
 		return
 	}
-	result, err := h.svc.PreviewFromCommand(r.Context(), chi.URLParam(r, "serverId"), body.CommandID, body.Reason, auth.Operator(r.Context()), clientIP(r))
+	result, err := h.svc.PreviewFromCommand(r.Context(), body.CommandID, body.Reason, auth.Operator(r.Context()), clientIP(r))
 	if err != nil {
 		writeAssetError(w, r, err)
 		return

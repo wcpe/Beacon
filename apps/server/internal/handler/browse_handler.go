@@ -35,6 +35,8 @@ func NewBrowseHandler(svc *service.AgentCommandService, instSvc *service.Instanc
 func (h *BrowseHandler) SetReportAuthenticator(authn browseReportAuthenticator) { h.reportAuth = authn }
 
 // Browse 只读取指定 commandId 的一次性结果；创建命令由 POST /browse 处理。
+// namespace 为可选 query 参数：显式给出时按 (serverId, namespace) 联合定位，缺省则由 service 按 serverId 反查，
+// 反查出现跨环境同名歧义时按不存在拒绝——不为了兼容而放弃命名空间隔离。
 func (h *BrowseHandler) Browse(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rawID := q.Get("commandId")
@@ -51,7 +53,7 @@ func (h *BrowseHandler) Browse(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInternal)
 		return
 	}
-	result, err := h.svc.ReadBrowseResult(uint(commandID), chi.URLParam(r, "serverId"), auth.Operator(r.Context()), clientIP(r))
+	result, err := h.svc.ReadBrowseResult(uint(commandID), q.Get("namespace"), chi.URLParam(r, "serverId"), auth.Operator(r.Context()), clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -114,6 +116,7 @@ func (h *BrowseHandler) startBrowse(w http.ResponseWriter, r *http.Request, para
 }
 
 // ConsumeApproved 保留旧 grant 路径作为兼容定位器，读取权限由 management.read 能力控制。
+// namespace 同 Browse：可选 query 参数，缺省由 service 按 serverId 反查。
 func (h *BrowseHandler) ConsumeApproved(w http.ResponseWriter, r *http.Request) {
 	var req consumeBrowseRequest
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.CommandID == 0 {
@@ -124,7 +127,7 @@ func (h *BrowseHandler) ConsumeApproved(w http.ResponseWriter, r *http.Request) 
 		render.WriteError(w, r, apperr.ErrInternal)
 		return
 	}
-	result, err := h.svc.ReadBrowseResult(req.CommandID, chi.URLParam(r, "serverId"), auth.Operator(r.Context()), clientIP(r))
+	result, err := h.svc.ReadBrowseResult(req.CommandID, r.URL.Query().Get("namespace"), chi.URLParam(r, "serverId"), auth.Operator(r.Context()), clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

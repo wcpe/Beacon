@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -88,6 +89,9 @@ func (s *AgentCommandService) RequestBrowse(_ context.Context, p BrowseParams) (
 }
 
 // RequestBrowseApproval 冻结受限浏览参数并创建审批申请；批准 worker 才能下发命令与待激活授权。
+//
+// Deprecated: 受限浏览改为直读（RequestBrowse）后本入口已无 handler 调用，
+// 保留仅为兼容旧审批单的读取 / 回放；适配器注册保留使历史待执行审批仍可按原语义落地。
 func (s *AgentCommandService) RequestBrowseApproval(p BrowseParams, reason, idempotencyKey string, principal auth.Principal) (ApprovalTicketView, error) {
 	if s == nil || s.approval == nil {
 		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
@@ -109,6 +113,9 @@ func validBrowseParams(p BrowseParams) bool {
 }
 
 // applyRequestBrowseInTx 在同一领域事务中创建浏览命令和审计。
+//
+// Deprecated: 仅由旧审批适配器在领域事务内调用；直读改造后不再有 handler 走本入口，
+// 保留仅为兼容旧审批单的执行 / 回放。
 func (s *AgentCommandService) applyRequestBrowseInTx(tx *gorm.DB, p BrowseParams) (*model.AgentCommand, error) {
 	if tx == nil || !validBrowseParams(p) {
 		return nil, apperr.ErrInvalidParam
@@ -177,6 +184,8 @@ func (s *AgentCommandService) ReceiveBrowseResult(identity agentauth.Identity, c
 }
 
 // ConsumeApprovedBrowse 仅允许原申请主体一次性取得已由 Agent 回传的浏览结果。
+//
+// Deprecated: 正文改为直读（ReadBrowseResult）后本入口已无 handler 调用，保留仅为兼容旧授权单的读取 / 回放。
 func (s *AgentCommandService) ConsumeApprovedBrowse(grantID string, commandID uint, principal auth.Principal) (string, error) {
 	if s == nil || s.grants == nil || grantID == "" || commandID == 0 {
 		return "", apperr.ErrForbidden
@@ -210,8 +219,50 @@ func (s *AgentCommandService) ConsumeApprovedBrowse(grantID string, commandID ui
 	return result, nil
 }
 
+// resolveCommandNamespaceScope 把「可能缺省」的 namespace 作用域解析为唯一的 namespace code。
+//
+// 命令 ID 是自增可枚举的，而 Server 的唯一键是 (namespace_id, server_id)，同名 serverId 可跨
+// namespace 共存，因此读路径必须把请求限定到唯一 namespace，不能只比对裸 serverId。
+// 显式给出 namespaceCode 时按 (server_id, namespace) 联合解析；缺省时按 server_id 反查——
+// v1 路由 /admin/v1/instances/{serverId}/... 不带 namespace 参数，只能这样反查。
+// 目标行不存在或同名 serverId 跨 namespace 共存导致歧义时统一返回 ErrCommandNotFound，
+// 不区分「不存在」与「无权读」，避免向猜测方泄露命令是否存在。
+func resolveCommandNamespaceScope(db *gorm.DB, serverID, namespaceCode string) (string, error) {
+	if db == nil || serverID == "" {
+		return "", apperr.ErrCommandNotFound
+	}
+	query := db.Model(&model.Server{}).Where("server_id = ?", serverID)
+	if namespaceCode != "" {
+		var explicit model.Namespace
+		if err := db.Where("code = ?", namespaceCode).First(&explicit).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return "", apperr.ErrCommandNotFound
+			}
+			return "", err
+		}
+		query = query.Where("namespace_id = ?", explicit.ID)
+	}
+	// 多取一条即可判定歧义，避免把跨环境的同名实例全量拉出来。
+	var servers []model.Server
+	if err := query.Order("namespace_id asc").Limit(2).Find(&servers).Error; err != nil {
+		return "", err
+	}
+	if len(servers) != 1 {
+		return "", apperr.ErrCommandNotFound
+	}
+	var namespace model.Namespace
+	if err := db.Where("id = ?", servers[0].NamespaceID).First(&namespace).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", apperr.ErrCommandNotFound
+		}
+		return "", err
+	}
+	return namespace.Code, nil
+}
+
 // ReadBrowseResult 直接读取指定命令的结果，并在同一事务内清理正文和记录元数据审计。
-func (s *AgentCommandService) ReadBrowseResult(commandID uint, serverID, operator, clientIP string) (string, error) {
+// namespace 为读请求的命名空间作用域（可为空，空则按 serverID 反查）；与命令归属不一致时按不存在拒绝。
+func (s *AgentCommandService) ReadBrowseResult(commandID uint, namespace, serverID, operator, clientIP string) (string, error) {
 	if s == nil || s.db == nil || s.auditRepo == nil {
 		return "", apperr.ErrInternal
 	}
@@ -227,7 +278,20 @@ func (s *AgentCommandService) ReadBrowseResult(commandID uint, serverID, operato
 		if cmd == nil || cmd.ServerID != serverID || cmd.Type != model.CommandTypeFsBrowse || cmd.Status != model.CommandStatusDone {
 			return apperr.ErrCommandNotFound
 		}
+		// namespace 作用域校验：没有这一步，凭枚举到的 commandID 即可读到别的环境同名实例的浏览正文。
+		scopeNamespace, err := resolveCommandNamespaceScope(tx, serverID, namespace)
+		if err != nil {
+			return err
+		}
+		if cmd.NamespaceCode != scopeNamespace {
+			return apperr.ErrCommandNotFound
+		}
 		if cmd.BrowseResult == "" {
+			return apperr.ErrSensitiveAccessConsumed
+		}
+		// 正文独立 TTL 必须在读路径自己兜住：清理器周期等于 TTL，过期正文最长还能多读一整个周期，
+		// 清理器失败时更是永久可读。nil 视为无过期限制（兼容历史数据），但不跳过其它校验。
+		if cmd.BrowseResultExpiresAt != nil && !cmd.BrowseResultExpiresAt.After(time.Now().UTC()) {
 			return apperr.ErrSensitiveAccessConsumed
 		}
 		var payload browsePayload
@@ -242,10 +306,19 @@ func (s *AgentCommandService) ReadBrowseResult(commandID uint, serverID, operato
 		if !cleared {
 			return apperr.ErrSensitiveAccessConsumed
 		}
+		// 读路径用独立动作名 ActionFileBrowseRead：与触发命令的 ActionFileBrowse 分开，
+		// 否则审计页无法按 action 过滤「谁读过正文」。detail 只记元数据，绝不记正文。
+		// 用 json.Marshal 而非字符串拼接：serverId / op / path 均为外部可控文本，拼接易产出非法 JSON。
+		detail, err := json.Marshal(map[string]any{
+			"commandId": commandID, "serverId": serverID, "op": payload.Op, "path": payload.Path, "bytes": len(result),
+		})
+		if err != nil {
+			return err
+		}
 		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: cmd.NamespaceCode, Operator: operator, Action: model.ActionFileBrowse,
+			NamespaceCode: cmd.NamespaceCode, Operator: operator, Action: model.ActionFileBrowseRead,
 			TargetType: model.TargetTypeCommand, TargetRef: serverID,
-			Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q,"op":%q,"path":%q,"bytes":%d}`, commandID, serverID, payload.Op, payload.Path, len(result)),
+			Detail: string(detail),
 			Result: model.ResultOK, ClientIP: clientIP,
 		})
 	})

@@ -35,3 +35,25 @@ func TestAssetHandlerPreviewAcceptsNamespaceID(t *testing.T) {
 		t.Fatalf("非数值 namespaceId 应拒绝，实际 %d", invalidResponse.Code)
 	}
 }
+
+// TestAssetHandlerConsumePreviewGrantResolvesFromCommand 验证旧 grant 消费端点
+// 不再要求路径里的 serverId（该路由只有 {grantId}），目标一律取自命令本身。
+// 此前此处读 chi.URLParam("serverId") 恒为空串，导致该端点永久 400 且不写审计。
+func TestAssetHandlerConsumePreviewGrantResolvesFromCommand(t *testing.T) {
+	h := NewAssetHandler(nil)
+	req := httptest.NewRequest(http.MethodPost, "/admin/v2/assets/preview/grants/7/consume", strings.NewReader(`{"commandId":42,"reason":"核验"}`))
+	// 路由只声明 {grantId}：故意不注入任何 URL 参数，模拟真实 chi 上下文
+	resp := httptest.NewRecorder()
+	h.ConsumePreviewGrant(resp, req)
+	// 请求解析通过后应到达「服务未装配」检查（500），而不是因缺 serverId 判 400
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("应通过参数解析并因服务未装配失败关闭，实际 %d", resp.Code)
+	}
+
+	missingCommand := httptest.NewRequest(http.MethodPost, "/admin/v2/assets/preview/grants/7/consume", strings.NewReader(`{"reason":"核验"}`))
+	missingResp := httptest.NewRecorder()
+	h.ConsumePreviewGrant(missingResp, missingCommand)
+	if missingResp.Code != http.StatusBadRequest {
+		t.Fatalf("缺 commandId 应 400，实际 %d", missingResp.Code)
+	}
+}

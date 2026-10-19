@@ -10,6 +10,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
@@ -104,10 +105,15 @@ func (s *AgentLogService) RequestTailLogs(ns, serverID, operator, clientIP strin
 	if ns == "" || serverID == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
+	// 限速锁必须在事务之外持有：锁若在事务回调内获取，defer unlock 会在**提交之前**执行，
+	// 下一个持有者用自己的事务仍读不到未提交行，单活跃限速形同失效（并发可重复建命令）；
+	// 同时先加锁再开事务，等待中的 goroutine 不会各自占住一个数据库连接阻塞等锁。
+	unlock := s.lockTarget(ns, serverID)
+	defer unlock()
 	var cmd *model.AgentCommand
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		var err error
-		cmd, err = s.applyRequestTailLogsInTx(tx, ns, serverID, operator, clientIP)
+		cmd, err = s.createTailLogsCommandInTx(tx, ns, serverID, operator, clientIP)
 		return err
 	})
 	if err != nil {
@@ -120,6 +126,9 @@ func (s *AgentLogService) RequestTailLogs(ns, serverID, operator, clientIP strin
 }
 
 // RequestTailLogsApproval 创建日志命令审批申请。
+//
+// Deprecated: 日志正文改为直读（RequestTailLogs + ReadCommand）后本入口已无 handler 调用，
+// 保留仅为兼容旧审批单的读取 / 回放；适配器注册保留使历史待执行审批仍可按原语义落地。
 func (s *AgentLogService) RequestTailLogsApproval(ns, serverID, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
 	if s == nil || s.approval == nil {
 		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
@@ -136,6 +145,13 @@ func (s *AgentLogService) RequestTailLogsApproval(ns, serverID, reason, idempote
 }
 
 // applyRequestTailLogsInTx 仅由审批适配器在领域事务内创建日志命令。
+//
+// Deprecated: 日志正文改为直读（RequestTailLogs）后不再有 handler 调用本入口，
+// 保留仅为兼容旧审批单的读取 / 回放（已存在的待执行审批仍能按原语义落地命令）。
+//
+// 注意它只能在事务回调内部加锁（适配器跑在审批 worker 的事务里），因此解锁发生在提交之前，
+// 单活跃限速对「同目标并发」不完全成立；审批 worker 是单 goroutine 串行执行，
+// 实际不会并发进入本入口，故此处保持原样而不引入新风险。
 func (s *AgentLogService) applyRequestTailLogsInTx(tx *gorm.DB, ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
 	if ns == "" || serverID == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
@@ -143,6 +159,12 @@ func (s *AgentLogService) applyRequestTailLogsInTx(tx *gorm.DB, ns, serverID, op
 	// 按 namespace/server 串行化限速检查与命令创建，事务隔离本身不能消除并发竞态。
 	unlock := s.lockTarget(ns, serverID)
 	defer unlock()
+	return s.createTailLogsCommandInTx(tx, ns, serverID, operator, clientIP)
+}
+
+// createTailLogsCommandInTx 是「限速检查 + 建命令 + 写审计」的无锁核心。
+// 调用方必须已持有该 (namespace, serverID) 的目标锁，否则单活跃限速存在并发窗口。
+func (s *AgentLogService) createTailLogsCommandInTx(tx *gorm.DB, ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
 	// 单活跃限速（ADR-0040 决策4）：该实例已有进行中（pending/fetched）的取日志命令则拒，避免刷命令压垮 agent。
 	active, err := s.repo.WithTx(tx).CountActiveByType(ns, serverID, model.CommandTypeTailLogs)
 	if err != nil {
@@ -172,14 +194,19 @@ func (s *AgentLogService) applyRequestTailLogsInTx(tx *gorm.DB, ns, serverID, op
 }
 
 // ReceiveLogs 接收 agent 回传的自身日志快照并转存为命令瞬态（FR-88）。
-// 命令须存在、type=tail-logs 且处 fetched；把脱敏日志行序列化存 log_content 并 CAS done。
+// 命令须存在、type=tail-logs 且处 fetched，且归属与回传 agent 身份一致；
+// 把脱敏日志行序列化存 log_content 并 CAS done。
 // lines 为已脱敏文本（agent 侧落缓冲即脱敏），控制面不再处理原文。
-func (s *AgentLogService) ReceiveLogs(commandID uint, lines []AgentLogLine, clientIP string) error {
+func (s *AgentLogService) ReceiveLogs(identity agentauth.Identity, commandID uint, lines []AgentLogLine, clientIP string) error {
 	cmd, err := s.repo.FindByID(commandID)
 	if err != nil {
 		return err
 	}
 	if cmd == nil || cmd.Type != model.CommandTypeTailLogs {
+		return apperr.ErrCommandNotFound
+	}
+	// 只允许发起该命令的那台 agent 回传，避免任一 agent 用猜测的 commandID 覆盖他人日志。
+	if identity.Namespace == "" || identity.ServerID == "" || cmd.NamespaceCode != identity.Namespace || cmd.ServerID != identity.ServerID {
 		return apperr.ErrCommandNotFound
 	}
 	if cmd.Status != model.CommandStatusFetched {
@@ -208,6 +235,8 @@ func (s *AgentLogService) ReceiveLogs(commandID uint, lines []AgentLogLine, clie
 }
 
 // ConsumeApprovedLogs 仅允许原申请主体一次取得已由 Agent 回传的脱敏日志。
+//
+// Deprecated: 正文改为直读（ReadCommand）后本入口已无 handler 调用，保留仅为兼容旧授权单的读取 / 回放。
 func (s *AgentLogService) ConsumeApprovedLogs(grantID string, commandID uint, principal auth.Principal) (*AgentLogResult, error) {
 	if s == nil || s.grants == nil || grantID == "" || commandID == 0 {
 		return nil, apperr.ErrForbidden
@@ -270,7 +299,8 @@ func (s *AgentLogService) ReadLatest(ns, serverID, operator, clientIP string) (*
 }
 
 // ReadCommand 返回指定命令的日志，不依赖 grant，审计只记录命令状态和行数。
-func (s *AgentLogService) ReadCommand(serverID string, commandID uint, operator, clientIP string) (*AgentLogResult, error) {
+// namespace 为读请求的命名空间作用域（可为空，空则按 serverID 反查）；与命令归属不一致时按不存在拒绝。
+func (s *AgentLogService) ReadCommand(namespace, serverID string, commandID uint, operator, clientIP string) (*AgentLogResult, error) {
 	if serverID == "" || commandID == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -279,6 +309,14 @@ func (s *AgentLogService) ReadCommand(serverID string, commandID uint, operator,
 		return nil, err
 	}
 	if cmd == nil || cmd.ServerID != serverID || cmd.Type != model.CommandTypeTailLogs {
+		return nil, apperr.ErrCommandNotFound
+	}
+	// namespace 作用域校验：commandID 可枚举，只比对裸 serverId 会让同名实例跨环境互相读到日志正文。
+	scopeNamespace, err := resolveCommandNamespaceScope(s.db, serverID, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if cmd.NamespaceCode != scopeNamespace {
 		return nil, apperr.ErrCommandNotFound
 	}
 	result := &AgentLogResult{CommandID: cmd.ID, Status: cmd.Status, Lines: []AgentLogLine{}}
@@ -296,6 +334,10 @@ func (s *AgentLogService) ReadCommand(serverID string, commandID uint, operator,
 	return result, nil
 }
 
+// recordReadAudit 记录一条「读取日志正文」审计，detail 只含命令状态与行数。
+//
+// 读路径用独立动作名 ActionInstanceTailLogsRead：与触发命令的 ActionInstanceTailLogs 分开，
+// 否则审计页无法按 action 过滤「谁读过正文」（两者混在一起）。
 func (s *AgentLogService) recordReadAudit(ns, serverID, operator, clientIP string, result *AgentLogResult) error {
 	if s == nil || s.auditRepo == nil {
 		return apperr.ErrInternal
@@ -311,10 +353,17 @@ func (s *AgentLogService) recordReadAudit(ns, serverID, operator, clientIP strin
 		status = result.Status
 		lineCount = len(result.Lines)
 	}
+	// 用 json.Marshal 而非字符串拼接：serverID / status 都是外部可控文本，拼接易产出非法 JSON。
+	detail, err := json.Marshal(map[string]any{
+		"commandId": commandID, "serverId": serverID, "status": status, "lineCount": lineCount,
+	})
+	if err != nil {
+		return err
+	}
 	return s.auditRepo.Create(&model.AuditLog{
-		NamespaceCode: ns, Operator: operator, Action: model.ActionInstanceTailLogs,
+		NamespaceCode: ns, Operator: operator, Action: model.ActionInstanceTailLogsRead,
 		TargetType: model.TargetTypeInstance, TargetRef: serverID,
-		Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q,"status":%q,"lineCount":%d}`, commandID, serverID, status, lineCount),
+		Detail: string(detail),
 		Result: model.ResultOK, ClientIP: clientIP,
 	})
 }

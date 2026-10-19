@@ -122,7 +122,7 @@ func TestReceiveBrowseResultGuards(t *testing.T) {
 func seedActiveBrowseResult(t *testing.T, db *gorm.DB, grants *SensitiveAccessGrantService) (*model.AgentCommand, *model.SensitiveAccessGrant, string) {
 	t.Helper()
 	const result = `{"path":"Demo/config.yml","content":"enabled: true\\n"}`
-	cmd := &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, BrowseResult: result, Operator: "alice"}
+	cmd := &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`, BrowseResult: result, Operator: "alice"}
 	if err := db.Create(cmd).Error; err != nil {
 		t.Fatalf("创建已完成浏览命令失败: %v", err)
 	}
@@ -353,4 +353,238 @@ func auditDetailContains(t *testing.T, db *gorm.DB, action, sub string) bool {
 		}
 	}
 	return false
+}
+
+// ensureReadScopeTables 迁移读路径作用域校验所需的 namespace / server 表。
+// 命令测试库默认只迁移命令与文件表；两张表位于同一共享内存库，需逐表清理避免跨用例残留。
+func ensureReadScopeTables(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}); err != nil {
+		t.Fatalf("迁移 namespace / server 表失败: %v", err)
+	}
+	for _, tbl := range []string{"server", "namespace"} {
+		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
+			t.Fatalf("清表 %s 失败: %v", tbl, err)
+		}
+	}
+}
+
+// seedReadScopeServer 为指定 (namespace, serverId) 准备服务器行，供读路径反查命名空间归属。
+func seedReadScopeServer(t *testing.T, db *gorm.DB, namespaceCode, serverID string) {
+	t.Helper()
+	var namespace model.Namespace
+	if err := db.Where("code = ?", namespaceCode).First(&namespace).Error; err != nil {
+		namespace = model.Namespace{Code: namespaceCode, Name: namespaceCode}
+		if err := db.Create(&namespace).Error; err != nil {
+			t.Fatalf("创建 namespace %s 失败: %v", namespaceCode, err)
+		}
+	}
+	if err := db.Create(&model.Server{NamespaceID: namespace.ID, ServerID: serverID, Kind: "backend"}).Error; err != nil {
+		t.Fatalf("创建 server %s/%s 失败: %v", namespaceCode, serverID, err)
+	}
+}
+
+// countBrowseAudit 统计读正文类审计条数，供断言「拒绝读取不写成功审计」。
+func countBrowseAudit(t *testing.T, db *gorm.DB, action string) int64 {
+	t.Helper()
+	var n int64
+	if err := db.Model(&model.AuditLog{}).Where("action = ?", action).Count(&n).Error; err != nil {
+		t.Fatalf("统计审计失败: %v", err)
+	}
+	return n
+}
+
+// TestReadBrowseResultNamespaceScope 同名 serverId 跨 namespace 不能互相读到浏览正文。
+// 修复前 ReadBrowseResult 只比对裸 serverId，prod 作用域可读到 test 环境同名实例的正文。
+func TestReadBrowseResultNamespaceScope(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	ensureReadScopeTables(t, db)
+	seedReadScopeServer(t, db, "prod", "lobby-1")
+	seedReadScopeServer(t, db, "test", "lobby-1")
+	// lobby-2 只存在于 prod，用于验证缺省 namespace 时按 serverId 反查仍可读（v1 路由兼容）。
+	seedReadScopeServer(t, db, "prod", "lobby-2")
+	svc := newCommandSvc(db)
+
+	const result = `{"path":"Demo/config.yml","content":"enabled: true\n"}`
+	cmd := &model.AgentCommand{NamespaceCode: "test", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`, BrowseResult: result, Operator: "alice"}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建 test 环境浏览命令失败: %v", err)
+	}
+
+	if _, err := svc.ReadBrowseResult(cmd.ID, "prod", "lobby-1", "alice", "127.0.0.1"); !errors.Is(err, apperr.ErrCommandNotFound) {
+		t.Fatalf("跨 namespace 读取必须按不存在拒绝，实际 %v", err)
+	}
+	// 缺省 namespace 且同名 serverId 跨环境共存时无法消歧，必须拒绝而不是猜一条。
+	if _, err := svc.ReadBrowseResult(cmd.ID, "", "lobby-1", "alice", "127.0.0.1"); !errors.Is(err, apperr.ErrCommandNotFound) {
+		t.Fatalf("同名 serverId 跨环境歧义必须拒绝，实际 %v", err)
+	}
+	stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if err != nil || stored.BrowseResult != result {
+		t.Fatalf("被拒绝的读取不得消费正文：%+v err=%v", stored, err)
+	}
+	if n := countBrowseAudit(t, db, model.ActionFileBrowseRead); n != 0 {
+		t.Fatalf("被拒绝的读取不得写成功审计，实际 %d 条", n)
+	}
+
+	if got, err := svc.ReadBrowseResult(cmd.ID, "test", "lobby-1", "alice", "127.0.0.1"); err != nil || got != result {
+		t.Fatalf("正确 namespace 应读到正文：got=%q err=%v", got, err)
+	}
+
+	// 唯一归属的 serverId 在缺省 namespace 时按反查结果读取，保持旧调用方兼容。
+	unique := &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-2", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`, BrowseResult: result, Operator: "alice"}
+	if err := db.Create(unique).Error; err != nil {
+		t.Fatalf("创建 prod 环境浏览命令失败: %v", err)
+	}
+	if got, err := svc.ReadBrowseResult(unique.ID, "", "lobby-2", "alice", "127.0.0.1"); err != nil || got != result {
+		t.Fatalf("唯一归属实例应在缺省 namespace 时反查成功：got=%q err=%v", got, err)
+	}
+}
+
+// TestReadBrowseResultRejectsExpiredResult 正文过期后读路径必须直接拒绝：不返回正文、不写成功审计。
+// 清理器周期等于正文 TTL，读路径不自校验等于过期正文最长还能多读一整个周期。
+func TestReadBrowseResultRejectsExpiredResult(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	ensureBrowseResultExpiryColumn(t, db)
+	ensureReadScopeTables(t, db)
+	seedReadScopeServer(t, db, "prod", "lobby-1")
+	svc := newCommandSvc(db)
+
+	const result = `{"path":"Demo/config.yml","content":"enabled: true\n"}`
+	cmd := &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`, BrowseResult: result, Operator: "alice"}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建已过期浏览命令失败: %v", err)
+	}
+	setBrowseResultExpiry(t, db, cmd.ID, time.Now().UTC().Add(-time.Second))
+
+	got, err := svc.ReadBrowseResult(cmd.ID, "prod", "lobby-1", "alice", "127.0.0.1")
+	if got != "" || !errors.Is(err, apperr.ErrSensitiveAccessConsumed) {
+		t.Fatalf("过期正文必须按已消费拒绝，got=%q err=%v", got, err)
+	}
+	if n := countBrowseAudit(t, db, model.ActionFileBrowseRead); n != 0 {
+		t.Fatalf("过期正文不得写成功读取审计，实际 %d 条", n)
+	}
+	stored, findErr := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if findErr != nil || stored.BrowseResult != result {
+		t.Fatalf("读路径拒绝时不得消费正文，交由清理器回收：%+v err=%v", stored, findErr)
+	}
+}
+
+// TestReadBrowseResultReturnsUnexpiredResult 未过期正文正常返回并清空；过期时间为空按无限制处理（兼容历史数据）。
+func TestReadBrowseResultReturnsUnexpiredResult(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	ensureBrowseResultExpiryColumn(t, db)
+	ensureReadScopeTables(t, db)
+	seedReadScopeServer(t, db, "prod", "lobby-1")
+	svc := newCommandSvc(db)
+
+	const result = `{"path":"Demo/config.yml","content":"enabled: true\n"}`
+	cmd := &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`, BrowseResult: result, Operator: "alice"}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建未过期浏览命令失败: %v", err)
+	}
+	setBrowseResultExpiry(t, db, cmd.ID, time.Now().UTC().Add(time.Minute))
+
+	got, err := svc.ReadBrowseResult(cmd.ID, "prod", "lobby-1", "alice", "127.0.0.1")
+	if err != nil || got != result {
+		t.Fatalf("未过期正文应正常返回：got=%q err=%v", got, err)
+	}
+	stored, findErr := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if findErr != nil || stored.BrowseResult != "" {
+		t.Fatalf("读取成功后应清空正文：%+v err=%v", stored, findErr)
+	}
+	if n := countBrowseAudit(t, db, model.ActionFileBrowseRead); n != 1 {
+		t.Fatalf("读取成功应写入一条成功审计，实际 %d 条", n)
+	}
+
+	// 历史数据没有独立过期时间，nil 视为无过期限制但仍受其它校验约束。
+	legacy := &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`, BrowseResult: result, Operator: "alice"}
+	if err := db.Create(legacy).Error; err != nil {
+		t.Fatalf("创建历史浏览命令失败: %v", err)
+	}
+	if got, err := svc.ReadBrowseResult(legacy.ID, "prod", "lobby-1", "alice", "127.0.0.1"); err != nil || got != result {
+		t.Fatalf("无过期时间的正文应可读：got=%q err=%v", got, err)
+	}
+}
+
+// failAuditCreate 注册一个让审计落库失败的回调（仅影响 *model.AuditLog 的 INSERT）。
+func failAuditCreate(t *testing.T, db *gorm.DB, cause error) {
+	t.Helper()
+	if err := db.Callback().Create().Before("gorm:create").Register(t.Name(), func(tx *gorm.DB) {
+		if _, ok := tx.Statement.Model.(*model.AuditLog); ok {
+			_ = tx.AddError(cause)
+		}
+	}); err != nil {
+		t.Fatalf("注册审计失败回调失败: %v", err)
+	}
+}
+
+// TestReadBrowseResultAuditFailFailsRequest 验证审计写失败时不返回浏览正文。
+//
+// 这是直读改造后最关键的一条负向护栏：正文可以不经审批直读，但「看了必留痕」不能失守。
+// 一旦有人误删审计写入或把审计失败降级成日志，本用例会立刻变红。
+func TestReadBrowseResultAuditFailFailsRequest(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	ensureBrowseResultExpiryColumn(t, db)
+	ensureReadScopeTables(t, db)
+	seedReadScopeServer(t, db, "prod", "lobby-1")
+	svc := newCommandSvc(db)
+	const result = `{"path":"Demo/config.yml","content":"enabled: true\n"}`
+	cmd := &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`, BrowseResult: result, Operator: "alice"}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建已完成浏览命令失败: %v", err)
+	}
+	setBrowseResultExpiry(t, db, cmd.ID, time.Now().UTC().Add(time.Minute))
+	failAuditCreate(t, db, errors.New("模拟审计不可用"))
+
+	got, err := svc.ReadBrowseResult(cmd.ID, "prod", "lobby-1", "alice", "127.0.0.1")
+	if err == nil {
+		t.Fatal("审计写失败必须拒绝返回正文")
+	}
+	if got != "" {
+		t.Fatalf("审计写失败时绝不应返回正文，实际 %q", got)
+	}
+	// 事务必须整体回滚：正文不能被「读了但没记」地清掉，也不能写下半条审计。
+	stored, findErr := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if findErr != nil || stored.BrowseResult != result {
+		t.Fatalf("审计失败必须回滚正文清理：%+v err=%v", stored, findErr)
+	}
+	if n := countBrowseAudit(t, db, model.ActionFileBrowseRead); n != 0 {
+		t.Fatalf("审计失败不得留下成功读取审计，实际 %d 条", n)
+	}
+}
+
+// TestReadBrowseResultRejectsUnavailableResult 验证不存在 / 类型不符 / 未完成 / 正文已被消费时一律不返回正文。
+func TestReadBrowseResultRejectsUnavailableResult(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	ensureBrowseResultExpiryColumn(t, db)
+	ensureReadScopeTables(t, db)
+	seedReadScopeServer(t, db, "prod", "lobby-1")
+	svc := newCommandSvc(db)
+
+	cases := []struct {
+		name   string
+		cmd    *model.AgentCommand
+		want   error
+		absent bool
+	}{
+		{name: "类型不符", cmd: &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeIngestPlugins, Status: model.CommandStatusDone, BrowseResult: `{"content":"x"}`}, want: apperr.ErrCommandNotFound},
+		{name: "尚未完成", cmd: &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusPending, Payload: `{"op":"file","path":"a.yml"}`, BrowseResult: `{"content":"x"}`}, want: apperr.ErrCommandNotFound},
+		{name: "正文已消费", cmd: &model.AgentCommand{NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse, Status: model.CommandStatusDone, Payload: `{"op":"file","path":"a.yml"}`, BrowseResult: "", Operator: "alice"}, want: apperr.ErrSensitiveAccessConsumed},
+	}
+	for _, tc := range cases {
+		if err := db.Create(tc.cmd).Error; err != nil {
+			t.Fatalf("创建命令失败（%s）: %v", tc.name, err)
+		}
+		got, err := svc.ReadBrowseResult(tc.cmd.ID, "prod", "lobby-1", "alice", "127.0.0.1")
+		if !errors.Is(err, tc.want) || got != "" {
+			t.Fatalf("%s 应按 %v 拒绝且不返回正文，实际 got=%q err=%v", tc.name, tc.want, got, err)
+		}
+	}
+	// 不存在的命令：按不存在拒绝（不区分「无权限」，避免枚举探测）。
+	if got, err := svc.ReadBrowseResult(999999, "prod", "lobby-1", "alice", "127.0.0.1"); !errors.Is(err, apperr.ErrCommandNotFound) || got != "" {
+		t.Fatalf("不存在的命令应拒绝且不返回正文，实际 got=%q err=%v", got, err)
+	}
+	if n := countBrowseAudit(t, db, model.ActionFileBrowseRead); n != 0 {
+		t.Fatalf("被拒绝的读取不得写成功审计，实际 %d 条", n)
+	}
 }

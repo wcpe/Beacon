@@ -228,7 +228,7 @@ func TestPreviewSensitiveGuard(t *testing.T) {
 		t.Fatal("敏感拒绝不应建命令 / 审计")
 	}
 
-	// 填 reason → 放行 + 审计只标记敏感放行，不保存原因或正文。
+	// 填 reason → 放行 + 审计标记敏感放行并把原因文本写入 detail（合规追溯），但绝不保存正文。
 	stop := startAgentSim(t, db, svc, textReply)
 	defer stop()
 	res, err := svc.applyPreviewForTest(context.Background(), PreviewParams{
@@ -237,8 +237,12 @@ func TestPreviewSensitiveGuard(t *testing.T) {
 	if err != nil || !res.Sensitive {
 		t.Fatalf("填 reason 应放行且 sensitive=true，实际 res=%+v err=%v", res, err)
 	}
-	if !auditDetailContains(t, db, model.ActionAssetPreview, "sensitiveOverride") || auditDetailContains(t, db, model.ActionAssetPreview, "排查登录异常") {
-		t.Fatal("敏感放行审计只允许标记状态，不得保存原因或正文")
+	if !auditDetailContains(t, db, model.ActionAssetPreview, "sensitiveOverride") ||
+		!auditDetailContains(t, db, model.ActionAssetPreview, "排查登录异常") {
+		t.Fatal("敏感放行审计必须标记 sensitiveOverride 并记下原因文本")
+	}
+	if auditDetailContains(t, db, model.ActionAssetPreview, "内容:") {
+		t.Fatal("审计 detail 绝不应含文件内容")
 	}
 }
 
@@ -280,7 +284,7 @@ func TestPreviewInvalidParam(t *testing.T) {
 	}
 }
 
-// TestAssetContentReadsRequireApprovedGrant 验证 preview/diff 可直读且专项审计不含正文。
+// TestAssetContentReadsAreDirectAndAudited 验证 preview/diff 可直读，且专项审计记原因但不含正文。
 func TestAssetContentReadsAreDirectAndAudited(t *testing.T) {
 	db := newAssetSvcTestDB(t)
 	svc := newAssetSvc(db, true)
@@ -291,12 +295,13 @@ func TestAssetContentReadsAreDirectAndAudited(t *testing.T) {
 	stop := startAgentSim(t, db, svc, textReply)
 	defer stop()
 
-	preview, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "a.yml", Operator: "alice"})
+	const reason = "核对线上配置"
+	preview, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "a.yml", Reason: reason, Operator: "alice"})
 	if err != nil || preview == nil || preview.Content == nil {
 		t.Fatalf("preview 应可直读：result=%+v err=%v", preview, err)
 	}
 	diff, err := svc.Diff(context.Background(), DiffParams{
-		Left: AssetRef{ServerID: "lobby-1", Path: "a.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.yml"}, Operator: "alice",
+		Left: AssetRef{ServerID: "lobby-1", Path: "a.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.yml"}, Reason: reason, Operator: "alice",
 	})
 	if err != nil || diff == nil || diff.Identical || diff.Left == nil || diff.Right == nil {
 		t.Fatalf("diff 应可直读：result=%+v err=%v", diff, err)
@@ -308,6 +313,10 @@ func TestAssetContentReadsAreDirectAndAudited(t *testing.T) {
 		auditDetailContains(t, db, model.ActionAssetDiff, diff.Left.Content) ||
 		auditDetailContains(t, db, model.ActionAssetDiff, diff.Right.Content) {
 		t.Fatal("文件正文不得进入审计 detail")
+	}
+	// 原因文本必须落进审计 detail：否则「强制填 reason」只校验不入库，事后无法追溯谁为什么读了正文。
+	if !auditDetailContains(t, db, model.ActionAssetPreview, reason) || !auditDetailContains(t, db, model.ActionAssetDiff, reason) {
+		t.Fatal("preview / diff 审计 detail 必须记录原因文本")
 	}
 }
 
@@ -518,5 +527,24 @@ func TestReceiveContentGuards(t *testing.T) {
 	}
 	if err := svc.ReceiveContent("prod", "other-server", cmd.ID, AssetContentPayload{}); err != apperr.ErrCommandNotFound {
 		t.Fatalf("归属不符应 ErrCommandNotFound，实际 %v", err)
+	}
+}
+
+// TestAuditReasonTextBoundary 验证写入审计的原因文本会去空白并截断到 255 字符。
+// 边界要求：审计必须记下原因（合规追溯），但不能被超长输入撑大，也不附加正文等额外信息。
+func TestAuditReasonTextBoundary(t *testing.T) {
+	if got := auditReasonText("  "); got != "" {
+		t.Fatalf("空白原因应归一为空串，实际 %q", got)
+	}
+	if got := auditReasonText("  排查异常  "); got != "排查异常" {
+		t.Fatalf("应去掉首尾空白，实际 %q", got)
+	}
+	long := strings.Repeat("字", auditReasonMaxRunes+40)
+	got := auditReasonText(long)
+	if runes := []rune(got); len(runes) != auditReasonMaxRunes {
+		t.Fatalf("超长原因应截断到 %d 个字符，实际 %d", auditReasonMaxRunes, len(runes))
+	}
+	if got != strings.Repeat("字", auditReasonMaxRunes) {
+		t.Fatal("截断应保留前 255 个字符原样")
 	}
 }
