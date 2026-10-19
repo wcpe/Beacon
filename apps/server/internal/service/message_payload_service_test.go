@@ -166,9 +166,9 @@ func TestPayloadViewSuccessAuditsFirst(t *testing.T) {
 	if strings.Contains(audit.entries[0].Detail, secret) || !strings.Contains(audit.entries[0].Detail, res.SHA256) {
 		t.Fatalf("审计只能含哈希等元数据，detail=%q", audit.entries[0].Detail)
 	}
-	// reason 必须落进审计 detail：强制填 reason 却只校验不入库，事后无法追溯谁为什么读了正文。
-	if !strings.Contains(audit.entries[0].Detail, "跨域排查") {
-		t.Fatalf("审计 detail 必须记录原因文本，detail=%q", audit.entries[0].Detail)
+	// ADR-0093 决策 4：原因只作放行输入，不写入审计 detail。
+	if strings.Contains(audit.entries[0].Detail, "跨域排查") {
+		t.Fatalf("按 ADR-0093，审计 detail 不得记录原因文本，detail=%q", audit.entries[0].Detail)
 	}
 	if !json.Valid([]byte(audit.entries[0].Detail)) {
 		t.Fatalf("审计 detail 必须是合法 JSON，detail=%q", audit.entries[0].Detail)

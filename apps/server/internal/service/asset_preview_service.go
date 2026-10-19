@@ -666,37 +666,13 @@ func (s *AssetPreviewService) loadSensitivePatterns() ([]string, error) {
 	return patterns, nil
 }
 
-// auditReasonMaxRunes 是写进审计 detail 的原因文本上限（与入参校验的 255 字符一致）。
-// 超出即截断，避免超长用户输入把审计行撑大；只记这一段，不附加其它信息。
-const auditReasonMaxRunes = 255
-
-// auditReasonText 归一审计用的原因文本：去首尾空白并截断到 255 个字符；无原因时返回空串。
-//
-// 为什么要把 reason 写进审计 detail：强制填 reason 若只校验不入库，「谁为什么看了这份正文」
-// 就无从追溯，强制填 reason 会退化成形式。正文仍然绝不入 detail。
-//
-// 同包内 message_payload_service.go 的 payload 查看路径也复用它，保证各处口径一致。
-func auditReasonText(reason string) string {
-	trimmed := strings.TrimSpace(reason)
-	if trimmed == "" {
-		return ""
-	}
-	runes := []rune(trimmed)
-	if len(runes) > auditReasonMaxRunes {
-		runes = runes[:auditReasonMaxRunes]
-	}
-	return string(runes)
-}
-
-// recordPreviewAudit 落一条 asset.preview 审计，只记目标、结果元数据与原因文本，绝不记录正文。
+// recordPreviewAudit 落一条 asset.preview 审计，只记目标与结果元数据，绝不记录正文。
 // 审计写失败拒绝返回内容，杜绝「看了没记录」。
+// 注意：按 ADR-0093 决策 4，用户填写的原因文本**不写入**审计 detail，只保留 sensitiveOverride 标记。
 func (s *AssetPreviewService) recordPreviewAudit(p PreviewParams, serverID, nsCode string, c *assetContent, sensitive bool) error {
 	detail := map[string]any{"serverId": serverID, "path": p.Path, "truncated": c.truncated, "binary": c.binary}
 	if sensitive {
 		detail["sensitiveOverride"] = true
-	}
-	if reason := auditReasonText(p.Reason); reason != "" {
-		detail["reason"] = reason
 	}
 	raw, _ := json.Marshal(detail)
 	entry := &model.AuditLog{
@@ -714,7 +690,8 @@ func (s *AssetPreviewService) recordPreviewAudit(p PreviewParams, serverID, nsCo
 	return nil
 }
 
-// recordDiffAudit 落一条 asset.diff 审计，只记两侧目标、比较结果、敏感标记与原因文本，绝不记录正文。
+// recordDiffAudit 落一条 asset.diff 审计，只记两侧目标与比较结果、敏感标记，绝不记录正文。
+// 原因文本同样按 ADR-0093 决策 4 不写入 detail。
 func (s *AssetPreviewService) recordDiffAudit(p DiffParams, leftServerID, rightServerID, nsCode string, identical, sensitive bool) error {
 	detail := map[string]any{
 		"left":      map[string]string{"serverId": leftServerID, "path": p.Left.Path},
@@ -723,9 +700,6 @@ func (s *AssetPreviewService) recordDiffAudit(p DiffParams, leftServerID, rightS
 	}
 	if sensitive {
 		detail["sensitiveOverride"] = true
-	}
-	if reason := auditReasonText(p.Reason); reason != "" {
-		detail["reason"] = reason
 	}
 	raw, _ := json.Marshal(detail)
 	entry := &model.AuditLog{

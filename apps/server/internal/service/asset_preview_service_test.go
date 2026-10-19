@@ -237,9 +237,12 @@ func TestPreviewSensitiveGuard(t *testing.T) {
 	if err != nil || !res.Sensitive {
 		t.Fatalf("填 reason 应放行且 sensitive=true，实际 res=%+v err=%v", res, err)
 	}
-	if !auditDetailContains(t, db, model.ActionAssetPreview, "sensitiveOverride") ||
-		!auditDetailContains(t, db, model.ActionAssetPreview, "排查登录异常") {
-		t.Fatal("敏感放行审计必须标记 sensitiveOverride 并记下原因文本")
+	// ADR-0093 决策 4：原因只作放行输入，不写入审计 detail。
+	if !auditDetailContains(t, db, model.ActionAssetPreview, "sensitiveOverride") {
+		t.Fatal("敏感放行审计必须标记 sensitiveOverride")
+	}
+	if auditDetailContains(t, db, model.ActionAssetPreview, "排查登录异常") {
+		t.Fatal("按 ADR-0093，原因文本不得写入审计 detail")
 	}
 	if auditDetailContains(t, db, model.ActionAssetPreview, "内容:") {
 		t.Fatal("审计 detail 绝不应含文件内容")
@@ -314,9 +317,10 @@ func TestAssetContentReadsAreDirectAndAudited(t *testing.T) {
 		auditDetailContains(t, db, model.ActionAssetDiff, diff.Right.Content) {
 		t.Fatal("文件正文不得进入审计 detail")
 	}
-	// 原因文本必须落进审计 detail：否则「强制填 reason」只校验不入库，事后无法追溯谁为什么读了正文。
-	if !auditDetailContains(t, db, model.ActionAssetPreview, reason) || !auditDetailContains(t, db, model.ActionAssetDiff, reason) {
-		t.Fatal("preview / diff 审计 detail 必须记录原因文本")
+	// ADR-0093 决策 4：原因文本不写入审计 detail（只作放行输入），正文同样不得进入。
+	if auditDetailContains(t, db, model.ActionAssetPreview, reason) ||
+		auditDetailContains(t, db, model.ActionAssetDiff, reason) {
+		t.Fatal("按 ADR-0093，preview / diff 审计 detail 不得记录原因文本")
 	}
 }
 
@@ -527,24 +531,5 @@ func TestReceiveContentGuards(t *testing.T) {
 	}
 	if err := svc.ReceiveContent("prod", "other-server", cmd.ID, AssetContentPayload{}); err != apperr.ErrCommandNotFound {
 		t.Fatalf("归属不符应 ErrCommandNotFound，实际 %v", err)
-	}
-}
-
-// TestAuditReasonTextBoundary 验证写入审计的原因文本会去空白并截断到 255 字符。
-// 边界要求：审计必须记下原因（合规追溯），但不能被超长输入撑大，也不附加正文等额外信息。
-func TestAuditReasonTextBoundary(t *testing.T) {
-	if got := auditReasonText("  "); got != "" {
-		t.Fatalf("空白原因应归一为空串，实际 %q", got)
-	}
-	if got := auditReasonText("  排查异常  "); got != "排查异常" {
-		t.Fatalf("应去掉首尾空白，实际 %q", got)
-	}
-	long := strings.Repeat("字", auditReasonMaxRunes+40)
-	got := auditReasonText(long)
-	if runes := []rune(got); len(runes) != auditReasonMaxRunes {
-		t.Fatalf("超长原因应截断到 %d 个字符，实际 %d", auditReasonMaxRunes, len(runes))
-	}
-	if got != strings.Repeat("字", auditReasonMaxRunes) {
-		t.Fatal("截断应保留前 255 个字符原样")
 	}
 }
