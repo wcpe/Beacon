@@ -34,6 +34,7 @@ import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
 import PlaintextDialog from '../features/shared/plaintext-dialog'
 import Pager from '../features/observability/pager'
+import PageTitle from '../shell/page-title'
 import CreateDialog from './api-keys/create-dialog'
 import DetailPanel from './api-keys/detail-panel'
 
@@ -223,6 +224,8 @@ export default function ApiKeysPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.apiKeys" />
       <MasterDetail
         master={master}
         detail={

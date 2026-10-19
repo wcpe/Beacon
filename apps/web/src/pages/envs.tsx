@@ -32,6 +32,7 @@ import { formatIso } from '../features/system/format'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
 import Pager from '../features/observability/pager'
+import PageTitle from '../shell/page-title'
 import EnvDetailPanel from './envs/env-detail-panel'
 import EnvFormDialog from './envs/env-form-dialog'
 import MappingDialog from './envs/mapping-dialog'
@@ -235,6 +236,8 @@ export default function EnvsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.envs" />
       {/* env 定位提示：品牌浅底，突出「纯展示 / 过滤维度、不动权威数据」 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">
         <Layers className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />

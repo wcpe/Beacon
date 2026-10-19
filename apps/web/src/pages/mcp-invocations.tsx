@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import MasterDetail from '../features/shared/master-detail'
+import PageTitle from '../shell/page-title'
 import InvocationDetailPanel from './mcp-invocations/invocation-detail-panel'
 import InvocationList from './mcp-invocations/invocation-list'
 
@@ -18,6 +19,8 @@ export default function McpInvocationsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.mcpInvocations" />
       <MasterDetail
         master={
           <InvocationList

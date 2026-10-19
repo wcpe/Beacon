@@ -9,6 +9,7 @@ import { Network, Table2 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
 
 import NamespaceSelect, { ALL_NAMESPACES } from '../features/cluster/namespace-select'
+import PageTitle from '../shell/page-title'
 import EdgesPanel from './topology/edges-panel'
 import TopologyGraph from './topology/topology-graph'
 
@@ -25,6 +26,8 @@ export default function TopologyPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.topology" />
       <Tabs value={mode} onValueChange={setMode}>
         {/* 模式切换与命名空间选择器同一行：不另起独立操作行 */}
         <div className="flex flex-wrap items-center justify-between gap-2">

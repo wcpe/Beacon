@@ -38,6 +38,7 @@ import {
   type GrantTrustBody,
 } from '../api/system'
 import type { ApprovalTicket } from '../api/cluster'
+import PageTitle from '../shell/page-title'
 import SystemReasonDialog from '../features/system/reason-dialog'
 import { formatIso } from '../features/system/format'
 import ListCard from '../features/shared/list-card'
@@ -299,6 +300,8 @@ export default function NamespacesPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.namespaces" />
       {/* 隔离原则提示：品牌浅底 + 盾牌图标，突出「默认强隔离、显式授予放通」 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />

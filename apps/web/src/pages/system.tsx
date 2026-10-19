@@ -6,6 +6,7 @@ import { CardGridSkeleton } from '@beacon/ui'
 import PageAsyncSection from '../features/shared/page-async-section'
 
 import { fetchSystemObservability, fetchSystemStatus } from '../api/system'
+import PageTitle from '../shell/page-title'
 import RuntimeCard from './system/runtime-card'
 import SubsystemPanel from './system/subsystem-panel'
 
@@ -26,6 +27,8 @@ export default function SystemPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.system" />
 
       <PageAsyncSection
         isLoading={statusQuery.isLoading}

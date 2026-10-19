@@ -32,6 +32,7 @@ import {
 } from '../api/cluster'
 import NamespaceSelect from '../features/cluster/namespace-select'
 import PageSkeleton from '../features/shared/page-skeleton'
+import PageTitle from '../shell/page-title'
 
 function availability(member: LobbyMember): { label: string; variant: 'ok' | 'warn' | 'off' } {
   if (member.draining) {
@@ -169,6 +170,8 @@ export default function LobbyClustersPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.lobbyClusters" />
       {/* 作用域工具条：命名空间选择器须常驻（其内部 effect 负责在未选时落定首个命名空间，
           放进条件分支会与数据加载形成循环依赖）；与状态卡同为一列内容流，不是独立空行。 */}
       <div className="grid gap-3.5">

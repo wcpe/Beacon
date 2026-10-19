@@ -27,6 +27,7 @@ import {
 import SystemReasonDialog from '../features/system/reason-dialog'
 import PageSkeleton from '../features/shared/page-skeleton'
 import { formatIso } from '../features/system/format'
+import PageTitle from '../shell/page-title'
 import ProgressCard from './system-version/progress-card'
 
 function messageOf(error: unknown): string {
@@ -132,6 +133,8 @@ export default function SystemVersionPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.systemVersion" />
 
       {/* 版本信息卡（紧凑：版本号 + 渠道 / 状态 + 检查 + 更新说明，不含操作按钮） */}
       <PageAsyncSection

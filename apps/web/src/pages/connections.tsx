@@ -28,6 +28,7 @@ import { useCursorStack } from '../features/observability/use-cursor-stack'
 import WindowSelect, { WINDOW_MS, type WindowKey } from '../features/observability/window-select'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
+import PageTitle from '../shell/page-title'
 
 const PAGE_SIZE = 20
 const STATUSES = ['open', 'closed'] as const
@@ -273,6 +274,8 @@ export default function ConnectionsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.connections" />
       <MasterDetail
         master={
           <ListCard

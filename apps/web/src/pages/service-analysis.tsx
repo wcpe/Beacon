@@ -13,6 +13,7 @@ import {
   setServiceAnalysisSelected,
   useServiceAnalysisSelected,
 } from '../state/service-analysis-selection'
+import PageTitle from '../shell/page-title'
 import ComparePanel from './service-analysis/compare-panel'
 import DecisionsPanel from './service-analysis/decisions-panel'
 import ServerPicker from './service-analysis/server-picker'
@@ -63,6 +64,8 @@ export default function ServiceAnalysisPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.serviceAnalysis" />
       {/* 左侧选择列（固定宽度吸顶）+ 右侧主区（占剩余宽度） */}
       <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] xl:grid-cols-[19rem_minmax(0,1fr)]">
         <ServerPicker selected={selected} onToggle={toggle} onClear={clearSelected} />

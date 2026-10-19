@@ -29,6 +29,7 @@ import WindowSelect, { WINDOW_MS, type WindowKey } from '../features/observabili
 import PayloadDialog from '../features/observability/payload-dialog'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
+import PageTitle from '../shell/page-title'
 
 const PAGE_SIZE = 20
 const STATUSES = ['accepted', 'dispatched', 'delivered', 'failed', 'expired'] as const
@@ -274,6 +275,8 @@ export default function MessagesPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.messages" />
       <MasterDetail
         master={
           <ListCard

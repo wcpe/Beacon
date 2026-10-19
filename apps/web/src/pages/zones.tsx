@@ -10,6 +10,7 @@ import { Badge, Button } from '@beacon/ui'
 
 import { fetchZoneTree } from '../api/cluster'
 import NamespaceSelect from '../features/cluster/namespace-select'
+import PageTitle from '../shell/page-title'
 import UnassignedBasket from './zones/unassigned-basket'
 import ZoneTree from './zones/zone-tree'
 
@@ -33,6 +34,8 @@ export default function ZonesPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.zones" />
       {/* 主从布局：结构树占主区，未分配窄栏（非模态）在右侧共存，不遮罩、不 reflow 主区 */}
       <div className="flex items-start gap-3.5">
         <div className="min-w-0 flex-1">

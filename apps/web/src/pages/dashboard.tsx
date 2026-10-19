@@ -2,6 +2,7 @@
 // 玩家流/连接流趋势 + 告警概览 + 调度概览，只看不改。各卡异常可下钻到对应页。
 // 健康与调度概览已接真（/admin/v2 metrics·health·sched-decisions）；连接流端点随后续阶段
 // 提供（卡内降级占位），告警卡消费既有 /admin/v1/alert-events。
+import PageTitle from '../shell/page-title'
 import AlertOverview from './dashboard/alert-overview'
 import FlowOverview from './dashboard/flow-overview'
 import HealthOverview from './dashboard/health-overview'
@@ -11,6 +12,8 @@ import ServerWall from './dashboard/server-wall'
 export default function DashboardPage() {
   return (
     <div className="grid gap-3">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.dashboard" />
       {/* 顶部 KPI 指标带（E5：无区段标题，右上保留下钻链接；健康分布环在 KpiStrip 内） */}
       <HealthOverview />
       {/* 中区：服务器状态墙（宽）+ 玩家流 / 连接流趋势 */}

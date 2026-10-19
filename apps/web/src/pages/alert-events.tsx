@@ -37,6 +37,7 @@ import {
 import FilterSelect from '../features/observability/filter-select'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
+import PageTitle from '../shell/page-title'
 import Pager from '../features/observability/pager'
 import AlertDetailPanel, { type HandleIntent } from './alert-events/alert-detail-panel'
 import AlertKpi from './alert-events/alert-kpi'
@@ -651,6 +652,8 @@ export default function AlertEventsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.alertEvents" />
       <MasterDetail
         master={master}
         detail={

@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import type { AuditItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
+import PageTitle from '../shell/page-title'
 import AuditDetailPanel from './audits/audit-detail-panel'
 import AuditKpi from './audits/audit-kpi'
 import AuditList from './audits/audit-list'
@@ -17,6 +18,8 @@ export default function AuditsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.audits" />
       <AuditKpi />
       <MasterDetail
         master={<AuditList onView={setDetail} selectedId={detail?.id ?? null} />}

@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom'
 
 import { fetchIdentities } from '../api/cluster'
 import { fetchPagedItemsByEnvScope, useEnvNamespaceScope, useEnvScopePending } from '../features/env/use-env-scope'
+import PageTitle from '../shell/page-title'
 import AssetsPanel from './servers/assets-panel'
 import HealthSheet from './servers/health-sheet'
 import PendingSheet from './servers/pending-sheet'
@@ -43,6 +44,8 @@ export default function ServersPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.servers" />
       <AssetsPanel
         initialKeyword={initialKeyword}
         onViewHealth={setHealthServerId}

@@ -10,6 +10,7 @@ import { CardGridSkeleton } from '@beacon/ui'
 import PageAsyncSection from '../features/shared/page-async-section'
 
 import { fetchIdentities, fetchNamespaces } from '../api/cluster'
+import PageTitle from '../shell/page-title'
 import ConflictCard from './identity-conflicts/conflict-card'
 
 export default function IdentityConflictsPage() {
@@ -33,6 +34,8 @@ export default function IdentityConflictsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.identityConflicts" />
       <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}

@@ -37,6 +37,7 @@ import { formatIso } from '../features/system/format'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
 import PlaintextDialog from '../features/shared/plaintext-dialog'
+import PageTitle from '../shell/page-title'
 import ConfigCard from './mcp-clients/config-card'
 import CreateDialog from './mcp-clients/create-dialog'
 import DetailPanel from './mcp-clients/detail-panel'
@@ -194,6 +195,8 @@ export default function McpClientsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.mcpClients" />
 
       <ConfigCard
         data={configQuery.data}

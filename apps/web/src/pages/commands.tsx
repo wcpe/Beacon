@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import type { CommandItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
+import PageTitle from '../shell/page-title'
 import CommandDetailPanel from './commands/command-detail-panel'
 import CommandHistory from './commands/command-history'
 import CommandKpi from './commands/command-kpi'
@@ -19,6 +20,8 @@ export default function CommandsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.commands" />
       <CommandKpi />
       <MasterDetail
         master={
