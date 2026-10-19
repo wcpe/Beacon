@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import Header from '../../shell/header'
 import OperatorMenu from '../../shell/operator-menu'
+import { MIN_REFRESH_BUSY_MS } from '../../shell/page-refresh-button'
 import { setLocale } from '../../state/locale'
 import '../../i18n'
 
@@ -202,5 +203,41 @@ describe('页眉工具 FR-193～196', () => {
     renderHeader()
     expect(await screen.findByRole('button', { name: '语言' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '通知' })).toBeEnabled()
+  })
+})
+
+// 本机 / 内网请求常在数十毫秒内返回。若忙碌态只跟随请求耗时，用户看不到任何反馈，
+// 故设最短展示时长；此用例用「立即返回」的响应验证下限确实生效。
+describe('刷新忙碌态最短展示时长', () => {
+  it('请求秒回时，忙碌态仍持续到最短时长', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('/admin/v1/system/status', () =>
+        HttpResponse.json({
+          version: '0.31.0',
+          startedAt: '2026-07-22T00:00:00Z',
+          uptimeSeconds: 1,
+          db: { connected: true },
+          onlineInstances: 0,
+          samplerEnabled: true,
+          runtime: { goroutines: 1, heapAlloc: 1, heapSys: 1 },
+          cpuAvailable: true,
+          cpuPercent: 10,
+        }),
+      ),
+    )
+    renderHeader('/system')
+    const resources = await screen.findByRole('link', { name: /控制面 CPU/ })
+
+    const startedAt = Date.now()
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+    // 请求是立即返回的，但忙碌态应仍在
+    expect(resources).toHaveAttribute('aria-busy', 'true')
+
+    await waitFor(() => expect(resources).not.toHaveAttribute('aria-busy'), {
+      timeout: MIN_REFRESH_BUSY_MS + 1500,
+    })
+    const elapsed = Date.now() - startedAt
+    expect(elapsed).toBeGreaterThanOrEqual(MIN_REFRESH_BUSY_MS)
   })
 })

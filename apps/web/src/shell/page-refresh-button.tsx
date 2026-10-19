@@ -64,6 +64,14 @@ export function queryKeysForPath(pathname: string): string[][] {
   return []
 }
 
+/**
+ * 刷新忙碌态的最短展示时长（ms）。
+ * 本机或内网请求常在数十毫秒内返回，若只按请求耗时控制忙碌态，变淡/脉冲会一闪而过，
+ * 用户根本看不见，等于没有反馈。给一个下限，让「正在刷新」至少可被感知。
+ * 取值与图标旋转的 400ms 对齐，两者的视觉节奏一致。
+ */
+export const MIN_REFRESH_BUSY_MS = 400
+
 export default function PageRefreshButton({
   onRefreshingChange,
 }: {
@@ -74,12 +82,19 @@ export default function PageRefreshButton({
   const location = useLocation()
   const [spinning, setSpinning] = useState(false)
   const activeRefreshes = useRef(0)
+  // 本次刷新批次的起始时刻，用于计算最短展示时长的剩余时间
+  const refreshStartedAt = useRef(0)
   // 卸载时清掉旋转定时器，避免测试 teardown 后 setState
   const spinTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 最短展示时长的收尾定时器：请求已回但忙碌态还没满 400ms 时，由它负责置回 false
+  const busyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     return () => {
       if (spinTimer.current !== null) {
         clearTimeout(spinTimer.current)
+      }
+      if (busyTimer.current !== null) {
+        clearTimeout(busyTimer.current)
       }
     }
   }, [])
@@ -89,7 +104,13 @@ export default function PageRefreshButton({
       clearTimeout(spinTimer.current)
       spinTimer.current = null
     }
+    // 新一轮刷新开始：取消上一轮可能挂起的收尾，并重置起始时刻
+    if (busyTimer.current !== null) {
+      clearTimeout(busyTimer.current)
+      busyTimer.current = null
+    }
     if (activeRefreshes.current === 0) {
+      refreshStartedAt.current = Date.now()
       onRefreshingChange(true)
     }
     activeRefreshes.current += 1
@@ -106,8 +127,18 @@ export default function PageRefreshButton({
     } finally {
       activeRefreshes.current -= 1
       if (activeRefreshes.current === 0) {
-        onRefreshingChange(false)
-        // 保留短暂的图标旋转反馈；指标忙碌态随数据请求完成立即结束。
+        // 不足最短时长则补齐剩余部分，避免忙碌态一闪而过
+        const elapsed = Date.now() - refreshStartedAt.current
+        const remaining = Math.max(MIN_REFRESH_BUSY_MS - elapsed, 0)
+        if (remaining === 0) {
+          onRefreshingChange(false)
+        } else {
+          busyTimer.current = setTimeout(() => {
+            busyTimer.current = null
+            onRefreshingChange(false)
+          }, remaining)
+        }
+        // 保留短暂的图标旋转反馈；指标忙碌态按上面的最短时长收尾。
         spinTimer.current = setTimeout(() => {
           setSpinning(false)
           spinTimer.current = null
