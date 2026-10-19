@@ -56,14 +56,74 @@ func walkedAdminRoutes(routes chi.Routes) map[string]struct{} {
 
 func adminRouteKey(method, route string) string { return method + " " + route }
 
+// adminRouteDescriptorForRequest 按确定性优先级判定请求归属的授权描述符。
 func adminRouteDescriptorForRequest(method, requestPath string) (AdminRouteDescriptor, bool) {
-	for key, descriptor := range adminRouteCatalog {
+	return lookupAdminRouteDescriptor(adminRouteCatalog, method, requestPath)
+}
+
+// adminRouteCandidate 是通配匹配的候选与其确定性排序键。
+type adminRouteCandidate struct {
+	key        string
+	descriptor AdminRouteDescriptor
+	literals   int // 字面段数量（越多越具体）
+	wildcards  int // 通配段数量（越少越具体）
+}
+
+// moreSpecificThan 判断本候选是否应优先于另一候选（用于从多个通配命中里挑唯一结果）。
+//
+// 排序键依次为：字面段多者优先 → 通配段少者优先 → key 字典序小者优先。
+// 最后一级是**必需的**：前两级完全相同时（例如 /a/{x} 与 /a/{y}）若没有稳定兜底，
+// map 遍历顺序会让同一请求在不同次调用得到不同描述符。
+func (c adminRouteCandidate) moreSpecificThan(other adminRouteCandidate) bool {
+	if c.literals != other.literals {
+		return c.literals > other.literals
+	}
+	if c.wildcards != other.wildcards {
+		return c.wildcards < other.wildcards
+	}
+	return c.key < other.key
+}
+
+// lookupAdminRouteDescriptor 在给定路由目录中查找 (method, path) 对应的授权描述符。
+//
+// 为什么必须确定性：旧实现直接 `for key, descriptor := range catalog` 命中即返回，
+// 而 Go map 迭代顺序随机——一旦出现「同段数、互相通配」的重叠路由（例如新增通配路由与
+// content.read 路径重叠），同一请求的授权结果就会在放行与 403 之间随机。
+// 现改为：精确匹配优先 → 再按具体度排序取唯一最优（见 moreSpecificThan）。
+func lookupAdminRouteDescriptor(catalog map[string]AdminRouteDescriptor, method, requestPath string) (AdminRouteDescriptor, bool) {
+	// 一级：精确匹配（path 与登记 pattern 完全一致）直接命中，避免被更宽的通配路由抢走。
+	if descriptor, ok := catalog[adminRouteKey(method, requestPath)]; ok {
+		return descriptor, true
+	}
+	var best adminRouteCandidate
+	found := false
+	for key, descriptor := range catalog {
 		routeMethod, pattern, ok := strings.Cut(key, " ")
-		if ok && routeMethod == method && adminRoutePatternMatches(pattern, requestPath) {
-			return descriptor, true
+		if !ok || routeMethod != method || !adminRoutePatternMatches(pattern, requestPath) {
+			continue
+		}
+		literals, wildcards := adminRoutePatternSpecificity(pattern)
+		candidate := adminRouteCandidate{key: key, descriptor: descriptor, literals: literals, wildcards: wildcards}
+		if !found || candidate.moreSpecificThan(best) {
+			best, found = candidate, true
 		}
 	}
-	return AdminRouteDescriptor{}, false
+	if !found {
+		return AdminRouteDescriptor{}, false
+	}
+	return best.descriptor, true
+}
+
+// adminRoutePatternSpecificity 统计 pattern 的字面段与通配段数量（"{name}" 段计为通配）。
+func adminRoutePatternSpecificity(pattern string) (literals, wildcards int) {
+	for _, part := range strings.Split(strings.Trim(pattern, "/"), "/") {
+		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
+			wildcards++
+			continue
+		}
+		literals++
+	}
+	return literals, wildcards
 }
 
 func adminRoutePatternMatches(pattern, requestPath string) bool {

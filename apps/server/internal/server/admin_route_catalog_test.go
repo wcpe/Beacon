@@ -116,3 +116,158 @@ func TestMergeRouteCatalogRejectsDuplicate(t *testing.T) {
 	entry := route("test", "management.read", routeDirect, http.MethodGet, "/admin/v2/duplicate")
 	_ = mergeRouteCatalog(entry, entry)
 }
+
+// TestLookupAdminRouteDescriptorPrefersExactMatch 验证精确匹配优先于通配匹配。
+// 构造两个互相通配的候选：字面路径与同段数通配路径同时命中同一个请求时，必须选字面那个，
+// 否则新增一条通配路由就可能把既有的危险操作降级成更宽的能力要求。
+func TestLookupAdminRouteDescriptorPrefersExactMatch(t *testing.T) {
+	catalog := map[string]AdminRouteDescriptor{
+		adminRouteKey(http.MethodPost, "/admin/v2/messages/{messageId}/payload"): {
+			Operation: "content.read", Capability: auth.CapabilityManagementRead, Classification: routeDirect,
+		},
+		adminRouteKey(http.MethodPost, "/admin/v2/messages/broadcast/payload"): {
+			Operation: "approval.request", Capability: auth.CapabilityApprovalRequest, Classification: routeApprovalRequired,
+		},
+	}
+	got, ok := lookupAdminRouteDescriptor(catalog, http.MethodPost, "/admin/v2/messages/broadcast/payload")
+	if !ok || got.Operation != "approval.request" || got.Classification != routeApprovalRequired {
+		t.Fatalf("字面路径应精确命中更高危描述符，实际 %+v ok=%v", got, ok)
+	}
+	// 非字面路径仍走通配。
+	got, ok = lookupAdminRouteDescriptor(catalog, http.MethodPost, "/admin/v2/messages/abc/payload")
+	if !ok || got.Operation != "content.read" {
+		t.Fatalf("非字面路径应走通配描述符，实际 %+v ok=%v", got, ok)
+	}
+}
+
+// TestLookupAdminRouteDescriptorDeterministic 验证同段数通配路由重叠时结果确定且更具体者优先。
+//
+// 旧实现遍历 map 命中即返回，Go 的 map 迭代顺序随机，同一 (method, path) 会随调用在放行 / 403 之间抖动。
+// 这里反复查询同一请求，断言每次结果一致，且字面段更多的候选胜出。
+func TestLookupAdminRouteDescriptorDeterministic(t *testing.T) {
+	catalog := map[string]AdminRouteDescriptor{
+		// 字面段 2、通配段 2
+		adminRouteKey(http.MethodGet, "/admin/v2/{scope}/{id}"): {
+			Operation: "wide.read", Capability: auth.CapabilityManagementRead, Classification: routeDirect,
+		},
+		// 字面段 3、通配段 1：更具体
+		adminRouteKey(http.MethodGet, "/admin/v2/messages/{id}"): {
+			Operation: "content.read", Capability: auth.CapabilityManagementRead, Classification: routeDirect,
+		},
+		// 字面段 4：最具体
+		adminRouteKey(http.MethodGet, "/admin/v2/messages/stats/{id}"): {
+			Operation: "approval.request", Capability: auth.CapabilityApprovalRequest, Classification: routeApprovalRequired,
+		},
+	}
+	cases := []struct{ path, operation string }{
+		{"/admin/v2/messages/stats/abc", "approval.request"},
+		{"/admin/v2/messages/abc", "content.read"},
+		{"/admin/v2/other/abc", "wide.read"},
+	}
+	for _, tc := range cases {
+		var first AdminRouteDescriptor
+		for i := 0; i < 200; i++ {
+			got, ok := lookupAdminRouteDescriptor(catalog, http.MethodGet, tc.path)
+			if !ok {
+				t.Fatalf("%s 应命中描述符（第 %d 次）", tc.path, i+1)
+			}
+			if i == 0 {
+				first = got
+				continue
+			}
+			if got != first {
+				t.Fatalf("%s 同一请求返回了不同描述符：%+v vs %+v（第 %d 次）", tc.path, first, got, i+1)
+			}
+		}
+		if first.Operation != tc.operation {
+			t.Fatalf("%s 应选最具体的候选 %q，实际 %q", tc.path, tc.operation, first.Operation)
+		}
+	}
+}
+
+// TestAdminRouteDescriptorForRequestRealCatalogDeterministic 验证真实目录下同一请求的判定稳定，
+// 且正文读取路径不会被同段数的其它路由抢走。
+func TestAdminRouteDescriptorForRequestRealCatalogDeterministic(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		for _, tc := range []struct{ method, path string }{
+			{http.MethodGet, "/admin/v1/instances/lobby-1/logs"},
+			{http.MethodGet, "/admin/v1/instances/lobby-1/browse"},
+			{http.MethodPost, "/admin/v2/messages/m1/payload"},
+			{http.MethodGet, "/admin/v1/instances/offline"},
+		} {
+			got, ok := adminRouteDescriptorForRequest(tc.method, tc.path)
+			if !ok {
+				t.Fatalf("%s %s 应命中描述符（第 %d 次）", tc.method, tc.path, i+1)
+			}
+			if i == 0 {
+				continue
+			}
+			// 前 3 条属 content.read；/instances/offline 是字面路径，必须精确命中管理读。
+			if strings.Contains(tc.path, "/logs") || strings.Contains(tc.path, "/browse") || strings.Contains(tc.path, "/payload") {
+				if got.Operation != "content.read" {
+					t.Fatalf("%s %s 应为 content.read，实际 %q（第 %d 次）", tc.method, tc.path, got.Operation, i+1)
+				}
+				continue
+			}
+			if got.Operation != "management.read" {
+				t.Fatalf("%s %s 应为 management.read，实际 %q（第 %d 次）", tc.method, tc.path, got.Operation, i+1)
+			}
+		}
+	}
+}
+
+// TestAdminRouteCatalogHasNoSameMethodAmbiguity 守护：真实目录内不得出现「同 method、同段数、
+// 互相通配且描述符不同」的重叠对。
+//
+// 这类重叠是 B8 的根因：一旦存在，同一 (method, path) 在确定性匹配下会稳定选中更具体者，
+// 但「更具体」未必是设计者想要的那条，属于需要人工裁决的目录错误。
+// 当前目录实测无此情况；若将来新增通配路由引入重叠，本用例会直接失败并指出冲突对，
+// 逼迫作者显式登记精确路径或调整描述符，而不是让授权结果取决于路由匹配的运气。
+func TestAdminRouteCatalogHasNoSameMethodAmbiguity(t *testing.T) {
+	type entry struct {
+		key      string
+		concrete string
+		desc     AdminRouteDescriptor
+		segments int
+	}
+	var entries []entry
+	for key := range adminRouteCatalog {
+		method, pattern, ok := strings.Cut(key, " ")
+		if !ok {
+			continue
+		}
+		parts := strings.Split(strings.Trim(pattern, "/"), "/")
+		concrete := make([]string, len(parts))
+		for i, part := range parts {
+			if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
+				concrete[i] = "x"
+				continue
+			}
+			concrete[i] = part
+		}
+		entries = append(entries, entry{
+			key: key, concrete: method + " /" + strings.Join(concrete, "/"),
+			desc: adminRouteCatalog[key], segments: len(parts),
+		})
+	}
+	for i := range entries {
+		for j := i + 1; j < len(entries); j++ {
+			a, b := entries[i], entries[j]
+			if a.segments != b.segments || a.desc == b.desc {
+				continue
+			}
+			aMethod, _, _ := strings.Cut(a.key, " ")
+			bMethod, _, _ := strings.Cut(b.key, " ")
+			if aMethod != bMethod {
+				continue
+			}
+			_, aPath, _ := strings.Cut(a.concrete, " ")
+			_, bPath, _ := strings.Cut(b.concrete, " ")
+			_, aPattern, _ := strings.Cut(a.key, " ")
+			_, bPattern, _ := strings.Cut(b.key, " ")
+			if adminRoutePatternMatches(bPattern, aPath) || adminRoutePatternMatches(aPattern, bPath) {
+				t.Fatalf("存在同 method 的歧义重叠路由，需人工裁决：%s (%+v) 与 %s (%+v)", a.key, a.desc, b.key, b.desc)
+			}
+		}
+	}
+}
