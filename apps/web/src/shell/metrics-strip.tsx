@@ -16,6 +16,7 @@ import {
 } from '@beacon/ui'
 
 import { useGlobalOpsMetrics } from './use-global-ops-metrics'
+import { useVisibleBusy } from './use-visible-busy'
 
 function formatMetric(value: number | null): string {
   if (value === null) {
@@ -31,9 +32,9 @@ export default function MetricsStrip({
 }) {
   const { t } = useTranslation()
   // isFetching 覆盖「主动刷新 + 周期轮询」；只盯主动刷新会让轮询时的数值硬替换，
-  // 用户看不出它刚刚更新过。
+  // 用户看不出它刚刚更新过。取数常在个位数毫秒内返回，故用最短展示时长撑开。
   const { metrics, isFetching } = useGlobalOpsMetrics()
-  const busy = isFetching || isRefreshing
+  const busy = useVisibleBusy(isFetching, isRefreshing)
 
   const controlPlaneState =
     metrics.controlPlaneOnline === null ? 'unknown' : metrics.controlPlaneOnline ? 'online' : 'offline'

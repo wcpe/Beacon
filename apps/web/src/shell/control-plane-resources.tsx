@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
 import { useControlPlaneResources } from './use-control-plane-resources'
+import { useVisibleBusy } from './use-visible-busy'
 
 const KIB = 1024
 const MIB = KIB * 1024
@@ -45,8 +46,9 @@ export default function ControlPlaneResources({
   // isFetching 覆盖「主动刷新 + 8 秒轮询」两种取数；只盯主动刷新会让轮询时的
   // 数字变成硬替换（用户看到数值突然跳变，不知道它刚更新过）。
   const { data: status, isFetching } = useControlPlaneResources()
-  // 取数中的视觉反馈：数字淡化 + 过渡，让「值在更新」这件事可被看见。
-  const busy = isFetching || isRefreshing
+  // 取数常在个位数毫秒内返回，直接绑 isFetching 会让淡出只存在 5ms（实测），
+  // 肉眼不可见；用最短展示时长撑到可感知的窗口。
+  const busy = useVisibleBusy(isFetching, isRefreshing)
 
   const cpuAvailable = status?.cpuAvailable ?? false
   const cpuPercent = status?.cpuPercent ?? 0
