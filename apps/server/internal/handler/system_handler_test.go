@@ -27,6 +27,9 @@ type cpuStub struct {
 
 func (c cpuStub) Percent() (float64, bool) { return c.percent, c.available }
 
+// Stop 空实现：替身无后台采样协程。
+func (c cpuStub) Stop() {}
+
 // TestSystemStatusHandlerConnected 验证端点返回 200 且 DB 连通、字段就位。
 func TestSystemStatusHandlerConnected(t *testing.T) {
 	reg := runtime.NewRegistry()

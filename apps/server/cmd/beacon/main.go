@@ -331,7 +331,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("获取底层连接池失败: %w", err)
 	}
-	// 进程 CPU% 采样器（gopsutil）：构造时预热一次基线，端点每次取自上次调用以来的占比。
+	// 进程 CPU% 采样器（gopsutil）：后台每 5 秒采样一次写入内存，端点请求只读缓存，
+	// 不再每次现算（避免基线随请求间隔漂移导致失真，也省掉请求路径上的系统调用）。
 	cpuSampler := service.NewGopsutilCPUSampler()
 	// 连通探测注入**带预算**的探测器（P1-1）：原生 `(*sql.DB).Ping()` 在池被占满时无界等待，
 	// 而本端点恰是排障时最需要可用的——事故症状会在这里原样复现。经 store.NewBoundedPinger

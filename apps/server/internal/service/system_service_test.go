@@ -42,6 +42,9 @@ type fakeCPUSampler struct {
 
 func (f fakeCPUSampler) Percent() (float64, bool) { return f.percent, f.available }
 
+// Stop 空实现：替身无后台协程。
+func (f fakeCPUSampler) Stop() {}
+
 // addOnline 向注册表注入一个在线实例（供在线计数断言）。
 func addOnline(t *testing.T, reg *rt.Registry, ns, serverID, addr string) {
 	t.Helper()
@@ -143,14 +146,29 @@ func TestSystemStatusCPUClamp(t *testing.T) {
 	}
 }
 
-// TestGopsutilCPUSamplerRealProcess 用真实 gopsutil 采样器跑通本进程：预热后采集应可用且占比落在 [0,100]。
-// 真实数值不可断言，仅校验「可用」与区间，覆盖生产装配路径（预热 + 采集）。
+// TestGopsutilCPUSamplerRealProcess 用真实 gopsutil 采样器跑通本进程：
+// 等后台采样产出首个样本后，读取应可用且占比落在 [0,100]。
+// 真实数值不可断言，仅校验「可用」与区间，覆盖生产装配路径（后台采样 + 内存读值）。
 func TestGopsutilCPUSamplerRealProcess(t *testing.T) {
 	sampler := NewGopsutilCPUSampler()
+	if sampler == nil {
+		t.Skip("当前环境无法创建进程句柄，跳过")
+	}
+	defer sampler.Stop()
 	svc := NewSystemService("v1", time.Now(), fakePinger{}, rt.NewRegistry(), samplerEnabledFn(true), sampler)
-	st := svc.Status()
+
+	// 后台采样间隔为 5s，轮询等待首个样本（最多 cpuSampleInterval*2），不做固定 sleep。
+	deadline := time.Now().Add(cpuSampleInterval * 2)
+	var st SystemStatus
+	for time.Now().Before(deadline) {
+		st = svc.Status()
+		if st.CPUAvailable {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if !st.CPUAvailable {
-		t.Fatal("真实采样器在本进程应可用（CPUAvailable=true）")
+		t.Fatal("后台采样产出首个样本后应可用（CPUAvailable=true）")
 	}
 	if st.CPUPercent < 0 || st.CPUPercent > 100 {
 		t.Fatalf("真实采样 CPUPercent 应落在 [0,100]，实际 %v", st.CPUPercent)
@@ -170,43 +188,57 @@ func TestSystemStatusCPUUnavailable(t *testing.T) {
 	}
 }
 
-// TestGopsutilSamplerStaleBaselineDegrades 验证基线过旧时丢弃结果并降级。
-// 场景：服务启动后很久才有人打开管理台，若直接用 Percent(0)，
-// 会把「长间隔内的平均值」当成当前占用（实测出现过接近 100% 的失真值）。
-func TestGopsutilSamplerStaleBaselineDegrades(t *testing.T) {
+// TestGopsutilSamplerReadsCacheBeforeFirstSample 验证首个后台样本产出前降级，
+// 而不是回落到「现算」——现算会把长间隔的平均值当成当前占用（实测出现过 100% 失真）。
+func TestGopsutilSamplerReadsCacheBeforeFirstSample(t *testing.T) {
 	sampler := newGopsutilCPUSampler()
 	if sampler == nil {
 		t.Skip("当前环境无法创建进程句柄，跳过")
 	}
-	// 人为把基线时刻推到阈值之外，模拟「很久没有人访问」。
-	sampler.mu.Lock()
-	sampler.lastSeen = time.Now().Add(-cpuSampleMaxGap - time.Minute)
-	sampler.mu.Unlock()
+	defer sampler.Stop()
 
+	// 构造后立即读取：后台 ticker 尚未触发，应降级。
 	if pct, ok := sampler.Percent(); ok || pct != 0 {
-		t.Fatalf("基线过旧时应降级为 (0,false)，实际 (%v,%v)", pct, ok)
-	}
-	// 降级同时也应重建基线：紧接着再采一次即应可用且落在合法区间。
-	pct, ok := sampler.Percent()
-	if !ok {
-		t.Fatal("重建基线后紧接着采样应可用")
-	}
-	if pct < 0 || pct > 100 {
-		t.Fatalf("占比应落在 [0,100]，实际 %v", pct)
+		t.Fatalf("首个样本产出前应降级为 (0,false)，实际 (%v,%v)", pct, ok)
 	}
 }
 
-// TestGopsutilSamplerZeroBaselineDegrades 验证尚无有效基线时降级而非返回失真值。
-func TestGopsutilSamplerZeroBaselineDegrades(t *testing.T) {
+// TestGopsutilSamplerBackgroundSampleBecomesAvailable 验证后台采样写入内存后，
+// Percent 直接读到该缓存值（请求路径不再做系统调用）。
+func TestGopsutilSamplerBackgroundSampleBecomesAvailable(t *testing.T) {
 	sampler := newGopsutilCPUSampler()
 	if sampler == nil {
 		t.Skip("当前环境无法创建进程句柄，跳过")
 	}
+	defer sampler.Stop()
+
+	// 不等待真实 5 秒 ticker：直接驱动一次采样逻辑，验证「写入缓存 → 读缓存」这条链路。
+	pct, err := sampler.proc.Percent(0)
+	if err != nil {
+		t.Skipf("当前环境无法采样，跳过：%v", err)
+	}
 	sampler.mu.Lock()
-	sampler.lastSeen = time.Time{}
+	sampler.pct, sampler.ready = pct, true
 	sampler.mu.Unlock()
 
-	if pct, ok := sampler.Percent(); ok || pct != 0 {
-		t.Fatalf("无基线时应降级为 (0,false)，实际 (%v,%v)", pct, ok)
+	got, ok := sampler.Percent()
+	if !ok {
+		t.Fatal("后台样本写入后 Percent 应可用")
 	}
+	if got != pct {
+		t.Fatalf("Percent 应原样返回缓存值 %v，实际 %v", pct, got)
+	}
+	if got < 0 || got > 100 {
+		t.Fatalf("占比应落在 [0,100]，实际 %v", got)
+	}
+}
+
+// TestGopsutilSamplerStopIsIdempotent 验证 Stop 可重复调用不 panic（进程退出路径会调用）。
+func TestGopsutilSamplerStopIsIdempotent(t *testing.T) {
+	sampler := newGopsutilCPUSampler()
+	if sampler == nil {
+		t.Skip("当前环境无法创建进程句柄，跳过")
+	}
+	sampler.Stop()
+	sampler.Stop()
 }
