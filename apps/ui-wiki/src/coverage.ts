@@ -14,6 +14,7 @@ export const UI_WIKI_COVERED_EXPORTS = [
   'SummaryItem',
   'SummaryTone',
   'CardGridSkeleton',
+  'FormSkeleton',
   'TableSkeleton',
   'TileGridSkeleton',
   'GaugeRing',

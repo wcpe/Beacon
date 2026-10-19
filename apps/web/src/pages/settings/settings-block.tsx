@@ -20,7 +20,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableSkeleton,
+  FormSkeleton,
 } from '@beacon/ui'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { SettingItem } from '@beacon/contracts'
@@ -122,7 +122,7 @@ export default function SettingsBlock() {
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}
-      skeleton={<TableSkeleton columns={4} rows={6} />}
+      skeleton={<FormSkeleton fields={5} withHint withActions />}
     >
       <div className="grid gap-4">
         {GROUPS.map((g) => {

@@ -15,7 +15,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableSkeleton,
+  FormSkeleton,
 } from '@beacon/ui'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { HealthWeightsConfig } from '@beacon/contracts'
@@ -102,7 +102,7 @@ export default function WeightsBlock() {
           isError={query.isError}
           error={query.error}
           loadingText={t('system.settings.weights.loadFail')}
-          skeleton={<TableSkeleton columns={2} rows={6} />}
+          skeleton={<FormSkeleton fields={4} withHint withActions />}
         >
           {current && (
             <>

@@ -6,7 +6,7 @@ export { default as JumpValue, type JumpValueProps } from './components/JumpValu
 export { default as MarkdownLite } from './components/MarkdownLite'
 export { default as SectionHeader } from './components/SectionHeader'
 export { default as SummaryStrip, type SummaryItem, type SummaryTone } from './components/SummaryStrip'
-export { CardGridSkeleton, TableSkeleton, TileGridSkeleton } from './components/skeletons'
+export { CardGridSkeleton, FormSkeleton, TableSkeleton, TileGridSkeleton } from './components/skeletons'
 export { default as GaugeRing } from './components/dashboard/GaugeRing'
 export { default as HealthBar, type HealthSegment } from './components/dashboard/HealthBar'
 export { default as IconStat } from './components/dashboard/IconStat'

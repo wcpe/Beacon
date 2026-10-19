@@ -85,6 +85,7 @@ import {
   SelectValue,
   Separator,
   CardGridSkeleton,
+  FormSkeleton,
   Sheet,
   SheetContent,
   SheetDescription,
@@ -547,6 +548,8 @@ function FeedbackPreview() {
         <TableSkeleton columns={3} rows={2} />
         <CardGridSkeleton count={2} gridClass="grid grid-cols-2 gap-2" />
         <TileGridSkeleton count={2} />
+        {/* 表单骨架：标签 + 输入框形状，比表格骨架更贴合设置项排版 */}
+        <FormSkeleton fields={2} withHint withActions />
       </div>
     </ComponentShell>
   )
@@ -803,7 +806,7 @@ const items: MuseumItem[] = [
     title: '加载与反馈',
     group: '交互反馈',
     description: '展示异步三态、骨架屏、Toast 容器和常用骨架组合。',
-    exports: ['AsyncSection', 'Skeleton', 'TableSkeleton', 'CardGridSkeleton', 'TileGridSkeleton', 'Toaster'],
+    exports: ['AsyncSection', 'Skeleton', 'TableSkeleton', 'CardGridSkeleton', 'TileGridSkeleton', 'FormSkeleton', 'Toaster'],
     states: ['loading', 'error', 'toast', 'table skeleton', 'card skeleton'],
     preview: <FeedbackPreview />,
   },

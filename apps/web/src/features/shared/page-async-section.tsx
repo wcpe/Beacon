@@ -9,22 +9,18 @@
 // 不用骨架替换——结构（表头/卡片框架）本来就不变，重画不传递信息；
 // 也不用数据行骨架——那会把用户正在看的行抽走。遮罩既表示「正在刷新」，
 // 又不丢失上下文。
-import { Loader2 } from 'lucide-react'
-import { createContext, useContext, type ReactNode, type ReactElement } from 'react'
+import type { ReactNode, ReactElement } from 'react'
 
 import { AsyncSection } from '@beacon/ui'
 
 import { usePageRefreshing } from '../../shell/page-refreshing'
 
 /**
- * 兼容保留：刷新态已改为「数据区遮罩 + 转圈」，由本组件统一覆盖，
- * 数据组件（DataTable / KPI 等）不再需要自行响应刷新态。
- * 保留该 hook 与 context 是为了避免各调用点大改；它现在恒为 false。
+ * 兼容保留：刷新态不再统一干预数据组件（遮罩已移除，数值跳动与表格骨架由各组件自行表达）。
+ * 保留该 hook 是为了避免各调用点大改；它现在恒为 false。
  */
-const RefreshLoadingContext = createContext(false)
-
 export function useRefreshLoading(): boolean {
-  return useContext(RefreshLoadingContext)
+  return false
 }
 
 interface PageAsyncSectionProps {
@@ -57,23 +53,13 @@ export default function PageAsyncSection({
     )
   }
 
+  // 刷新时不覆盖、不替换内容：数值更新由各数据组件的跳动/骨架自行表达，
+  // 整块遮罩会盖住用户正在看的数据，反而碍事。
   return (
-    <div className="relative" aria-busy={refreshing ? true : undefined}>
+    <div aria-busy={refreshing ? true : undefined}>
       <AsyncSection isLoading={false} isError={isError} error={error} skeleton={skeleton} loadingText={loadingText}>
         {children}
       </AsyncSection>
-      {refreshing && (
-        // 遮罩：覆盖数据区，半透明，保留底层数据可见但不抢注意力
-        <div
-          data-slot="refresh-overlay"
-          className="absolute inset-0 z-10 grid place-items-center rounded-lg bg-background/55 backdrop-blur-[1px] motion-reduce:backdrop-blur-none"
-        >
-          <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-ink-2 shadow-card">
-            <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
-            {loadingText ?? '正在刷新'}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

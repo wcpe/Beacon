@@ -4,6 +4,7 @@
 
 import type { ReactNode } from 'react'
 import { cn } from '../../lib/utils'
+import JumpValue from '../JumpValue'
 
 // 图标角标语义色调：品牌靛蓝（默认）/ 正常 / 注意 / 危急 / 次要，映射到浅底 + 同色图标。
 export type KpiTone = 'brand' | 'ok' | 'warn' | 'crit' | 'off'
@@ -26,6 +27,12 @@ interface KpiCardProps {
   meta?: ReactNode
   // 底部可视化槽（细进度条 / sparkline 等），可选；给了则渲染在 meta 上方
   visual?: ReactNode
+  /**
+   * 数值更新时是否跳动（默认开启）。
+   * 传字符串主数值时按值变化自动播放；传 ReactNode 时无法比较前值，自动降级为不跳动。
+   * 关掉它用于「数值本就不该强调变化」的场景（如静态说明性卡片）。
+   */
+  jump?: boolean
 }
 
 // 色调 → 图标角标类（浅底 + 同色图标）。
@@ -37,7 +44,11 @@ const TONE_CLASS: Record<KpiTone, string> = {
   off: 'bg-off-bg text-off',
 }
 
-export default function KpiCard({ label, value, unit, icon, tone = 'brand', meta, visual }: KpiCardProps) {
+export default function KpiCard({ label, value, unit, icon, tone = 'brand', meta, visual, jump = true }: KpiCardProps) {
+  // 只有字符串主数值才能比较前值触发跳动；ReactNode 无法判断是否变化，原样渲染。
+  const valueNode =
+    jump && typeof value === 'string' ? <JumpValue value={value} /> : value
+
   return (
     <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-card px-3 py-2.5 shadow-card">
       {/* 图标在左、标签紧随：整行可截断，避免长标签把卡片撑高 */}
@@ -48,7 +59,7 @@ export default function KpiCard({ label, value, unit, icon, tone = 'brand', meta
         <span className="truncate text-[11.5px] font-medium text-ink-3">{label}</span>
       </div>
       <div className="text-[20px] leading-none font-bold tracking-[-0.4px] text-ink-1 tnum">
-        {value}
+        {valueNode}
         {unit != null && <span className="text-[12px] font-medium tracking-normal text-ink-4">{unit}</span>}
       </div>
       {visual}
