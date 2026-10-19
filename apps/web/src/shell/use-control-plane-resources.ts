@@ -15,5 +15,5 @@ export function useControlPlaneResources() {
   })
 
   // React Query 在轮询失败时保留上次成功的数据；首个请求失败则由展示组件显示占位符。
-  return query.data ?? null
+  return { data: query.data ?? null, isFetching: query.isFetching }
 }

@@ -36,9 +36,13 @@ function Separator() {
   return <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border" />
 }
 
-export default function ControlPlaneResources() {
+export default function ControlPlaneResources({
+  isRefreshing = false,
+}: {
+  isRefreshing?: boolean
+}) {
   const { t } = useTranslation()
-  const status = useControlPlaneResources()
+  const { data: status } = useControlPlaneResources()
 
   const cpuAvailable = status?.cpuAvailable ?? false
   const cpuPercent = status?.cpuPercent ?? 0
@@ -56,11 +60,19 @@ export default function ControlPlaneResources() {
     <Link
       to="/system"
       aria-label={groupLabel}
+      aria-busy={isRefreshing ? true : undefined}
       title={t('common.resources.openHealth')}
       data-slot="control-plane-resources"
       className="hidden h-8 w-[min(260px,30vw)] min-w-[200px] shrink-0 cursor-pointer items-center gap-2.5 rounded-lg bg-surface-2/70 px-2 text-[11px] transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 lg:flex"
     >
-      <div data-slot="resource-cpu" data-level={cpuWarning ? 'warning' : 'normal'} className="flex shrink-0 items-center gap-1.5">
+      <div
+        data-slot="resource-cpu"
+        data-level={cpuWarning ? 'warning' : 'normal'}
+        className={[
+          'flex shrink-0 items-center gap-1.5 transition-opacity duration-200 motion-reduce:transition-none',
+          isRefreshing ? 'opacity-60' : '',
+        ].join(' ')}
+      >
         <span className="text-ink-3">{t('common.resources.cpu')}</span>
         {/* 迷你条：h-1.5 + w-10 才能看清占比；此前 h-1/w-7 在 23% 时只剩一个小点 */}
         <span
@@ -80,7 +92,14 @@ export default function ControlPlaneResources() {
 
       <Separator />
 
-      <div data-slot="resource-memory" data-level={heapWarning ? 'warning' : 'normal'} className="flex min-w-0 shrink-0 items-center gap-1.5">
+      <div
+        data-slot="resource-memory"
+        data-level={heapWarning ? 'warning' : 'normal'}
+        className={[
+          'flex min-w-0 shrink-0 items-center gap-1.5 transition-opacity duration-200 motion-reduce:transition-none',
+          isRefreshing ? 'opacity-60' : '',
+        ].join(' ')}
+      >
         <span className="text-ink-3">{t('common.resources.memory')}</span>
         <span className={['whitespace-nowrap font-medium tabular-nums', heapWarning ? 'text-warn' : 'text-ink-1'].join(' ')}>
           {formatHeapUsage(heapAlloc, heapSys)}

@@ -24,7 +24,11 @@ function formatMetric(value: number | null): string {
   return String(value)
 }
 
-export default function MetricsStrip() {
+export default function MetricsStrip({
+  isRefreshing = false,
+}: {
+  isRefreshing?: boolean
+}) {
   const { t } = useTranslation()
   const { metrics } = useGlobalOpsMetrics()
 
@@ -57,10 +61,14 @@ export default function MetricsStrip() {
         <button
           type="button"
           aria-label={controlPlaneDescription}
+          aria-busy={isRefreshing ? true : undefined}
           data-slot="control-plane-status"
           data-state={controlPlaneState}
           title={controlPlaneDescription}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-ink-3 transition-colors hover:bg-muted hover:text-ink-1 focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
+          className={[
+            'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-ink-3 transition-[color,background-color,opacity] duration-200 motion-reduce:transition-none hover:bg-muted hover:text-ink-1 focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none',
+            isRefreshing ? 'opacity-60' : '',
+          ].join(' ')}
         >
           <span
             aria-hidden="true"
@@ -83,7 +91,11 @@ export default function MetricsStrip() {
         align="start"
         sideOffset={6}
         collisionPadding={12}
-        className="w-64 max-w-[calc(100vw-1.5rem)] p-1.5"
+        aria-busy={isRefreshing ? true : undefined}
+        className={[
+          'w-64 max-w-[calc(100vw-1.5rem)] p-1.5 transition-opacity duration-200 motion-reduce:transition-none',
+          isRefreshing ? 'opacity-60' : '',
+        ].join(' ')}
         data-slot="metrics-menu"
       >
         <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-medium text-ink-4">

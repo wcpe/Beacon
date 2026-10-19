@@ -1,6 +1,6 @@
 // 页眉工具：搜索可点、刷新可点、语言/通知触发器存在（FR-193～196）
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
@@ -44,13 +44,13 @@ afterAll(() => {
   server.close()
 })
 
-function renderHeader() {
+function renderHeader(initialEntry = '/') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <Header />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -125,6 +125,77 @@ describe('页眉工具 FR-193～196', () => {
     await user.click(btn)
     // 仍在文档中（未 unload）
     expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument()
+  })
+
+  it('用户刷新时页眉指标保留旧值并显示忙碌，刷新结束后恢复', async () => {
+    const user = userEvent.setup()
+    const initialStatus = {
+      version: '0.31.0',
+      startedAt: '2026-07-22T00:00:00Z',
+      uptimeSeconds: 1,
+      db: { connected: true },
+      onlineInstances: 0,
+      samplerEnabled: true,
+      runtime: { goroutines: 1, heapAlloc: 1, heapSys: 1 },
+      cpuAvailable: true,
+      cpuPercent: 42.4,
+    }
+    server.use(
+      http.get('/admin/v1/system/status', () => HttpResponse.json(initialStatus)),
+    )
+    renderHeader('/system')
+
+    const resources = await screen.findByRole('link', {
+      name: '控制面 CPU 42%，堆内存 1/1 B，点击查看健康详情',
+    })
+    const cpuBar = resources.querySelector('[data-slot="resource-cpu"] > span[aria-hidden="true"] > span')
+    expect(cpuBar).toHaveStyle({ width: '42.4%' })
+
+    const pendingResponses: (() => void)[] = []
+    server.use(
+      http.get(
+        '/admin/v1/system/status',
+        () =>
+          new Promise((resolve) => {
+            pendingResponses.push(() => {
+              resolve(
+                HttpResponse.json({
+                  ...initialStatus,
+                  runtime: { ...initialStatus.runtime, heapAlloc: 2, heapSys: 2 },
+                  cpuPercent: 75.2,
+                }),
+              )
+            })
+          }),
+      ),
+    )
+
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+    await waitFor(() => {
+      expect(pendingResponses).toHaveLength(2)
+    })
+
+    expect(resources).toHaveAttribute('aria-busy', 'true')
+    expect(resources.querySelector('[data-slot="resource-cpu"]')).toHaveClass('opacity-60')
+    expect(resources.querySelector('[data-slot="resource-memory"]')).toHaveClass('opacity-60')
+    expect(screen.getByText('42%')).toBeInTheDocument()
+    expect(screen.getByText('1/1 B')).toBeInTheDocument()
+    expect(cpuBar).toHaveStyle({ width: '42.4%' })
+
+    const status = screen.getByRole('button', { name: /控制面在线/ })
+    expect(status).toHaveAttribute('aria-busy', 'true')
+    expect(status).toHaveClass('opacity-60')
+
+    await act(async () => {
+      for (const finish of pendingResponses) {
+        finish()
+      }
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(resources).not.toHaveAttribute('aria-busy'))
+    expect(screen.getByText('75%')).toBeInTheDocument()
+    expect(screen.getByText('2/2 B')).toBeInTheDocument()
+    expect(resources.querySelector('[data-slot="resource-cpu"]')).not.toHaveClass('opacity-60')
   })
 
   it('语言与通知触发器启用', async () => {

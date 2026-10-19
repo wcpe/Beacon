@@ -64,11 +64,16 @@ export function queryKeysForPath(pathname: string): string[][] {
   return []
 }
 
-export default function PageRefreshButton() {
+export default function PageRefreshButton({
+  onRefreshingChange,
+}: {
+  onRefreshingChange: (isRefreshing: boolean) => void
+}) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const location = useLocation()
   const [spinning, setSpinning] = useState(false)
+  const activeRefreshes = useRef(0)
   // 卸载时清掉旋转定时器，避免测试 teardown 后 setState
   const spinTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -80,6 +85,14 @@ export default function PageRefreshButton() {
   }, [])
 
   const refresh = async () => {
+    if (spinTimer.current !== null) {
+      clearTimeout(spinTimer.current)
+      spinTimer.current = null
+    }
+    if (activeRefreshes.current === 0) {
+      onRefreshingChange(true)
+    }
+    activeRefreshes.current += 1
     setSpinning(true)
     try {
       const keys = queryKeysForPath(location.pathname)
@@ -91,14 +104,15 @@ export default function PageRefreshButton() {
         )
       }
     } finally {
-      // 短延迟让旋转可见
-      if (spinTimer.current !== null) {
-        clearTimeout(spinTimer.current)
+      activeRefreshes.current -= 1
+      if (activeRefreshes.current === 0) {
+        onRefreshingChange(false)
+        // 保留短暂的图标旋转反馈；指标忙碌态随数据请求完成立即结束。
+        spinTimer.current = setTimeout(() => {
+          setSpinning(false)
+          spinTimer.current = null
+        }, 400)
       }
-      spinTimer.current = setTimeout(() => {
-        setSpinning(false)
-        spinTimer.current = null
-      }, 400)
     }
   }
 

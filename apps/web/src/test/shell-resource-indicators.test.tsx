@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ControlPlaneResources from '../shell/control-plane-resources'
 import { CONTROL_PLANE_RESOURCES_REFETCH_MS } from '../shell/use-control-plane-resources'
@@ -30,6 +30,7 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' })
 })
 afterEach(async () => {
+  vi.useRealTimers()
   server.resetHandlers()
   setLocale('zh-CN')
   await i18next.changeLanguage('zh-CN')
@@ -140,6 +141,47 @@ describe('页眉控制面资源指示器（FR-272）', () => {
     expect(failures).toBeGreaterThan(0)
     expect(screen.getByText('42%')).toBeInTheDocument()
     expect(screen.getByText('64/128 MB')).toBeInTheDocument()
+  })
+
+  it('后台 8 秒轮询正在请求时不显示用户刷新忙碌标记', async () => {
+    vi.useFakeTimers()
+    let finishPoll: (() => void) | null = null
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    queryClient.setQueryData(['shell', 'control-plane-resources'], status)
+    server.use(
+      http.get('/admin/v1/system/status', async () => {
+        await new Promise<void>((resolve) => {
+          finishPoll = resolve
+        })
+        return HttpResponse.json(status)
+      }),
+    )
+    const rendered = render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <ControlPlaneResources />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+    const resources = rendered.container.querySelector('[data-slot="control-plane-resources"]')
+    expect(resources).not.toHaveAttribute('aria-busy')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTROL_PLANE_RESOURCES_REFETCH_MS)
+    })
+
+    expect(queryClient.isFetching({ queryKey: ['shell', 'control-plane-resources'] })).toBe(1)
+    expect(resources).not.toHaveAttribute('aria-busy')
+    expect(screen.getByText('42%')).toBeInTheDocument()
+    expect(screen.getByText('64/128 MB')).toBeInTheDocument()
+
+    await act(async () => {
+      finishPoll?.()
+      await Promise.resolve()
+    })
+    rendered.unmount()
   })
 
   it('英文界面使用对应 i18n 标签', async () => {

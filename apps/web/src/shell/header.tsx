@@ -21,7 +21,13 @@ import OperatorMenu from './operator-menu'
 import PageRefreshButton from './page-refresh-button'
 
 /** 段 2 右侧工具：搜索 / 语言 / 通知 / 刷新（FR-193～196） */
-function HeaderUtilities({ onOpenSearch }: { onOpenSearch: () => void }) {
+function HeaderUtilities({
+  onOpenSearch,
+  onRefreshingChange,
+}: {
+  onOpenSearch: () => void
+  onRefreshingChange: (isRefreshing: boolean) => void
+}) {
   const { t } = useTranslation()
   return (
     <>
@@ -43,7 +49,7 @@ function HeaderUtilities({ onOpenSearch }: { onOpenSearch: () => void }) {
       </div>
       <NotificationsMenu />
       <div data-slot="header-refresh-compact" className="hidden lg:inline-flex">
-        <PageRefreshButton />
+        <PageRefreshButton onRefreshingChange={onRefreshingChange} />
       </div>
     </>
   )
@@ -55,6 +61,7 @@ export default function Header() {
   const mobileNavOpen = useShellStore((state) => state.mobileNavOpen)
   const toggleMobileNav = useShellStore((state) => state.toggleMobileNav)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   // 全局 Ctrl/Cmd+K 唤起命令面板（FR-193）
   useEffect(() => {
@@ -88,16 +95,17 @@ export default function Header() {
           {mobileNavOpen ? <X className="size-4" /> : <Menu className="size-4" />}
         </Button>
         {/* 控制面状态点：也是运维指标的入口（点开看 Agent 在线 / 待确认 / 告警 / 变更单） */}
-        <MetricsStrip />
+        <MetricsStrip isRefreshing={isRefreshing} />
         <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
         {/* 环境 / 命名空间选择器固定在左侧：所有页面（含 /approvals）统一渲染 */}
         <EnvFilter />
-        <ControlPlaneResources />
+        <ControlPlaneResources isRefreshing={isRefreshing} />
         <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
           <HeaderUtilities
             onOpenSearch={() => {
               setPaletteOpen(true)
             }}
+            onRefreshingChange={setIsRefreshing}
           />
           {!demo && <OperatorMenu />}
         </div>
