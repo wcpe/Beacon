@@ -42,7 +42,11 @@ export default function ControlPlaneResources({
   isRefreshing?: boolean
 }) {
   const { t } = useTranslation()
-  const { data: status } = useControlPlaneResources()
+  // isFetching 覆盖「主动刷新 + 8 秒轮询」两种取数；只盯主动刷新会让轮询时的
+  // 数字变成硬替换（用户看到数值突然跳变，不知道它刚更新过）。
+  const { data: status, isFetching } = useControlPlaneResources()
+  // 取数中的视觉反馈：数字淡化 + 过渡，让「值在更新」这件事可被看见。
+  const busy = isFetching || isRefreshing
 
   const cpuAvailable = status?.cpuAvailable ?? false
   const cpuPercent = status?.cpuPercent ?? 0
@@ -60,7 +64,7 @@ export default function ControlPlaneResources({
     <Link
       to="/system"
       aria-label={groupLabel}
-      aria-busy={isRefreshing ? true : undefined}
+      aria-busy={busy ? true : undefined}
       title={t('common.resources.openHealth')}
       data-slot="control-plane-resources"
       className="hidden h-8 w-[min(260px,30vw)] min-w-[200px] shrink-0 cursor-pointer items-center gap-2.5 rounded-lg bg-surface-2/70 px-2 text-[11px] transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 lg:flex"
@@ -70,7 +74,7 @@ export default function ControlPlaneResources({
         data-level={cpuWarning ? 'warning' : 'normal'}
         className={[
           'flex shrink-0 items-center gap-1.5 transition-opacity duration-200 motion-reduce:transition-none',
-          isRefreshing ? 'opacity-60' : '',
+          busy ? 'opacity-60' : '',
         ].join(' ')}
       >
         <span className="text-ink-3">{t('common.resources.cpu')}</span>
@@ -97,7 +101,7 @@ export default function ControlPlaneResources({
         data-level={heapWarning ? 'warning' : 'normal'}
         className={[
           'flex min-w-0 shrink-0 items-center gap-1.5 transition-opacity duration-200 motion-reduce:transition-none',
-          isRefreshing ? 'opacity-60' : '',
+          busy ? 'opacity-60' : '',
         ].join(' ')}
       >
         <span className="text-ink-3">{t('common.resources.memory')}</span>

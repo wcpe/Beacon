@@ -143,11 +143,13 @@ describe('页眉控制面资源指示器（FR-272）', () => {
     expect(screen.getByText('64/128 MB')).toBeInTheDocument()
   })
 
-  it('后台 8 秒轮询正在请求时不显示用户刷新忙碌标记', async () => {
+  it('后台 8 秒轮询请求期间同样展示忙碌标记', async () => {
     vi.useFakeTimers()
     let finishPoll: (() => void) | null = null
+    // 不设 staleTime：设为 Infinity 时 React Query 认为缓存永久新鲜，
+    // 轮询到点也不会真正发请求，isFetching 恒为 false，测不到忙碌态。
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+      defaultOptions: { queries: { retry: false } },
     })
     queryClient.setQueryData(['shell', 'control-plane-resources'], status)
     server.use(
@@ -166,14 +168,25 @@ describe('页眉控制面资源指示器（FR-272）', () => {
       </MemoryRouter>,
     )
     const resources = rendered.container.querySelector('[data-slot="control-plane-resources"]')
-    expect(resources).not.toHaveAttribute('aria-busy')
+    // 挂载即触发首次请求，取数期间本就应处于忙碌态（数据在加载）。
+    // 这里等到首轮请求完成、忙碌态收起，再推进到轮询点验证第二轮。
+    await act(async () => {
+      await Promise.resolve()
+    })
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTROL_PLANE_RESOURCES_REFETCH_MS)
     })
 
-    expect(queryClient.isFetching({ queryKey: ['shell', 'control-plane-resources'] })).toBe(1)
-    expect(resources).not.toHaveAttribute('aria-busy')
+    // 轮询取数期间数值会更新；若不标记忙碌，用户看到的是数字被硬替换，
+    // 无法判断它刚更新过。故轮询与主动刷新都应有忙碌反馈。
+    const fetchingCount = queryClient.isFetching({ queryKey: ['shell', 'control-plane-resources'] })
+    expect(fetchingCount, 'staleTime 已移除，轮询到点应真正发出请求').toBe(1)
+    // 请求在途时组件应已重渲染出忙碌态；等待一个微任务让 React 提交更新
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(resources).toHaveAttribute('aria-busy', 'true')
     expect(screen.getByText('42%')).toBeInTheDocument()
     expect(screen.getByText('64/128 MB')).toBeInTheDocument()
 
