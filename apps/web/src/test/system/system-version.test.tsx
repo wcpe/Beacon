@@ -2,7 +2,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 
 import { DEMO_NEXT_VERSION, DEMO_VERSION } from '@beacon/devmock'
 import SystemVersionPage from '../../pages/system-version'
@@ -35,6 +35,35 @@ describe('/system/version 版本与更新页', () => {
     expect(screen.getByText('版本信息')).toBeInTheDocument()
     expect(screen.getByText('更新与渠道')).toBeInTheDocument()
     expect(screen.getByText('维护操作')).toBeInTheDocument()
+  })
+
+  it('首屏显示版本信息骨架，加载完成后显示真实版本', async () => {
+    useScenario('normal')
+    server.use(
+      http.get('/admin/v1/system/update-check', async () => {
+        await delay(120)
+        return HttpResponse.json({
+          status: 'ok',
+          currentVersion: DEMO_VERSION,
+          channel: 'stable',
+          hasUpdate: false,
+          isDevBuild: false,
+          latestVersion: DEMO_VERSION,
+          releaseNotes: '',
+          releaseUrl: '',
+          publishedAt: '',
+          checkedAt: '2026-07-20T00:00:00Z',
+          cacheExpiresAt: '2026-07-20T06:00:00Z',
+        })
+      }),
+    )
+    const { container } = renderPage(<SystemVersionPage />)
+
+    expect(container.querySelector('[data-slot="page-skeleton"]')).toBeInTheDocument()
+    expect(await screen.findByText(DEMO_VERSION)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(container.querySelector('[data-slot="page-skeleton"]')).not.toBeInTheDocument()
+    })
   })
 
   it('空态（已是最新）给出已最新提示', async () => {

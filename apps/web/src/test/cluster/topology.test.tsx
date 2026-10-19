@@ -4,7 +4,7 @@
 // 数据剖析模式渲染异常链路表并点击边看明细。默认可视化模式，切到「数据剖析」看表。
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import TopologyPage from '../../pages/topology'
@@ -36,6 +36,21 @@ describe('/topology 拓扑页', () => {
     expect(await screen.findByText('area-1')).toBeInTheDocument()
     // 图例悬浮卡
     expect(await screen.findByText('图例')).toBeInTheDocument()
+  })
+
+  it('首屏显示拓扑画布骨架，加载完成后显示真实空态', async () => {
+    useScenario('empty')
+    server.use(
+      http.get('/admin/v2/zone-tree', async () => {
+        await delay(120)
+        return HttpResponse.json({ namespaceId: 0, clusters: [], unassignedCount: 0 })
+      }),
+    )
+    const { container } = renderPage(<TopologyPage />)
+
+    expect(container.querySelector('[data-slot="page-skeleton"]')).toBeInTheDocument()
+    expect(await screen.findByText('暂无拓扑数据，接入服务器并完成区服分配后展示链路')).toBeInTheDocument()
+    expect(container.querySelector('[data-slot="page-skeleton"]')).not.toBeInTheDocument()
   })
 
   it('异常聚合链路失败率标签直显在图上（红色加粗边旁）', async () => {

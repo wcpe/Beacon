@@ -16,11 +16,12 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { ArrowRight, Boxes, DoorOpen, Maximize, Network, TriangleAlert, Waves, ZoomIn, ZoomOut } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, cn } from '@beacon/ui'
+import { AsyncSection, Badge, Button, cn, Skeleton } from '@beacon/ui'
 import type { HealthItem, MessageEdgeStat, ZoneTreeResponse } from '@beacon/contracts'
 
 import { fetchMessageEdges, fetchServers, fetchZoneTree } from '../../api/cluster'
 import { fetchHealthList } from '../../api/metrics'
+import PageSkeleton from '../../features/shared/page-skeleton'
 import SampleMessages from './sample-messages'
 
 // 小区节点总数上限：超过则按大区聚合折叠（节点 = 大区），不再逐个渲染小区
@@ -940,7 +941,17 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
         </Button>
       </div>
 
-      <AsyncSection isLoading={treeQuery.isLoading} isError={treeQuery.isError} error={treeQuery.error}>
+      <AsyncSection
+        isLoading={treeQuery.isLoading}
+        isError={treeQuery.isError}
+        error={treeQuery.error}
+        skeleton={
+          <PageSkeleton className="flex items-start gap-3">
+            <Skeleton className="h-[calc(100vh-340px)] min-h-[420px] min-w-0 flex-1 rounded-lg" />
+            <Skeleton className="h-56 w-[248px] shrink-0 rounded-lg" />
+          </PageSkeleton>
+        }
+      >
         {isEmpty || !layout ? (
           <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-ink-3">
             {t('cluster.topology.graph.empty')}

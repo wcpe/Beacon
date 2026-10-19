@@ -8,6 +8,7 @@ import {
   AsyncSection,
   Badge,
   Button,
+  CardGridSkeleton,
   DataTable,
   Dialog,
   DialogContent,
@@ -15,6 +16,8 @@ import {
   DialogHeader,
   DialogTitle,
   Label,
+  Skeleton,
+  TableSkeleton,
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -28,6 +31,7 @@ import {
   transferServerPlacement,
 } from '../api/cluster'
 import NamespaceSelect from '../features/cluster/namespace-select'
+import PageSkeleton from '../features/shared/page-skeleton'
 
 function availability(member: LobbyMember): { label: string; variant: 'ok' | 'warn' | 'off' } {
   if (member.draining) {
@@ -196,7 +200,18 @@ export default function LobbyClustersPage() {
         isLoading={loading}
         isError={hasError}
         error={error}
-        skeleton={<div className="h-36 animate-pulse rounded-xl bg-surface-2" />}
+        skeleton={
+          <PageSkeleton className="grid gap-3.5">
+            <CardGridSkeleton count={1} gridClass="grid" heightClass="h-20" />
+            <div className="grid gap-3 rounded-xl border border-border bg-card p-4">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-5 w-36" />
+                <Skeleton className="h-8 w-24" />
+              </div>
+              <TableSkeleton columns={columns.length} rows={5} />
+            </div>
+          </PageSkeleton>
+        }
       >
         {detail ? (
           <div className="grid gap-3.5">

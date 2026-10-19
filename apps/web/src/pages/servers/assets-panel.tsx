@@ -55,6 +55,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
+  TableSkeleton,
   cn,
   levelText,
   type DataTableColumn,
@@ -79,6 +80,7 @@ import {
   useEnvNamespaceScope,
   useEnvScopePending,
 } from '../../features/env/use-env-scope'
+import PageSkeleton from '../../features/shared/page-skeleton'
 import { notifyError, notifySuccess } from '../../lib/notify'
 import { LEVEL_META, badgeOf } from './health-level'
 import ReasonDialog from './reason-dialog'
@@ -899,7 +901,16 @@ export default function AssetsPanel({
 
         {/* 列表区：自身滚动（max-height），页面整体高度可控，1000+ 台亦不无限增高 */}
         <div className="max-h-[calc(100vh-20rem)] overflow-y-auto px-4 pt-2 pb-1">
-          <AsyncSection isLoading={query.isPending} isError={query.isError} error={query.error}>
+          <AsyncSection
+            isLoading={query.isPending}
+            isError={query.isError}
+            error={query.error}
+            skeleton={
+              <PageSkeleton>
+                <TableSkeleton columns={columns.length} rows={8} />
+              </PageSkeleton>
+            }
+          >
             <DataTable
               columns={columns}
               rows={rows}

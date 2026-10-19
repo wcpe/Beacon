@@ -13,12 +13,15 @@ import {
   Badge,
   DataTable,
   SummaryStrip,
+  Skeleton,
+  TableSkeleton,
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
 import type { MessageEdgeStat } from '@beacon/contracts'
 
 import { fetchMessageEdges, fetchMessageTypeStats } from '../../api/cluster'
+import PageSkeleton from '../../features/shared/page-skeleton'
 import SampleMessages from './sample-messages'
 
 // 边的失败率阈值：超过即视为异常边高亮
@@ -133,7 +136,19 @@ export default function EdgesPanel() {
           { label: t('cluster.topology.data.maxP95'), value: `${String(aggregates.maxP95)}ms` },
         ]}
       />
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+      <AsyncSection
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+        skeleton={
+          <PageSkeleton className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <TableSkeleton columns={columns.length} rows={8} />
+            </div>
+            <Skeleton className="h-48 w-[248px] shrink-0 rounded-lg" />
+          </PageSkeleton>
+        }
+      >
         {/* 仅广播等非点对点流量：明示边表口径 + 类型汇总，避免「没数据」误判 */}
         {emptyIsBroadcastOnly ? (
           <div className="grid gap-3 rounded-lg border border-border bg-surface-2 p-3 text-sm">

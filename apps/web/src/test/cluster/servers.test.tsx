@@ -2,7 +2,7 @@
 // keyword 筛选。待确认收敛到吸顶入口 → 抽屉里处理，故 approve 用例先开抽屉。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ServersPage from '../../pages/servers'
@@ -43,6 +43,21 @@ describe('/servers 服务器页', () => {
     const pendingBtn = await screen.findByRole('button', { name: /注册待确认/ })
     expect(pendingBtn).toBeInTheDocument()
   }, 20_000)
+
+  it('首屏显示服务器表格骨架，加载完成后显示真实空态', async () => {
+    useScenario('empty')
+    server.use(
+      http.get('/admin/v2/servers', async () => {
+        await delay(120)
+        return HttpResponse.json({ items: [], total: 0 })
+      }),
+    )
+    const { container } = renderPage(<ServersPage />)
+
+    expect(container.querySelector('[data-slot="page-skeleton"]')).toBeInTheDocument()
+    expect(await screen.findByText('当前筛选条件下无服务器')).toBeInTheDocument()
+    expect(container.querySelector('[data-slot="page-skeleton"]')).not.toBeInTheDocument()
+  })
 
   it('空态给出资产列表接入引导', async () => {
     useScenario('empty')
