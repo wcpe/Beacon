@@ -183,7 +183,10 @@ describe('全局运维指标（FR-188）', () => {
     // 指标收进弹层：未打开前不应直接出现在页面上
     expect(screen.queryByText('Agent 在线')).not.toBeInTheDocument()
 
-    await userEvent.click(status as HTMLElement)
+    // 状态本体是导航链接（点它进控制面健康页），展开指标改由独立的小箭头触发器承担
+    const menuTrigger = container.querySelector('[data-slot="control-plane-status-menu-trigger"]')
+    expect(menuTrigger).not.toBeNull()
+    await userEvent.click(menuTrigger as HTMLElement)
     await waitFor(() => {
       expect(metricValue('Agent 在线')).toBe('3')
     })
@@ -246,8 +249,10 @@ describe('全局运维指标（FR-188）', () => {
       expect(status).toHaveAttribute('data-state', 'offline')
       expect(status).toHaveAttribute('aria-label', '控制面异常')
     })
-    // 指标在弹层内：打开后服务器在线数回落为 1
-    await userEvent.click(screen.getByRole('button', { name: '控制面异常' }))
+    // 指标在弹层内：由小箭头触发器展开（状态本体已改为导航链接）
+    const menuTrigger = container.querySelector('[data-slot="control-plane-status-menu-trigger"]')
+    expect(menuTrigger).not.toBeNull()
+    await userEvent.click(menuTrigger as HTMLElement)
     await waitFor(() => {
       expect(screen.getByText('1')).toBeInTheDocument()
     })

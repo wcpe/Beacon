@@ -4,6 +4,7 @@
 // 页眉得以保持单层，同时仍能一键查看并跳转到对应页面。
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
+import { ChevronDown } from 'lucide-react'
 
 import {
   Badge,
@@ -59,69 +60,82 @@ export default function MetricsStrip({
     .join(' · ')
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={controlPlaneDescription}
-          aria-busy={busy ? true : undefined}
-          data-slot="control-plane-status"
-          data-state={controlPlaneState}
-          title={controlPlaneDescription}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-ink-3 transition-[color,background-color] duration-200 motion-reduce:transition-none hover:bg-muted hover:text-ink-1 focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
-        >
-          <span
-            aria-hidden="true"
-            className={[
-              'size-2 shrink-0 rounded-full',
-              controlPlaneDotClass,
-              controlPlaneState === 'unknown' ? '' : 'animate-status-breathe',
-            ].join(' ')}
-          />
-          <span data-slot="control-plane-status-label" className="hidden whitespace-nowrap xl:inline">
-            {controlPlaneLabel}
-          </span>
-          {/* 有需要关注项时挂一个小红点，避免收进弹层后完全失去提醒能力 */}
-          {hasAttention && (
-            <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-crit" />
-          )}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        sideOffset={6}
-        collisionPadding={12}
-        aria-busy={isRefreshing ? true : undefined}
-        className={[
-          'w-64 max-w-[calc(100vw-1.5rem)] p-1.5 transition-opacity duration-200 motion-reduce:transition-none',
-          isRefreshing ? 'opacity-60' : '',
-        ].join(' ')}
-        data-slot="metrics-menu"
+    <div className="inline-flex h-8 shrink-0 items-center rounded-lg text-[12px] text-ink-3 transition-[color,background-color] duration-200 motion-reduce:transition-none hover:bg-muted hover:text-ink-1">
+      {/* 状态本体是链接：点它进控制面健康页（与页眉资源组同一目标，避免只有数字能跳、文字不能跳） */}
+      <Link
+        to="/system"
+        aria-label={controlPlaneDescription}
+        aria-busy={busy ? true : undefined}
+        data-slot="control-plane-status"
+        data-state={controlPlaneState}
+        title={controlPlaneDescription}
+        className="inline-flex h-8 items-center gap-1.5 rounded-l-lg pl-2 focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
       >
-        <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-medium text-ink-4">
-          {t('common.metrics.title')}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <MetricItem href="/servers" label={t('common.metrics.agentOnline')} value={metrics.agentOnline} />
-        <MetricItem
-          href="/servers"
-          label={t('common.metrics.pendingRegistrations')}
-          value={metrics.pendingRegistrations}
-          highlight={(metrics.pendingRegistrations ?? 0) > 0}
+        <span
+          aria-hidden="true"
+          className={[
+            'size-2 shrink-0 rounded-full',
+            controlPlaneDotClass,
+            controlPlaneState === 'unknown' ? '' : 'animate-status-breathe',
+          ].join(' ')}
         />
-        <MetricItem
-          href="/alert-events"
-          label={t('common.metrics.openAlerts')}
-          value={metrics.openAlerts}
-          highlight={(metrics.openAlerts ?? 0) > 0}
-        />
-        <MetricItem
-          href="/changes"
-          label={t('common.metrics.activeChanges')}
-          value={metrics.activeChanges}
-        />
-      </DropdownMenuContent>
-    </DropdownMenu>
+        <span data-slot="control-plane-status-label" className="hidden whitespace-nowrap xl:inline">
+          {controlPlaneLabel}
+        </span>
+        {/* 有需要关注项时挂一个小红点，避免收进弹层后完全失去提醒能力 */}
+        {hasAttention && (
+          <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-crit" />
+        )}
+      </Link>
+      {/* 独立的菜单触发器：只管展开指标明细，不承担导航 */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={t('common.metrics.openDetail')}
+            title={t('common.metrics.openDetail')}
+            data-slot="control-plane-status-menu-trigger"
+            className="inline-flex h-8 items-center rounded-r-lg px-1 text-ink-4 transition-colors hover:text-ink-2 focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
+          >
+            <ChevronDown className="size-3" aria-hidden />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          sideOffset={6}
+          collisionPadding={12}
+          aria-busy={isRefreshing ? true : undefined}
+          className={[
+            'w-64 max-w-[calc(100vw-1.5rem)] p-1.5 transition-opacity duration-200 motion-reduce:transition-none',
+            isRefreshing ? 'opacity-60' : '',
+          ].join(' ')}
+          data-slot="metrics-menu"
+        >
+          <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-medium text-ink-4">
+            {t('common.metrics.title')}
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <MetricItem href="/servers" label={t('common.metrics.agentOnline')} value={metrics.agentOnline} />
+          <MetricItem
+            href="/servers"
+            label={t('common.metrics.pendingRegistrations')}
+            value={metrics.pendingRegistrations}
+            highlight={(metrics.pendingRegistrations ?? 0) > 0}
+          />
+          <MetricItem
+            href="/alert-events"
+            label={t('common.metrics.openAlerts')}
+            value={metrics.openAlerts}
+            highlight={(metrics.openAlerts ?? 0) > 0}
+          />
+          <MetricItem
+            href="/changes"
+            label={t('common.metrics.activeChanges')}
+            value={metrics.activeChanges}
+          />
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }
 

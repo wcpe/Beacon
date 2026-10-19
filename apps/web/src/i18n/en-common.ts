@@ -136,6 +136,7 @@ export const enCommon = {
     pendingRegistrations: 'Pending',
     openAlerts: 'Open alerts',
     activeChanges: 'Active changes',
+    openDetail: 'Show operational metrics',
   },
   resources: {
     ariaLabel: 'Control-plane CPU {{cpu}}, heap memory {{memory}}; click to view health details',

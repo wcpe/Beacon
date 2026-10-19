@@ -145,6 +145,7 @@ export const common = {
     pendingRegistrations: '待确认',
     openAlerts: '未处理告警',
     activeChanges: '进行中变更单',
+    openDetail: '展开运维指标明细',
   },
   resources: {
     ariaLabel: '控制面 CPU {{cpu}}，堆内存 {{memory}}，点击查看健康详情',

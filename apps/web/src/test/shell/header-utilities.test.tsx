@@ -183,7 +183,8 @@ describe('页眉工具 FR-193～196', () => {
     expect(screen.getByText('1/1 B')).toBeInTheDocument()
     expect(cpuBar).toHaveStyle({ width: '42.4%' })
 
-    const status = screen.getByRole('button', { name: /控制面在线/ })
+    // 状态本体现在是链接（点它进控制面健康页），故按 link 角色查询
+    const status = screen.getByRole('link', { name: /控制面在线/ })
     expect(status).toHaveAttribute('aria-busy', 'true')
 
     await act(async () => {
