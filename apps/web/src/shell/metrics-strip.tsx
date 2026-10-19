@@ -16,7 +16,6 @@ import {
 } from '@beacon/ui'
 
 import { useGlobalOpsMetrics } from './use-global-ops-metrics'
-import { useVisibleBusy } from './use-visible-busy'
 
 function formatMetric(value: number | null): string {
   if (value === null) {
@@ -34,7 +33,7 @@ export default function MetricsStrip({
   // isFetching 覆盖「主动刷新 + 周期轮询」；只盯主动刷新会让轮询时的数值硬替换，
   // 用户看不出它刚刚更新过。取数常在个位数毫秒内返回，故用最短展示时长撑开。
   const { metrics, isFetching } = useGlobalOpsMetrics()
-  const busy = useVisibleBusy(isFetching, isRefreshing)
+  const busy = isFetching || isRefreshing
 
   const controlPlaneState =
     metrics.controlPlaneOnline === null ? 'unknown' : metrics.controlPlaneOnline ? 'online' : 'offline'
@@ -69,10 +68,7 @@ export default function MetricsStrip({
           data-slot="control-plane-status"
           data-state={controlPlaneState}
           title={controlPlaneDescription}
-          className={[
-            'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-ink-3 transition-[color,background-color,opacity] duration-200 motion-reduce:transition-none hover:bg-muted hover:text-ink-1 focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none',
-            busy ? 'opacity-60' : '',
-          ].join(' ')}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-ink-3 transition-[color,background-color] duration-200 motion-reduce:transition-none hover:bg-muted hover:text-ink-1 focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
         >
           <span
             aria-hidden="true"

@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
 import { useControlPlaneResources } from './use-control-plane-resources'
-import { useVisibleBusy } from './use-visible-busy'
+import JumpValue from './jump-value'
 
 const KIB = 1024
 const MIB = KIB * 1024
@@ -46,9 +46,9 @@ export default function ControlPlaneResources({
   // isFetching 覆盖「主动刷新 + 8 秒轮询」两种取数；只盯主动刷新会让轮询时的
   // 数字变成硬替换（用户看到数值突然跳变，不知道它刚更新过）。
   const { data: status, isFetching } = useControlPlaneResources()
-  // 取数常在个位数毫秒内返回，直接绑 isFetching 会让淡出只存在 5ms（实测），
-  // 肉眼不可见；用最短展示时长撑到可感知的窗口。
-  const busy = useVisibleBusy(isFetching, isRefreshing)
+  // 保留 aria-busy 供读屏；视觉反馈交给 JumpValue 的跳动，
+  // 不再用透明度变淡——CPU 常在 0%~1% 间波动，变淡几乎不可察觉。
+  const busy = isFetching || isRefreshing
 
   const cpuAvailable = status?.cpuAvailable ?? false
   const cpuPercent = status?.cpuPercent ?? 0
@@ -74,10 +74,7 @@ export default function ControlPlaneResources({
       <div
         data-slot="resource-cpu"
         data-level={cpuWarning ? 'warning' : 'normal'}
-        className={[
-          'flex shrink-0 items-center gap-1.5 transition-opacity duration-200 motion-reduce:transition-none',
-          busy ? 'opacity-60' : '',
-        ].join(' ')}
+        className="flex shrink-0 items-center gap-1.5"
       >
         <span className="text-ink-3">{t('common.resources.cpu')}</span>
         {/* 迷你条：h-1.5 + w-10 才能看清占比；此前 h-1/w-7 在 23% 时只剩一个小点 */}
@@ -91,9 +88,11 @@ export default function ControlPlaneResources({
             style={{ width: `${String(cpuBarWidth)}%` }}
           />
         </span>
-        <span className={['min-w-[34px] text-right font-medium tabular-nums', cpuWarning ? 'text-warn' : 'text-ink-1'].join(' ')}>
-          {cpuAvailable ? `${cpuPercent.toFixed(0)}%` : '—'}
-        </span>
+        {/* 数值用 JumpValue：更新时跳动一次，让「刚刷新」可见 */}
+        <JumpValue
+          value={cpuAvailable ? `${cpuPercent.toFixed(0)}%` : '—'}
+          className={['min-w-[34px] text-right font-medium tabular-nums', cpuWarning ? 'text-warn' : 'text-ink-1'].join(' ')}
+        />
       </div>
 
       <Separator />
@@ -101,15 +100,13 @@ export default function ControlPlaneResources({
       <div
         data-slot="resource-memory"
         data-level={heapWarning ? 'warning' : 'normal'}
-        className={[
-          'flex min-w-0 shrink-0 items-center gap-1.5 transition-opacity duration-200 motion-reduce:transition-none',
-          busy ? 'opacity-60' : '',
-        ].join(' ')}
+        className="flex min-w-0 shrink-0 items-center gap-1.5"
       >
         <span className="text-ink-3">{t('common.resources.memory')}</span>
-        <span className={['whitespace-nowrap font-medium tabular-nums', heapWarning ? 'text-warn' : 'text-ink-1'].join(' ')}>
-          {formatHeapUsage(heapAlloc, heapSys)}
-        </span>
+        <JumpValue
+          value={formatHeapUsage(heapAlloc, heapSys)}
+          className={['whitespace-nowrap font-medium tabular-nums', heapWarning ? 'text-warn' : 'text-ink-1'].join(' ')}
+        />
       </div>
 
     </Link>

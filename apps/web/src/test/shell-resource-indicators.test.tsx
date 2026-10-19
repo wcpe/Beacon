@@ -97,11 +97,18 @@ describe('页眉控制面资源指示器（FR-272）', () => {
     )
     const { container } = renderResources()
 
-    expect(await screen.findByText('92%')).toBeInTheDocument()
+    // 数值由 JumpValue 渲染（更新时会重建元素播放跳动动画），
+    // 故按容器取 textContent，而不是依赖稳定的文本节点匹配。
+    await waitFor(() => {
+      expect(container.querySelector('[data-slot="resource-cpu"]')?.textContent).toContain('92%')
+    })
     expect(container.querySelector('[data-slot="resource-cpu"]')).toHaveAttribute('data-level', 'warning')
     expect(container.querySelector('[data-slot="resource-memory"]')).toHaveAttribute('data-level', 'warning')
-    expect(screen.getByText('92%')).toHaveClass('text-warn')
-    expect(screen.getByText('110/128 MB')).toHaveClass('text-warn')
+    expect(container.querySelector('[data-slot="resource-memory"]')?.textContent).toContain('110/128 MB')
+    // 警告色仍施加在数值元素上
+    const cpuValue = container.querySelector('[data-slot="resource-cpu"] .animate-value-jump')
+    expect(cpuValue).not.toBeNull()
+    expect(cpuValue).toHaveClass('text-warn')
   })
 
   it('首次加载或接口失败时显示占位符', async () => {
@@ -124,8 +131,11 @@ describe('页眉控制面资源指示器（FR-272）', () => {
         return HttpResponse.json(status)
       }),
     )
-    const { queryClient } = renderResources()
-    expect(await screen.findByText('42%')).toBeInTheDocument()
+    const { queryClient, container } = renderResources()
+    // 数值由 JumpValue 渲染，元素会随更新重建，按容器取文本更稳
+    await waitFor(() => {
+      expect(container.querySelector('[data-slot="resource-cpu"]')?.textContent).toContain('42%')
+    })
 
     server.use(
       http.get('/admin/v1/system/status', () => {

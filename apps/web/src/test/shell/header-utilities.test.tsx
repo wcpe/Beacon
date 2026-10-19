@@ -176,16 +176,15 @@ describe('页眉工具 FR-193～196', () => {
       expect(pendingResponses).toHaveLength(2)
     })
 
+    // 刷新中：容器标记忙碌供读屏；视觉反馈由数值跳动承担（不再用透明度变淡，
+    // 页眉数值常在 0%~1% 间波动，变淡肉眼不可察觉）。
     expect(resources).toHaveAttribute('aria-busy', 'true')
-    expect(resources.querySelector('[data-slot="resource-cpu"]')).toHaveClass('opacity-60')
-    expect(resources.querySelector('[data-slot="resource-memory"]')).toHaveClass('opacity-60')
     expect(screen.getByText('42%')).toBeInTheDocument()
     expect(screen.getByText('1/1 B')).toBeInTheDocument()
     expect(cpuBar).toHaveStyle({ width: '42.4%' })
 
     const status = screen.getByRole('button', { name: /控制面在线/ })
     expect(status).toHaveAttribute('aria-busy', 'true')
-    expect(status).toHaveClass('opacity-60')
 
     await act(async () => {
       for (const finish of pendingResponses) {
@@ -196,7 +195,6 @@ describe('页眉工具 FR-193～196', () => {
     await waitFor(() => expect(resources).not.toHaveAttribute('aria-busy'))
     expect(screen.getByText('75%')).toBeInTheDocument()
     expect(screen.getByText('2/2 B')).toBeInTheDocument()
-    expect(resources.querySelector('[data-slot="resource-cpu"]')).not.toHaveClass('opacity-60')
   })
 
   it('语言与通知触发器启用', async () => {

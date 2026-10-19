@@ -92,10 +92,11 @@ describe('页眉刷新内容区加载态', () => {
     fireEvent.click(refreshButton as HTMLElement)
 
     await waitFor(() => {
+      // 刷新态：数据区盖一层遮罩 + 转圈，表头与既有数据保留
       expect(main.querySelector('[aria-busy="true"]')).not.toBeNull()
       expect(screen.getByText('名称')).toBeInTheDocument()
-      expect(main.querySelector('tbody[aria-busy="true"]')).not.toBeNull()
-      expect(main.querySelector('[data-slot="data-loading-row"]')).not.toBeNull()
+      expect(main.querySelector('[data-slot="refresh-overlay"]')).not.toBeNull()
+      // 不再用骨架替换（结构本来就不变，重画不传递信息）
       expect(screen.queryByTestId('page-skeleton')).not.toBeInTheDocument()
     })
     expect(queryFn).toHaveBeenCalledTimes(1)
