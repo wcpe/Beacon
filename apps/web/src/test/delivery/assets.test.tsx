@@ -2,12 +2,17 @@
 // 清单主从布局点行出非模态详情面板、空态引导、比对交互。
 // 命名空间范围自本页移除选择器后取自页眉观测范围选择器（真源 features/env/observation-scope），
 // 因此用例统一在 beforeEach 里把范围固定到 mock 的 prod 命名空间（id=1）。
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { useState, type ReactElement } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { delay, http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import AssetsPage from '../../pages/assets'
+import AssetPathPicker from '../../features/delivery/asset-path-picker'
+import DiffPanel from '../../pages/assets/diff-panel'
+import PreviewDialog from '../../pages/assets/preview-dialog'
 import { getObservationScopeSelection, setObservationScope } from '../../features/env/observation-scope'
 import { createTestServer, renderPage, useScenario } from './harness'
 
@@ -520,5 +525,163 @@ describe('/assets 文件资产页', () => {
       expect(within(region).getByText('尚未查看差异')).toBeInTheDocument()
       expect(within(region).getByRole('button', { name: '查看差异' })).toBeDisabled()
     })
+  }, 20_000)
+})
+
+// ---- 资产正文缓存与候选作用域（组件级用例）----
+// 这一组直接渲染单个组件并自建 QueryClient：既能把敏感接口的响应压成可识别的正文，
+// 也能在同一实例上读 MutationCache 断言「正文没有被留在缓存里」。
+function renderWithClient(ui: ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const view = render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>)
+  return { ...view, queryClient }
+}
+
+/** 单文件预览的最小宿主：关闭弹窗即把 target 置空（与清单详情面板同一行为） */
+function PreviewDialogHarness() {
+  const [target, setTarget] = useState<{ namespaceId: number; serverId: string; path: string } | null>({
+    namespaceId: 1,
+    serverId: 'lobby-1',
+    path: 'plugins/Economy/config.yml',
+  })
+  return (
+    <PreviewDialog
+      target={target}
+      onOpenChange={(open) => { if (!open) setTarget(null) }}
+    />
+  )
+}
+
+/** 两侧差异的最小宿主：用按钮切换命名空间，触发面板内的清理逻辑 */
+function DiffPanelHarness() {
+  const [namespaceId, setNamespaceId] = useState(1)
+  return (
+    <>
+      <button type="button" onClick={() => { setNamespaceId(2) }}>切换命名空间</button>
+      <DiffPanel namespaceId={namespaceId} />
+    </>
+  )
+}
+
+describe('资产正文直读不滞留 MutationCache', () => {
+  it('单文件预览关闭弹窗后，正文不再可从 MutationCache 取到', async () => {
+    useScenario('normal')
+    const body = 'mutation-cache-must-drop-this: 1'
+    server.use(
+      http.post('*/admin/v2/assets/preview', () =>
+        HttpResponse.json({
+          content: body,
+          truncated: false,
+          binary: false,
+          sha256: 'd'.repeat(64),
+          size: body.length,
+          sensitive: true,
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    const { queryClient } = renderWithClient(<PreviewDialogHarness />)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText(body)).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: '关闭' }))
+    await waitFor(() => {
+      expect(screen.queryByText(body)).not.toBeInTheDocument()
+    })
+    // 该 mutation 设了 gcTime: 0，失去 observer 后应立刻被回收；
+    // 若沿用默认 gcTime，正文会在全局缓存里滞留数分钟，关闭弹窗后仍可被取到。
+    await waitFor(() => {
+      const cached = queryClient.getMutationCache().getAll()
+      expect(cached.some((mutation) => JSON.stringify(mutation.state.data ?? '').includes(body))).toBe(false)
+    })
+  }, 20_000)
+
+  it('两侧差异在切换命名空间重置后，正文不再可从 MutationCache 取到', async () => {
+    useScenario('normal')
+    const leftBody = 'left-secret: mutation-cache-must-drop-this'
+    const rightBody = 'right-secret: mutation-cache-must-drop-this'
+    server.use(
+      http.post('*/admin/v2/assets/diff', () =>
+        HttpResponse.json({
+          identical: false,
+          left: { serverId: 'lobby-1', path: 'plugins/Beacon/config.yml', content: leftBody, sha256: 'a'.repeat(64) },
+          right: { serverId: 'lobby-2', path: 'plugins/Beacon/config.yml', content: rightBody, sha256: 'b'.repeat(64) },
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    const { queryClient } = renderWithClient(<DiffPanelHarness />)
+
+    const region = await screen.findByRole('region', { name: '两侧差异' })
+    await user.click(within(region).getByLabelText('左侧子服'))
+    await user.click(await screen.findByRole('option', { name: 'lobby-1' }))
+    await user.click(within(region).getByLabelText('右侧子服'))
+    await user.click(await screen.findByRole('option', { name: 'lobby-2' }))
+    await user.type(within(region).getByLabelText('文件路径'), 'plugins/Beacon/config.yml')
+    await user.click(within(region).getByRole('button', { name: '查看差异' }))
+    expect(await within(region).findByText(leftBody)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '切换命名空间' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText(leftBody)).not.toBeInTheDocument()
+    })
+    await waitFor(() => {
+      const cached = queryClient.getMutationCache().getAll()
+      const serialized = JSON.stringify(cached.map((mutation) => mutation.state.data ?? ''))
+      expect(serialized).not.toContain(leftBody)
+      expect(serialized).not.toContain(rightBody)
+    })
+  }, 20_000)
+})
+
+describe('路径候选不跨命名空间残留', () => {
+  it('切换命名空间后不沿用上一个命名空间的候选，新候选到达前保持空态', async () => {
+    useScenario('normal')
+    const assetPage = (namespaceId: number, path: string) => ({
+      items: [{
+        serverId: 'lobby-1',
+        namespaceId,
+        path,
+        ext: 'yml',
+        sha256: 'e'.repeat(64),
+        size: 10,
+        mtimeMs: 0,
+        isText: true,
+        scannedAt: '2026-01-01T00:00:00.000Z',
+      }],
+      total: 1,
+    })
+    server.use(
+      http.get('*/admin/v2/assets', async ({ request }) => {
+        const namespaceId = Number(new URL(request.url).searchParams.get('namespaceId'))
+        if (namespaceId === 2) {
+          // 放慢新命名空间的响应，撑开「已切换但新候选未到」的窗口：
+          // 这段窗口正是旧的 keepPreviousData 会把上一个命名空间路径端出来的地方。
+          await delay(300)
+          return HttpResponse.json(assetPage(2, 'only-in-ns2/config.yml'))
+        }
+        return HttpResponse.json(assetPage(1, 'only-in-ns1/config.yml'))
+      }),
+    )
+    const user = userEvent.setup()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const picker = (namespaceId: number) => (
+      <QueryClientProvider client={queryClient}>
+        <AssetPathPicker namespaceId={namespaceId} serverId="" value="" onChange={() => undefined} aria-label="文件路径" />
+      </QueryClientProvider>
+    )
+    const view = render(picker(1))
+
+    await user.click(screen.getByLabelText('文件路径'))
+    expect(await screen.findByRole('option', { name: 'only-in-ns1/config.yml' })).toBeInTheDocument()
+
+    view.rerender(picker(2))
+
+    // 新命名空间候选还没到达：不得把上一个命名空间的路径当作候选展示
+    expect(screen.queryByRole('option', { name: 'only-in-ns1/config.yml' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: 'only-in-ns2/config.yml' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'only-in-ns1/config.yml' })).not.toBeInTheDocument()
   }, 20_000)
 })

@@ -9,7 +9,7 @@
 //      取到最后一个 '/' 才能既收窄查询范围、又让 Combobox 的前端子串过滤命中半截目录名；
 //   4) 目录 / 文件候选去重后按上限截断，DOM 数量与清单规模解耦。
 import { useEffect, useMemo, useState } from 'react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { Combobox, type ComboboxOption } from '@beacon/ui'
@@ -24,6 +24,14 @@ const MAX_OPTIONS = 50
 const TYPING_DEBOUNCE_MS = 300
 // 未拿到清单时的常用目录兜底（路径是系统内的固定值，不做翻译）
 const COMMON_DIRS = ['plugins/', 'mods/', 'config/', 'world/']
+// 清单 queryKey 里 namespaceId 固定在第 3 位（见 assetPathQueryKey），
+// 供 placeholderData 判断「上一批候选是否属于同一命名空间」
+const NAMESPACE_KEY_INDEX = 2
+
+/** 候选清单的 queryKey：namespaceId 位于索引 2，与 NAMESPACE_KEY_INDEX 必须保持一致 */
+function assetPathQueryKey(namespaceId: number, serverId: string, directoryPrefix: string) {
+  return ['delivery', 'asset-path-picker', namespaceId, serverId, directoryPrefix] as const
+}
 
 export type AssetPathMode = 'file' | 'directory'
 
@@ -64,7 +72,7 @@ export default function AssetPathPicker({
 
   const query = useQuery({
     // mode 只影响候选的聚合方式、不影响请求本身，故不进 queryKey：文件 / 目录两处可共享同一份清单缓存
-    queryKey: ['delivery', 'asset-path-picker', namespaceId, scopedServerId ?? '', directoryPrefix],
+    queryKey: assetPathQueryKey(namespaceId, scopedServerId ?? '', directoryPrefix),
     queryFn: () =>
       fetchAssets({
         namespaceId,
@@ -75,8 +83,13 @@ export default function AssetPathPicker({
     // namespace 尚未选定时不查（后端要求 namespaceId 必填，避免无索引全表扫描）
     enabled: namespaceId > 0,
     staleTime: 30_000,
-    // 键入过程中沿用上一批候选，避免候选区闪烁清空
-    placeholderData: keepPreviousData,
+    // 键入过程中沿用上一批候选，避免候选区闪烁清空。
+    // 但 keepPreviousData 的语义是「key 变化即返回上一个 key 的 data」，而 namespaceId 也在 key 里：
+    // 直接交给它会让切换命名空间后短暂展示上一个命名空间的路径候选。
+    // 故显式比对上一批候选所属的 namespaceId——同一命名空间内（键入 / 翻目录）沿用旧候选，
+    // 跨命名空间则返回 undefined，退回首次加载的空态（不清空、不残留别的命名空间的路径）。
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[NAMESPACE_KEY_INDEX] === namespaceId ? previousData : undefined,
   })
 
   const options = useMemo<ComboboxOption[]>(() => {

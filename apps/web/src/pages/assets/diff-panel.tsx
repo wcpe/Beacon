@@ -55,6 +55,9 @@ export default function DiffPanel({ namespaceId }: { namespaceId: number }) {
         setResult({ namespaceId: variables.namespaceId, response })
       }
     },
+    // 敏感正文不入长期缓存：gcTime 置 0 使无 observer 的 mutation 立即被回收。
+    // 默认 gcTime 会让两侧文件正文在全局 MutationCache 中滞留数分钟，重置后仍可被取到。
+    gcTime: 0,
   })
   const error = diffMutation.variables?.namespaceId === namespaceId ? diffMutation.error : null
   const isPending = diffMutation.variables?.namespaceId === namespaceId && diffMutation.isPending

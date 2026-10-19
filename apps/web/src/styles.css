@@ -55,8 +55,12 @@ body {
   animation: status-breathe 2.4s ease-in-out infinite;
 }
 
+/* 减少动态效果：真正停掉呼吸动画，而不是只把它放慢——
+   放慢后的 infinite 光晕扩散仍会持续闪烁，对前庭敏感用户依旧构成动效负担。
+   停止动画不丢语义：状态点本身由 bg-ok / bg-crit / bg-ink-4 静态着色，
+   旁边还有状态文字（xl 断点）与 aria-label / title 描述，不依赖动画传达状态。 */
 @media (prefers-reduced-motion: reduce) {
   .animate-status-breathe {
-    animation-duration: 6s;
+    animation: none;
   }
 }

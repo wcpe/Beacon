@@ -42,6 +42,9 @@ export default function PreviewDialog({ target, onOpenChange }: PreviewDialogPro
       if (target === null) return Promise.reject(new Error('未选择文件'))
       return previewAsset(target, PREVIEW_REASON)
     },
+    // 敏感正文不入长期缓存：gcTime 置 0 使无 observer 的 mutation 立即被回收。
+    // 默认 gcTime 会让正文在全局 MutationCache 中滞留数分钟，关闭弹窗后仍可被取到。
+    gcTime: 0,
   })
   const handleOpenChange = (open: boolean): void => {
     if (!open) previewMutation.reset()
