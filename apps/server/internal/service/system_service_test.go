@@ -169,3 +169,44 @@ func TestSystemStatusCPUUnavailable(t *testing.T) {
 		t.Fatalf("不可用时 CPUPercent 应恒 0，实际 %v", st.CPUPercent)
 	}
 }
+
+// TestGopsutilSamplerStaleBaselineDegrades 验证基线过旧时丢弃结果并降级。
+// 场景：服务启动后很久才有人打开管理台，若直接用 Percent(0)，
+// 会把「长间隔内的平均值」当成当前占用（实测出现过接近 100% 的失真值）。
+func TestGopsutilSamplerStaleBaselineDegrades(t *testing.T) {
+	sampler := newGopsutilCPUSampler()
+	if sampler == nil {
+		t.Skip("当前环境无法创建进程句柄，跳过")
+	}
+	// 人为把基线时刻推到阈值之外，模拟「很久没有人访问」。
+	sampler.mu.Lock()
+	sampler.lastSeen = time.Now().Add(-cpuSampleMaxGap - time.Minute)
+	sampler.mu.Unlock()
+
+	if pct, ok := sampler.Percent(); ok || pct != 0 {
+		t.Fatalf("基线过旧时应降级为 (0,false)，实际 (%v,%v)", pct, ok)
+	}
+	// 降级同时也应重建基线：紧接着再采一次即应可用且落在合法区间。
+	pct, ok := sampler.Percent()
+	if !ok {
+		t.Fatal("重建基线后紧接着采样应可用")
+	}
+	if pct < 0 || pct > 100 {
+		t.Fatalf("占比应落在 [0,100]，实际 %v", pct)
+	}
+}
+
+// TestGopsutilSamplerZeroBaselineDegrades 验证尚无有效基线时降级而非返回失真值。
+func TestGopsutilSamplerZeroBaselineDegrades(t *testing.T) {
+	sampler := newGopsutilCPUSampler()
+	if sampler == nil {
+		t.Skip("当前环境无法创建进程句柄，跳过")
+	}
+	sampler.mu.Lock()
+	sampler.lastSeen = time.Time{}
+	sampler.mu.Unlock()
+
+	if pct, ok := sampler.Percent(); ok || pct != 0 {
+		t.Fatalf("无基线时应降级为 (0,false)，实际 (%v,%v)", pct, ok)
+	}
+}

@@ -41,10 +41,21 @@ type CPUSampler interface {
 // gopsutilCPUSampler 基于 gopsutil 采集控制面进程自身 CPU 占比。
 // 持有进程句柄并在构造时预热一次（gopsutil Percent(0) 首调返回 0，需先建立基线）；
 // 之后每次 Percent(0) 返回自上次调用以来的占比。采集失败优雅降级（返回不可用），不 panic。
+//
+// 基线过旧时丢弃：gopsutil 的 Percent(0) 用「上次调用到本次的 CPU 时间差 ÷ 时间差」计算，
+// 若两次调用间隔过长（例如服务启动后很久才有人打开管理台），分母被拉得过大，
+// 结果会失真甚至接近 100%——那是把「就绪以来的平均值」当成了「当前占用」。
+// 故记录上次采样时刻，间隔超过 cpuSampleMaxGap 时只更新基线并降级为不可用，
+// 让端点走既有的「—」降级路径，下一次采样即可给出真实值。
 type gopsutilCPUSampler struct {
-	proc *process.Process
-	mu   sync.Mutex // 串行化 Percent 调用：gopsutil 内部按上次采样时刻算增量，并发会扰乱基线
+	proc     *process.Process
+	mu       sync.Mutex // 串行化 Percent 调用：gopsutil 内部按上次采样时刻算增量，并发会扰乱基线
+	lastSeen time.Time  // 上次成功采样的时刻；零值表示尚无有效基线
 }
+
+// cpuSampleMaxGap 是两次 CPU 采样之间允许的最大间隔。
+// 超过此间隔的差值不再代表「当前占用」，按无基线处理。
+const cpuSampleMaxGap = 2 * time.Minute
 
 // newGopsutilCPUSampler 创建基于当前进程的 CPU 采样器并预热一次基线。
 // 进程句柄创建失败（极少见）时返回 nil，调用方据此判定 CPU 不可用并降级。
@@ -57,22 +68,34 @@ func newGopsutilCPUSampler() *gopsutilCPUSampler {
 	// 预热：首调 Percent(0) 仅建立基线、返回 0，丢弃其结果。
 	if _, err := proc.Percent(0); err != nil {
 		slog.Warn("进程 CPU% 预热失败，将在后续采集时重试", "错误", err)
+		return &gopsutilCPUSampler{proc: proc}
 	}
-	return &gopsutilCPUSampler{proc: proc}
+	return &gopsutilCPUSampler{proc: proc, lastSeen: time.Now()}
 }
 
-// Percent 取自上次调用以来的进程 CPU 占比；句柄缺失或采集出错时降级返回 (0, false)。
+// Percent 取自上次调用以来的进程 CPU 占比；句柄缺失、基线过旧或采集出错时降级返回 (0, false)。
 func (s *gopsutilCPUSampler) Percent() (float64, bool) {
 	if s == nil || s.proc == nil {
 		return 0, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
+	// 基线过旧：本次结果会把「长间隔内的平均值」当成当前占用，丢弃但保留新基线。
+	if s.lastSeen.IsZero() || now.Sub(s.lastSeen) > cpuSampleMaxGap {
+		if _, err := s.proc.Percent(0); err != nil {
+			slog.Warn("重建进程 CPU% 基线失败，本次降级为不可用", "错误", err)
+			return 0, false
+		}
+		s.lastSeen = now
+		return 0, false
+	}
 	pct, err := s.proc.Percent(0)
 	if err != nil {
 		slog.Warn("采集进程 CPU% 失败，本次降级为不可用", "错误", err)
 		return 0, false
 	}
+	s.lastSeen = now
 	return pct, true
 }
 
