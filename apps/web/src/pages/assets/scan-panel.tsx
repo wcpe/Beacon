@@ -10,12 +10,12 @@ import {
   CardDescription,
   CardTitle,
   CardGridSkeleton,
-  DataTable,
   KpiCard,
   SectionHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 
 import ListCard from '../../features/shared/list-card'
@@ -172,7 +172,7 @@ export default function ScanPanel({ namespaceId }: { namespaceId: number }) {
                 </Button>
               </div>
             ) : (
-              <DataTable
+              <PageDataTable
                 columns={columns}
                 rows={items}
                 rowKey={(row) => row.serverId}

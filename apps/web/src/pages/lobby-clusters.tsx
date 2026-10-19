@@ -8,7 +8,6 @@ import {
   Badge,
   Button,
   CardGridSkeleton,
-  DataTable,
   Dialog,
   DialogContent,
   DialogFooter,
@@ -20,6 +19,7 @@ import {
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
 import PageAsyncSection from '../features/shared/page-async-section'
 import type { LobbyMember, ServerItem } from '@beacon/contracts'
 
@@ -248,7 +248,7 @@ export default function LobbyClustersPage() {
                   无大厅成员时，BC 首次连接拒绝；先确认 Bukkit 身份，再迁入。
                 </div>
               ) : (
-                <DataTable
+                <PageDataTable
                   columns={columns}
                   rows={detail.members}
                   rowKey={(row) => row.serverId}

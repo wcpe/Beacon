@@ -11,12 +11,12 @@ import {
   Badge,
   Button,
   Checkbox,
-  DataTable,
   Input,
   Skeleton,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
 import PageAsyncSection from '../features/shared/page-async-section'
 import type { MessageItem, MsgStatus } from '@beacon/contracts'
 
@@ -301,7 +301,7 @@ export default function MessagesPage() {
               error={query.error}
               skeleton={<TableSkeleton columns={columns.length} rows={8} />}
             >
-              <DataTable
+              <PageDataTable
                 columns={columns}
                 rows={rows}
                 rowKey={(row) => row.messageId}

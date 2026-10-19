@@ -4,7 +4,8 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { Badge, DataTable, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import { Badge, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 
 import {
@@ -127,7 +128,7 @@ export default function ImpactTab({ order }: ImpactTabProps) {
           <h4 className="text-[13px] font-semibold text-ink-2">
             {t('delivery.changes.detail.impact.targetsTitle')}
           </h4>
-          <DataTable
+          <PageDataTable
             columns={columns}
             rows={query.data?.targets.items}
             rowKey={(row) => row.serverId}

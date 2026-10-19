@@ -1,6 +1,7 @@
 // 顶部 KPI 卡行（对齐 B 版 row-kpi）：可调度服务器 / 代理·子服在线 / 在线玩家 / 平均 TPS
 // + 健康等级分布环。数据源 metrics/summary（与健康总览同 queryKey，React Query 去重复用）。
 
+import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Activity, CircleAlert, Cpu, Gauge, Network, Server, Users } from 'lucide-react'
@@ -12,7 +13,7 @@ import {
   levelSolid,
   type HealthLevel,
 } from '@beacon/ui'
-import PageAsyncSection from '../../features/shared/page-async-section'
+import PageAsyncSection, { useRefreshLoading } from '../../features/shared/page-async-section'
 
 import { fetchMetricsSummary } from '../../api/metrics'
 
@@ -26,6 +27,10 @@ function MiniBar({ pct, level }: { pct: number; level: HealthLevel }) {
       />
     </div>
   )
+}
+
+function RefreshValue({ children, refreshing }: { children: ReactNode; refreshing: boolean }) {
+  return <span className={cn('transition-opacity', refreshing && 'opacity-50')}>{children}</span>
 }
 
 // 健康等级分布环（SVG stroke-dasharray）：健康 / 亚健康 / 不健康 三段占比，中心显总数。
@@ -93,6 +98,7 @@ export default function KpiStrip() {
   const { t } = useTranslation()
   const query = useQuery({ queryKey: ['dashboard', 'metrics-summary'], queryFn: fetchMetricsSummary })
   const data = query.data
+  const refreshing = useRefreshLoading()
 
   return (
     <PageAsyncSection
@@ -106,7 +112,7 @@ export default function KpiStrip() {
           {/* 可调度服务器 */}
           <KpiCard
             label={t('dashboard.kpi.schedulable')}
-            value={data.schedulable.yes}
+            value={<RefreshValue refreshing={refreshing}>{data.schedulable.yes}</RefreshValue>}
             unit={` / ${String(data.schedulable.yes + data.schedulable.no)} ${t('dashboard.kpi.units')}`}
             icon={<Server className="size-4" />}
             tone="brand"
@@ -127,7 +133,7 @@ export default function KpiStrip() {
           <KpiCard
             label={t('dashboard.kpi.online')}
             value={
-              <>
+              <RefreshValue refreshing={refreshing}>
                 {data.byKind.proxy.online}
                 <span className="text-[14px] font-semibold text-ink-4">
                   /{data.byKind.proxy.total}
@@ -137,7 +143,7 @@ export default function KpiStrip() {
                 <span className="text-[14px] font-semibold text-ink-4">
                   /{data.byKind.backend.total}
                 </span>
-              </>
+              </RefreshValue>
             }
             icon={<Network className="size-4" />}
             tone="brand"
@@ -152,7 +158,7 @@ export default function KpiStrip() {
           {/* 在线玩家 */}
           <KpiCard
             label={t('dashboard.kpi.players')}
-            value={data.playersOnline}
+            value={<RefreshValue refreshing={refreshing}>{data.playersOnline}</RefreshValue>}
             icon={<Users className="size-4" />}
             tone="ok"
             meta={t('dashboard.kpi.playersHint')}
@@ -161,7 +167,7 @@ export default function KpiStrip() {
           {/* 平均 TPS */}
           <KpiCard
             label={t('dashboard.kpi.avgTps')}
-            value={data.avgTps.toFixed(1)}
+            value={<RefreshValue refreshing={refreshing}>{data.avgTps.toFixed(1)}</RefreshValue>}
             icon={<Gauge className="size-4" />}
             tone={data.avgTps >= 19.5 ? 'ok' : data.avgTps >= 18 ? 'warn' : 'crit'}
             visual={<MiniBar pct={(data.avgTps / 20) * 100} level={data.avgTps >= 18 ? 'ok' : 'warn'} />}
@@ -176,7 +182,7 @@ export default function KpiStrip() {
           {/* 不健康实例（需立即处置） */}
           <KpiCard
             label={t('dashboard.kpi.unhealthy')}
-            value={data.levelDistribution.unhealthy}
+            value={<RefreshValue refreshing={refreshing}>{data.levelDistribution.unhealthy}</RefreshValue>}
             unit={` / ${String(
               data.levelDistribution.healthy +
                 data.levelDistribution.degraded +
@@ -190,7 +196,7 @@ export default function KpiStrip() {
           {/* 平均 CPU */}
           <KpiCard
             label={t('dashboard.kpi.avgCpu')}
-            value={`${data.avgCpuPct.toFixed(1)}%`}
+            value={<RefreshValue refreshing={refreshing}>{data.avgCpuPct.toFixed(1)}%</RefreshValue>}
             icon={<Cpu className="size-4" />}
             tone={data.avgCpuPct >= 85 ? 'crit' : data.avgCpuPct >= 70 ? 'warn' : 'ok'}
             visual={
@@ -211,7 +217,7 @@ export default function KpiStrip() {
                 {t('dashboard.kpi.distribution')}
               </span>
             </div>
-            <div className="flex items-center gap-4">
+            <div className={cn('flex items-center gap-4 transition-opacity', refreshing && 'opacity-50')}>
               <DistributionRing
                 healthy={data.levelDistribution.healthy}
                 degraded={data.levelDistribution.degraded}

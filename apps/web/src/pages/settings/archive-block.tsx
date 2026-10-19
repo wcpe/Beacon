@@ -8,7 +8,6 @@ import { Archive, Database } from 'lucide-react'
 import {
   Badge,
   Button,
-  DataTable,
   DestructiveConfirmDialog,
   Select,
   SelectContent,
@@ -24,6 +23,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ArchiveJob } from '@beacon/contracts'
 
@@ -304,7 +304,7 @@ export default function ArchiveBlock() {
                 error={jobsQuery.error}
                 skeleton={<TableSkeleton columns={columns.length} rows={4} />}
               >
-                <DataTable
+                <PageDataTable
                   columns={columns}
                   rows={jobs}
                   rowKey={(row) => String(row.id)}

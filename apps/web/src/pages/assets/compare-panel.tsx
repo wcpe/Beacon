@@ -12,12 +12,12 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  DataTable,
   Label,
   SectionHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import type { AssetCompareGroup, AssetCompareResponse } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
@@ -204,7 +204,7 @@ export default function ComparePanel({ namespaceId }: { namespaceId: number }) {
                 </CardDescription>
               </div>
             ) : (
-              <DataTable
+              <PageDataTable
                 columns={columns}
                 rows={result.groups}
                 rowKey={(group) => group.sha256}

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 
 import { Button } from './ui/button'
+import { Skeleton } from './ui/skeleton'
 import {
   Table,
   TableBody,
@@ -46,6 +47,49 @@ interface DataTableProps<T> {
   density?: 'comfortable' | 'compact'
   // 启用后表头吸顶，纵向滚动由外层列表容器承担
   stickyHeader?: boolean
+  /**
+   * 数据加载中：表头与列宽保持不变，仅把 <tbody> 换成骨架行。
+   * 用于「重新拉取数据」的场景——整块骨架会把静态表头也重画一遍，
+   * 结构本来就不变，重画没有信息量；只有数据区变化才表达「数据在加载」。
+   */
+  loading?: boolean
+  // loading 时渲染的骨架行数（默认与 pageSize 对齐，未分页时 6 行）
+  loadingRows?: number
+}
+
+// 数据区骨架行：保持列数与真实表格一致，避免表头与列宽跳动。
+function DataLoadingRows({
+  columns,
+  rows,
+  trailing,
+  density,
+}: {
+  columns: number
+  rows: number
+  trailing: boolean
+  density: 'comfortable' | 'compact'
+}) {
+  return (
+    <>
+      {Array.from({ length: rows }).map((_, r) => (
+        <TableRow key={`loading-${String(r)}`} data-slot="data-loading-row">
+          {Array.from({ length: columns }).map((__, c) => (
+            <TableCell
+              key={c}
+              className={cn(density === 'compact' && 'px-2 py-1.5 text-xs')}
+            >
+              <Skeleton className="h-4 w-full max-w-32" />
+            </TableCell>
+          ))}
+          {trailing && (
+            <TableCell className="w-8">
+              <Skeleton className="h-4 w-4" />
+            </TableCell>
+          )}
+        </TableRow>
+      ))}
+    </>
+  )
 }
 
 export default function DataTable<T>({
@@ -58,6 +102,8 @@ export default function DataTable<T>({
   pageSize,
   density = 'comfortable',
   stickyHeader = false,
+  loading = false,
+  loadingRows,
 }: DataTableProps<T>) {
   // 舒适档沿用底层 table.tsx 默认；紧凑档只收紧本表，不影响其它表格。
   const list = useMemo(() => rows ?? [], [rows])
@@ -102,8 +148,15 @@ export default function DataTable<T>({
             )}
           </TableRow>
         </TableHeader>
-        <TableBody>
-          {list.length > 0 ? (
+        <TableBody aria-busy={loading ? true : undefined}>
+          {loading ? (
+            <DataLoadingRows
+              columns={columns.length}
+              rows={loadingRows ?? (effectivePageSize ?? 6)}
+              trailing={onRowClick !== undefined}
+              density={density}
+            />
+          ) : list.length > 0 ? (
             pageRows.map((row, index) => {
               const absoluteIndex = effectivePageSize
                 ? currentPage * effectivePageSize + index

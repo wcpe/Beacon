@@ -11,7 +11,6 @@ import { Layers, Server } from 'lucide-react'
 import {
   Badge,
   Button,
-  DataTable,
   SectionHeader,
   Tabs,
   TabsContent,
@@ -20,6 +19,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ChangeTarget } from '@beacon/contracts'
 
@@ -191,7 +191,7 @@ function ReplayTab({ detail }: { detail: ChangeOrderDetail }) {
           isError={targetsQuery.isError}
           error={targetsQuery.error}
         >
-          <DataTable
+          <PageDataTable
             columns={targetColumns}
             rows={targetsQuery.data?.items}
             rowKey={(row) => `${row.serverId}:${String(row.batchNo)}`}

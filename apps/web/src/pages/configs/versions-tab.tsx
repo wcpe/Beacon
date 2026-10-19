@@ -9,12 +9,12 @@ import {
   Badge,
   Button,
   Combobox,
-  DataTable,
   Label,
   SectionHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigScopeLevel, ConfigScopeSummary, ConfigVersionListItem } from '@beacon/contracts'
 
@@ -196,7 +196,7 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
         error={scopesQuery.error ?? versionsQuery.error}
         skeleton={<TableSkeleton columns={6} rows={6} />}
       >
-        <DataTable
+        <PageDataTable
           columns={columns}
           rows={versionsQuery.data?.items}
           rowKey={(row) => String(row.versionId)}

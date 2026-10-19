@@ -10,12 +10,12 @@ import { Layers, Search } from 'lucide-react'
 import {
   Badge,
   Button,
-  DataTable,
   DestructiveConfirmDialog,
   Input,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
 import PageAsyncSection from '../features/shared/page-async-section'
 import type { EnvItem } from '@beacon/contracts'
 
@@ -218,7 +218,7 @@ export default function EnvsPage() {
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={6} />}
       >
-        <DataTable
+        <PageDataTable
           columns={columns}
           rows={items}
           rowKey={(row) => String(row.id)}

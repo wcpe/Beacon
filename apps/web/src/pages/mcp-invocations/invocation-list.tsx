@@ -2,7 +2,7 @@
 //
 // 交互范式对齐仓库既有页（/connections、/audits）：
 //   - 筛选条 = QueryField 标签 + Input / FilterSelect（'all' 表示不筛选），变更即重查并回到首页；
-//   - 列表 = ListCard 自区滚动 + DataTable（空态由 DataTable 承担、加载 / 错误态交给 AsyncSection）；
+//   - 列表 = ListCard 自区滚动 + PageDataTable（空态由 PageDataTable 承担、加载 / 错误态交给 AsyncSection）；
 //   - 分页 = 游标翻页（后端不返回 total：跨日表精确总数需全扫），复用 useCursorStack + CursorPager。
 //
 // 危险操作视图（PRD 硬要求）：结果 / 风险等级两个筛选维度负责收窄，「仅看危险操作」开关再把当前结果
@@ -15,13 +15,13 @@ import { ListFilter } from 'lucide-react'
 
 import {
   Checkbox,
-  DataTable,
   Input,
   SummaryStrip,
   TableSkeleton,
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type {
   MCPInvocationItem,
@@ -327,7 +327,7 @@ export default function InvocationList({ onView, selectedId }: InvocationListPro
           loadingText={t('system.mcpInvocations.loadFail')}
           skeleton={<TableSkeleton columns={columns.length} rows={8} />}
         >
-          <DataTable
+          <PageDataTable
             columns={columns}
             density="compact"
             emptyText={

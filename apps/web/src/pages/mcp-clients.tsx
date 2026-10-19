@@ -13,13 +13,13 @@ import { Link } from 'react-router-dom'
 import {
   Badge,
   Button,
-  DataTable,
   DestructiveConfirmDialog,
   SummaryStrip,
   TableSkeleton,
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
 import PageAsyncSection from '../features/shared/page-async-section'
 import type { CreateMCPClientBody, MCPClientItem } from '@beacon/contracts'
 
@@ -288,7 +288,7 @@ export default function McpClientsPage() {
               {items.length === 0 ? (
                 <p className="px-1 py-8 text-center text-sm text-ink-3">{t('system.mcpClients.empty')}</p>
               ) : (
-                <DataTable
+                <PageDataTable
                   columns={columns}
                   onRowClick={(row) => {
                     setSelectedId(row.clientId)

@@ -9,12 +9,12 @@ import { RefreshCcw } from 'lucide-react'
 
 import {
   Button,
-  DataTable,
   SummaryStrip,
   TableSkeleton,
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchChangeObserve, type ChangeObserveResponse } from '../../api/delivery-changes'
@@ -170,7 +170,7 @@ export default function ObserveTab({ orderId }: ObserveTabProps) {
 
         <SummaryStrip items={summaryItems} />
 
-        <DataTable
+        <PageDataTable
           columns={columns}
           rows={data?.targets}
           rowKey={(row) => row.serverId}

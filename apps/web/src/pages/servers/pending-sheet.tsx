@@ -10,7 +10,6 @@ import {
   Badge,
   Button,
   Checkbox,
-  DataTable,
   Input,
   Label,
   Sheet,
@@ -21,6 +20,7 @@ import {
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { AgentIdentityItem } from '@beacon/contracts'
 
@@ -210,7 +210,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
             </div>
           )}
           <PageAsyncSection isLoading={query.isPending} isError={query.isError} error={query.error}>
-            <DataTable
+            <PageDataTable
               columns={columns}
               rows={pendingRows}
               rowKey={(row) => row.identityId}

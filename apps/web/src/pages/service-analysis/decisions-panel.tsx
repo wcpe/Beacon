@@ -6,7 +6,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Workflow } from 'lucide-react'
 
-import { Badge, Checkbox, DataTable, Input, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import { Badge, Checkbox, Input, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { SchedDecisionItem } from '@beacon/contracts'
 
@@ -243,7 +244,7 @@ export default function DecisionsPanel() {
             error={query.error}
             skeleton={<TableSkeleton columns={columns.length} rows={8} />}
           >
-            <DataTable
+            <PageDataTable
               columns={columns}
               rows={decisionRows}
               rowKey={(row) => row.traceId}

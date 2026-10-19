@@ -11,7 +11,6 @@ import {
   Badge,
   Button,
   Checkbox,
-  DataTable,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -22,6 +21,7 @@ import {
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
 import PageAsyncSection from '../features/shared/page-async-section'
 import type { AlertEventItem } from '@beacon/contracts'
 
@@ -606,45 +606,47 @@ export default function AlertEventsPage() {
   )
 
   const master = (
-    <div className="grid gap-3.5">
-      <AlertKpi total={total} items={query.data?.items ?? []} />
-      <ListCard
-        toolbar={toolbar}
-        footer={
-          total > PAGE_SIZE ? (
-            <Pager
-              page={page}
-              pageCount={pageCount}
-              total={total}
-              onPageChange={(next) => {
-                setPage(next)
-                clearSelection()
-              }}
-            />
-          ) : undefined
-        }
-      >
-        <PageAsyncSection
-          isLoading={query.isPending}
-          isError={query.isError}
-          error={query.error}
-          skeleton={<TableSkeleton columns={columns.length} rows={8} />}
+    <PageAsyncSection isLoading={false}>
+      <div className="grid gap-3.5">
+        <AlertKpi total={total} items={query.data?.items ?? []} />
+        <ListCard
+          toolbar={toolbar}
+          footer={
+            total > PAGE_SIZE ? (
+              <Pager
+                page={page}
+                pageCount={pageCount}
+                total={total}
+                onPageChange={(next) => {
+                  setPage(next)
+                  clearSelection()
+                }}
+              />
+            ) : undefined
+          }
         >
-          <DataTable
-            columns={columns}
-            rows={rows}
-            rowKey={(row) => String(row.id)}
-            emptyText={t('observability.alertEvents.listEmpty')}
-            density="compact"
-            onRowClick={(row) => {
-              setErrorText(null)
-              setSelectedId(row.id)
-            }}
-            rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
-          />
-        </PageAsyncSection>
-      </ListCard>
-    </div>
+          <PageAsyncSection
+            isLoading={query.isPending}
+            isError={query.isError}
+            error={query.error}
+            skeleton={<TableSkeleton columns={columns.length} rows={8} />}
+          >
+            <PageDataTable
+              columns={columns}
+              rows={rows}
+              rowKey={(row) => String(row.id)}
+              emptyText={t('observability.alertEvents.listEmpty')}
+              density="compact"
+              onRowClick={(row) => {
+                setErrorText(null)
+                setSelectedId(row.id)
+              }}
+              rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
+            />
+          </PageAsyncSection>
+        </ListCard>
+      </div>
+    </PageAsyncSection>
   )
 
   return (

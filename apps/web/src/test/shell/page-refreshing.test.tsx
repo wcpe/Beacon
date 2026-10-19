@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
 import PageAsyncSection from '../../features/shared/page-async-section'
+import PageDataTable from '../../features/shared/page-data-table'
 import '../../i18n'
 import { resetPageRefreshingForTest } from '../../shell/page-refreshing'
 import PageRefreshButton from '../../shell/page-refresh-button'
@@ -32,7 +33,12 @@ function RefreshablePage({ queryFn, refetchInterval }: RefreshablePageProps) {
           error={query.error}
           skeleton={<div data-testid="page-skeleton">加载中</div>}
         >
-          <p>{query.data}</p>
+          <PageDataTable
+            columns={[{ header: '名称', cell: (row: string) => row }]}
+            rows={query.data === undefined ? [] : [query.data]}
+            rowKey={(row) => row}
+            emptyText="暂无数据"
+          />
         </PageAsyncSection>
       </main>
     </>
@@ -87,7 +93,10 @@ describe('页眉刷新内容区加载态', () => {
 
     await waitFor(() => {
       expect(main.querySelector('[aria-busy="true"]')).not.toBeNull()
-      expect(screen.getByTestId('page-skeleton')).toBeInTheDocument()
+      expect(screen.getByText('名称')).toBeInTheDocument()
+      expect(main.querySelector('tbody[aria-busy="true"]')).not.toBeNull()
+      expect(main.querySelector('[data-slot="data-loading-row"]')).not.toBeNull()
+      expect(screen.queryByTestId('page-skeleton')).not.toBeInTheDocument()
     })
     expect(queryFn).toHaveBeenCalledTimes(1)
 
@@ -97,7 +106,9 @@ describe('页眉刷新内容区加载态', () => {
 
     await waitFor(() => {
       expect(screen.getByText('刷新完成')).toBeInTheDocument()
+      expect(screen.getByText('名称')).toBeInTheDocument()
       expect(main.querySelector('[aria-busy="true"]')).toBeNull()
+      expect(main.querySelector('[data-slot="data-loading-row"]')).toBeNull()
     })
   })
 

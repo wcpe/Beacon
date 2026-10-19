@@ -36,7 +36,6 @@ import {
   Badge,
   Button,
   Checkbox,
-  DataTable,
   DestructiveConfirmDialog,
   DropdownMenu,
   DropdownMenuContent,
@@ -60,7 +59,8 @@ import {
   type DataTableColumn,
   type KpiTone,
 } from '@beacon/ui'
-import PageAsyncSection from '../../features/shared/page-async-section'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection, { useRefreshLoading } from '../../features/shared/page-async-section'
 import type { HealthItem, MetricsSeriesPoint, ServerItem } from '@beacon/contracts'
 import {
   ApiClientError,
@@ -142,7 +142,15 @@ interface AssetsPanelProps {
   initialKeyword?: string
 }
 
-export default function AssetsPanel({
+export default function AssetsPanel(props: AssetsPanelProps) {
+  return (
+    <PageAsyncSection isLoading={false}>
+      <AssetsPanelContent {...props} />
+    </PageAsyncSection>
+  )
+}
+
+function AssetsPanelContent({
   namespaceId,
   onViewHealth,
   onOpenPending,
@@ -150,6 +158,7 @@ export default function AssetsPanel({
   initialKeyword = '',
 }: AssetsPanelProps) {
   const { t } = useTranslation()
+  const refreshing = useRefreshLoading()
   const queryClient = useQueryClient()
   // FR-178：顶栏 env 作用域与页内命名空间合成受限请求范围。
   const envScope = useEnvNamespaceScope()
@@ -776,7 +785,13 @@ export default function AssetsPanel({
       {/* KPI 卡带：紧凑网格，图标在左 + 文字 + 数值 */}
       <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-8">
         {kpiCards.map((c) => (
-          <KpiCard key={c.key} label={c.label} value={c.value} icon={c.icon} tone={c.tone} />
+          <KpiCard
+            key={c.key}
+            label={c.label}
+            value={<span className={cn('transition-opacity', refreshing && 'opacity-50')}>{c.value}</span>}
+            icon={c.icon}
+            tone={c.tone}
+          />
         ))}
       </div>
 
@@ -911,7 +926,7 @@ export default function AssetsPanel({
               </PageSkeleton>
             }
           >
-            <DataTable
+            <PageDataTable
               columns={columns}
               rows={rows}
               rowKey={(row) => String(row.id)}

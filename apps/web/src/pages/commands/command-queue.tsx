@@ -8,11 +8,11 @@ import { Radio } from 'lucide-react'
 
 import {
   Badge,
-  DataTable,
   SectionHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { CommandItem } from '@beacon/contracts'
 
@@ -111,7 +111,7 @@ export default function CommandQueue({ onView, selectedId }: CommandQueueProps) 
         skeleton={<TableSkeleton columns={columns.length} rows={4} />}
       >
         <div className="max-h-[16rem] overflow-y-auto rounded-xl border border-border bg-card shadow-card">
-          <DataTable
+          <PageDataTable
             columns={columns}
             rows={rows}
             rowKey={(row) => String(row.commandId)}

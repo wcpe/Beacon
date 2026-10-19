@@ -13,12 +13,12 @@ import {
   CardDescription,
   Checkbox,
   Combobox,
-  DataTable,
   Input,
   TableSkeleton,
   type DataTableColumn,
   type ComboboxOption,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { AssetItem, AssetRescanResponse } from '@beacon/contracts'
 
@@ -293,7 +293,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           isLoading={query.isLoading && !nameNeedsIndex}
           skeleton={<TableSkeleton columns={8} rows={6} />}
         >
-          <DataTable
+          <PageDataTable
             columns={columns}
             rows={nameNeedsIndex ? [] : query.data?.items}
             rowKey={(row, index) => `${row.serverId}:${row.path}:${String(index)}`}

@@ -10,13 +10,13 @@ import { ArrowRight, ArrowRightLeft, ExternalLink, GitCompareArrows, Info } from
 
 import {
   Badge,
-  DataTable,
   SummaryStrip,
   Skeleton,
   TableSkeleton,
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { MessageEdgeStat } from '@beacon/contracts'
 
@@ -186,7 +186,7 @@ export default function EdgesPanel() {
         {/* 主从布局：链路表占主区，选中明细进右侧固定侧面板（不落页面底部、不 reflow 主区） */}
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <DataTable
+            <PageDataTable
               columns={columns}
               rows={edges}
               rowKey={(edge) => edgeKey(edge)}
