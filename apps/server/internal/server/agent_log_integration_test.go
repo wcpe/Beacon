@@ -11,7 +11,14 @@ import (
 func TestAgentLogTailFullChain(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
+	// 回传要求权威身份：与生产一致地建立 v2 身份并用其请求头回传。
+	const identityID = "e1000000-0000-4000-8000-000000000001"
+	const otherIdentityID = "e1000000-0000-4000-8000-000000000002"
+	v2Token := createV2NamespaceToken(t, ts.URL, "prod")
+	activateAgent(t, ts, v2Token, identityID, "log-1")
+	activateAgent(t, ts, v2Token, otherIdentityID, "log-other")
 	registerOnline(t, ts.URL, "prod", "log-1", "area1")
+	agentHeaders := map[string]string{"X-Beacon-Token": v2Token, "X-Beacon-Identity": identityID, "X-Beacon-Boot": "boot-1"}
 
 	code, created := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-1/logs?namespace=prod", map[string]any{"reason": "集成测试读取脱敏日志"})
 	if code != http.StatusAccepted || created["commandId"] == nil {
@@ -28,7 +35,7 @@ func TestAgentLogTailFullChain(t *testing.T) {
 		t.Fatalf("agent 应拉到指定 tail-logs 命令，实际 %d：%v", code, pulled)
 	}
 
-	code, recv := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/logs", map[string]any{
+	code, recv := doAgentJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/logs", agentHeaders, map[string]any{
 		"commandId": cmdID,
 		"lines": []map[string]any{
 			{"level": "INFO", "text": "已应用有效配置 md5=abc"},
@@ -37,6 +44,14 @@ func TestAgentLogTailFullChain(t *testing.T) {
 	})
 	if code != http.StatusOK {
 		t.Fatalf("回传日志应 200，实际 %d：%v", code, recv)
+	}
+
+	// 身份不符（另一台 agent 猜中 commandId）必须被拒，且不得改写命令内容。
+	code, forged := doAgentJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/logs",
+		map[string]string{"X-Beacon-Token": v2Token, "X-Beacon-Identity": otherIdentityID, "X-Beacon-Boot": "boot-1"},
+		map[string]any{"commandId": cmdID, "lines": []map[string]any{{"level": "INFO", "text": "越权写入"}}})
+	if code == http.StatusOK {
+		t.Fatalf("非归属 agent 回传不得成功，实际 %d：%v", code, forged)
 	}
 
 	code, view := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/log-1/logs/grants/legacy/consume", map[string]any{"commandId": cmdID})
@@ -104,8 +119,9 @@ func TestAgentLogGetNoCommand(t *testing.T) {
 	if code != http.StatusOK || len(asSlice(body["lines"])) != 0 {
 		t.Fatalf("无历史日志应返回空摘要，实际 %d：%v", code, body)
 	}
-	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action=instance.tail-logs", nil)
+	// 读取使用独立动作名，便于与「下发命令」区分检索。
+	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action=instance.tail-logs-read", nil)
 	if code != http.StatusOK || len(asSlice(audits["items"])) == 0 {
-		t.Fatalf("无结果查询也应留下元数据审计，实际 %d：%v", code, audits)
+		t.Fatalf("无结果查询也应留下 instance.tail-logs-read 审计，实际 %d：%v", code, audits)
 	}
 }
