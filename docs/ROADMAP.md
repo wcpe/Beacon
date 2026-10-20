@@ -63,7 +63,7 @@ Beacon 从项目开始就使用 `MAJOR.MINOR.PATCH` 三段版本号。`1.0.0` �
 - mock 基建：`packages/devmock` 按 API 域组织 MSW handlers，浏览器与测试双端共享，承接 P2 全量 mock 管理台。
 - UI 博物馆：`@beacon/ui` 与 ui-wiki 从 Legacy `web/` 内部提升到根级；每个导出控件必须有展示页（覆盖率检查进 CI）；新管理台组件一律取自 `packages/ui`。
 - 静态检查最严档三线进 CI 门禁：TS = typescript-eslint strictTypeChecked + stylisticTypeChecked；Go = golangci-lint 全量启用档（禁用项集中声明并注明原因）；Kotlin = detekt 全规则（存量走 baseline，新代码零违例）。
-- Legacy 前端冻结（FR-138）：`web/` 不再演进，发布产物只嵌 `apps/web`；真机依赖旧功能时继续运行 v0.19 及更早版本。
+- Legacy 前端冻结并退役（FR-138）：根级 `web/` 自 P1 起不再演进、发布产物只嵌 `apps/web`，现已删除（历史实现由 `git log -- web/` 追溯，CI 与 E2E 不再保留其门禁）；真机依赖旧功能时继续运行 v0.19 及更早版本。
 - Agent 身份与注册确认（FR-139~FR-141）：agent 首启生成 `identity.yml`，携 `identityId + bootId` 走 `/beacon/v2/agent/register`；pending 经后台确认后转 active，并衔接 legacy 数据面注册；拒绝、允许重新申请、禁用、启用、解绑与 Q3 强制换绑入审计。
 - namespace 隔离与区服权威基础（FR-142~FR-143）：v2 权威表纳入 AutoMigrate，namespace token 哈希落库，namespace_trust 授予 / 收回即时刷新快照；approve 创建未分配 server，未分配 server 可首次分配到 zone / BC 集群，已分配直改返回 `rezone_required`。
 - 配套 ADR 已随 P0 落地：monorepo 布局与第二版前端栈（ADR-0060）、静态检查最严档三线（ADR-0061，`static-analysis.md` 随 FR-176 实施同步）。
