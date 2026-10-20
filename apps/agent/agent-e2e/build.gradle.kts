@@ -115,6 +115,19 @@ mcTestkit {
         }
         optionalEnvironment("BEACON_E2E_MESSAGING")?.let { env("BEACON_E2E_MESSAGING", it) }
         optionalEnvironment("BEACON_E2E_SCHED_ZONE")?.let { env("BEACON_E2E_SCHED_ZONE", it) }
+        // 服务发现 / 拓扑订阅 / 名册探针（对应 agent-api 的 Discovery）。
+        optionalEnvironment("BEACON_E2E_DISCOVERY")?.let { env("BEACON_E2E_DISCOVERY", it) }
+        optionalEnvironment("BEACON_E2E_DISCOVERY_GROUP")?.let { env("BEACON_E2E_DISCOVERY_GROUP", it) }
+        // 节点自声明探针（agent-api 唯一写入面）。
+        optionalEnvironment("BEACON_E2E_DECLARATION")?.let { env("BEACON_E2E_DECLARATION", it) }
+        optionalEnvironment("BEACON_E2E_DECL_LABEL_KEY")?.let { env("BEACON_E2E_DECL_LABEL_KEY", it) }
+        // 健康视图 + 准入作用域探针。
+        optionalEnvironment("BEACON_E2E_HEALTH_ADMISSION")?.let { env("BEACON_E2E_HEALTH_ADMISSION", it) }
+        // 前缀过滤订阅探针。
+        optionalEnvironment("BEACON_E2E_PREFIX_SUB")?.let { env("BEACON_E2E_PREFIX_SUB", it) }
+        optionalEnvironment("BEACON_E2E_PREFIX_LIST")?.let { env("BEACON_E2E_PREFIX_LIST", it) }
+        // 门面连通性探针（connected / effectiveMd5 / awaitRegistered）。
+        optionalEnvironment("BEACON_E2E_FACADE")?.let { env("BEACON_E2E_FACADE", it) }
     }
     proxy("bungee") {
         platform = bungeecord
