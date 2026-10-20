@@ -99,7 +99,7 @@ func TestReverseFetchManagedTaskFullChain(t *testing.T) {
 	}
 
 	// agent 拉 scan 命令 → 200，payload 含 mode=scan
-	code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-1", nil)
+	code, pulled := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-1", nil)
 	if code != http.StatusOK || int(pulled["id"].(float64)) != scanCmdID {
 		t.Fatalf("拉 scan 命令应 200 且匹配 id，实际 %d：%v", code, pulled)
 	}
@@ -109,7 +109,7 @@ func TestReverseFetchManagedTaskFullChain(t *testing.T) {
 	}
 
 	// agent 回扫描清单（含一个超阈值运行时垃圾文件，应被列出而非整批失败）→ 200
-	code, scanResp := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/scan", map[string]any{
+	code, scanResp := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/scan", map[string]any{
 		"commandId": scanCmdID,
 		"files": []map[string]any{
 			{"path": "plugin-a/config.yml", "size": 100, "isText": true, "overThreshold": false},
@@ -137,7 +137,7 @@ func TestReverseFetchManagedTaskFullChain(t *testing.T) {
 	submitCmdID := int(submitted["submitCommandId"].(float64))
 
 	// agent 拉 submit 命令 → payload 含 mode=submit + selectedPaths
-	code, pulled2 := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-1", nil)
+	code, pulled2 := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-1", nil)
 	if code != http.StatusOK || int(pulled2["id"].(float64)) != submitCmdID {
 		t.Fatalf("拉 submit 命令应 200 且匹配 id，实际 %d：%v", code, pulled2)
 	}
@@ -153,7 +153,7 @@ func TestReverseFetchManagedTaskFullChain(t *testing.T) {
 	}
 
 	// agent 回选定内容（复用 /files/ingest）→ 200，仅选定落库
-	code, ing := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
+	code, ing := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
 		"commandId": submitCmdID,
 		"files":     []map[string]any{{"path": "plugin-a/config.yml", "content": "k: 1\n"}},
 	})
@@ -245,20 +245,20 @@ func TestReverseFetchSubmitIngestRejectsJar(t *testing.T) {
 	task := createReverseFetchTaskForTest(t, ts, "src-2", "area2")
 	taskID := taskIDFromView(t, task)
 	scanCmdID := int(task["scanCommandId"].(float64))
-	if code, _ := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-2", nil); code != http.StatusOK {
+	if code, _ := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-2", nil); code != http.StatusOK {
 		t.Fatalf("拉 scan 命令应 200，实际 %d", code)
 	}
-	doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/scan", map[string]any{
+	doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/scan", map[string]any{
 		"commandId": scanCmdID,
 		"files":     []map[string]any{{"path": "evil/plugin.yml", "size": 10, "isText": true, "overThreshold": false}},
 	})
 	submitted := submitReverseFetchForTest(t, ts, taskID, []string{"evil/plugin.yml"})
 	submitCmdID := int(submitted["submitCommandId"].(float64))
-	if code, _ := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-2", nil); code != http.StatusOK {
+	if code, _ := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-2", nil); code != http.StatusOK {
 		t.Fatalf("拉 submit 命令应 200，实际 %d", code)
 	}
 	// 回传含 .jar → 400 INVALID_PATH（双保险，整批拒）
-	code, body := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
+	code, body := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
 		"commandId": submitCmdID,
 		"files":     []map[string]any{{"path": "evil/plugin.jar", "content": "MZ"}},
 	})
@@ -289,12 +289,12 @@ func TestReverseFetchScanErrorReport(t *testing.T) {
 	}
 
 	// agent 拉 scan 命令（迁 fetched）
-	if code, _ := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-e", nil); code != http.StatusOK {
+	if code, _ := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-e", nil); code != http.StatusOK {
 		t.Fatalf("拉 scan 命令应 200，实际 %d", code)
 	}
 
 	// agent 回传执行错误 → 200
-	code, errResp := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/error", map[string]any{
+	code, errResp := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/error", map[string]any{
 		"commandId": scanCmdID,
 		"reason":    "扫描 plugins 目录元信息失败：IOException: permission denied",
 	})
@@ -331,7 +331,7 @@ func TestReverseFetchErrorRejectsMismatch(t *testing.T) {
 	registerOnline(t, ts.URL, "prod", "src-em", "area4")
 
 	// 命令不存在 → 404 COMMAND_NOT_FOUND
-	code, body := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/error", map[string]any{
+	code, body := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/error", map[string]any{
 		"commandId": 999999, "reason": "x",
 	})
 	if code != http.StatusNotFound || body["code"] != "COMMAND_NOT_FOUND" {
@@ -342,11 +342,11 @@ func TestReverseFetchErrorRejectsMismatch(t *testing.T) {
 	task := createReverseFetchTaskForTest(t, ts, "src-em", "area4")
 	taskID := taskIDFromView(t, task)
 	scanCmdID := int(task["scanCommandId"].(float64))
-	doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-em", nil)
+	doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-em", nil)
 	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/cancel", nil); code != http.StatusOK {
 		t.Fatalf("取消应 200，实际 %d", code)
 	}
-	code, body2 := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/error", map[string]any{
+	code, body2 := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/error", map[string]any{
 		"commandId": scanCmdID, "reason": "x",
 	})
 	if code != http.StatusConflict || body2["code"] != "REVERSE_FETCH_TASK_STATE" {

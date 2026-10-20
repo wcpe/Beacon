@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
@@ -17,14 +16,10 @@ import (
 // admin 触发（POST /admin/v1/instances/{serverId}/logs）+ admin 查询（GET 同址）+ agent 回传（POST /beacon/v1/agent/logs）。
 // 严守边界：只取 agent 自身脱敏日志、瞬态不入真源 / 不进审计 detail；读取由 management.read 能力控制并写元数据审计。
 type AgentLogHandler struct {
-	svc        *service.AgentLogService
-	instSvc    *service.InstanceService
-	reportAuth agentLogReportAuthenticator
-}
-
-// agentLogReportAuthenticator 解析回传 agent 的 v2 权威身份，用于把命令绑定到发起它的那台 agent。
-type agentLogReportAuthenticator interface {
-	AuthenticateAgentReport(token, identityID, bootID, addr string) (agentauth.Identity, error)
+	svc     *service.AgentLogService
+	instSvc *service.InstanceService
+	// reportAuth 解析回传 agent 的权威身份，用于把命令绑定到发起它的那台 agent。
+	reportAuth agentReportAuthenticator
 }
 
 // NewAgentLogHandler 构造处理器（instSvc 供触发前校验目标在线——离线 agent 收不到命令）。
@@ -33,7 +28,7 @@ func NewAgentLogHandler(svc *service.AgentLogService, instSvc *service.InstanceS
 }
 
 // SetReportAuthenticator 注入日志回传的 v2 权威身份校验器。
-func (h *AgentLogHandler) SetReportAuthenticator(authn agentLogReportAuthenticator) {
+func (h *AgentLogHandler) SetReportAuthenticator(authn agentReportAuthenticator) {
 	h.reportAuth = authn
 }
 
@@ -139,14 +134,13 @@ func (h *AgentLogHandler) Receive(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if h == nil || h.svc == nil || h.reportAuth == nil {
+	if h == nil || h.svc == nil {
 		render.WriteError(w, r, apperr.ErrUnauthorized)
 		return
 	}
 	// 必须确认回传者就是该命令的目标 agent，否则任一 agent 凭猜测的 commandID 即可覆盖他人结果。
-	identity, err := h.reportAuth.AuthenticateAgentReport(r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"), r.Header.Get("X-Beacon-Boot"), r.RemoteAddr)
-	if err != nil {
-		render.WriteError(w, r, err)
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
 		return
 	}
 	lines := make([]service.AgentLogLine, len(req.Lines))

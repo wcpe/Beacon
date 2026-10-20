@@ -25,8 +25,12 @@ type AgentCommand struct {
 	// 持有一个文件、生命周期到确认即止，比 FR-39 永久落整棵树暴露更少；不入审计 detail、不导出 git。
 	ImprintContent string `gorm:"column:imprint_content;type:text"`
 	// 取日志回传内容（FR-88，瞬态，见 ADR-0040）：type=tail-logs 回传的 agent 自身日志行集（JSON 文本，已脱敏）。
-	// 与 ImprintContent 平行——受控瞬态：done 后供 admin 取一次、命令过期即清空；不入审计 detail、不导出 git、不落持久真源。
+	// 与 ImprintContent 平行——受控瞬态：done 后供 admin 取一次、独立过期时间到达即清空；不入审计 detail、不导出 git、不落持久真源。
 	LogContent string `gorm:"column:log_content;type:text"`
+	// 日志正文的独立过期时间（与 BrowseResultExpiresAt 同口径的 5 分钟）。
+	// 为什么需要独立列：done 是终态，ExpireStale 只收敛 pending/fetched/ready，靠它无法回收成功回传的正文，
+	// 没有本列则 log_content 会永久滞留（issue #145）。读路径也用它兜底，不依赖清扫器是否跑过。
+	LogContentExpiresAt *time.Time `gorm:"column:log_content_expires_at;index"`
 	// 文件浏览回传结果（FR-110，瞬态，见 ADR-0049）：type=fs-browse 回传的目录清单 / 子树 / 文件内容（JSON 文本）。
 	// 与 ImprintContent / LogContent 平行——受控瞬态：等待中的 admin 取一次即用、独立过期时间到达即清空；
 	// **绝不入审计 detail**（文件内容敏感）、不导出 git、不落持久真源。

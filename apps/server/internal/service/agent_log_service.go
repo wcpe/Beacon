@@ -18,6 +18,10 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
+// agentLogContentTTL 是日志正文在库内的保留时长，与浏览正文（browseResultTTL）同口径 5 分钟。
+// 两者都是「agent 回传的受控瞬态」，共用一套到期语义，避免同类内容两套保留期。
+const agentLogContentTTL = browseResultTTL
+
 // AgentLogLine 是 agent 回传的一行日志（级别 + 已脱敏文本，FR-88，见 ADR-0040）。
 // 脱敏在 agent 侧落环形缓冲那一刻完成，控制面只忠实转存 / 透传，不再处理原文。
 type AgentLogLine struct {
@@ -185,7 +189,9 @@ func (s *AgentLogService) createTailLogsCommandInTx(tx *gorm.DB, ns, serverID, o
 		NamespaceCode: ns,
 		Operator:      operator, Action: model.ActionInstanceTailLogs,
 		TargetType: model.TargetTypeInstance, TargetRef: serverID,
-		Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q}`, cmd.ID, serverID),
+		// 用 json.Marshal 而非 `%q` 拼接：serverId 是外部可控文本，Go 的 %q 对控制字符输出 `\x01`
+		// 而 JSON 不允许 `\x` 转义，会静默写出非法 detail（issue #144）。
+		Detail: auditJSON(map[string]any{"commandId": cmd.ID, "serverId": serverID}),
 		Result: model.ResultOK, ClientIP: clientIP,
 	}); e != nil {
 		return nil, e
@@ -217,7 +223,7 @@ func (s *AgentLogService) ReceiveLogs(identity agentauth.Identity, commandID uin
 		lines = []AgentLogLine{}
 	}
 	content, _ := json.Marshal(lines)
-	ok, err := s.repo.UpdateStatusWithLogContent(cmd.ID, string(content))
+	ok, err := s.repo.UpdateStatusWithLogContent(cmd.ID, string(content), time.Now().UTC().Add(agentLogContentTTL))
 	if err != nil {
 		return err
 	}
@@ -245,6 +251,10 @@ func (s *AgentLogService) ConsumeApprovedLogs(grantID string, commandID uint, pr
 	if err != nil || cmd == nil || cmd.Type != model.CommandTypeTailLogs || cmd.Status != model.CommandStatusDone {
 		return nil, apperr.ErrForbidden
 	}
+	// 旧授权单同样受正文独立到期时间约束：否则存量授权会绕过新 TTL 把过期正文读出去。
+	if !logContentReadable(cmd, time.Now().UTC()) {
+		return nil, apperr.ErrForbidden
+	}
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cmd.LogContent)))
 	if err := s.grants.Consume(grantID, principal, authz.OperationAgentCommandTailLogs, fmt.Sprintf("agent-command/%d", commandID), hash, time.Now().UTC()); err != nil {
 		return nil, err
@@ -256,9 +266,22 @@ func (s *AgentLogService) ConsumeApprovedLogs(grantID string, commandID uint, pr
 	return &AgentLogResult{CommandID: cmd.ID, Status: cmd.Status, Lines: lines}, nil
 }
 
+// logContentReadable 判断命令的日志正文此刻是否仍可返回。
+//
+// done 之后正文按 agentLogContentTTL 到期作废：清扫器周期与 TTL 同量级，过期正文最坏还能多读一整个周期，
+// 清扫失败时更是永久可读，所以读路径必须自己兜一次，不能只依赖清扫（issue #145）。
+// 到期时间列为空视为无期限，兼容本次改造前的历史行——它们由清扫器按「无期限」一并回收。
+func logContentReadable(cmd *model.AgentCommand, now time.Time) bool {
+	if cmd == nil || cmd.Status != model.CommandStatusDone || cmd.LogContent == "" {
+		return false
+	}
+	return cmd.LogContentExpiresAt == nil || cmd.LogContentExpiresAt.After(now)
+}
+
 // GetLatest 取某实例最近一条 tail-logs 命令的状态 + 日志（FR-88，供 admin 查询）。
 // 无任何取日志命令返回 (nil, nil)；done 则解出脱敏日志行，其余状态 lines 为空（前端据 status 显示进行中 / 失败）。
-// 只读不清：done 命令的瞬态日志可重复读，不在读时抹除；未终结命令的瞬态由清理器超时过期时清空。
+// 只读不清：done 命令的瞬态日志在保留期内可重复读，不在读时抹除；未终结命令的瞬态由清理器超时过期时清空，
+// done 的正文由 ClearExpiredLogContents 按独立到期时间清空。
 func (s *AgentLogService) GetLatest(ns, serverID string) (*AgentLogResult, error) {
 	if ns == "" || serverID == "" {
 		return nil, apperr.ErrInvalidParam
@@ -270,30 +293,61 @@ func (s *AgentLogService) GetLatest(ns, serverID string) (*AgentLogResult, error
 	if cmd == nil {
 		return nil, nil
 	}
-	res := &AgentLogResult{CommandID: cmd.ID, Status: cmd.Status, Lines: []AgentLogLine{}}
-	if cmd.Status == model.CommandStatusDone && cmd.LogContent != "" {
-		var lines []AgentLogLine
-		if err := json.Unmarshal([]byte(cmd.LogContent), &lines); err != nil {
-			return nil, apperr.ErrInternal
-		}
-		if lines != nil {
-			res.Lines = lines
-		}
+	res, _, err := buildAgentLogResult(cmd, time.Now().UTC())
+	if err != nil {
+		return nil, apperr.ErrInternal
 	}
 	return res, nil
 }
 
+// buildAgentLogResult 由命令行组装查询结果，并回报「正文是否真的返回」。
+//
+// 第二个返回值专供读审计判断：正文因过期 / 已清空而没返回时，本次读取并未交出内容，
+// 不能再写「成功读取正文」审计（那会让审计看起来像又泄露了一次正文）。
+// 落库内容损坏仍返回 error 而不是降级成空日志：静默降级会把「解码失败」伪装成「没有日志」，
+// 既掩盖写入缺陷，也会写出一条与事实不符的成功读取审计。
+func buildAgentLogResult(cmd *model.AgentCommand, now time.Time) (*AgentLogResult, bool, error) {
+	res := &AgentLogResult{CommandID: cmd.ID, Status: cmd.Status, Lines: []AgentLogLine{}}
+	if !logContentReadable(cmd, now) {
+		return res, false, nil
+	}
+	var lines []AgentLogLine
+	if err := json.Unmarshal([]byte(cmd.LogContent), &lines); err != nil {
+		return nil, false, err
+	}
+	if lines != nil {
+		res.Lines = lines
+	}
+	return res, true, nil
+}
+
 // ReadLatest 返回最近日志并先写仅含状态与行数的专项审计。
+// done 但正文已过期 / 已清空时不写「成功读取正文」审计（本次没有交出任何内容）。
 func (s *AgentLogService) ReadLatest(ns, serverID, operator, clientIP string) (*AgentLogResult, error) {
-	result, err := s.GetLatest(ns, serverID)
+	if ns == "" || serverID == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	cmd, err := s.repo.FindLatestByType(ns, serverID, model.CommandTypeTailLogs)
 	if err != nil {
 		return nil, err
 	}
-	if result == nil {
-		result = &AgentLogResult{Lines: []AgentLogLine{}}
+	if cmd == nil {
+		result := &AgentLogResult{Lines: []AgentLogLine{}}
+		if err := s.recordReadAudit(ns, serverID, operator, clientIP, result); err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
-	if err := s.recordReadAudit(ns, serverID, operator, clientIP, result); err != nil {
+	result, served, err := buildAgentLogResult(cmd, time.Now().UTC())
+	if err != nil {
 		return nil, err
+	}
+	// 未终结命令（pending/fetched/failed）仍记审计：这时的读取是「查状态」，前端据此显示进行中 / 失败。
+	// 只有 done 且正文不可返回才跳过——那种情况没有正文流出，不该留「读过正文」的痕迹。
+	if cmd.Status != model.CommandStatusDone || served {
+		if err := s.recordReadAudit(ns, serverID, operator, clientIP, result); err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -319,17 +373,15 @@ func (s *AgentLogService) ReadCommand(namespace, serverID string, commandID uint
 	if cmd.NamespaceCode != scopeNamespace {
 		return nil, apperr.ErrCommandNotFound
 	}
-	result := &AgentLogResult{CommandID: cmd.ID, Status: cmd.Status, Lines: []AgentLogLine{}}
-	if cmd.Status == model.CommandStatusDone && cmd.LogContent != "" {
-		if err := json.Unmarshal([]byte(cmd.LogContent), &result.Lines); err != nil {
-			return nil, apperr.ErrForbidden
-		}
-		if result.Lines == nil {
-			result.Lines = []AgentLogLine{}
-		}
+	result, served, err := buildAgentLogResult(cmd, time.Now().UTC())
+	if err != nil {
+		return nil, apperr.ErrForbidden
 	}
-	if err := s.recordReadAudit(cmd.NamespaceCode, serverID, operator, clientIP, result); err != nil {
-		return nil, err
+	// 与 ReadLatest 同口径：done 但正文不可返回时不写「成功读取正文」审计。
+	if cmd.Status != model.CommandStatusDone || served {
+		if err := s.recordReadAudit(cmd.NamespaceCode, serverID, operator, clientIP, result); err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -366,4 +418,16 @@ func (s *AgentLogService) recordReadAudit(ns, serverID, operator, clientIP strin
 		Detail: string(detail),
 		Result: model.ResultOK, ClientIP: clientIP,
 	})
+}
+
+// ClearExpiredLogContents 清理所有已过独立到期时间的 done 日志正文（FR-88 / issue #145）。
+//
+// 挂在 AgentCommandService 上而不是 AgentLogService：与 ClearExpiredBrowseResults 成对，
+// 两者共用同一个 CommandSweeper 实例（sweeper 的窄接口只认实现者）。
+// done 是终态，ExpireStale 永远收敛不到它，因此成功回传的日志正文只能靠本函数回收。
+func (s *AgentCommandService) ClearExpiredLogContents(now time.Time) (int64, error) {
+	if s == nil || s.db == nil || s.repo == nil {
+		return 0, apperr.ErrForbidden
+	}
+	return s.repo.ClearExpiredLogContents(now.UTC())
 }

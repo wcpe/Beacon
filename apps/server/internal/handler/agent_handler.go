@@ -22,11 +22,18 @@ type AgentHandler struct {
 	svc      *service.InstanceService
 	effSvc   *service.EffectiveService
 	settings longpollSettings // 长轮询挂起上限从设置 store 读，热生效（FR-61）
+	// reportAuth 解析心跳 / 上报 / 声明 / 配置 / 发现各端点的调用者权威身份。
+	reportAuth agentReportAuthenticator
 }
 
 // NewAgentHandler 构造处理器。
 func NewAgentHandler(svc *service.InstanceService, effSvc *service.EffectiveService, settings longpollSettings) *AgentHandler {
 	return &AgentHandler{svc: svc, effSvc: effSvc, settings: settings}
+}
+
+// SetReportAuthenticator 注入 agent 数据面读写下端点的权威身份校验器。
+func (h *AgentHandler) SetReportAuthenticator(authn agentReportAuthenticator) {
+	h.reportAuth = authn
 }
 
 // registerRequest 是注册请求体（capacity/weight 顶层、metadata 自定义、无 canary）。
@@ -112,13 +119,25 @@ type heartbeatRequest struct {
 }
 
 // Heartbeat 处理 POST /beacon/v1/agent/heartbeat。
+//
+// 必须绑定身份：心跳决定「谁还活着」。共享 token 下若照信请求体的 namespace/serverId，
+// 任一 agent 都能替**别人**续命——把已挂掉的实例永久保活成 online（调度继续往里塞人），
+// 或反手把别人的实例认成自己的。故先取 DB 权威身份，再把请求自报归属收敛到身份。
 func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	var req heartbeatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	ttlSec, err := h.svc.Heartbeat(req.Namespace, req.ServerID)
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	ns, serverID, ok := bindAgentTarget(w, r, identity, req.Namespace, req.ServerID)
+	if !ok {
+		return
+	}
+	ttlSec, err := h.svc.Heartbeat(ns, serverID)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -192,6 +211,10 @@ func (req *reportRequest) cpuLoadOrUnavailable() float64 {
 }
 
 // Report 处理 POST /beacon/v1/agent/report。
+//
+// 必须绑定身份：上报值（人数 / TPS / 内存 / CPU / bc 后端子服集合）虽只展示不决策，
+// 但归错台就是错事实——任一 agent 可把别人的在线人数刷成 0、把别人的实例标成高负载，
+// 运维照着错误事实排查。身份取 DB 权威绑定，不认请求体自报的 namespace/serverId。
 func (h *AgentHandler) Report(w http.ResponseWriter, r *http.Request) {
 	var req reportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -199,8 +222,16 @@ func (h *AgentHandler) Report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.applyDefaults()
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	ns, serverID, ok := bindAgentTarget(w, r, identity, req.Namespace, req.ServerID)
+	if !ok {
+		return
+	}
 	if err := h.svc.Report(service.ReportParams{
-		Namespace: req.Namespace, ServerID: req.ServerID, AppliedMD5: req.AppliedMD5,
+		Namespace: ns, ServerID: serverID, AppliedMD5: req.AppliedMD5,
 		PlayerCount: req.PlayerCount, TPS: req.TPS, MemUsed: req.MemUsed, MemMax: req.MemMax,
 		CPULoad: req.cpuLoadOrUnavailable(), Backends: req.Backends, Proxy: req.Proxy.toRuntime(),
 	}); err != nil {
@@ -226,14 +257,25 @@ type declarationRequest struct {
 // Declaration 处理 POST /beacon/v1/agent/declaration（FR-243）。
 // 声明刷新成功回 200 + 生效后的 capacity / labels（自证）；未注册 / 未挂载数据面 404 NOT_REGISTERED；
 // 格式非法、超界、capacity < 0、两字段全缺 400 INVALID_PARAM（失败分类见 spec §3.4）。
+//
+// 必须绑定身份：声明会写进调度准入读的标签真源（FR-244）。共享 token 下若认请求体自报归属，
+// 任一 agent 就能替别人改写 capacity / labels，把别服伪装成高容量骗调度，或反向压低别服权重。
 func (h *AgentHandler) Declaration(w http.ResponseWriter, r *http.Request) {
 	var req declarationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	ns, serverID, ok := bindAgentTarget(w, r, identity, req.Namespace, req.ServerID)
+	if !ok {
+		return
+	}
 	res, err := h.svc.Declare(service.DeclarationParams{
-		Namespace: req.Namespace, ServerID: req.ServerID, Capacity: req.Capacity, Labels: req.Labels,
+		Namespace: ns, ServerID: serverID, Capacity: req.Capacity, Labels: req.Labels,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -244,9 +286,20 @@ func (h *AgentHandler) Declaration(w http.ResponseWriter, r *http.Request) {
 
 // Discover 处理 GET /beacon/v1/agent/discovery（仅返回可用实例：online+degraded）。
 // 支持按 role/zone/group 与自定义元数据 tag 过滤；tag 以重复查询参数 tag.<key>=<value> 传入（多 tag 取交集，FR-29）。
+//
+// 必须绑定身份：发现结果是全集群在线清单（含他服 host/port 与自声明标签），
+// 且原实现在 namespace 缺省时会把**所有环境**一起吐出来。故把作用域收敛到调用者身份所属 namespace，
+// 显式跨环境请求直接拒（404 不泄露存在性）。
 func (h *AgentHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	ns := q.Get("namespace")
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	ns, ok := bindAgentNamespace(w, r, identity, q.Get("namespace"))
+	if !ok {
+		return
+	}
 	insts := h.svc.Discover(runtime.Filter{
 		Namespace: ns, Group: q.Get("group"), Zone: q.Get("zone"), Role: q.Get("role"),
 		Tags: parseTagParams(q),
@@ -286,13 +339,26 @@ type effectiveItemView struct {
 
 // Effective 处理 GET /beacon/v1/agent/config/effective（长轮询）。
 // 当前 md5 ≠ 请求 md5 → 立即 200；挂起期间被唤醒且重算后变化 → 200；超时无变化 → 304。
+//
+// 必须绑定身份：本端点会回**配置正文**。共享 token 下若认 query 自报的 namespace/serverId，
+// 任一 agent 换个参数就能读走别服的有效配置（含敏感项的实际生效值）。故先取权威身份，
+// 再把 query 归属收敛到身份；不一致按 404 拒，不暴露目标是否存在。
 func (h *AgentHandler) Effective(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	ns, serverID, agentMD5 := q.Get("namespace"), q.Get("serverId"), q.Get("md5")
-	if ns == "" || serverID == "" {
+	// 入参契约不变：namespace / serverId 必须显式给出（缺参仍是 400 INVALID_PARAM）。
+	if q.Get("namespace") == "" || q.Get("serverId") == "" {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	ns, serverID, ok := bindAgentTarget(w, r, identity, q.Get("namespace"), q.Get("serverId"))
+	if !ok {
+		return
+	}
+	agentMD5 := q.Get("md5")
 	groupHint, err := h.svc.RequireRegistered(ns, serverID)
 	if err != nil {
 		render.WriteError(w, r, err) // 未注册 → 404 NOT_REGISTERED

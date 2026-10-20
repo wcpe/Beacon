@@ -72,7 +72,7 @@ func TestImprintReceiveTransfersNotLand(t *testing.T) {
 		t.Fatalf("应取到刚建命令")
 	}
 	// agent 回传整棵树（含目标 path 与其它文件）
-	_, err := svc.ReceiveIngest(cmd.ID, []ImportFile{
+	_, err := svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{
 		{Path: "AllinCore/config.yml", Content: "a: 99\n"},
 		{Path: "AllinCore/lang.yml", Content: "hi: hello\n"},
 	}, "10.0.0.2")
@@ -103,7 +103,7 @@ func TestImprintReceiveMissingPathFails(t *testing.T) {
 	svc := newImprintSvc(db)
 	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/missing.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
-	_, err := svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/other.yml", Content: "x: 1\n"}}, "")
+	_, err := svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "AllinCore/other.yml", Content: "x: 1\n"}}, "")
 	if err == nil {
 		t.Fatal("目标 path 缺失应报错")
 	}
@@ -126,7 +126,7 @@ func TestImprintDiff(t *testing.T) {
 	if _, err := svc.ImprintDiff(cmd.ID, model.ScopeServer, "area1", ""); err != apperr.ErrImprintNotReady {
 		t.Fatalf("非 ready 应 ErrImprintNotReady，实际 %v", err)
 	}
-	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
+	_, _ = svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 
 	diff, err := svc.ImprintDiff(cmd.ID, model.ScopeServer, "area1", "")
 	if err != nil {
@@ -153,7 +153,7 @@ func TestConfirmImprintSelfReviewGate(t *testing.T) {
 	svc := newImprintSvc(db)
 	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
-	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
+	_, _ = svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 	actualMD5 := filetree.ContentMD5("a: 99\n")
 
 	// 错误 reviewedMd5 → 412，不落库
@@ -201,7 +201,7 @@ func TestConfirmImprintPublishesWhenExists(t *testing.T) {
 	seedGroupFile(t, db, "prod", "area1", "AllinCore/config.yml", "a: 1\n")
 	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
-	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, "")
+	_, _ = svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, "")
 	md5 := filetree.ContentMD5("a: 2\n")
 
 	// 并入 group 层（已存在）→ 应发布新版本（version 2）
@@ -224,7 +224,7 @@ func TestConfirmImprintClaimBeforeLand(t *testing.T) {
 	svc := newImprintSvc(db)
 	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
-	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
+	_, _ = svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 	md5 := filetree.ContentMD5("a: 99\n")
 
 	if _, err := applyConfirmImprintForTest(svc, cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "bob", ""); err != nil {
@@ -251,7 +251,7 @@ func TestConfirmImprintGroupIgnoresStrayTarget(t *testing.T) {
 	seedGroupFile(t, db, "prod", "area1", "AllinCore/config.yml", "a: 1\n") // 组层已存在 → 走 conflict 回退
 	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
-	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, "")
+	_, _ = svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, "")
 	md5 := filetree.ContentMD5("a: 2\n")
 
 	// 直连 API 传多余 target="stray"；group 层应忽略它、按空 target 命中既有组层文件并发新版本。
@@ -271,7 +271,7 @@ func TestConfirmImprintServerTargetMustBeSource(t *testing.T) {
 	svc := newImprintSvc(db)
 	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
-	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
+	_, _ = svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 	md5 := filetree.ContentMD5("a: 99\n")
 
 	// server 层但 target 指向他服 → 拒
@@ -297,7 +297,7 @@ func TestCommandSweeperExpiresStaleReadyAndClearsContent(t *testing.T) {
 	svc := newImprintSvc(db)
 	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
-	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
+	_, _ = svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 	// 前置：ready 且有瞬态明文
 	if c, _ := repository.NewAgentCommandRepository(db).FindByID(cmd.ID); c.Status != model.CommandStatusReady || c.ImprintContent == "" {
 		t.Fatalf("前置应为 ready 且有瞬态内容，实际 status=%s content=%q", c.Status, c.ImprintContent)

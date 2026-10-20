@@ -41,7 +41,7 @@ func TestImprintFullChain(t *testing.T) {
 	}
 
 	// agent 拉待办命令 → 200，payload 带 mode=imprint + path
-	code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-1", nil)
+	code, pulled := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-1", nil)
 	if code != http.StatusOK {
 		t.Fatalf("拉命令应 200，实际 %d：%v", code, pulled)
 	}
@@ -52,7 +52,7 @@ func TestImprintFullChain(t *testing.T) {
 	cmdID := int(pulled["id"].(float64))
 
 	// agent 回传整棵树（含目标 path 与其它文件）→ 200；控制面取目标 path 转存、命令转 ready，不落库
-	code, ing := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
+	code, ing := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
 		"commandId": cmdID,
 		"files": []map[string]any{
 			{"path": "plugin-a/config.yml", "content": "a: 99\n"},
@@ -112,7 +112,7 @@ func TestImprintFullChain(t *testing.T) {
 	}
 
 	// 命令已 done → 再拉无待办 204
-	code, _ = doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-1", nil)
+	code, _ = doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-1", nil)
 	if code != http.StatusNoContent {
 		t.Fatalf("命令完成后再拉应 204，实际 %d", code)
 	}
@@ -126,12 +126,12 @@ func TestImprintConfirmSelfReviewGate(t *testing.T) {
 
 	requestImprintForTest(t, ts, "src-imp-2", "plugin-b/config.yml")
 	// 拉取转 fetched 后回传
-	code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-2", nil)
+	code, pulled := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-2", nil)
 	if code != http.StatusOK {
 		t.Fatalf("拉命令应 200，实际 %d", code)
 	}
 	cmdID := int(pulled["id"].(float64))
-	code, _ = doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
+	code, _ = doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
 		"commandId": cmdID,
 		"files":     []map[string]any{{"path": "plugin-b/config.yml", "content": "x: 1\n"}},
 	})
@@ -160,7 +160,7 @@ func TestImprintDiffNotReady(t *testing.T) {
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "src-imp-3", "area3")
 	requestImprintForTest(t, ts, "src-imp-3", "plugin-c/config.yml")
-	code, pending := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-3", nil)
+	code, pending := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-3", nil)
 	if code != http.StatusOK {
 		t.Fatalf("拉待执行拓印命令应 200，实际 %d", code)
 	}

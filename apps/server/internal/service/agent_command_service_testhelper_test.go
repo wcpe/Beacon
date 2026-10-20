@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
@@ -14,6 +15,23 @@ import (
 )
 
 var imprintConfirmTestSequence atomic.Uint64
+
+// testAgentIdentityOf 构造「回传身份 = 指定归属的那台 agent」，供既有领域行为测试走正常回传路径。
+// 归属校验上线后，每个回传入口都必须带身份；真实归属不符的负向用例另行显式构造。
+func testAgentIdentityOf(namespace, serverID string) agentauth.Identity {
+	return agentauth.Identity{
+		Namespace: namespace, ServerID: serverID,
+		IdentityID: "test-identity-" + namespace + "/" + serverID,
+	}
+}
+
+// testAgentIdentity 构造「回传身份 = 该命令归属的那台 agent 本人」。
+func testAgentIdentity(cmd *model.AgentCommand) agentauth.Identity {
+	if cmd == nil {
+		return agentauth.Identity{}
+	}
+	return testAgentIdentityOf(cmd.NamespaceCode, cmd.ServerID)
+}
 
 // applyRequestReverseFetchForTest 仅供既有领域行为测试构造已批准的反向抓取命令，不构成生产旁路。
 func applyRequestReverseFetchForTest(s *AgentCommandService, ns, serverID, scope, group, target, operator, clientIP string) (*model.AgentCommand, error) {

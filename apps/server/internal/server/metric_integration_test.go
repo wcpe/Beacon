@@ -37,12 +37,12 @@ func TestMetricSummaryStructure(t *testing.T) {
 		}
 	}
 	// 上报真实负载（含一个 CPU 不可用）。
-	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
+	if code, _ := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
 		"namespace": "prod", "serverId": "m-s1", "playerCount": 42, "tps": 19.9, "memUsed": 128, "memMax": 512, "cpuLoad": 0.4,
 	}); code != http.StatusOK {
 		t.Fatalf("上报 m-s1 应 200，实际 %d", code)
 	}
-	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
+	if code, _ := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
 		"namespace": "prod", "serverId": "m-s2", "playerCount": 8, "tps": 20.0, "memUsed": 64, "memMax": 256, "cpuLoad": -1.0,
 	}); code != http.StatusOK {
 		t.Fatalf("上报 m-s2 应 200，实际 %d", code)
@@ -85,13 +85,13 @@ func TestMetricSummaryBCDimension(t *testing.T) {
 		}
 	}
 	// bukkit 上报（无 proxy 段）。
-	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
+	if code, _ := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
 		"namespace": "prod", "serverId": "bc-bk1", "playerCount": 20, "tps": 19.9, "cpuLoad": 0.3,
 	}); code != http.StatusOK {
 		t.Fatalf("上报 bc-bk1 应 200，实际 %d", code)
 	}
 	// bc 上报含 proxy 子对象。
-	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
+	if code, _ := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
 		"namespace": "prod", "serverId": "bc-px1", "playerCount": 35, "tps": 0,
 		"proxy": map[string]any{
 			"onlineConnections": 35, "threadCount": 48, "uptimeMs": 600000,

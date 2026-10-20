@@ -17,9 +17,11 @@ const (
 )
 
 // commandExpirer 是清理器对命令服务的窄依赖（由 AgentCommandService 实现），便于以测试替身验证调用。
+// 三个方法覆盖互不重叠的瞬态：未终结命令整体过期、done 浏览正文到期、done 日志正文到期。
 type commandExpirer interface {
 	ExpireStale(before time.Time) (int64, error)
 	ClearExpiredBrowseResults(now time.Time) (int64, error)
+	ClearExpiredLogContents(now time.Time) (int64, error)
 }
 
 // CommandSweeper 是陈旧命令清理器（FR-39 / FR-46，单后台 goroutine）：周期把创建超期仍未终结的命令标 expired
@@ -51,19 +53,24 @@ func (s *CommandSweeper) Run(ctx context.Context) {
 	}
 }
 
-// sweepOnce 执行一轮清理：把创建早于 now-staleAfter 仍未终结的命令标 expired 并清空瞬态。
+// sweepOnce 执行一轮清理：把创建早于 now-staleAfter 仍未终结的命令标 expired 并清空瞬态，
+// 再按各自的独立到期时间清空 done 命令的浏览正文与日志正文（done 是终态，ExpireStale 收敛不到）。
+//
+// 三项互不依赖：任一项失败只记日志，不阻断其余项，避免一类清理故障连带停掉另一类瞬态的回收。
 func (s *CommandSweeper) sweepOnce(now time.Time) {
 	n, err := s.svc.ExpireStale(now.Add(-s.staleAfter))
 	if err != nil {
 		slog.Error("命令过期清理失败", "错误", err)
-		return
 	}
 	cleared, err := s.svc.ClearExpiredBrowseResults(now)
 	if err != nil {
 		slog.Error("浏览结果过期清理失败", "错误", err)
-		return
 	}
-	if n > 0 || cleared > 0 {
-		slog.Info("命令过期清理完成", "过期条数", n, "清空浏览结果条数", cleared)
+	logCleared, err := s.svc.ClearExpiredLogContents(now)
+	if err != nil {
+		slog.Error("日志正文过期清理失败", "错误", err)
+	}
+	if n > 0 || cleared > 0 || logCleared > 0 {
+		slog.Info("命令过期清理完成", "过期条数", n, "清空浏览结果条数", cleared, "清空日志正文条数", logCleared)
 	}
 }

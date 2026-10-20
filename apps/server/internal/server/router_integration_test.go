@@ -189,6 +189,7 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	// 反向抓取持久忽略规则（FR-59）：规则服务供任务详情标 ignoredByRule + CRUD 处理器。
 	reverseFetchRuleSvc := service.NewReverseFetchIgnoreRuleService(db, repository.NewReverseFetchIgnoreRuleRepository(db), auditRepo)
 	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskSvc, instSvc, reverseFetchRuleSvc)
+	reverseFetchTaskHandler.SetReportAuthenticator(v2Svc)
 	reverseFetchRuleHandler := handler.NewReverseFetchIgnoreRuleHandler(reverseFetchRuleSvc)
 	// 取 agent 日志（FR-88）：复用同一命令仓库，编排 tail-logs 命令-回传周期 + 处理器。
 	agentLogSvc := service.NewAgentLogService(db, commandRepo, auditRepo)
@@ -217,6 +218,13 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	testHealthViews = healthview.NewStore()
 	metricIngestSvc.SetHealthViews(testHealthViews)
 	v2MetricsHandler := handler.NewV2MetricsHandler(metricIngestSvc)
+	// v1 数据面身份绑定（issue #146）：与 main.go 同源装配，v1 端点各自取 DB 权威身份并收敛归属。
+	agentHandler := handler.NewAgentHandler(instSvc, effSvc, settingsSvc)
+	agentHandler.SetReportAuthenticator(v2Svc)
+	streamHandler := handler.NewStreamHandler(instSvc, streamSvc)
+	streamHandler.SetReportAuthenticator(v2Svc)
+	fileHandler := handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, settingsSvc)
+	fileHandler.SetReportAuthenticator(v2Svc)
 	router := server.NewRouter(server.Handlers{
 		Namespace:        nsHandler,
 		Env:              envHandler,
@@ -224,10 +232,10 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 		V2Metrics:        v2MetricsHandler,
 		V2Assets:         handler.NewV2AssetsHandler(assetSvc),
 		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc, service.NewImpactService(registry, placementRepo, db)),
-		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, settingsSvc),
+		File:             fileHandler,
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),
-		Agent:            handler.NewAgentHandler(instSvc, effSvc, settingsSvc),
-		Stream:           handler.NewStreamHandler(instSvc, streamSvc),
+		Agent:            agentHandler,
+		Stream:           streamHandler,
 		Instance:         handler.NewInstanceHandler(instSvc, settingsSvc, effSvc),
 		Zone:             handler.NewZoneHandler(zoneSvc, v2Svc),
 		Scheduling:       handler.NewSchedulingHandler(schedSvc, v2Svc),

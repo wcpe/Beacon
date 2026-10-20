@@ -244,14 +244,20 @@ func (r *AgentCommandRepository) CountActiveByType(ns, serverID, cmdType string)
 }
 
 // UpdateStatusWithLogContent 把命令从 fetched CAS 迁移 done 并存取日志回传内容（FR-88）：仅当当前 status=fetched 才迁移。
-// content 即 agent 回传的脱敏日志行 JSON（瞬态，取一次后由过期清理清空）。返回是否命中（前态不符 / 不存在则 false）。
-func (r *AgentCommandRepository) UpdateStatusWithLogContent(id uint, content string) (bool, error) {
+// content 即 agent 回传的脱敏日志行 JSON（瞬态，到期由清扫清空）。expiresAt 是正文的独立到期时间：
+// done 是终态、ExpireStale 够不到它，没有这一列正文就会永久滞留（issue #145）。
+// 返回是否命中（前态不符 / 不存在则 false）。
+func (r *AgentCommandRepository) UpdateStatusWithLogContent(id uint, content string, expiresAt time.Time) (bool, error) {
 	if err := r.ensureCommandTargetActive(id); err != nil {
 		return false, err
 	}
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("id = ? AND status = ?", id, model.CommandStatusFetched).
-		Updates(map[string]any{"status": model.CommandStatusDone, "log_content": content})
+		Updates(map[string]any{
+			"status": model.CommandStatusDone,
+			"log_content": content,
+			"log_content_expires_at": expiresAt.UTC(),
+		})
 	if res.Error != nil {
 		return false, res.Error
 	}
@@ -306,6 +312,21 @@ func (r *AgentCommandRepository) ClearExpiredBrowseResults(now time.Time) (int64
 		Where("type = ? AND status = ? AND browse_result <> '' AND (browse_result_expires_at IS NULL OR browse_result_expires_at <= ?)",
 			model.CommandTypeFsBrowse, model.CommandStatusDone, now.UTC()).
 		Updates(map[string]any{"browse_result": "", "browse_result_expires_at": nil})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// ClearExpiredLogContents 清空所有已过独立到期时间的 done 日志正文（FR-88 / issue #145）。
+// 与 ClearExpiredBrowseResults 同口径：过期时间为空的历史结果也立即清除，
+// 避免旧数据因迁移后没有期限而继续滞留（done 是终态，ExpireStale 永远不会回收它）。
+// 只清正文与期限列，status 保留 done 供无正文的审计与观测使用。
+func (r *AgentCommandRepository) ClearExpiredLogContents(now time.Time) (int64, error) {
+	res := r.db.Model(&model.AgentCommand{}).
+		Where("type = ? AND status = ? AND log_content <> '' AND (log_content_expires_at IS NULL OR log_content_expires_at <= ?)",
+			model.CommandTypeTailLogs, model.CommandStatusDone, now.UTC()).
+		Updates(map[string]any{"log_content": "", "log_content_expires_at": nil})
 	if res.Error != nil {
 		return 0, res.Error
 	}
@@ -453,7 +474,7 @@ func (r *AgentCommandRepository) ExpireForTarget(namespace, serverID string) (in
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("namespace = ? AND server_id = ? AND status IN ?", namespace, serverID,
 			[]string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady}).
-		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "browse_result": "", "browse_result_expires_at": nil})
+		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "log_content_expires_at": nil, "browse_result": "", "browse_result_expires_at": nil})
 	if res.Error != nil {
 		return 0, res.Error
 	}
@@ -463,11 +484,12 @@ func (r *AgentCommandRepository) ExpireForTarget(namespace, serverID string) (in
 // ExpireStale 把创建早于 before、仍处 pending/fetched/ready 的命令标 expired（超时清理）；返回受影响条数。
 // ready（FR-46 拓印已抓取未确认）一并过期并清空瞬态拓印内容，避免未确认的磁盘原文长期滞留。
 // 同时清空 log_content（FR-88 取日志瞬态）与 browse_result（FR-110 浏览瞬态）：过期命令的回传内容一并抹除，避免瞬态长期滞留。
+// 注意本函数只覆盖未终结态；done 命令的 log_content 由 ClearExpiredLogContents 按独立到期时间回收（issue #145）。
 func (r *AgentCommandRepository) ExpireStale(before time.Time) (int64, error) {
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("status IN ? AND created_at < ?",
 			[]string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady}, before).
-		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "browse_result": "", "browse_result_expires_at": nil})
+		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "log_content_expires_at": nil, "browse_result": "", "browse_result_expires_at": nil})
 	if res.Error != nil {
 		return 0, res.Error
 	}

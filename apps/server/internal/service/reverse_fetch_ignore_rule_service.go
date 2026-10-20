@@ -77,8 +77,10 @@ func (s *ReverseFetchIgnoreRuleService) Create(p CreateRuleParams) (*model.Rever
 		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: p.Namespace, Operator: p.Operator, Action: model.ActionReverseFetchIgnoreRuleAdd,
 			TargetType: model.TargetTypeReverseFetchIgnoreRule, TargetRef: fmt.Sprintf("%d", rule.ID),
-			Detail: fmt.Sprintf(`{"ruleId":%d,"scope":%q,"group":%q,"target":%q,"ruleType":%q,"pattern":%q}`,
-				rule.ID, p.Scope, p.Group, scopeTarget, p.RuleType, pattern),
+			// 用 json.Marshal 而非 `%q` 拼接：group/target/pattern 均为外部可控文本，Go 的 %q 对
+			// 控制字符输出 `\x01`，JSON 不允许 `\x` 转义，会静默写出非法 detail（issue #144）。
+			Detail: auditJSON(map[string]any{"ruleId": rule.ID, "scope": p.Scope, "group": p.Group,
+				"target": scopeTarget, "ruleType": p.RuleType, "pattern": pattern}),
 			Result: model.ResultOK, ClientIP: p.ClientIP,
 		})
 	})
@@ -123,8 +125,8 @@ func (s *ReverseFetchIgnoreRuleService) Delete(id uint, operator, clientIP strin
 		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: rule.NamespaceCode, Operator: operator, Action: model.ActionReverseFetchIgnoreRuleRemove,
 			TargetType: model.TargetTypeReverseFetchIgnoreRule, TargetRef: fmt.Sprintf("%d", id),
-			Detail: fmt.Sprintf(`{"ruleId":%d,"scope":%q,"group":%q,"target":%q,"pattern":%q}`,
-				id, rule.Scope, rule.GroupCode, rule.ScopeTarget, rule.Pattern),
+			Detail: auditJSON(map[string]any{"ruleId": id, "scope": rule.Scope, "group": rule.GroupCode,
+				"target": rule.ScopeTarget, "pattern": rule.Pattern}),
 			Result: model.ResultOK, ClientIP: clientIP,
 		})
 	})

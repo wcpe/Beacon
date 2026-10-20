@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -128,10 +127,14 @@ func TestCommandHandlerReportDirectoryResyncAuthenticationFailureShortCircuits(t
 	}
 }
 
-func TestCommandHandlerReportResyncConfigPathUnchanged(t *testing.T) {
+// TestCommandHandlerReportResyncConfigPathStillAuthenticates 锁定 issue #146 后的新语义：
+// 命令结果回传**所有分支**都必须先绑定回传者身份（此前只有 bc-directory-resync 分支校验，
+// 其余分支裸奔，任一 agent 可凭猜测的 commandId 把别人的命令提前推进 done / 打成 failed）。
+// 普通重同步分支不得调用目录重同步的接收方法，但仍必须过一次认证。
+func TestCommandHandlerReportResyncConfigPathStillAuthenticates(t *testing.T) {
 	h, db := newCommandResultHandler(t)
 	cmd := seedFetchedCommand(t, db, model.CommandTypeResyncConfig)
-	authn := &commandReportAuthenticatorStub{authErr: errors.New("普通路径不应认证")}
+	authn := &commandReportAuthenticatorStub{identity: agentauth.Identity{Namespace: "prod", ServerID: "server-1", IdentityID: "identity"}}
 	h.SetReportAuthenticator(authn)
 
 	rec := reportCommandResult(h, cmd.ID)
@@ -139,8 +142,8 @@ func TestCommandHandlerReportResyncConfigPathUnchanged(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("普通重同步回传应保持 200，实际 %d：%s", rec.Code, rec.Body.String())
 	}
-	if authn.authenticateCalls != 0 || authn.receiveCalls != 0 {
-		t.Fatalf("普通重同步不得调用目录重同步认证器，实际 authenticate=%d receive=%d", authn.authenticateCalls, authn.receiveCalls)
+	if authn.authenticateCalls != 1 || authn.receiveCalls != 0 {
+		t.Fatalf("普通重同步必须认证一次且不得调用目录重同步接收器，实际 authenticate=%d receive=%d", authn.authenticateCalls, authn.receiveCalls)
 	}
 	var got model.AgentCommand
 	if err := db.First(&got, cmd.ID).Error; err != nil {
@@ -148,6 +151,77 @@ func TestCommandHandlerReportResyncConfigPathUnchanged(t *testing.T) {
 	}
 	if got.Status != model.CommandStatusDone {
 		t.Fatalf("普通重同步成功回传应推进 done，实际 %s", got.Status)
+	}
+}
+
+// TestCommandHandlerReportRejectsUnauthenticatedResyncConfig 是 issue #146 的负向锁：
+// 未带身份头（仅共享 token 通过中间件）的普通重同步回传必须被拒且命令状态不变。
+func TestCommandHandlerReportRejectsUnauthenticatedResyncConfig(t *testing.T) {
+	h, db := newCommandResultHandler(t)
+	cmd := seedFetchedCommand(t, db, model.CommandTypeResyncConfig)
+	h.SetReportAuthenticator(&commandReportAuthenticatorStub{authErr: apperr.ErrUnauthorized})
+
+	rec := reportCommandResult(h, cmd.ID)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("缺身份回传应 401，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	var got model.AgentCommand
+	if err := db.First(&got, cmd.ID).Error; err != nil {
+		t.Fatalf("读取命令失败: %v", err)
+	}
+	if got.Status != model.CommandStatusFetched {
+		t.Fatalf("认证失败不得推进命令状态，实际 %s", got.Status)
+	}
+}
+
+// TestCommandHandlerReportRejectsForeignAgentResyncConfig 是 issue #146 归属校验的 handler 锁：
+// 身份已确认但不是该命令归属的那台 agent，必须按「命令不存在」404 拒绝，且命令状态不变。
+// 它同时证明 handler 确实把解析出的身份转发给了 service——否则 service 无从判断归属。
+func TestCommandHandlerReportRejectsForeignAgentResyncConfig(t *testing.T) {
+	h, db := newCommandResultHandler(t)
+	cmd := seedFetchedCommand(t, db, model.CommandTypeResyncConfig)
+	h.SetReportAuthenticator(&commandReportAuthenticatorStub{
+		identity: agentauth.Identity{Namespace: "prod", ServerID: "server-2", IdentityID: "identity"},
+	})
+
+	rec := reportCommandResult(h, cmd.ID)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("非归属 agent 回传应 404 而非成功，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	var got model.AgentCommand
+	if err := db.First(&got, cmd.ID).Error; err != nil {
+		t.Fatalf("读取命令失败: %v", err)
+	}
+	if got.Status != model.CommandStatusFetched {
+		t.Fatalf("非归属回传不得推进命令状态，实际 %s", got.Status)
+	}
+}
+
+// TestCommandHandlerIngestRejectsForeignAgent 同上，锁定 /agent/files/ingest 的归属校验：
+// 该端点写的是真源，非归属回传既不落文件也不推进命令。
+func TestCommandHandlerIngestRejectsForeignAgent(t *testing.T) {
+	h, db := newCommandResultHandler(t)
+	cmd := seedFetchedCommand(t, db, model.CommandTypeIngestPlugins)
+	h.SetReportAuthenticator(&commandReportAuthenticatorStub{
+		identity: agentauth.Identity{Namespace: "prod", ServerID: "server-2", IdentityID: "identity"},
+	})
+
+	body := bytes.NewBufferString(`{"commandId":` + fmt.Sprint(cmd.ID) + `,"files":[{"path":"a.yml","content":"a: 1"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/beacon/v1/agent/files/ingest", body)
+	rec := httptest.NewRecorder()
+	h.Ingest(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("非归属 agent 回传应 404 而非成功，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	var got model.AgentCommand
+	if err := db.First(&got, cmd.ID).Error; err != nil {
+		t.Fatalf("读取命令失败: %v", err)
+	}
+	if got.Status != model.CommandStatusFetched || got.ResultDetail != "" {
+		t.Fatalf("非归属回传不得改写命令，实际 %s/%q", got.Status, got.ResultDetail)
 	}
 }
 

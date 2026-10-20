@@ -35,7 +35,7 @@ func TestReceiveScanRecomputesOverThresholdFromSetting(t *testing.T) {
 		{Path: "A/small.yml", Size: 100, IsText: true, OverThreshold: true},
 		{Path: "A/big.yml", Size: 5000, IsText: true, OverThreshold: false},
 	}
-	if err := svc.ReceiveScan(task.ScanCommandID, files, ""); err != nil {
+	if err := svc.ReceiveScan(testAgentIdentityOf("prod", "lobby-1"), task.ScanCommandID, files, ""); err != nil {
 		t.Fatalf("scan 回传应成功，实际 %v", err)
 	}
 
@@ -79,7 +79,7 @@ func TestSubmitRejectsUnconfirmedOverThreshold(t *testing.T) {
 	}
 	fetchCmd(t, db, task.ScanCommandID)
 	files := []ScanFile{{Path: "A/big.yml", Size: 5000, IsText: true, OverThreshold: false}}
-	if err := svc.ReceiveScan(task.ScanCommandID, files, ""); err != nil {
+	if err := svc.ReceiveScan(testAgentIdentityOf("prod", "lobby-1"), task.ScanCommandID, files, ""); err != nil {
 		t.Fatalf("scan 回传失败: %v", err)
 	}
 

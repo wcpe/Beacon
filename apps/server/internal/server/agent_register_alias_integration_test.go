@@ -73,7 +73,7 @@ func fr233EnsureNamespace(t *testing.T, ts *integrationTestServer, code string) 
 // fr233DiscoveryHas 断言 discovery 里能查到该实例（证明注册确实写了内存 registry，即走了真实 handler）。
 func fr233DiscoveryHas(t *testing.T, ts *integrationTestServer, namespace, serverID string) {
 	t.Helper()
-	code, disc := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace="+namespace, nil)
+	code, disc := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace="+namespace, nil)
 	if code != http.StatusOK {
 		t.Fatalf("发现应 200，实际 %d", code)
 	}
@@ -199,7 +199,7 @@ func TestFR233BothPathsShareSameSemantics(t *testing.T) {
 		t.Fatalf("两路径响应结构应一致，新=%v 旧=%v", canonKeys, legacyKeys)
 	}
 	// 旧路径的重复注册不产生第二条实例：发现里 fr233-both 恰好一条（同 handler 同一 registry 真源）。
-	code, disc := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace=prod", nil)
+	code, disc := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace=prod", nil)
 	if code != http.StatusOK {
 		t.Fatalf("发现应 200，实际 %d", code)
 	}

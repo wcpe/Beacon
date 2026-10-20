@@ -196,7 +196,7 @@ func TestReceiveScanNeverFails(t *testing.T) {
 		{Path: "AllinCore/config.yml", Size: 1234, IsText: true, OverThreshold: false},
 		{Path: "ServerProbe/metrics.jsonl", Size: 5 * 1024 * 1024, IsText: true, OverThreshold: true},
 	}
-	if err := svc.ReceiveScan(task.ScanCommandID, files, ""); err != nil {
+	if err := svc.ReceiveScan(testAgentIdentityOf("prod", "lobby-1"), task.ScanCommandID, files, ""); err != nil {
 		t.Fatalf("scan 回传应永不失败（含超阈值文件），实际 %v", err)
 	}
 	got, _ := svc.Get(task.ID)
@@ -227,7 +227,7 @@ func scanToPendingReview(t *testing.T, db *gorm.DB, svc *ReverseFetchTaskService
 		t.Fatalf("建任务失败: %v", err)
 	}
 	fetchCmd(t, db, task.ScanCommandID)
-	if err := svc.ReceiveScan(task.ScanCommandID, files, ""); err != nil {
+	if err := svc.ReceiveScan(testAgentIdentityOf("prod", "lobby-1"), task.ScanCommandID, files, ""); err != nil {
 		t.Fatalf("scan 回传失败: %v", err)
 	}
 	got, _ := svc.Get(task.ID)
@@ -439,7 +439,7 @@ func TestReceiveIngestDispatchesSubmitMode(t *testing.T) {
 	fetchCmd(t, db, got.SubmitCommandID)
 
 	// 经命令服务的统一回传入口（生产路径）→ 应转交受管任务落库、任务→done
-	res, err := cmdSvc.ReceiveIngest(got.SubmitCommandID, []ImportFile{{Path: "A/config.yml", Content: "k: 1\n"}}, "")
+	res, err := cmdSvc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), got.SubmitCommandID, []ImportFile{{Path: "A/config.yml", Content: "k: 1\n"}}, "")
 	if err != nil {
 		t.Fatalf("经 ReceiveIngest 转交 submit 应成功: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestReceiveErrorScanFailsTask(t *testing.T) {
 	task, _ := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	fetchCmd(t, db, task.ScanCommandID)
 
-	if err := svc.ReceiveError(task.ScanCommandID, "扫描 plugins 目录元信息失败：permission denied", ""); err != nil {
+	if err := svc.ReceiveError(testAgentIdentityOf("prod", "lobby-1"), task.ScanCommandID, "扫描 plugins 目录元信息失败：permission denied", ""); err != nil {
 		t.Fatalf("scan 错误回传应成功: %v", err)
 	}
 	got, _ := svc.Get(task.ID)
@@ -509,7 +509,7 @@ func TestReceiveErrorSubmitFailsTask(t *testing.T) {
 	got, _ := applySubmitForTest(svc, task.ID, []string{"A/config.yml"}, false, "alice", "")
 	fetchCmd(t, db, got.SubmitCommandID)
 
-	if err := svc.ReceiveError(got.SubmitCommandID, "读 plugins 目录失败：IO error", ""); err != nil {
+	if err := svc.ReceiveError(testAgentIdentityOf("prod", "lobby-1"), got.SubmitCommandID, "读 plugins 目录失败：IO error", ""); err != nil {
 		t.Fatalf("submit 错误回传应成功: %v", err)
 	}
 	failed, _ := svc.Get(task.ID)
@@ -524,13 +524,13 @@ func TestReceiveErrorRejectsMismatch(t *testing.T) {
 	svc := newRFTaskSvc(db)
 
 	// 命令不存在 → COMMAND_NOT_FOUND
-	if err := svc.ReceiveError(99999, "x", ""); err != apperr.ErrCommandNotFound {
+	if err := svc.ReceiveError(testAgentIdentityOf("prod", "lobby-1"), 99999, "x", ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("不存在命令应 COMMAND_NOT_FOUND，实际 %v", err)
 	}
 
 	// scan 命令未被拉取（仍 pending、非 fetched）→ COMMAND_NOT_FOUND
 	task, _ := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
-	if err := svc.ReceiveError(task.ScanCommandID, "x", ""); err != apperr.ErrCommandNotFound {
+	if err := svc.ReceiveError(testAgentIdentityOf("prod", "lobby-1"), task.ScanCommandID, "x", ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("未拉取命令回传应 COMMAND_NOT_FOUND，实际 %v", err)
 	}
 
@@ -539,7 +539,7 @@ func TestReceiveErrorRejectsMismatch(t *testing.T) {
 	if _, err := svc.Cancel(task.ID, "alice", ""); err != nil {
 		t.Fatalf("取消应成功: %v", err)
 	}
-	if err := svc.ReceiveError(task.ScanCommandID, "x", ""); err != apperr.ErrReverseFetchTaskState {
+	if err := svc.ReceiveError(testAgentIdentityOf("prod", "lobby-1"), task.ScanCommandID, "x", ""); err != apperr.ErrReverseFetchTaskState {
 		t.Fatalf("终态任务回传错误应 REVERSE_FETCH_TASK_STATE，实际 %v", err)
 	}
 }

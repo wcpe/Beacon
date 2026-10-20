@@ -509,7 +509,7 @@ func (a fileOverrideApprovalAdapter) applyFileImport(tx *gorm.DB, pending filePe
 		}
 		items = append(items, *existing)
 	}
-	if err := a.files.writeImportAudit(tx, p.Namespace, p.Group, p.Operator, fmt.Sprintf(`{"scope":%q,"target":%q,"files":%d}`, p.ScopeLevel, p.ScopeTarget, len(p.Files)), p.ClientIP); err != nil {
+	if err := a.files.writeImportAudit(tx, p.Namespace, p.Group, p.Operator, auditJSON(map[string]any{"scope": p.ScopeLevel, "target": p.ScopeTarget, "files": len(p.Files)}), p.ClientIP); err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -636,7 +636,7 @@ func (a fileOverrideApprovalAdapter) applyOverridePublish(tx *gorm.DB, p fileApp
 	if err = a.sets.setRepo.WithTx(tx).Save(set); err != nil {
 		return "", err
 	}
-	if err = a.sets.writeAudit(tx, set, v.Operator, model.ActionOverrideSetPublish, fmt.Sprintf(`{"version":%d,"targetRoot":%q,"hasCommand":%t}`, set.Version, root, cmd != ""), v.ClientIP); err != nil {
+	if err = a.sets.writeAudit(tx, set, v.Operator, model.ActionOverrideSetPublish, auditJSON(map[string]any{"version": set.Version, "targetRoot": root, "hasCommand": cmd != ""}), v.ClientIP); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%d", set.ID), nil
@@ -659,7 +659,7 @@ func (a fileOverrideApprovalAdapter) applyOverrideRollback(tx *gorm.DB, p fileAp
 	if err = a.sets.setRepo.WithTx(tx).Save(set); err != nil {
 		return "", err
 	}
-	if err = a.sets.writeAudit(tx, set, v.Operator, model.ActionOverrideSetRollback, fmt.Sprintf(`{"version":%d,"fromVersion":%d,"targetRoot":%q}`, set.Version, v.RollbackVersion, set.TargetRoot), v.ClientIP); err != nil {
+	if err = a.sets.writeAudit(tx, set, v.Operator, model.ActionOverrideSetRollback, auditJSON(map[string]any{"version": set.Version, "fromVersion": v.RollbackVersion, "targetRoot": set.TargetRoot}), v.ClientIP); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%d", set.ID), nil

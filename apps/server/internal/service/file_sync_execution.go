@@ -480,11 +480,13 @@ func errOrCommand(err error) error {
 	return apperr.ErrCommandNotFound
 }
 
+// 用 json.Marshal 而非 `%q` 拼接：reason 为 agent 回传文本，可能含控制字符，
+// Go 的 %q 会输出 JSON 不允许的 `\x01` 转义（issue #144 同类缺陷）。
 func fileSyncCommandResultDetail(taskID, targetID uint, status, reason string) string {
 	if reason == "" {
-		return fmt.Sprintf(`{"taskId":%d,"targetId":%d,"status":%q}`, taskID, targetID, status)
+		return auditJSON(map[string]any{"taskId": taskID, "targetId": targetID, "status": status})
 	}
-	return fmt.Sprintf(`{"taskId":%d,"targetId":%d,"status":%q,"error":%q}`, taskID, targetID, status, reason)
+	return auditJSON(map[string]any{"taskId": taskID, "targetId": targetID, "status": status, "error": reason})
 }
 
 func (s *FileSyncService) advanceBatchAfterTargetLocked(repo *repository.FileSyncRepository,

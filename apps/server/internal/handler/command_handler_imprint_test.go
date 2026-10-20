@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -41,6 +42,10 @@ func TestIngestImprintModeNoPanic(t *testing.T) {
 	fileSvc := service.NewFileService(db, repository.NewFileObjectRepository(db), repository.NewFileRevisionRepository(db), auditRepo)
 	cmdSvc := service.NewAgentCommandService(db, repository.NewAgentCommandRepository(db), fileSvc, auditRepo)
 	h := NewCommandHandler(cmdSvc, nil) // Ingest 不用 insSvc，nil 足矣
+	// 回传必须绑定身份（issue #146）：注入与生产同形的权威身份校验器。
+	h.SetReportAuthenticator(&commandReportAuthenticatorStub{
+		identity: agentauth.Identity{Namespace: "prod", ServerID: "lobby-1", IdentityID: "identity"},
+	})
 
 	// 建一条 fetched 态拓印命令（mode=imprint + 目标 path）。
 	cmd := &model.AgentCommand{

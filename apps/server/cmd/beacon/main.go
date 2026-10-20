@@ -395,6 +395,13 @@ func run() error {
 	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, settingsService)
 	streamHandler := handler.NewStreamHandler(instanceService, streamService)
 	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, overrideEffectiveService, instanceService, settingsService)
+	// v1 数据面身份绑定（issue #146）：v1 组只挂共享 token，token 通过仅代表「某台已接入的 agent」，
+	// 请求里的 namespace / serverId 又是自报可伪造的。故这些端点在 handler 内各自再取一次 DB 权威身份
+	// 并收敛归属，杜绝任一 agent 冒充另一台（顶替心跳、读走别服配置与文件正文、抢别人待办命令）。
+	// 注入的校验器与 v2 上报端点同源（service.V2ControlPlaneService.AuthenticateAgentReport）。
+	agentHandler.SetReportAuthenticator(v2ControlPlaneService)
+	streamHandler.SetReportAuthenticator(v2ControlPlaneService)
+	fileHandler.SetReportAuthenticator(v2ControlPlaneService)
 	// 实例视图渲染健康原因（FR-81）须读当前健康阈值（设置 store 热改项 FR-61），故注入 settingsService；
 	// effectiveService 供 per-server 有效配置变更时间线端点（FR-80）。
 	instanceHandler := handler.NewInstanceHandler(instanceService, settingsService, effectiveService)
@@ -685,6 +692,9 @@ func run() error {
 	reverseFetchIgnoreRuleRepo := repository.NewReverseFetchIgnoreRuleRepository(db)
 	reverseFetchIgnoreRuleService := service.NewReverseFetchIgnoreRuleService(db, reverseFetchIgnoreRuleRepo, auditRepo)
 	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskService, instanceService, reverseFetchIgnoreRuleService)
+	// 扫描 / 错误回传同样要求已确认身份（issue #146）：清单与失败成因都会写进任务真源，
+	// 共享 token 下不设门槛则可凭猜测的 commandId 覆盖他人扫描结果或定向把他人任务打成失败。
+	reverseFetchTaskHandler.SetReportAuthenticator(v2ControlPlaneService)
 	reverseFetchIgnoreRuleHandler := handler.NewReverseFetchIgnoreRuleHandler(reverseFetchIgnoreRuleService)
 
 	// P4b 装配点：调度域（FR-146）
