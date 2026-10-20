@@ -162,7 +162,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
   const onExport = async (format: 'csv' | 'json') => {
     setExportError(null)
     if (envCodes !== null && envCodes.length !== 1) {
-      setExportError('当前环境导出暂仅支持单命名空间范围')
+      setExportError(t('observability.audits.exportScopeUnsupported'))
       return
     }
     setExporting(true)

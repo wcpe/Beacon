@@ -276,6 +276,8 @@ export const observability = {
     filterKeyword: '详情关键词',
     filterResult: '结果',
     exportFailed: '导出失败',
+    // 导出范围不支持时的提示（当前仅支持单个命名空间）
+    exportScopeUnsupported: '当前环境导出暂仅支持单命名空间范围',
     exporting: '导出中…',
     // 时间范围预设（「全部」= 不限时间，仅热查询；冷查询强制有界范围）
     filterWindow: '时间范围',
