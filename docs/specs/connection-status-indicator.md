@@ -1,6 +1,6 @@
 # 功能规格：控制面连接状态指示 + 自动重连
 
-> 状态：开发中　·　关联 PRD：FR-78　·　分支：feature/fr-78-connection-status
+> 状态：已交付@v0.11.0　·　关联 PRD：FR-78　·　分支：feature/fr-78-connection-status
 
 ## 1. 背景与目标
 

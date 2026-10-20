@@ -1,6 +1,6 @@
 # 功能规格：控制面升级、回滚与运行设置审批
 
-> 状态：开发中　·　关联 PRD：FR-210　·　决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
+> 状态：已交付@v1.1.0　·　关联 PRD：FR-210　·　决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
 
 ## 1. 背景与目标
 

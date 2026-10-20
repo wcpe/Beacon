@@ -1,6 +1,6 @@
 # 功能规格：agent↔控制面 server→agent 推送合并为单条 SSE 流
 
-> 状态：开发中　·　关联 PRD：FR-24　·　决策：[ADR-0015](../adr/0015-sse-server-push-transport.md)（取代 [ADR-0006](../adr/0006-rest-long-poll-push.md)、扩展 [ADR-0005](../adr/0005-agent-transport-codec-abstraction.md)）　·　建议分支：feature/sse-server-push
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-24　·　决策：[ADR-0015](../adr/0015-sse-server-push-transport.md)（取代 [ADR-0006](../adr/0006-rest-long-poll-push.md)、扩展 [ADR-0005](../adr/0005-agent-transport-codec-abstraction.md)）　·　建议分支：feature/sse-server-push
 
 ## 1. 背景与目标
 

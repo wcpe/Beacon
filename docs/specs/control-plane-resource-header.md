@@ -1,6 +1,6 @@
 # 功能规格：控制面资源页眉显示
 
-> 状态：开发中　·　关联 PRD：FR-272　·　版本线：待排期　·　分支：rc-candidate-identity
+> 状态：开发中（实现与 CHANGELOG 均已完成，尚未随任何版本发布，故不标已交付）　·　关联 PRD：FR-272　·　版本线：未发布　·　分支：rc-candidate-identity
 
 ## 1. 背景与目标
 

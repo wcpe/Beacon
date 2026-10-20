@@ -1,6 +1,6 @@
 # 功能规格：实例主动下线态
 
-> 状态：开发中　·　关联 PRD：FR-49　·　分支：feature/fr-49-instance-offline-state
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-49　·　分支：feature/fr-49-instance-offline-state
 
 ## 1. 背景与目标
 

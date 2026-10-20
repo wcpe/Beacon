@@ -1,6 +1,6 @@
 # 功能规格：Agent 命令与敏感内容访问审批
 
-> 状态：草拟　·　关联 PRD：FR-209　·　分支：待执行时创建　·　依赖：FR-206、FR-207、[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
+> 状态：已交付@v1.1.0　·　关联 PRD：FR-209　·　分支：待执行时创建　·　依赖：FR-206、FR-207、[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
 
 ## 1. 背景与目标
 

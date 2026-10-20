@@ -1,6 +1,6 @@
 # 功能规格：agent 内置跨服消息中间件
 
-> 状态：开发中　·　关联 PRD：FR-26　·　决策：[ADR-0016](../adr/0016-agent-cross-server-messaging-middleware.md)　·　建议分支：feature/cross-server-messaging
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-26　·　决策：[ADR-0016](../adr/0016-agent-cross-server-messaging-middleware.md)　·　建议分支：feature/cross-server-messaging
 
 ## 1. 背景与目标
 

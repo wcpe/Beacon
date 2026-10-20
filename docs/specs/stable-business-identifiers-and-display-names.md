@@ -1,6 +1,6 @@
 # 功能规格：稳定业务标识与显示名称
 
-> 状态：草拟　·　关联 PRD：FR-205　·　分支：待执行时创建　·　依赖：[ADR-0078](../adr/0078-stable-resource-identity-and-lifecycle-tombstones.md)
+> 状态：已交付@v1.1.0　·　关联 PRD：FR-205　·　分支：待执行时创建　·　依赖：[ADR-0078](../adr/0078-stable-resource-identity-and-lifecycle-tombstones.md)
 
 本规格只定义资源标识、兼容迁移和管理面展示名编辑。当前权威关系、分配约束仍以 [v2-zone-authority.md](v2-zone-authority.md) 与 [v2-namespace-isolation.md](v2-namespace-isolation.md) 为准；生命周期由 FR-215～218 承接，不在本文重复定义。
 

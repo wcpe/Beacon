@@ -1,6 +1,6 @@
 # 功能规格：per-server 有效配置变更时间线
 
-> 状态：开发中　·　关联 PRD：FR-80　·　分支：feature/fr-80-config-timeline
+> 状态：已交付@v0.12.0　·　关联 PRD：FR-80　·　分支：feature/fr-80-config-timeline
 
 ## 1. 背景与目标
 某子服（serverId）当前生效的配置，是按其覆盖链（global / group / zone / server 四层）合并出来的。运维想回答「这台服的有效配置**何时因哪次发布变过**」时，今天只能：知道该服解析到哪几层、再分别去各 config 项的版本历史（FR-3 `/configs/{id}/revisions`）里逐个翻，自己把多条历史按时间合并——既费力又易漏层。

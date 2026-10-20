@@ -1,6 +1,6 @@
 # 功能规格：环境（namespace）增删改查补全
 
-> 状态：开发中　·　关联 PRD：FR-53（增强 FR-6）　·　分支：feature/fr-53-namespace-crud
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-53（增强 FR-6）　·　分支：feature/fr-53-namespace-crud
 >
 > **后续演进（2026-07-29）**：本文记录早期 CRUD 设计；旧 `/admin/v1/namespaces/{code}` 与历史 `/admin/v2/namespaces/{id}` DELETE 现统一迁移为 `410 namespace_delete_migrated`，不再提供硬删旁路。后续清理能力改由 FR-216/218 的归档、审批与墓碑契约承接。
 

@@ -1,6 +1,6 @@
 # 功能规格：页眉 env→namespace 级联观测筛选
 
-> 状态：草拟　·　关联 PRD：FR-214　·　依赖：[authoritative-observation-scope-contract.md](authoritative-observation-scope-contract.md)
+> 状态：已交付@v1.1.0　·　关联 PRD：FR-214　·　依赖：[authoritative-observation-scope-contract.md](authoritative-observation-scope-contract.md)
 
 ## 1. 背景与目标
 

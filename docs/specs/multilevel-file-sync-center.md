@@ -1,6 +1,6 @@
 # 功能规格：多级灰度配置同步中心
 
-> 状态：草拟　·　关联 PRD：FR-129 / FR-130 / FR-131 / FR-132 / FR-133　·　关联 ADR：[ADR-0058](../adr/0058-controlled-large-file-sync-channel.md)
+> 状态：草拟（后端 file-sync 服务已实现；前端页面与关联 FR 编号待核，暂不标交付）　·　关联 PRD：FR-129 / FR-130 / FR-131 / FR-132 / FR-133　·　关联 ADR：[ADR-0058](../adr/0058-controlled-large-file-sync-channel.md)
 
 ## 1. 背景与目标
 

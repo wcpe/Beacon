@@ -1,6 +1,6 @@
 # 功能规格：agent 本地运维命令（FR-17，仅本地）
 
-> 状态：开发中　·　关联 PRD：FR-17　·　分支：feature/fr-17-agent-ops-commands
+> 状态：已交付@v0.2.0　·　关联 PRD：FR-17　·　分支：feature/fr-17-agent-ops-commands
 
 ## 1. 背景与目标
 

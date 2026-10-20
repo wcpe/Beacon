@@ -1,6 +1,6 @@
 # 功能规格：告警收敛与防堆积
 
-> 状态：已实现（单测通过；真机验收待做）　·　关联 PRD：FR-232（增强 FR-89 / FR-157）　·　分支：feature/alert-dedup-and-auto-resolve
+> 状态：已交付@v1.2.0　·　关联 PRD：FR-232（增强 FR-89 / FR-157）　·　分支：feature/alert-dedup-and-auto-resolve
 
 ## 1. 背景与目标
 

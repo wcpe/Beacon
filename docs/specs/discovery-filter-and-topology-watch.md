@@ -1,6 +1,6 @@
 # 功能规格：发现接口过滤 + 拓扑 watch 订阅
 
-> 状态：开发中　·　关联 PRD：FR-29（增强 FR-4/FR-16，复用 FR-24 SSE 推送流）　·　分支：feature/fr-29-discovery-watch
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-29（增强 FR-4/FR-16，复用 FR-24 SSE 推送流）　·　分支：feature/fr-29-discovery-watch
 
 ## 1. 背景与目标
 

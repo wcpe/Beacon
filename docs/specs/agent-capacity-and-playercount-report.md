@@ -1,6 +1,6 @@
 # 功能规格：Agent 上报容量与在线人数
 
-> 状态：已实现（`capacity` 已接通；`conn` 语义已拍板：**保持 FR-32 母规格的 proxy 口径**，见 §7）　·　关联 PRD：FR-228（增强 FR-32 健康打分）　·　分支：feature/agent-capacity-and-playercount-report
+> 状态：已交付@v1.2.0（`conn` 语义保持 FR-32 母规格的 proxy 口径，见 §7）　·　关联 PRD：FR-228（增强 FR-32 健康打分）　·　分支：feature/agent-capacity-and-playercount-report
 
 ## 1. 背景与目标
 

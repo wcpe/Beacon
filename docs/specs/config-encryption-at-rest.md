@@ -1,6 +1,6 @@
 # 功能规格：敏感配置 at-rest 加密
 
-> 状态：开发中　·　关联 PRD：FR-20　·　分支：feature/fr-20-config-encrypt
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-20　·　分支：feature/fr-20-config-encrypt
 
 ## 1. 背景与目标
 

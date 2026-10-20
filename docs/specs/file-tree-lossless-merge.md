@@ -1,6 +1,6 @@
 # 功能规格：文件树结构化无损深合并
 
-> 状态：开发中　·　关联 PRD：FR-57（增强 FR-44）　·　分支：feature/fr-57-lossless-filetree-merge
+> 状态：已交付@v0.9.0　·　关联 PRD：FR-57（增强 FR-44）　·　分支：feature/fr-57-lossless-filetree-merge
 
 ## 1. 背景与目标
 

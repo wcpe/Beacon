@@ -1,6 +1,6 @@
 # 功能规格：可观测看板 BC/子服双区块拆分
 
-> 状态：开发中　·　关联 PRD：FR-43　·　分支：feature/fr-43-dashboard-split
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-43　·　分支：feature/fr-43-dashboard-split
 
 ## 1. 背景与目标
 

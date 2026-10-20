@@ -1,6 +1,6 @@
 # 功能规格：身份、凭据、信任与拓扑危险操作适配
 
-> 状态：开发中　·　关联 PRD：FR-208　·　依赖：FR-205～207、[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
+> 状态：已交付@v1.1.0　·　关联 PRD：FR-208　·　依赖：FR-205～207、[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
 
 ## 1. 背景与目标
 

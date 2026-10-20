@@ -1,6 +1,6 @@
 # 功能规格：BC 代理专属指标与角色分流展示
 
-> 状态：开发中　·　关联 PRD：FR-34　·　分支：feature/fr-34-bc-metrics
+> 状态：已交付@v0.6.0　·　关联 PRD：FR-34　·　分支：feature/fr-34-bc-metrics
 
 ## 1. 背景与目标
 

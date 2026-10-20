@@ -1,6 +1,6 @@
 # 功能规格：控制面自观测页
 
-> 状态：开发中　·　关联 PRD：FR-82　·　分支：feature/fr-82-self-observability
+> 状态：已交付@v0.12.0　·　关联 PRD：FR-82　·　分支：feature/fr-82-self-observability
 
 ## 1. 背景与目标
 

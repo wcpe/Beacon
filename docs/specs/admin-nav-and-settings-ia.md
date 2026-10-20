@@ -1,6 +1,6 @@
 # 功能规格：管理台导航分组 + 系统区扁平独立页 IA（FR-93 / FR-94 / FR-95）
 
-> 状态：开发中　·　关联 PRD：FR-93、FR-94、FR-95　·　决策见 [ADR-0043](../adr/0043-admin-nav-grouping-and-settings-aggregation.md)（5 组手风琴有效）与 [ADR-0048](../adr/0048-flatten-system-nav-pages.md)（系统区扁平独立页，取代 ADR-0043 的聚合/折叠/二级子 tab）
+> 状态：已交付@v0.15.0　·　关联 PRD：FR-93、FR-94、FR-95　·　决策见 [ADR-0043](../adr/0043-admin-nav-grouping-and-settings-aggregation.md)（5 组手风琴有效）与 [ADR-0048](../adr/0048-flatten-system-nav-pages.md)（系统区扁平独立页，取代 ADR-0043 的聚合/折叠/二级子 tab）
 
 ## 1. 背景与目标
 

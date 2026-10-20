@@ -1,6 +1,6 @@
 # 功能规格：git 单向导出镜像（备份 / 灾备 / 外部可见）
 
-> 状态：已交付（落 master `c4c87b9`，待发版标版本）　·　关联 PRD：FR-47　·　分支：feature/fr-47-git-export
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-47　·　分支：feature/fr-47-git-export
 
 ## 1. 背景与目标
 

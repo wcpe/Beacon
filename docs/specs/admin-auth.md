@@ -1,6 +1,6 @@
 # 功能规格：管理面鉴权
 
-> 状态：开发中　·　关联 PRD：FR-11　·　分支：feature/admin-auth
+> 状态：已交付@v0.2.0　·　关联 PRD：FR-11　·　分支：feature/admin-auth
 
 ## 1. 背景与目标
 

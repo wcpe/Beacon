@@ -1,6 +1,6 @@
 # 功能规格：配置编辑器格式校验
 
-> 状态：开发中　·　关联 PRD：FR-75　·　分支：feature/fr-75-editor-lint
+> 状态：已交付@v0.11.0　·　关联 PRD：FR-75　·　分支：feature/fr-75-editor-lint
 
 ## 1. 背景与目标
 

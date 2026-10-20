@@ -1,6 +1,6 @@
 # 功能规格：按需拓印回写 + 前端审核台
 
-> 状态：开发中　·　关联 PRD：FR-46　·　分支：feature/fr-46-imprint-review-console
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-46　·　分支：feature/fr-46-imprint-review-console
 
 ## 1. 背景与目标
 

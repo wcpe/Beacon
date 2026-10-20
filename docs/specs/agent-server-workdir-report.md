@@ -1,6 +1,6 @@
 # 功能规格：Agent 上报服务器工作目录
 
-> 状态：已实现（单测通过；跨端 agent 编译通过，真机端到端验收待做）　·　关联 PRD：FR-226（增强 FR-208）　·　分支：feature/agent-server-workdir-report
+> 状态：已交付@v1.2.0（agent 编译通过，真机端到端验收待做）　·　关联 PRD：FR-226（增强 FR-208）　·　分支：feature/agent-server-workdir-report
 
 ## 1. 背景与目标
 

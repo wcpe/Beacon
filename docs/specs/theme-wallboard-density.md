@@ -1,6 +1,6 @@
 # 功能规格：暗色模式 / NOC 大屏只读 / 紧凑密度
 
-> 状态：开发中　·　关联 PRD：FR-92　·　分支：feature/fr-92-theme-wallboard
+> 状态：已交付@v0.14.0　·　关联 PRD：FR-92　·　分支：feature/fr-92-theme-wallboard
 
 ## 1. 背景与目标
 

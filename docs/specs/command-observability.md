@@ -1,6 +1,6 @@
 # 功能规格：命令观测 / 审查面板
 
-> 状态：开发中　·　关联 PRD：FR-104　·　分支：feature/command-observability
+> 状态：已交付@v0.15.0　·　关联 PRD：FR-104　·　分支：feature/command-observability
 
 ## 1. 背景与目标
 控制面↔agent 之间的「控制命令」（`agent_command` 表：反向抓取 ingest-plugins / 取日志 tail-logs / 强制重同步 resync-config）目前只能从审计日志（人触发那一刻）与控制面健康页（FR-82，仅命令队列**计数**）侧面观测，缺少一个能看到**命令双向生命周期**（下发 pending → agent 拉取 fetched → 回执 done/failed/expired）的专门视图。本功能（FR-104，P2，增强 FR-17/FR-82）新增「命令观测」页 + 两个只读后端端点，把命令从下发到终态的全过程做成可过滤、可聚合、可实时跟踪的运维面板，并吸收原「控制面健康逐条队列明细」诉求（把队列从计数升级为逐条）。

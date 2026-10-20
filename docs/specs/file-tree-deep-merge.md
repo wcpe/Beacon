@@ -1,6 +1,6 @@
 # 功能规格：文件树结构化深合并 + 按文件整文件豁免
 
-> 状态：开发中　·　关联 PRD：FR-44　·　分支：feature/fr-44-file-tree-deep-merge
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-44　·　分支：feature/fr-44-file-tree-deep-merge
 
 ## 1. 背景与目标
 

@@ -1,6 +1,6 @@
 # 功能规格：写操作审计中间件兜底
 
-> 状态：开发中　·　关联 PRD：FR-72（增强 FR-7）　·　分支：feature/fr-72-audit-middleware
+> 状态：已交付@v0.10.0　·　关联 PRD：FR-72（增强 FR-7）　·　分支：feature/fr-72-audit-middleware
 
 ## 1. 背景与目标
 

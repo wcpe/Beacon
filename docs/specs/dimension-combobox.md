@@ -1,6 +1,6 @@
 # 功能规格：维度输入统一可编辑下拉（combobox）
 
-> 状态：开发中　·　关联 PRD：FR-51　·　分支：feature/fr-51-combobox
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-51　·　分支：feature/fr-51-combobox
 
 ## 1. 背景与目标
 

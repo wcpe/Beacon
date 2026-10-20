@@ -1,6 +1,6 @@
 # 功能规格：agent 只读交互式文件浏览
 
-> 状态：开发中　·　关联 PRD：FR-109　·　分支：feature/fr-109-agent-fs-browse
+> 状态：已交付@v0.16.0　·　关联 PRD：FR-109　·　分支：feature/fr-109-agent-fs-browse
 
 ## 1. 背景与目标
 

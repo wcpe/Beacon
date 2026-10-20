@@ -1,6 +1,6 @@
 # 功能规格：配置灰度 / Beta（cohort 名单）
 
-> 状态：开发中　·　关联 PRD：FR-9（增强 FR-1/FR-3）　·　分支：feature/fr-9-config-gray
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-9（增强 FR-1/FR-3）　·　分支：feature/fr-9-config-gray
 
 ## 1. 背景与目标
 

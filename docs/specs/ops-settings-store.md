@@ -1,6 +1,6 @@
 # 功能规格：运维设置 store + 热生效（FR-61）
 
-> 状态：开发中　·　关联 PRD：FR-61（feat，扩展 FR-25）　·　ADR：[ADR-0038](../adr/0038-ops-settings-store-hot-reload.md)。后端；前端设置页是 FR-62。
+> 状态：已交付@v0.10.0　·　关联 PRD：FR-61（feat，扩展 FR-25）　·　ADR：[ADR-0038](../adr/0038-ops-settings-store-hot-reload.md)。后端；前端设置页是 FR-62。
 
 ## 1. 背景与目标
 把控制面热改项的真源从 config.yml（启动期一次性读）移到 DB 设置 store，加设置 API（full 角色 + 审计），各消费者运行期从 store 读并热生效，免重启。启动 / 安全项仍留文件。详见 ADR-0038。

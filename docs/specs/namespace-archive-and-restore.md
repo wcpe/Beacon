@@ -1,6 +1,6 @@
 # 功能规格：namespace 归档与恢复
 
-> 状态：草拟　·　关联 PRD：FR-216　·　分支：待执行时创建　·　依赖：FR-205、FR-206、FR-207、[ADR-0078](../adr/0078-stable-resource-identity-and-lifecycle-tombstones.md)、[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
+> 状态：已交付@v1.1.0　·　关联 PRD：FR-216　·　分支：待执行时创建　·　依赖：FR-205、FR-206、FR-207、[ADR-0078](../adr/0078-stable-resource-identity-and-lifecycle-tombstones.md)、[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
 
 ## 1 背景与目标
 

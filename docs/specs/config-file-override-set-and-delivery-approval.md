@@ -1,6 +1,6 @@
 # 功能规格：配置、文件、覆盖集与交付高危操作审批
 
-> 状态：草拟　·　关联 PRD：FR-211　·　决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)　·　依赖：[dangerous-operation-approval-core.md](dangerous-operation-approval-core.md)
+> 状态：已交付@v1.1.0　·　关联 PRD：FR-211　·　决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)　·　依赖：[dangerous-operation-approval-core.md](dangerous-operation-approval-core.md)
 
 ## 1. 背景与目标
 

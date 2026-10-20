@@ -1,6 +1,6 @@
 # 功能规格：在线日志/诊断查看器（agent 只读日志回传）
 
-> 状态：开发中　·　关联 PRD：FR-88　·　分支：feature/fr-88-agent-logs　·　决策：[ADR-0040](../adr/0040-agent-readonly-log-tail.md)
+> 状态：已交付@v0.13.0　·　关联 PRD：FR-88　·　分支：feature/fr-88-agent-logs　·　决策：[ADR-0040](../adr/0040-agent-readonly-log-tail.md)
 
 ## 1. 背景与目标
 

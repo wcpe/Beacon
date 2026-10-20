@@ -1,6 +1,6 @@
 # 功能规格：服务器行快捷操作
 
-> 状态：开发中　·　关联 PRD：FR-91（增强 FR-65，依赖 FR-86 + FR-88）　·　分支：feature/fr-91-resync　·　命令通路：[ADR-0027](../adr/0027-reverse-fetch-channel-and-security.md)（复用，不新增 ADR）
+> 状态：已交付@v0.14.0　·　关联 PRD：FR-91（增强 FR-65，依赖 FR-86 + FR-88）　·　分支：feature/fr-91-resync　·　命令通路：[ADR-0027](../adr/0027-reverse-fetch-channel-and-security.md)（复用，不新增 ADR）
 
 ## 1. 背景与目标
 

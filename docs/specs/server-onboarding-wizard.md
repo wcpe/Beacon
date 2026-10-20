@@ -1,6 +1,6 @@
 # 功能规格：新服接入引导向导
 
-> 状态：开发中　·　关联 PRD：FR-85　·　分支：feature/fr-85-server-onboarding
+> 状态：已交付@v0.12.0　·　关联 PRD：FR-85　·　分支：feature/fr-85-server-onboarding
 
 ## 1. 背景与目标
 

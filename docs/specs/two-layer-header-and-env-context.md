@@ -1,6 +1,6 @@
 # 功能规格：两层页眉框架 + 环境全局上下文
 
-> 状态：开发中　·　关联 PRD：FR-105　·　分支：feature/two-layer-header
+> 状态：已交付@v0.16.0　·　关联 PRD：FR-105　·　分支：feature/two-layer-header
 
 ## 1. 背景与目标
 

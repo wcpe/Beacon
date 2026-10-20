@@ -1,6 +1,6 @@
 # 功能规格：统一审批中心
 
-> 状态：草拟　·　关联 PRD：FR-212　·　决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)　·　依赖：[dangerous-operation-approval-core.md](dangerous-operation-approval-core.md)
+> 状态：已交付@v1.1.0　·　关联 PRD：FR-212　·　决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)　·　依赖：[dangerous-operation-approval-core.md](dangerous-operation-approval-core.md)
 >
 > **内容读取口径已被 [ADR-0093](../adr/0093-direct-sensitive-content-reads.md) 取代**：日志、目录浏览、文件资产正文与差异、消息 payload 读取改为 `content.read` 直读 + 强制审计，不再产生审批申请；本规格中涉及这些内容的一次性授权描述已按现状改写。
 

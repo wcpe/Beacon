@@ -1,6 +1,6 @@
 # 规格：Agent 身份与注册绑定（第二版）
 
-> 状态：已实现（P1 基础闭环） · 关联 FR：FR-139, FR-140, FR-141 · 阶段：P1（0.21.x）
+> 状态：已交付@v0.21.0 · 关联 FR：FR-139, FR-140, FR-141 · 阶段：P1（0.21.x）
 >
 > **与数据面挂载端点的分工（FR-233）**：本规格定义的 `POST /beacon/v2/agent/register` 是**唯一身份注册入口**（身份状态机 pending → 审批 → active）。**机器注册直落不在本端点**——它落在 v1 数据面挂载端点（`POST /beacon/v1/agent/data-plane/attach`，原名 `/beacon/v1/agent/register`），且需开启 `mcp.allow-machine-register`。两者凭据不同（本端点用 namespace token，v1 用共享 `agent-token`），详见 [agent-registration-endpoint-disambiguation](agent-registration-endpoint-disambiguation.md)。
 >

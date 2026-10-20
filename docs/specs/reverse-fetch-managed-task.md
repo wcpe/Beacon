@@ -1,6 +1,6 @@
 # 功能规格：反向抓取受管任务 + 两段式 scan/submit（FR-58）
 
-> 状态：开发中　·　关联 PRD：FR-58（增强 FR-39，链首 FR-58→59→60）　·　ADR：[ADR-0037](../adr/0037-reverse-fetch-managed-task.md)（取代 ADR-0027 决策5、扩展决策1）
+> 状态：已交付@v0.10.0　·　关联 PRD：FR-58（增强 FR-39，链首 FR-58→59→60）　·　ADR：[ADR-0037](../adr/0037-reverse-fetch-managed-task.md)（取代 ADR-0027 决策5、扩展决策1）
 
 ## 1. 背景与目标
 

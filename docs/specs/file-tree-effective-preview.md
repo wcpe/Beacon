@@ -1,6 +1,6 @@
 # 功能规格：文件树有效预览 + 逐文件/逐键来源 provenance
 
-> 状态：开发中　·　关联 PRD：FR-45　·　分支：feature/fr-45-file-tree-effective-preview
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-45　·　分支：feature/fr-45-file-tree-effective-preview
 
 ## 1. 背景与目标
 

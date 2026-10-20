@@ -1,6 +1,6 @@
 # 功能规格：交付回滚韧性（失败重试 · 目标级子集回滚 · 交付版本与回滚记录 · 回滚预检）
 
-> 状态：已交付@v1.5.0（实现、单测与真机验收均通过；回滚组 R1/R2/R4/R5/R6 全通过）　·　关联 PRD：FR-262、FR-270、FR-271、FR-255　·　分支：feature/fr-262-rollback-resilience
+> 状态：已交付@v1.5.0-rc.1（实现、单测与真机验收均通过；回滚组 R1/R2/R4/R5/R6 全通过）　·　关联 PRD：FR-262、FR-270、FR-271、FR-255　·　分支：feature/fr-262-rollback-resilience
 > 决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)（危险操作统一审批）、[ADR-0071](../adr/0071-config-gray-effectuation-model.md)（配置灰度生效与版本不可变链）、[ADR-0057](../adr/0057-surface-desensitized-errors.md)（错误脱敏）
 > 承接：[v2-delivery-orchestration](v2-delivery-orchestration.md) §4.7（备份与整单回滚）、[delivery-mcp-tools](delivery-mcp-tools.md)
 

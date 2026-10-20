@@ -87,10 +87,10 @@
 | [0081](0081-local-persistent-encryption-key-files.md) | 控制面 at-rest 加密密钥使用本地持久文件 | 已接受；取代 ADR-0018 的环境变量密钥来源 |
 | [0082](0082-rc-ga-sdk-maven-publication.md) | RC/GA 发布 agent-api 与 agent-kit 的候选/正式 Maven 坐标，并保留 GitHub 产品资产原样晋级 | 已接受；取代 ADR-0074 中 GA 完全禁止重新发布的约束 |
 | [0083](0083-entry-server-as-lobby-member.md) | 入口 / 登录服作为 LobbyCluster 成员，不新增第二落脚真源 | 已接受；在 ADR-0075 约束内落地 FR-225，不取代任何 ADR |
-| [0084](0084-agent-registration-endpoint-disambiguation.md) | 保留 v1 / v2 双 agent 注册端点，只消除语义歧义，不退役任一端点 | 已接受（决策）；实现并入 FR-233 待排期。增强 FR-222 / FR-139/140/141 / FR-142，不取代任何 ADR |
+| [0084](0084-agent-registration-endpoint-disambiguation.md) | 保留 v1 / v2 双 agent 注册端点，只消除语义歧义，不退役任一端点 | 已接受（决策）；实现已随 FR-233 交付 @v1.3.0。增强 FR-222 / FR-139/140/141 / FR-142，不取代任何 ADR |
 | [0085](0085-mcp-client-secret-direct.md) | MCP 端点接受客户端凭据直连（第二类长期凭据） | 已接受 |
-| [0086](0086-agent-self-declaration-narrow-write-surface.md) | agent 对业务插件开放「节点自声明」的窄写入面（只读边界内：容量 + 自定义键值标签） | 已接受（决策）；实现并入 FR-243 待排期。**决策 4 中「控制面只存不判 / 不进入调度决策」一条被 [0087](0087-scheduling-admission-scope-over-self-declared-labels.md) 取代**（其余决策仍有效）。增强 FR-227 / FR-228，不取代任何 ADR |
-| [0087](0087-scheduling-admission-scope-over-self-declared-labels.md) | 调度准入作用域读取节点自声明标签（取代 ADR-0086 决策 4 的「不进入调度决策」一条） | 已接受（决策）；实现并入 FR-244 待排期。增强 FR-243 / FR-227，不取代其他 ADR |
+| [0086](0086-agent-self-declaration-narrow-write-surface.md) | agent 对业务插件开放「节点自声明」的窄写入面（只读边界内：容量 + 自定义键值标签） | 已接受（决策）；实现已随 FR-243 交付 @v1.4.0。**决策 4 中「控制面只存不判 / 不进入调度决策」一条被 [0087](0087-scheduling-admission-scope-over-self-declared-labels.md) 取代**（其余决策仍有效）。增强 FR-227 / FR-228，不取代任何 ADR |
+| [0087](0087-scheduling-admission-scope-over-self-declared-labels.md) | 调度准入作用域读取节点自声明标签（取代 ADR-0086 决策 4 的「不进入调度决策」一条） | 已接受（决策）；实现已随 FR-244 交付 @v1.4.0。增强 FR-243 / FR-227，不取代其他 ADR |
 | [0088](0088-restart-activation-single-receipt-and-shutdown-capability.md) | restart 生效的单次回执收敛与关服能力探测（取代 ADR-0070 决策 2 的回执顺序描述） | 已接受（决策）；实现并入 FR-266。增强 FR-171 / FR-266，不取代其他 ADR |
 | [0089](0089-http-layer-red-metrics.md) | 控制面 HTTP 层 RED 指标（路由模板分维的请求计数与时延直方图，扩展现有 /metrics） | 已接受；扩展 ADR-0020（独立 registry 沿用，不改其正文），不取代任何 ADR。**前言中当时沿用的「同端口 / 不挂鉴权」两条已被 [0090](0090-metrics-endpoint-dedicated-listener.md) 取代**（其余决策仍有效） |
 | [0090](0090-metrics-endpoint-dedicated-listener.md) | Prometheus 抓取端点独立监听（默认仅回环）并支持可选 Bearer 鉴权 | 已接受；**部分取代 [0020](0020-prometheus-metrics-observability.md)**（同端口暴露、不挂鉴权两条；独立 registry / pull 模型 / 指标清单等其余决策承继） |
