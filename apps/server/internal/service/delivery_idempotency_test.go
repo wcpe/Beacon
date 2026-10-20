@@ -209,8 +209,12 @@ func TestDeliveryConcurrentBlobReputIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open 失败: %v", err)
 	}
-	defer release()
+	// Open 的 release 只归还下载并发额度、**不关文件句柄**（契约如此，见 handler 侧同款注释）。
+	// 不显式 Close 会让句柄活到 GC，Windows 下 t.TempDir 清理随即失败：
+	// "The process cannot access the file because it is being used by another process"。
 	got, _ := readAllFile(file)
+	_ = file.Close()
+	release()
 	if !bytes.Equal(got, content) {
 		t.Fatalf("重传后内容不一致：got=%q", got)
 	}
