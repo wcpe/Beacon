@@ -165,7 +165,7 @@ describe('/assets 文件资产页', () => {
     const user = userEvent.setup()
     renderPage(<AssetsPage />)
 
-    const serverFilter = await screen.findByRole('textbox', { name: '按子服过滤' })
+    const serverFilter = await screen.findByRole('combobox', { name: '按子服过滤' })
     try {
       await user.click(serverFilter)
       expect(screen.getByText('正在加载服务器候选…')).toBeInTheDocument()
@@ -192,7 +192,7 @@ describe('/assets 文件资产页', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('服务器候选加载失败：服务器接口暂不可用')
-    const serverFilter = screen.getByRole('textbox', { name: '按子服过滤' })
+    const serverFilter = screen.getByRole('combobox', { name: '按子服过滤' })
     await user.click(serverFilter)
     expect(await screen.findByText('服务器候选加载失败，无法确认匹配结果')).toBeInTheDocument()
     expect(screen.queryByText('无匹配服务器')).not.toBeInTheDocument()

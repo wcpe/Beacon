@@ -7,7 +7,7 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import AuditsPage from '../../pages/audits'
 import { AUDIT_ACTIONS } from '../../pages/audits/audit-actions.generated'
@@ -44,7 +44,7 @@ describe('/audits 动作筛选与后端枚举同源', () => {
     renderPage(<AuditsPage />)
 
     // 触发器回显「全部」（Combobox 严格选模式：关闭时显示当前选中项文案）
-    const actionInput = await screen.findByRole('textbox', { name: '动作' })
+    const actionInput = await screen.findByRole('combobox', { name: '动作' })
     expect(actionInput).toHaveValue('全部')
 
     // 展开候选：数量必须等于生成物全量 +1（「全部」首项），这是「选得到」的核心断言
@@ -64,7 +64,7 @@ describe('/audits 动作筛选与后端枚举同源', () => {
     const user = userEvent.setup()
     renderPage(<AuditsPage />)
 
-    const actionInput = await screen.findByRole('textbox', { name: '动作' })
+    const actionInput = await screen.findByRole('combobox', { name: '动作' })
     await screen.findByText('审计总数')
 
     // 键入英文枚举片段：Combobox 按 value（枚举）或 label（中文）子串命中，
@@ -89,7 +89,7 @@ describe('/audits 动作筛选与后端枚举同源', () => {
     const user = userEvent.setup()
     renderPage(<AuditsPage />, ['/audits?action=instance.tail-logs'])
 
-    const actionInput = await screen.findByRole('textbox', { name: '动作' })
+    const actionInput = await screen.findByRole('combobox', { name: '动作' })
     await waitFor(() => {
       expect(seen.some((url) => url.searchParams.get('action') === 'instance.tail-logs')).toBe(true)
     })
@@ -110,7 +110,7 @@ describe('/audits 动作筛选与后端枚举同源', () => {
     renderPage(<AuditsPage />, ['/audits?action=legacy.removed-action'])
 
     // 未知动作不在生成物里，经 withCurrent 并入候选首位并以原文回显（不显示成「全部」）
-    const actionInput = await screen.findByRole('textbox', { name: '动作' })
+    const actionInput = await screen.findByRole('combobox', { name: '动作' })
     await waitFor(() => {
       expect(actionInput).toHaveValue('legacy.removed-action')
     })
@@ -126,7 +126,7 @@ describe('/audits 动作筛选与后端枚举同源', () => {
     const user = userEvent.setup()
     renderPage(<AuditsPage />)
 
-    const actionInput = await screen.findByRole('textbox', { name: '动作' })
+    const actionInput = await screen.findByRole('combobox', { name: '动作' })
     await screen.findByText('审计总数')
 
     // 该筛选器候选量级大（后端全部动作），原先只能鼠标点选；
@@ -145,6 +145,38 @@ describe('/audits 动作筛选与后端枚举同源', () => {
     await waitFor(() => {
       expect(seen.some((url) => url.searchParams.get('action') === 'instance.tail-logs')).toBe(true)
     })
+  }, 20_000)
+
+  it('关闭态按一次方向键即高亮，且高亮项被滚入可视区', async () => {
+    useScenario('normal')
+    renderPage(<AuditsPage />)
+    const user = userEvent.setup()
+
+    const actionInput = await screen.findByRole('combobox', { name: '动作' })
+    await screen.findByText('审计总数')
+
+    // 候选约 158 项，容器 max-h-60 只能显示 7~8 行：这里锁住「一次按键就有高亮」与
+    // 「高亮项被滚入可视区」，否则高亮跑出容器后屏幕没有任何反馈。
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, 'scrollIntoView')
+      .mockImplementation(() => undefined)
+    try {
+      // 只聚焦不点击：保持下拉处于关闭态，方向键是首次交互
+      actionInput.focus()
+      await user.keyboard('{ArrowDown}')
+
+      await waitFor(() => {
+        expect(actionInput.getAttribute('aria-activedescendant')).toMatch(/-option-0$/)
+      })
+      const activeId = actionInput.getAttribute('aria-activedescendant')
+      await waitFor(() => {
+        const scrolled = scrollSpy.mock.instances.map((el) => (el as HTMLElement).id)
+        expect(scrolled).toContain(activeId)
+      })
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+    } finally {
+      scrollSpy.mockRestore()
+    }
   }, 20_000)
 
 })

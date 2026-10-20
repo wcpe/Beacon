@@ -68,7 +68,7 @@ describe('/changes 变更单页', () => {
     // 吸顶工具条：引导创建（主）+ 高级创建（保留原表单）+ 状态筛选始终可见
     expect(screen.getByRole('button', { name: '引导创建' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '高级创建' })).toBeInTheDocument()
-    expect(screen.getByRole('textbox', { name: '按状态过滤' })).toHaveValue('全部状态')
+    expect(screen.getByRole('combobox', { name: '按状态过滤' })).toHaveValue('全部状态')
   })
 
   it('状态筛选支持键入过滤并映射查询参数', async () => {
@@ -82,7 +82,7 @@ describe('/changes 变更单页', () => {
     )
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
-    const status = await screen.findByRole('textbox', { name: '按状态过滤' })
+    const status = await screen.findByRole('combobox', { name: '按状态过滤' })
 
     expect(status).toHaveValue('全部状态')
     await user.click(status)

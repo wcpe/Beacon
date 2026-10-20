@@ -65,7 +65,7 @@ describe('/approvals 审批中心', () => {
     expect(screen.getByText(/不继承页眉环境或命名空间筛选/)).toBeInTheDocument()
     // 筛选区为「常显一行 + 高级筛选折叠」：分组标题已移除，默认只露状态与关键字
     expect(screen.getByRole('button', { name: /高级筛选/ })).toBeInTheDocument()
-    const statusFilter = screen.getByRole('textbox', { name: '审批状态' })
+    const statusFilter = screen.getByRole('combobox', { name: '审批状态' })
     expect(statusFilter).toHaveValue('待审批')
     expect(screen.getByRole('textbox', { name: '审批关键字' })).toBeInTheDocument()
     // 高级字段默认收起：时间窗输入不应外露
@@ -106,7 +106,7 @@ describe('/approvals 审批中心', () => {
     )
     renderPage()
     const user = userEvent.setup()
-    const status = await screen.findByRole('textbox', { name: '审批状态' })
+    const status = await screen.findByRole('combobox', { name: '审批状态' })
 
     expect(status).toHaveValue('待审批')
     await user.click(status)
@@ -132,14 +132,14 @@ describe('/approvals 审批中心', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /高级筛选/ }))
 
-    const risk = await screen.findByRole('textbox', { name: '风险级别' })
+    const risk = await screen.findByRole('combobox', { name: '风险级别' })
     expect(risk).toHaveValue('全部风险')
     await user.click(risk)
     expect(await screen.findByRole('option', { name: '全部风险' })).toHaveAttribute('aria-selected', 'true')
     await user.type(risk, '严重')
     await user.click(await screen.findByRole('option', { name: '严重' }))
 
-    const requesterType = screen.getByRole('textbox', { name: '申请主体类型' })
+    const requesterType = screen.getByRole('combobox', { name: '申请主体类型' })
     expect(requesterType).toHaveValue('全部主体')
     await user.click(requesterType)
     await user.type(requesterType, 'API 密钥')
@@ -360,7 +360,7 @@ describe('/approvals 文案 i18n 守护', () => {
     const user = userEvent.setup()
 
     // 常显行：状态 / 关键字 / 高级开关，无障碍名称与占位符均来自 i18n
-    const status = await screen.findByRole('textbox', { name: 'Approval status' })
+    const status = await screen.findByRole('combobox', { name: 'Approval status' })
     expect(status).toHaveValue('Pending')
     expect(await screen.findByPlaceholderText('Search request ID / summary')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Advanced filters/ }))
@@ -381,8 +381,8 @@ describe('/approvals 文案 i18n 守护', () => {
     expect(screen.getByPlaceholderText('Domain, e.g. config.publish')).toBeInTheDocument()
 
     // 两个枚举的「不筛选」哨兵选项
-    expect(screen.getByRole('textbox', { name: 'Risk level' })).toHaveValue('All risk levels')
-    expect(screen.getByRole('textbox', { name: 'Requester type' })).toHaveValue('All requesters')
+    expect(screen.getByRole('combobox', { name: 'Risk level' })).toHaveValue('All risk levels')
+    expect(screen.getByRole('combobox', { name: 'Requester type' })).toHaveValue('All requesters')
 
     // 行内映射表（风险 / 主体 / 状态）与命名空间提示
     expect((await screen.findAllByText('High risk')).length).toBeGreaterThan(0)

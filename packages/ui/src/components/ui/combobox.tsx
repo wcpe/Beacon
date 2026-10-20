@@ -11,7 +11,7 @@
 
 import * as React from 'react'
 import { Popover as PopoverPrimitive } from 'radix-ui'
-import { ChevronDownIcon, XIcon } from 'lucide-react'
+import { CheckIcon, ChevronDownIcon, XIcon } from 'lucide-react'
 
 import { cn } from '../../lib/utils'
 import { Input } from './input'
@@ -117,22 +117,60 @@ export function Combobox({
     setActiveIndex(-1)
   }
 
-  // 候选变化（过滤结果缩短）时把高亮复位，避免索引越界后回车选到错项。
+  // 候选集合变化时把高亮复位，避免索引越界后回车选到错项。
+  // 依赖必须含 filtered.length：候选由上层异步刷新时，输入文本可能没变而候选变短，
+  // 只盯 filterText 会让旧索引越界，视觉高亮凭空消失。
   React.useEffect(() => {
     setActiveIndex(-1)
-  }, [filterText, open])
+  }, [filterText, filtered.length])
+
+  // 关闭下拉时复位高亮，下次打开从「无高亮」开始。
+  // 单独成一个 effect（依赖只有 open）：若与上面的重置合并，打开瞬间的重置会
+  // 覆盖方向键刚设好的首/末项高亮，导致首次按键看不到反馈。
+  React.useEffect(() => {
+    if (!open) setActiveIndex(-1)
+  }, [open])
+
+  // 高亮项滚动跟随：候选容器是 max-h-60 overflow-y-auto（约 7~8 行），
+  // 上百项候选时高亮很快跑出可视区，屏幕毫无反馈，等于键盘操作失效。
+  // block:'nearest' 只在高亮项越界时才滚动，不会把可视区每次顶回顶部。
+  React.useEffect(() => {
+    if (!open || activeIndex < 0) return
+    const optionId = `${listboxId}-option-${String(activeIndex)}`
+    const scrollToOption = () => {
+      const optionEl = document.getElementById(optionId)
+      // jsdom 无滚动布局，scrollIntoView 在测试环境里可能整体缺失：
+      // 类型上它是必有的，这里用 typeof 守卫兜住运行时缺失，别让测试环境崩
+      if (optionEl && typeof optionEl.scrollIntoView === 'function') {
+        optionEl.scrollIntoView({ block: 'nearest' })
+      }
+    }
+    scrollToOption()
+    // Radix Portal 的首次挂载比本副作用晚一次提交：关闭态按方向键「打开 + 立即高亮」时
+    // 节点此刻还不存在，不补一次延迟重试，这条路径就永远不滚动。
+    if (document.getElementById(optionId)) return
+    const timer = setTimeout(scrollToOption, 0)
+    return () => { clearTimeout(timer) }
+  }, [activeIndex, open, listboxId])
 
   // 键盘交互（WAI-ARIA APG combobox 模式）：方向键移动高亮、Enter 选中、Esc 关闭。
   // 没有这段时，纯选择场景对键盘用户完全不可用——候选是 div，Tab 也到不了。
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
-      if (!open) {
-        setOpen(true)
+      const step = e.key === 'ArrowDown' ? 1 : -1
+      if (filtered.length === 0) {
+        // 无候选时仍打开列表以便看到空态，但没有可高亮项
+        if (!open) setOpen(true)
         return
       }
-      if (filtered.length === 0) return
-      const step = e.key === 'ArrowDown' ? 1 : -1
+      if (!open) {
+        // 关闭态首次按下：同一次按键就落到首项 / 末项，
+        // 否则要按第二次才见到高亮，用户会以为键盘失灵。
+        setOpen(true)
+        setActiveIndex(step === 1 ? 0 : filtered.length - 1)
+        return
+      }
       setActiveIndex((prev) => {
         // 从两端环绕，与原生 select 一致
         const next = prev + step
@@ -157,15 +195,8 @@ export function Combobox({
       }
       return
     }
-    if (e.key === 'Home' && open && filtered.length > 0) {
-      e.preventDefault()
-      setActiveIndex(0)
-      return
-    }
-    if (e.key === 'End' && open && filtered.length > 0) {
-      e.preventDefault()
-      setActiveIndex(filtered.length - 1)
-    }
+    // Home / End 不做候选首尾跳转：严格选模式下输入框内容是可编辑的真实查询文本，
+    // APG 规定 Home / End 应移动文本光标；拦截它会抢走本应属于光标的行为。
   }
 
   function handleClear(e: React.MouseEvent) {
@@ -188,11 +219,14 @@ export function Combobox({
         <Input
           id={id}
           aria-label={ariaLabel}
-          // 键盘与读屏语义：保留 input 的隐式 textbox 角色（既有调用方都按 textbox 定位），
-          // 只用 aria-expanded / aria-controls / aria-activedescendant 表达「可展开候选列表 +
-          // 当前高亮项」。若改成显式 role="combobox"，会影响全仓 17 处按 textbox 的查询。
+          // 键盘与读屏语义：显式 role="combobox"（ARIA 1.2）。
+          // 隐式 textbox 角色不支持 aria-expanded（aria-allowed-attr 判无效），
+          // 且没有 combobox 角色时读屏不会播报「已展开 / 已折叠」。
+          role="combobox"
           aria-expanded={open}
-          aria-controls={listboxId}
+          // 列表关闭时 Popover 内容整棵卸载，此时若仍给出 listboxId 就是悬空 IDREF，
+          // 因此只在展开时暴露 aria-controls。
+          aria-controls={open ? listboxId : undefined}
           aria-autocomplete="list"
           aria-activedescendant={
             open && activeIndex >= 0 && activeIndex < filtered.length
@@ -246,14 +280,22 @@ export function Combobox({
                   role="option"
                   aria-selected={opt.value === value}
                   className={cn(
-                    'cursor-pointer rounded-md px-2 py-1.5 text-sm outline-none transition-colors duration-100 select-none hover:bg-accent hover:text-accent-foreground',
-                    // 高亮项与已选项用同一视觉，键盘与鼠标的反馈保持一致
-                    (index === activeIndex || opt.value === value) && 'bg-accent text-accent-foreground',
+                    'flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm outline-none transition-colors duration-100 select-none hover:bg-accent hover:text-accent-foreground',
+                    // 焦点通道：键盘 / 鼠标高亮项用背景色，表示「回车会选中这一项」
+                    index === activeIndex && 'bg-accent text-accent-foreground',
+                    // 当前值通道：左侧勾标记 + 加粗，与高亮是两套视觉，
+                    // 两者同时命中（高亮正好落在已选项）时仍能分辨焦点与当前值
+                    opt.value === value && 'font-medium',
                   )}
                   onMouseEnter={() => { setActiveIndex(index); }}
                   onClick={() => { handlePick(opt); }}
                 >
-                  {opt.label}
+                  {/* 勾标记始终占位，未选中时以透明占位保持文本左对齐一致 */}
+                  <CheckIcon
+                    aria-hidden="true"
+                    className={cn('size-3.5 shrink-0', opt.value === value ? 'opacity-100' : 'opacity-0')}
+                  />
+                  <span className="truncate">{opt.label}</span>
                 </div>
               ))
             )}
