@@ -159,8 +159,11 @@ func (s *FileSyncService) CreateTask(p CreateFileSyncTaskParams) (*model.FileSyn
 		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: p.Namespace, Operator: p.Operator, Action: model.ActionFileSyncCreate,
 			TargetType: model.TargetTypeFileSyncTask, TargetRef: fmt.Sprintf("%d", task.ID),
-			Detail: fmt.Sprintf(`{"taskId":%d,"sourceServerId":%q,"directory":%q,"batchSize":%d,"intervalSec":%d,"failureThresholdPercent":%d}`,
-				task.ID, p.SourceServerID, directory, p.BatchSize, p.IntervalSec, p.FailureThresholdPercent),
+			// 用 json.Marshal 而非 `%q` 拼接：sourceServerId/directory 为外部可控文本，Go 的 %q 对
+			// 控制字符输出 `\x01`，JSON 不允许 `\x` 转义，会静默写出非法 detail（issue #144）。
+			Detail: auditJSON(map[string]any{"taskId": task.ID, "sourceServerId": p.SourceServerID,
+				"directory": directory, "batchSize": p.BatchSize, "intervalSec": p.IntervalSec,
+				"failureThresholdPercent": p.FailureThresholdPercent}),
 			Result: model.ResultOK, ClientIP: p.ClientIP,
 		})
 	})
@@ -398,7 +401,7 @@ func (s *FileSyncService) transition(taskID uint, from []string, to string, star
 		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: task.NamespaceCode, Operator: operator, Action: action,
 			TargetType: model.TargetTypeFileSyncTask, TargetRef: fmt.Sprintf("%d", taskID),
-			Detail: fmt.Sprintf(`{"taskId":%d,"from":%q,"to":%q}`, taskID, task.Status, to),
+			Detail: auditJSON(map[string]any{"taskId": taskID, "from": task.Status, "to": to}),
 			Result: model.ResultOK, ClientIP: clientIP,
 		})
 	})

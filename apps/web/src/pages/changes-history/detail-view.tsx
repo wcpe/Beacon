@@ -69,7 +69,6 @@ export default function DetailView({ orderId }: DetailViewProps) {
       {detail && <RollbackRecordsSection orderId={detail.id} />}
 
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={detailQuery.isLoading}
         isError={detailQuery.isError}
         error={detailQuery.error}
@@ -186,7 +185,6 @@ function ReplayTab({ detail }: { detail: ChangeOrderDetail }) {
           title={t('delivery.changesHistory.detail.targetsTitle')}
         />
         <PageAsyncSection
-          keepContentWhileRefreshing
           isLoading={targetsQuery.isLoading}
           isError={targetsQuery.isError}
           error={targetsQuery.error}
@@ -214,7 +212,6 @@ function OrchestrationTab({ detail }: { detail: ChangeOrderDetail }) {
   })
   return (
     <PageAsyncSection
-      keepContentWhileRefreshing
       isLoading={impactQuery.isLoading}
       isError={impactQuery.isError}
       error={impactQuery.error}
@@ -232,7 +229,6 @@ function TimelineTab({ orderId }: { orderId: number }) {
   })
   return (
     <PageAsyncSection
-      keepContentWhileRefreshing
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}

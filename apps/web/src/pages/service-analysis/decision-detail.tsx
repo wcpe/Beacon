@@ -26,7 +26,6 @@ export default function DecisionDetail({ traceId }: DecisionDetailProps) {
 
   return (
     <PageAsyncSection
-      keepContentWhileRefreshing
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}

@@ -113,7 +113,9 @@ func (s *AgentCommandService) applyRequestImprintInTx(tx *gorm.DB, ns, serverID,
 		NamespaceCode: ns,
 		Operator:      operator, Action: model.ActionFileImprintFetch,
 		TargetType: model.TargetTypeCommand, TargetRef: serverID,
-		Detail: fmt.Sprintf(`{"commandId":%d,"path":%q}`, cmd.ID, cleanPath),
+		// 用 json.Marshal 而非 `%q` 拼接：path 是外部可控文本，Go 的 %q 对控制字符输出 `\x01`，
+		// JSON 不允许 `\x` 转义，会静默写出非法 detail（issue #144）。
+		Detail: auditJSON(map[string]any{"commandId": cmd.ID, "path": cleanPath}),
 		Result: model.ResultOK, ClientIP: clientIP,
 	}); e != nil {
 		return nil, e
@@ -287,7 +289,7 @@ func (s *AgentCommandService) applyConfirmImprintInTx(tx *gorm.DB, req authz.App
 	if err != nil {
 		return nil, err
 	}
-	claimed, err := s.repo.WithTx(tx).UpdateStatusClearImprint(cmd.ID, model.CommandStatusReady, model.CommandStatusDone, fmt.Sprintf("{\"scope\":%q}", input.Scope))
+	claimed, err := s.repo.WithTx(tx).UpdateStatusClearImprint(cmd.ID, model.CommandStatusReady, model.CommandStatusDone, auditJSON(map[string]any{"scope": input.Scope}))
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +302,7 @@ func (s *AgentCommandService) applyConfirmImprintInTx(tx *gorm.DB, req authz.App
 	}
 	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{NamespaceCode: cmd.NamespaceCode, Operator: input.Operator, Action: model.ActionFileImprint,
 		TargetType: model.TargetTypeFile, TargetRef: fmt.Sprintf("%s/%s/%s@%s:%s", cmd.NamespaceCode, normGroup, payload.Path, input.Scope, normTarget),
-		Detail: fmt.Sprintf("{\"commandId\":%d,\"scope\":%q,\"version\":%d,\"md5\":%q}", cmd.ID, input.Scope, obj.Version, obj.ContentMD5),
+		Detail: auditJSON(map[string]any{"commandId": cmd.ID, "scope": input.Scope, "version": obj.Version, "md5": obj.ContentMD5}),
 		Result: model.ResultOK, ClientIP: input.ClientIP}); err != nil {
 		return nil, err
 	}
@@ -361,7 +363,7 @@ func (s *AgentCommandService) landImprintInTx(tx *gorm.DB, ns, filePath, scope, 
 		if err := files.Save(obj); err != nil {
 			return nil, err
 		}
-		if err := s.fileSvc.writeAudit(tx, obj, operator, model.ActionFileCreate, fmt.Sprintf("{\"version\":1,\"md5\":%q}", md5), clientIP); err != nil {
+		if err := s.fileSvc.writeAudit(tx, obj, operator, model.ActionFileCreate, auditJSON(map[string]any{"version": 1, "md5": md5}), clientIP); err != nil {
 			return nil, err
 		}
 		return obj, nil
@@ -376,7 +378,7 @@ func (s *AgentCommandService) landImprintInTx(tx *gorm.DB, ns, filePath, scope, 
 	if err := files.Save(existing); err != nil {
 		return nil, err
 	}
-	if err := s.fileSvc.writeAudit(tx, existing, operator, model.ActionFilePublish, fmt.Sprintf("{\"version\":%d,\"md5\":%q}", newVersion, md5), clientIP); err != nil {
+	if err := s.fileSvc.writeAudit(tx, existing, operator, model.ActionFilePublish, auditJSON(map[string]any{"version": newVersion, "md5": md5}), clientIP); err != nil {
 		return nil, err
 	}
 	if err := s.fileSvc.recordReversible(tx, existing, preVersion, operator); err != nil {

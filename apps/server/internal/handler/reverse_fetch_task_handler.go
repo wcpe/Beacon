@@ -20,12 +20,19 @@ type ReverseFetchTaskHandler struct {
 	svc     *service.ReverseFetchTaskService
 	instSvc *service.InstanceService
 	ruleSvc *service.ReverseFetchIgnoreRuleService
+	// reportAuth 解析扫描 / 错误回传端点的调用者权威身份。
+	reportAuth agentReportAuthenticator
 }
 
 // NewReverseFetchTaskHandler 构造处理器（instSvc 供建任务前校验目标在线；ruleSvc 供任务详情标 ignoredByRule，FR-59）。
 func NewReverseFetchTaskHandler(svc *service.ReverseFetchTaskService, instSvc *service.InstanceService,
 	ruleSvc *service.ReverseFetchIgnoreRuleService) *ReverseFetchTaskHandler {
 	return &ReverseFetchTaskHandler{svc: svc, instSvc: instSvc, ruleSvc: ruleSvc}
+}
+
+// SetReportAuthenticator 注入扫描 / 错误回传端点的权威身份校验器。
+func (h *ReverseFetchTaskHandler) SetReportAuthenticator(authn agentReportAuthenticator) {
+	h.reportAuth = authn
 }
 
 // reverseFetchScanFileView 是扫描清单单文件视图（FR-58，无内容；FR-59 加 ignoredByRule 展示标记）。
@@ -337,11 +344,18 @@ func (h *ReverseFetchTaskHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	// 必须要求已确认身份：扫描清单会写进任务真源并决定后续可选集，
+	// 共享 token 下不设门槛则任一 agent 都能凭猜测的 commandId 覆盖别人的扫描结果。
+	// 已解析的身份随 commandId 交给 service 做归属比对（commandId 可枚举，只有拿到身份才判得出归属）。
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
 	files := make([]service.ScanFile, len(req.Files))
 	for i, f := range req.Files {
 		files[i] = service.ScanFile{Path: f.Path, Size: f.Size, IsText: f.IsText, OverThreshold: f.OverThreshold}
 	}
-	if err := h.svc.ReceiveScan(req.CommandID, files, clientIP(r)); err != nil {
+	if err := h.svc.ReceiveScan(identity, req.CommandID, files, clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
@@ -362,7 +376,14 @@ func (h *ReverseFetchTaskHandler) ReportError(w http.ResponseWriter, r *http.Req
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if err := h.svc.ReceiveError(req.CommandID, req.Reason, clientIP(r)); err != nil {
+	// 必须要求已确认身份：错误回传会把任务直接转 failed 并写入成因，
+	// 共享 token 下不设门槛则任一 agent 都能凭猜测的 commandId 把别人的任务打成失败（定向 DoS）。
+	// 已解析的身份随 commandId 交给 service 做归属比对，确保只有命令归属的那台 agent 能终结它。
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	if err := h.svc.ReceiveError(identity, req.CommandID, req.Reason, clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

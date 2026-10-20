@@ -320,9 +320,11 @@ func (s *FileService) applyImportInTx(tx *gorm.DB, p ImportFilesParams) (*Import
 		result.Updated++
 		result.UpdatedItems = append(result.UpdatedItems, ImportUpdatedItem{ID: existing.ID, PreVersion: preVersion})
 	}
+	// 用 json.Marshal 而非 `%q` 拼接：scope/target 为外部可控文本，Go 的 %q 对控制字符输出
+	// `\x01`，JSON 不允许 `\x` 转义，会静默写出非法 detail（issue #144）。
 	if err := s.writeImportAudit(tx, p.Namespace, group, p.Operator,
-		fmt.Sprintf(`{"scope":%q,"target":%q,"files":%d,"created":%d,"updated":%d}`,
-			scopeLevel, scopeTarget, len(cleaned), result.Created, result.Updated), p.ClientIP); err != nil {
+		auditJSON(map[string]any{"scope": scopeLevel, "target": scopeTarget, "files": len(cleaned),
+			"created": result.Created, "updated": result.Updated}), p.ClientIP); err != nil {
 		return nil, err
 	}
 	return result, nil

@@ -39,7 +39,6 @@ export default function VersionViewDialog({ versionId, onOpenChange }: VersionVi
         </DialogHeader>
         <div className="min-h-0 overflow-y-auto pr-1">
           <PageAsyncSection
-            keepContentWhileRefreshing
             isLoading={query.isLoading}
             isError={query.isError}
             error={query.error}

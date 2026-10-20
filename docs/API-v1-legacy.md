@@ -9,7 +9,7 @@
 
 - 统一错误体：`{ "code": "<业务码>", "message": "<中文说明>", "traceId": "<可选>" }`。领域错误返回其业务码与安全文案；**非预期内部错误（`code:"INTERNAL"`）的 `message` 为脱敏后的真实原因**（打码凭据：URL 账密 / token / password / secret / api-key / Bearer·Basic 令牌；保留内网地址 / 路径等运维上下文），而非笼统「内部错误」——让运维看得见失败原因又不泄露凭据（FR-122，[ADR-0057](adr/0057-surface-desensitized-errors.md)）；完整未脱敏错误仍记服务端日志，可凭 `traceId` 对账。
 - HTTP 状态：400 参数错 / 401 缺 token 或登录令牌 / **403 已认证但无权（只读密钥写）** / 404 不存在 / 409 冲突 / 422 校验失败 / 500 内部错；**304 仅用于长轮询无变更超时**。
-- 鉴权：admin 端需登录令牌**或 API 密钥**（见下「管理面鉴权」，自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)、[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）；agent 端用共享 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
+- 鉴权：admin 端需登录令牌**或 API 密钥**（见下「管理面鉴权」，自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)、[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）；agent 端分两档：注册与机器注册通道用共享 `X-Beacon-Token` 判定「受信内部调用方」；**其余数据面端点（心跳 / 上报 / 声明 / 发现 / 配置与文件读取 / 命令拉取 / 各类回传）要求该 token 为其所属命名空间的 access token，并携带 `X-Beacon-Identity`；`X-Beacon-Boot` 用于双实例冲突检测与陈旧 boot 识别（v1 数据面经身份分支的请求必须携带）**，服务端据 DB 权威绑定校验身份、再把请求自报的 namespace / serverId 与身份比对（归属不符一律 `404 COMMAND_NOT_FOUND`，与「不存在」同码，避免被用作探测）。规则见 [ADR-0094](adr/0094-v1-agent-data-plane-authoritative-identity.md)。
 - 时间统一 UTC；内容指纹 `md5` 为小写 hex。
 
 ---
@@ -201,15 +201,15 @@ data: {}
 
 ### 14. 回传 agent 自身日志 `POST /beacon/v1/agent/logs`（FR-88 取日志）
 请求体：`{ "commandId": 1330, "lines": [{ "level": "INFO", "text": "已应用有效配置 md5=abc" }, { "level": "WARN", "text": "bootstrap-token=***" }] }`。agent 收到 §10 的 `type=tail-logs` 命令后，读自身日志内存环形缓冲快照（**已在 agent 侧落缓冲那一刻脱敏**、行数由缓冲容量天然有界、**绝不读任何磁盘日志文件**）回传。控制面把日志行存为该命令的**瞬态**（`log_content`，取一次后过期清理清空，不落持久真源、不进审计 detail、不导出）并 CAS `fetched → done`。
-- 命令须存在且处 `fetched`、`type=tail-logs`（否则 `404 COMMAND_NOT_FOUND`）。与其它 agent 端点同属 agentToken 防误连信任面。返回 `{ "ok": true }`。见 [ADR-0040](adr/0040-agent-readonly-log-tail.md) 与 [docs/specs/agent-log-viewer.md](specs/agent-log-viewer.md)。
+- 命令须存在且处 `fetched`、`type=tail-logs`（否则 `404 COMMAND_NOT_FOUND`）。token 须为该命名空间的 access token，另需 `X-Beacon-Identity`（`X-Beacon-Boot` 用于冲突检测与陈旧 boot 识别，经身份分支必须携带），服务端校验权威身份并把命令归属与该身份比对（不符一律 `404`）。返回 `{ "ok": true }`。见 [ADR-0040](adr/0040-agent-readonly-log-tail.md) 与 [docs/specs/agent-log-viewer.md](specs/agent-log-viewer.md)。
 
 ### 15. 回传命令执行结果 `POST /beacon/v1/agent/commands/result`（FR-91 强制重同步）
 请求体：`{ "commandId": 1450, "ok": true, "reason": "" }`。agent 收到 §10 的 `type=resync-config` 命令后，重拉控制面权威的有效配置/文件树/覆盖集并 apply（各 applier md5 幂等守卫兜底，已是最新则合法 no-op、**不读 plugins 树**），再回传执行结果。控制面据此 CAS `fetched → done`（`ok=true`）或 `fetched → failed`（`ok=false`，`reason` 为原因摘要、无敏感内容）。
-- 命令须存在且处 `fetched`、`type=resync-config`（否则 `404 COMMAND_NOT_FOUND`）。与其它 agent 端点同属 agentToken 防误连信任面；无内容回传、仅推进命令生命周期。返回 `{ "ok": true }`。复用命令队列（见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)），不新增 ADR；见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md)。
+- 命令须存在且处 `fetched`、`type=resync-config`（否则 `404 COMMAND_NOT_FOUND`）。token 须为该命名空间的 access token，另需 `X-Beacon-Identity`（`X-Beacon-Boot` 用于冲突检测与陈旧 boot 识别，经身份分支必须携带）并校验权威身份与命令归属（不符一律 `404`）；无内容回传、仅推进命令生命周期。返回 `{ "ok": true }`。复用命令队列（见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)），不新增 ADR；见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md)。
 
 ### 16. 回传文件浏览结果 `POST /beacon/v1/agent/files/browse-result`（FR-110 只读文件浏览，见 [ADR-0049](adr/0049-agent-fs-browse.md)）
 请求体：`{ "namespace": "prod", "serverId": "lobby-1", "commandId": 1500, "ok": true, "result": { ... } }`（命中）或 `{ ..., "ok": false, "reason": "目标不存在或不可读" }`（原语拒读：越权 / 非目录 / 非文本 / 未启用浏览，**不携任何内容**）。agent 收到 §10 的 `type=fs-browse` 命令后，按 `op` 调只读浏览原语读盘，把结构化结果回传。`result` 按 `op` 形状不同：`list` → `{ type:"list", path, entries:[{name,relPath,dir,size,text}], offset, limit, total, hasMore }`；`tree` → `{ type:"tree", name, relPath, dir, size, text, children:[...递归], truncated }`；`file` → `{ type:"file", path, content, truncated }`。控制面把结果存为该命令**瞬态**（`browse_result`，命令或 grant 过期即清空，不落持久真源、**不进审计 detail**、不导出）；成功回传时在同一事务内 CAS `fetched → done` 并绑定结果 SHA-256 激活 pending grant，失败则 CAS `fetched → failed` 并撤销该 grant。正文只能由原申请主体通过浏览 grant 一次消费。
-- 命令须存在且处 `fetched`、`type=fs-browse`（否则 `404 COMMAND_NOT_FOUND`）。与其它 agent 端点同属 agentToken 防误连信任面。返回 `{ "ok": true }`。见 [docs/specs/control-plane-fs-browse.md](specs/control-plane-fs-browse.md)。
+- 命令须存在且处 `fetched`、`type=fs-browse`（否则 `404 COMMAND_NOT_FOUND`）。token 须为该命名空间的 access token，另需 `X-Beacon-Identity`（`X-Beacon-Boot` 用于冲突检测与陈旧 boot 识别，经身份分支必须携带），服务端校验权威身份并把命令归属与该身份比对（不符一律 `404`）。返回 `{ "ok": true }`。见 [docs/specs/control-plane-fs-browse.md](specs/control-plane-fs-browse.md)。
 
 ---
 
@@ -255,7 +255,7 @@ data: {}
 
 > 密钥管理端点本身受只读拒写约束：`readonly` 密钥对创建 / 吊销 / 重置一律 `403`（只读不能管密钥）。范围外（不做）：细粒度 / 字段级权限、按端点 scope、自动轮换、速率限制、多租户。
 
-> **脚本化 admin API token（FR-90，见 [ADR-0042](adr/0042-admin-api-token.md)）**：上述 `bk_` API 密钥**即**供脚本 / curl 调 `/admin/v1` 的「admin API token」——库存哈希、可吊销 / 到期、`full`/`readonly` 角色，区别于 agent 数据面共享 `X-Beacon-Token`（仅防误连）。FR-90 **无新增端点**，仅在管理台一次性明文展示弹窗增「复制为 curl」自动化辅助：复制一条带 `X-Beacon-Api-Key` 头、指向只读样例端点 `GET /admin/v1/system/status` 的可粘贴命令，便于运维上手 API 自动化。
+> **脚本化 admin API token（FR-90，见 [ADR-0042](adr/0042-admin-api-token.md)）**：上述 `bk_` API 密钥**即**供脚本 / curl 调 `/admin/v1` 的「admin API token」——库存哈希、可吊销 / 到期、`full`/`readonly` 角色，区别于 agent 数据面的 `X-Beacon-Token`（注册阶段作共享 token 判定受信内部调用方；数据面须为所属命名空间的 access token，并叠加权威身份校验）。FR-90 **无新增端点**，仅在管理台一次性明文展示弹窗增「复制为 curl」自动化辅助：复制一条带 `X-Beacon-Api-Key` 头、指向只读样例端点 `GET /admin/v1/system/status` 的可粘贴命令，便于运维上手 API 自动化。
 
 ### 配置管理
 | 端点 | 说明 |
@@ -446,10 +446,10 @@ data: {}
 
 | 端点 | 说明 |
 |---|---|
-| `POST /file-sync/{taskId}/manifest` | 源 agent 回传扫描清单。body `{ commandId, files:[{path,size,hash}] }`；控制面校验命令状态与 path/hash 后写 `file_sync_file`，任务进入可规划 / 可启动状态。 |
-| `PUT /file-sync/{taskId}/blobs/{sha256}` | 源 agent 流式上传某文件 blob。请求体为 `application/octet-stream`；控制面边读边算 sha256，摘要不匹配拒绝，匹配后落本地 blob 缓存。 |
-| `GET /file-sync/{taskId}/blobs/{sha256}` | 目标 agent 流式下载某文件 blob。响应 `application/octet-stream` + `Content-Length`，不把内容包进 JSON。 |
-| `POST /file-sync/{taskId}/targets/result` | 目标 agent 回传执行结果。body `{ commandId, ok, reason, backupPath, currentFileCount, changedFileCount, skippedFileCount, bytesTotal, bytesDone }`；控制面推进目标、批次和熔断状态。 |
+| `POST /file-sync/{taskId}/manifest` | 源 agent 回传扫描清单。body `{ commandId, files:[{path,size,hash}] }`；须为**该任务的源实例**（身份校验，不符 `404`），且命令归属与 URL `taskId` 均须与命令载荷一致；控制面校验命令状态与 path/hash 后写 `file_sync_file`，任务进入可规划 / 可启动状态。 |
+| `PUT /file-sync/{taskId}/blobs/{sha256}` | 源 agent 流式上传某文件 blob。请求体为 `application/octet-stream`；**仅任务源实例可上传**（身份校验先于读请求体），控制面边读边算 sha256，摘要不匹配拒绝，匹配后落本地 blob 缓存。 |
+| `GET /file-sync/{taskId}/blobs/{sha256}` | 目标 agent 流式下载某文件 blob。**仅该任务计划内目标可下载**（源实例亦被拒，避免源扩权读缓存），且身份须属任务所在命名空间；响应 `application/octet-stream` + `Content-Length`，不把内容包进 JSON。 |
+| `POST /file-sync/{taskId}/targets/result` | 目标 agent 回传执行结果。body `{ commandId, ok, reason, backupPath, currentFileCount, changedFileCount, skippedFileCount, bytesTotal, bytesDone }`；须为**该任务的目标实例**，命令归属与 URL `taskId` 须与命令载荷一致；控制面推进目标、批次和熔断状态。 |
 
 错误：任务不存在 `404 FILE_SYNC_TASK_NOT_FOUND`；状态不符 `409 FILE_SYNC_TASK_STATE`；源非法 `400 FILE_SYNC_SOURCE_INVALID`；目标非法 `400 FILE_SYNC_TARGET_INVALID`；目标为空 `400 FILE_SYNC_NO_TARGETS`；路径非法 `400 INVALID_PATH`。
 

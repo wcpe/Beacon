@@ -1217,10 +1217,109 @@ export const delivery = {
       status: 'Status',
       createdAt: 'Created at',
     },
+    // 筛选区：key 为字段名（同时用作 aria-label），Placeholder 后缀为占位符，All 后缀为「不限」哨兵选项
     filters: {
       advanced: 'Advanced filters',
+      status: 'Approval status',
+      statusAll: 'All statuses',
+      keyword: 'Approval keyword',
+      keywordPlaceholder: 'Search request ID / summary',
+      operation: 'Operation / domain',
+      operationPlaceholder: 'Domain, e.g. config.publish',
+      risk: 'Risk level',
+      riskAll: 'All risk levels',
+      requesterType: 'Requester type',
+      requesterTypeAll: 'All requesters',
+      requester: 'Requester',
+      requesterPlaceholder: 'Requester',
+      createdFrom: 'Created from',
+      createdTo: 'Created before',
+      expiresFrom: 'Expires from',
+      expiresTo: 'Expires before',
       groups: {
       },
+    },
+    // 列表区：总数、加载 / 错误态、空态与命名空间提示
+    list: {
+      total: '{{count}} total',
+      loading: 'Loading…',
+      loadFailed: 'Failed to load the approval list',
+      retry: 'Retry',
+      emptyAll: 'No pending approvals',
+      emptyFiltered: 'No results for the current filters',
+      clearFilters: 'Clear filters',
+      namespaceGlobal: 'Global',
+      namespaceRef: 'namespace {{id}}',
+    },
+    // 申请状态（筛选选项、状态徽标与时间线兜底共用）
+    status: {
+      pending: 'Pending',
+      executing: 'Running',
+      succeeded: 'Completed',
+      failed: 'Failed',
+      rejected: 'Rejected',
+      withdrawn: 'Withdrawn',
+      expired: 'Expired',
+    },
+    // 时间线条目类型：下面两项不是申请状态，需要各自独立的文案
+    timeline: {
+      requested: 'Submitted',
+      approved: 'Approved',
+    },
+    risk: {
+      low: 'Low',
+      medium: 'Medium',
+      high: 'High',
+      critical: 'Critical',
+    },
+    // 风险徽标：{{risk}} 由 risk.* 提供
+    riskBadge: '{{risk}} risk',
+    principal: {
+      human: 'Human',
+      api_key: 'API key',
+      mcp: 'MCP',
+      system: 'System',
+    },
+    // 主从视图（列表 + 详情）
+    detail: {
+      title: 'Approval detail',
+      close: 'Close detail',
+      loadFailed: 'Failed to load the approval detail',
+      retry: 'Retry',
+      sections: {
+        riskImpact: 'Risk and impact',
+        snapshot: 'Request snapshot',
+        currentFacts: 'Current facts',
+        diff: 'Snapshot vs current',
+        timeline: 'Timeline',
+      },
+      resultLink: 'View domain result and audit trail',
+      noActions: 'Your principal cannot act on this request.',
+      // 审批被阻断的原因（与禁用按钮同源）
+      blocked: {
+        drift: 'The underlying facts have drifted; file a new request based on the current facts',
+        evidence: 'The snapshot or current evidence is unavailable or expired',
+        expired: 'This request has expired',
+      },
+    },
+    // 审批动作（按钮与确认对话框共用）
+    actions: {
+      approve: 'Approve and run',
+      reject: 'Reject',
+      withdraw: 'Withdraw',
+    },
+    confirm: {
+      approveTitle: 'Confirm approve and run',
+      rejectTitle: 'Confirm rejection',
+      withdrawTitle: 'Confirm withdrawal',
+      approveDesc:
+        'Approving only calls the unified approval API; the server creates the execution task for you.',
+      rejectDesc: 'Rejecting ends this request, and a reason is required.',
+      withdrawDesc: 'Withdrawing ends this request; a reason is optional.',
+    },
+    // 前端错误（缺少申请 ID）在确认对话框内就地展示
+    errors: {
+      missingRequestId: 'Missing approval request ID',
     },
   },
 } as const

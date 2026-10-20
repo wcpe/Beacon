@@ -124,7 +124,6 @@ export default function DetailView({ orderId }: DetailViewProps) {
   return (
     <div className="flex min-h-full flex-col gap-4">
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}

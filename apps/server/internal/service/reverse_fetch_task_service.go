@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
@@ -149,8 +150,9 @@ func (s *ReverseFetchTaskService) applyCreateScanTaskInTx(tx *gorm.DB, ns, serve
 		NamespaceCode: ns,
 		Operator:      operator, Action: model.ActionFileReverseFetchScan,
 		TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
-		Detail: fmt.Sprintf(`{"taskId":%d,"commandId":%d,"scope":%q,"group":%q,"target":%q}`,
-			task.ID, cmd.ID, scope, group, target),
+		// 用 json.Marshal 而非 `%q` 拼接：scope/group/target 均为外部可控文本，Go 的 %q 对控制字符
+		// 输出 `\x01`，JSON 不允许 `\x` 转义，会静默写出非法 detail（issue #144）。
+		Detail: auditJSON(map[string]any{"taskId": task.ID, "commandId": cmd.ID, "scope": scope, "group": group, "target": target}),
 		Result: model.ResultOK, ClientIP: clientIP,
 	}); err != nil {
 		return nil, err
@@ -159,12 +161,18 @@ func (s *ReverseFetchTaskService) applyCreateScanTaskInTx(tx *gorm.DB, ns, serve
 	return task, nil
 }
 
-// ReceiveScan 接收 agent 回传的扫描清单（mode=scan）：命令须属某 scanning 任务 → 存 manifest + 计数、
-// 任务→pending-review、命令→done。scan 永不因任何超限文件失败（无内容、不受上限约束）。
-func (s *ReverseFetchTaskService) ReceiveScan(commandID uint, files []ScanFile, _ string) error {
+// ReceiveScan 接收 agent 回传的扫描清单（mode=scan）：命令须属某 scanning 任务、且该命令归属正是回传的这台 agent
+// → 存 manifest + 计数、任务→pending-review、命令→done。scan 永不因任何超限文件失败（无内容、不受上限约束）。
+func (s *ReverseFetchTaskService) ReceiveScan(identity agentauth.Identity, commandID uint, files []ScanFile, _ string) error {
 	cmd, task, err := s.requireTaskForCommand(commandID, model.IngestModeScan, model.ReverseFetchTaskScanning)
 	if err != nil {
 		return err
+	}
+	// 归属校验必须在写 manifest 之前：清单会写进任务真源并决定后续可选集，
+	// 不比对归属则任一 agent 都能凭枚举到的 commandId 覆盖别人的扫描结果、劫持后续提交范围。
+	// requireTaskForCommand 只校验命令类型 / 状态与任务阶段，不看调用方是谁。
+	if !commandBelongsToAgent(cmd, identity) {
+		return apperr.ErrCommandNotFound
 	}
 
 	// 单文件上限从设置 store 读、热生效（FR-61）：用该上限 + agent 上报 size 重算 overThreshold，
@@ -402,13 +410,19 @@ const reverseFetchErrorMaxLen = 480
 
 // ReceiveError 接收 agent 回传的 scan/submit 执行错误（FR-87）：据命令反查所属任务（scan→scanning / submit→fetching），
 // 把任务 CAS 转 failed、写 lastError、命令转 failed、记审计 file.reverse-fetch-error。
-// 命令须存在且 fetched、mode 为 scan 或 submit；任务须处对应非终态（否则 404/409，幂等：重复回传不二次终结）。
-func (s *ReverseFetchTaskService) ReceiveError(commandID uint, reason, clientIP string) error {
+// 命令须存在、fetched、mode 为 scan 或 submit，且归属正是回传的这台 agent；
+// 任务须处对应非终态（否则 404/409，幂等：重复回传不二次终结）。
+func (s *ReverseFetchTaskService) ReceiveError(identity agentauth.Identity, commandID uint, reason, clientIP string) error {
 	cmd, err := s.cmdRepo.FindByID(commandID)
 	if err != nil {
 		return err
 	}
 	if cmd == nil || cmd.Type != model.CommandTypeIngestPlugins || cmd.Status != model.CommandStatusFetched {
+		return apperr.ErrCommandNotFound
+	}
+	// 归属校验必须在终结任务之前：本条路径会把任务直接打成 failed，
+	// 不比对归属则任一 agent 都能凭枚举到的 commandId 终结别人的任务（定向 DoS）并伪造失败成因。
+	if !commandBelongsToAgent(cmd, identity) {
 		return apperr.ErrCommandNotFound
 	}
 	var payload ingestPayload
@@ -442,7 +456,9 @@ func (s *ReverseFetchTaskService) ReceiveError(commandID uint, reason, clientIP 
 		return apperr.ErrReverseFetchTaskState // 被并发迁移
 	}
 	if _, e := s.cmdRepo.UpdateStatus(cmd.ID, model.CommandStatusFetched, model.CommandStatusFailed,
-		fmt.Sprintf(`{"taskId":%d,"error":%q}`, task.ID, lastErr)); e != nil {
+		// 用 json.Marshal 而非 `%q` 拼接：error 为 agent 回传文本，可能含控制字符，
+		// Go 的 %q 会输出 JSON 不允许的 `\x01` 转义（issue #144 同类缺陷）。
+		auditJSON(map[string]any{"taskId": task.ID, "error": lastErr})); e != nil {
 		slog.Warn("命令置 failed 失败（任务已记错误）", "commandId", cmd.ID, "原因", e)
 	}
 	if payload.Mode == model.IngestModeSubmit {
@@ -452,7 +468,7 @@ func (s *ReverseFetchTaskService) ReceiveError(commandID uint, reason, clientIP 
 		NamespaceCode: task.NamespaceCode,
 		Operator:      cmd.Operator, Action: model.ActionFileReverseFetchError,
 		TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
-		Detail: fmt.Sprintf(`{"taskId":%d,"commandId":%d,"mode":%q}`, task.ID, cmd.ID, payload.Mode),
+		Detail: auditJSON(map[string]any{"taskId": task.ID, "commandId": cmd.ID, "mode": payload.Mode}),
 		Result: model.ResultFail, ClientIP: clientIP,
 	}); e != nil {
 		slog.Warn("反向抓取错误回传审计写入失败（任务已记错误）", "taskId", task.ID, "原因", e)
@@ -498,7 +514,7 @@ func (s *ReverseFetchTaskService) Cancel(taskID uint, operator, clientIP string)
 		NamespaceCode: task.NamespaceCode,
 		Operator:      operator, Action: model.ActionFileReverseFetchCancel,
 		TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
-		Detail: fmt.Sprintf(`{"taskId":%d,"from":%q}`, task.ID, task.Status),
+		Detail: auditJSON(map[string]any{"taskId": task.ID, "from": task.Status}),
 		Result: model.ResultOK, ClientIP: clientIP,
 	}); e != nil {
 		slog.Warn("反向抓取取消审计写入失败（已取消）", "taskId", task.ID, "原因", e)
@@ -590,7 +606,7 @@ func (s *ReverseFetchTaskService) failTaskFrom(task *model.ReverseFetchTask, exp
 		slog.Warn("标记反向抓取任务失败态出错", "taskId", task.ID, "原因", e)
 	}
 	if _, e := s.cmdRepo.UpdateStatus(cmd.ID, model.CommandStatusFetched, model.CommandStatusFailed,
-		fmt.Sprintf(`{"error":%q}`, reason)); e != nil {
+		auditJSON(map[string]any{"error": reason})); e != nil {
 		slog.Warn("标记命令失败态出错", "commandId", cmd.ID, "原因", e)
 	}
 	s.revokeSubmitGrant(cmd.ID)

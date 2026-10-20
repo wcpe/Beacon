@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { delay, http, HttpResponse } from 'msw'
@@ -62,7 +65,7 @@ describe('/approvals 审批中心', () => {
     expect(screen.getByText(/不继承页眉环境或命名空间筛选/)).toBeInTheDocument()
     // 筛选区为「常显一行 + 高级筛选折叠」：分组标题已移除，默认只露状态与关键字
     expect(screen.getByRole('button', { name: /高级筛选/ })).toBeInTheDocument()
-    const statusFilter = screen.getByRole('textbox', { name: '审批状态' })
+    const statusFilter = screen.getByRole('combobox', { name: '审批状态' })
     expect(statusFilter).toHaveValue('待审批')
     expect(screen.getByRole('textbox', { name: '审批关键字' })).toBeInTheDocument()
     // 高级字段默认收起：时间窗输入不应外露
@@ -103,7 +106,7 @@ describe('/approvals 审批中心', () => {
     )
     renderPage()
     const user = userEvent.setup()
-    const status = await screen.findByRole('textbox', { name: '审批状态' })
+    const status = await screen.findByRole('combobox', { name: '审批状态' })
 
     expect(status).toHaveValue('待审批')
     await user.click(status)
@@ -129,14 +132,14 @@ describe('/approvals 审批中心', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /高级筛选/ }))
 
-    const risk = await screen.findByRole('textbox', { name: '风险级别' })
+    const risk = await screen.findByRole('combobox', { name: '风险级别' })
     expect(risk).toHaveValue('全部风险')
     await user.click(risk)
     expect(await screen.findByRole('option', { name: '全部风险' })).toHaveAttribute('aria-selected', 'true')
     await user.type(risk, '严重')
     await user.click(await screen.findByRole('option', { name: '严重' }))
 
-    const requesterType = screen.getByRole('textbox', { name: '申请主体类型' })
+    const requesterType = screen.getByRole('combobox', { name: '申请主体类型' })
     expect(requesterType).toHaveValue('全部主体')
     await user.click(requesterType)
     await user.type(requesterType, 'API 密钥')
@@ -339,6 +342,127 @@ describe('/approvals 审批中心', () => {
     expect(await screen.findByText('执行中', { selector: '[data-slot="badge"]' })).toBeInTheDocument()
     expect(await screen.findByText('已完成', { selector: '[data-slot="badge"]' })).toBeInTheDocument()
   }, 5_000)
+})
+
+// issue #148：筛选与无障碍文案必须来自 i18n，不得硬编码中文。
+describe('/approvals 文案 i18n 守护', () => {
+  // 切到英文：若文案仍硬编码中文，下面这些英文断言必然失败。
+  async function switchToEnglish(): Promise<void> {
+    setLocale('en')
+    await act(async () => {
+      await i18next.changeLanguage('en')
+    })
+  }
+
+  it('英文界面下筛选控件与无障碍名称全部为英文', async () => {
+    await switchToEnglish()
+    renderPage()
+    const user = userEvent.setup()
+
+    // 常显行：状态 / 关键字 / 高级开关，无障碍名称与占位符均来自 i18n
+    const status = await screen.findByRole('combobox', { name: 'Approval status' })
+    expect(status).toHaveValue('Pending')
+    expect(await screen.findByPlaceholderText('Search request ID / summary')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Advanced filters/ }))
+
+    // 高级行：8 个字段的无障碍名称（时间窗是 datetime-local，无 textbox 角色）
+    for (const label of [
+      'Operation / domain',
+      'Risk level',
+      'Requester type',
+      'Requester',
+      'Created from',
+      'Created before',
+      'Expires from',
+      'Expires before',
+    ]) {
+      expect(await screen.findByLabelText(label)).toBeInTheDocument()
+    }
+    expect(screen.getByPlaceholderText('Domain, e.g. config.publish')).toBeInTheDocument()
+
+    // 两个枚举的「不筛选」哨兵选项
+    expect(screen.getByRole('combobox', { name: 'Risk level' })).toHaveValue('All risk levels')
+    expect(screen.getByRole('combobox', { name: 'Requester type' })).toHaveValue('All requesters')
+
+    // 行内映射表（风险 / 主体 / 状态）与命名空间提示
+    expect((await screen.findAllByText('High risk')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Human ·/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('namespace 1').length).toBeGreaterThan(0)
+
+    // 泄露的 i18n key 视为失败
+    expect(screen.queryByText(/delivery\.approvals/)).not.toBeInTheDocument()
+  })
+
+  it('英文界面下计数、空态与错误态文案为英文', async () => {
+    await switchToEnglish()
+    renderPage()
+    // 计数文案带插值（共 N 条 → N total）
+    expect((await screen.findAllByText(/^\d+ total$/)).length).toBeGreaterThan(0)
+
+    cleanup()
+    renderPage(['/approvals'], 'empty')
+    expect(await screen.findByText('No pending approvals')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Clear filters' })).toBeInTheDocument()
+
+    cleanup()
+    renderPage(['/approvals'], 'error')
+    expect(await screen.findByText('Failed to load the approval list')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
+  it('英文界面下详情区块、动作与二次确认文案为英文', async () => {
+    await switchToEnglish()
+    renderPage(['/approvals/apr_change_9101'])
+    const user = userEvent.setup()
+
+    for (const title of [
+      'Risk and impact',
+      'Request snapshot',
+      'Current facts',
+      'Snapshot vs current',
+      'Timeline',
+    ]) {
+      expect(await screen.findByRole('heading', { name: title })).toBeInTheDocument()
+    }
+    // 详情主从视图的关闭按钮与面板无障碍名称
+    expect(screen.getByRole('button', { name: 'Close detail' })).toBeInTheDocument()
+
+    // 审批动作按钮
+    await user.click(screen.getByRole('button', { name: 'Approve and run' }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByText('Confirm approve and run')).toBeInTheDocument()
+    expect(
+      within(dialog).getByText(/Approving only calls the unified approval API/),
+    ).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Approve and run' })).toBeInTheDocument()
+    expect(screen.queryByText(/delivery\.approvals/)).not.toBeInTheDocument()
+  })
+
+  it('英文界面下批准阻断原因与不可操作提示为英文', async () => {
+    await switchToEnglish()
+    renderPage(['/approvals/apr_drift_9106'])
+    expect(
+      await screen.findByText(
+        'The underlying facts have drifted; file a new request based on the current facts',
+      ),
+    ).toBeInTheDocument()
+
+    cleanup()
+    renderPage(['/approvals/apr_server_9102'])
+    expect(await screen.findByText('Your principal cannot act on this request.')).toBeInTheDocument()
+  })
+})
+
+describe('/approvals 源码不再硬编码中文文案', () => {
+  it('页面源文件除注释外不含中文字面量', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/approvals.tsx'), 'utf8')
+    // 依次剥掉 JSX 注释、块注释（含 JSDoc）与行注释，剩下的才是会渲染的正文字面量来源
+    const code = source
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '')
+    expect(code).not.toMatch(/[\u4e00-\u9fff]/)
+  })
 })
 
 function approvalDetail(status: 'pending' | 'executing') {

@@ -43,7 +43,7 @@ func newDeclarationITServer(t *testing.T) *integrationTestServer {
 // discoveryInstanceView 从发现响应取指定 serverId 的实例视图（rawQuery 为空表示不过滤），返回视图与实例总数。
 func discoveryInstanceView(t *testing.T, ts *integrationTestServer, rawQuery, serverID string) (map[string]any, int) {
 	t.Helper()
-	code, disc := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace=prod"+rawQuery, nil)
+	code, disc := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace=prod"+rawQuery, nil)
 	if code != http.StatusOK {
 		t.Fatalf("发现应 200，实际 %d：%v", code, disc)
 	}
@@ -90,7 +90,7 @@ func assertDeclaredView(t *testing.T, where string, view map[string]any, wantCap
 // assertDeclarationRejected 断言声明端点按期望业务码拒绝。
 func assertDeclarationRejected(t *testing.T, ts *integrationTestServer, body any, wantStatus int, wantCode string) {
 	t.Helper()
-	code, res := doJSON(t, http.MethodPost, ts.URL+declarationPath, body)
+	code, res := doAgentAuto(t, ts, http.MethodPost, ts.URL+declarationPath, body)
 	if code != wantStatus || res["code"] != wantCode {
 		t.Fatalf("应 %d %s，实际 %d：%v", wantStatus, wantCode, code, res)
 	}
@@ -105,7 +105,7 @@ func TestAgentDeclarationRefreshFlow(t *testing.T) {
 	assertDeclaredView(t, "注册后 admin", adminInstanceView(t, ts, "lobby-1"), 200, map[string]string{"mode": "survival"})
 
 	// ② 只给 capacity：labels 不刷新（部分刷新）
-	code, res := doJSON(t, http.MethodPost, ts.URL+declarationPath, map[string]any{
+	code, res := doAgentAuto(t, ts, http.MethodPost, ts.URL+declarationPath, map[string]any{
 		"namespace": "prod", "serverId": "lobby-1", "capacity": 350})
 	if code != http.StatusOK || res["ok"] != true {
 		t.Fatalf("声明应 200 ok=true，实际 %d：%v", code, res)
@@ -117,7 +117,7 @@ func TestAgentDeclarationRefreshFlow(t *testing.T) {
 	assertDeclaredView(t, "只给 capacity 后 discovery", mustDiscoveryView(t, ts, "lobby-1"), 350, map[string]string{"mode": "survival"})
 
 	// ③ 只给 labels：capacity 不刷新，标签整体替换（旧 key mode 消失）
-	code, res = doJSON(t, http.MethodPost, ts.URL+declarationPath, map[string]any{
+	code, res = doAgentAuto(t, ts, http.MethodPost, ts.URL+declarationPath, map[string]any{
 		"namespace": "prod", "serverId": "lobby-1", "labels": map[string]string{"tier": "core", "mode": "creative"}})
 	if code != http.StatusOK {
 		t.Fatalf("只给 labels 应 200，实际 %d：%v", code, res)
@@ -129,7 +129,7 @@ func TestAgentDeclarationRefreshFlow(t *testing.T) {
 		map[string]string{"tier": "core", "mode": "creative"})
 
 	// ④ capacity=0 生效（不与「缺键」混淆：上一步为 350）
-	if code, res := doJSON(t, http.MethodPost, ts.URL+declarationPath, map[string]any{
+	if code, res := doAgentAuto(t, ts, http.MethodPost, ts.URL+declarationPath, map[string]any{
 		"namespace": "prod", "serverId": "lobby-1", "capacity": 0}); code != http.StatusOK {
 		t.Fatalf("capacity=0 应 200，实际 %d：%v", code, res)
 	}
@@ -137,7 +137,7 @@ func TestAgentDeclarationRefreshFlow(t *testing.T) {
 		map[string]string{"tier": "core", "mode": "creative"})
 
 	// ⑤ 空标签对象 = 清空全部标签（与「缺键不刷新」区分）
-	if code, res := doJSON(t, http.MethodPost, ts.URL+declarationPath, map[string]any{
+	if code, res := doAgentAuto(t, ts, http.MethodPost, ts.URL+declarationPath, map[string]any{
 		"namespace": "prod", "serverId": "lobby-1", "labels": map[string]string{}}); code != http.StatusOK {
 		t.Fatalf("空标签集应 200（= 清空），实际 %d：%v", code, res)
 	}
@@ -145,7 +145,7 @@ func TestAgentDeclarationRefreshFlow(t *testing.T) {
 
 	// ⑥ 幂等：同一请求连续上报 3 次 → 结果一致、实例数不变、标签不叠加
 	for i := 0; i < 3; i++ {
-		code, res := doJSON(t, http.MethodPost, ts.URL+declarationPath, map[string]any{
+		code, res := doAgentAuto(t, ts, http.MethodPost, ts.URL+declarationPath, map[string]any{
 			"namespace": "prod", "serverId": "lobby-1", "capacity": 500,
 			"labels": map[string]string{"mode": "creative", "tier": "core"}})
 		if code != http.StatusOK {
@@ -229,7 +229,7 @@ func TestAgentDeclarationDoesNotFeedOtherTruthSources(t *testing.T) {
 	beforeAdmin := adminInstanceView(t, ts, "lobby-1")
 
 	// 声明刷新：容量与标签都换成本地声明值（其中 env=gamma 与过滤真源 env=beta 故意不同）。
-	if code, res := doJSON(t, http.MethodPost, ts.URL+declarationPath, map[string]any{
+	if code, res := doAgentAuto(t, ts, http.MethodPost, ts.URL+declarationPath, map[string]any{
 		"namespace": "prod", "serverId": "lobby-1", "capacity": 999,
 		"labels": map[string]string{"env": "gamma", "tier": "core"}}); code != http.StatusOK {
 		t.Fatalf("声明应 200，实际 %d：%v", code, res)

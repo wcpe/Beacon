@@ -400,7 +400,7 @@ func (s *ReversibleOperationService) writeUndoAudit(tx *gorm.DB, op *model.Rever
 		Action:        action,
 		TargetType:    model.TargetTypeReversibleOp,
 		TargetRef:     fmt.Sprintf("%d", op.ID),
-		Detail:        fmt.Sprintf(`{"reversibleOpId":%d,"opType":%q,"scope":%q,"scopeTarget":%q}`, op.ID, op.OpType, op.Scope, op.ScopeTarget),
+		Detail:        auditJSON(map[string]any{"reversibleOpId": op.ID, "opType": op.OpType, "scope": op.Scope, "scopeTarget": op.ScopeTarget}),
 		Result:        model.ResultOK,
 		ClientIP:      clientIP,
 	})

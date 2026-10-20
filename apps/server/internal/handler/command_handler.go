@@ -132,10 +132,18 @@ type commandResultRequest struct {
 
 // ReportResult 处理 POST /beacon/v1/agent/commands/result（FR-91）：接收 agent 回传的 resync-config 命令执行结果，
 // CAS 推进命令 done / failed。与其它 agent 端点同属 agentToken 防误连信任面；无内容回传，仅推进命令生命周期。
+//
+// 必须绑定身份：回传只带 commandId，共享 token 下任一 agent 都能凭猜测的 commandId 把别人的命令
+// 提前推进 done / 打成 failed。所有分支都把已解析的权威身份交给 service 做命令归属比对——
+// commandId 可枚举，只有 service 层拿到身份才能回答「这条命令是不是这台 agent 的」。
 func (h *CommandHandler) ReportResult(w http.ResponseWriter, r *http.Request) {
 	var req commandResultRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
 		return
 	}
 	commandType, err := h.svc.ResultCommandType(req.CommandID)
@@ -144,18 +152,9 @@ func (h *CommandHandler) ReportResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if commandType == model.CommandTypeBCDirectoryResync {
-		if h.reportAuth == nil {
-			render.WriteError(w, r, apperr.ErrCommandNotFound)
-			return
-		}
-		identity, authErr := h.reportAuth.AuthenticateAgentReport(r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"), r.Header.Get("X-Beacon-Boot"), r.RemoteAddr)
-		if authErr != nil {
-			render.WriteError(w, r, authErr)
-			return
-		}
 		err = h.reportAuth.ReceiveDirectoryResyncResult(identity, req.CommandID, req.OK, req.Reason)
 	} else {
-		err = h.svc.ReceiveResyncResult(req.CommandID, req.OK, req.Reason)
+		err = h.svc.ReceiveResyncResult(identity, req.CommandID, req.OK, req.Reason)
 	}
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -298,12 +297,23 @@ type agentCommandResponse struct {
 }
 
 // Pending 处理 GET /beacon/v1/agent/commands（FR-39）：返回该 agent 最早 pending 命令并 CAS 标 fetched；无则 204。
+//
+// 必须绑定身份：拉取即消费（CAS 标 fetched），共享 token 下若认 query 自报归属，
+// 任一 agent 只要报别人的 serverId 就能**抢走**别人的待办命令——真 agent 再也拉不到，
+// 且拿到 payload 里的一次性执行参考载荷。故先把 query 归属收敛到 DB 权威身份。
 func (h *CommandHandler) Pending(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	ns := q.Get("namespace")
-	serverID := q.Get("serverId")
-	if ns == "" || serverID == "" {
+	// 入参契约不变：namespace / serverId 必须显式给出（缺参仍是 400 INVALID_PARAM）。
+	if q.Get("namespace") == "" || q.Get("serverId") == "" {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	ns, serverID, ok := bindAgentTarget(w, r, identity, q.Get("namespace"), q.Get("serverId"))
+	if !ok {
 		return
 	}
 	cmd, err := h.svc.FetchPending(ns, serverID)
@@ -337,17 +347,25 @@ type ingestRequest struct {
 
 // Ingest 处理 POST /beacon/v1/agent/files/ingest（FR-39）：接收 agent 回传文件集，
 // 控制面再校验（上限 / 排除 jar / path）+ 复用 Import 落组 / 单服覆盖；命令转 done / failed。
+//
+// 必须绑定身份：本端点会把回传内容**写进真源**（落入分组或该服覆盖层），
+// 共享 token 之下不校验身份，任一 agent 都能凭猜测的 commandId 往别人的分组里塞文件。
+// 已解析的权威身份随 commandId 一起交给 service：归属比对只能在 service 层做（那里才读得到命令行的归属）。
 func (h *CommandHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 	var req ingestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
 	files := make([]service.ImportFile, len(req.Files))
 	for i, f := range req.Files {
 		files[i] = service.ImportFile{Path: f.Path, Content: f.Content}
 	}
-	res, err := h.svc.ReceiveIngest(req.CommandID, files, clientIP(r))
+	res, err := h.svc.ReceiveIngest(identity, req.CommandID, files, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

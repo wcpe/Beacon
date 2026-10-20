@@ -150,7 +150,7 @@ func (s *OverrideSetService) Create(p CreateOverrideSetParams) (*model.FileOverr
 			return err
 		}
 		return s.writeAudit(tx, set, p.Operator, model.ActionOverrideSetCreate,
-			fmt.Sprintf(`{"version":1,"targetRoot":%q,"hasCommand":%t}`, root, cmd != ""), p.ClientIP)
+			auditJSON(map[string]any{"version": 1, "targetRoot": root, "hasCommand": cmd != ""}), p.ClientIP)
 	})
 	if err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {

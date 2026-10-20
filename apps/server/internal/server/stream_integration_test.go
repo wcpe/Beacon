@@ -19,11 +19,17 @@ type sseEvent struct {
 
 // openStream 打开 SSE 推送流并返回事件通道 + 取消函数；读取在后台 goroutine，按帧（空行分隔）切分。
 // 注释行（: 开头，保活心跳）被跳过，不投递为事件。
-func openStream(t *testing.T, baseURL, query string) (<-chan sseEvent, context.CancelFunc) {
+func openStream(t *testing.T, ts *integrationTestServer, query string) (<-chan sseEvent, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/beacon/v1/agent/stream?"+query, nil)
-	req.Header.Set("X-Beacon-Token", testAgentToken)
+	// 推送流订阅要求权威身份（issue #146）：从 query 派生归属并为该实例建立已确认身份。
+	target := ts.URL + "/beacon/v1/agent/stream?" + query
+	namespace, serverID := agentTargetFromRequest(target, nil)
+	headers := bindAgentForTest(t, ts, namespace, serverID)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		cancel()
@@ -123,11 +129,15 @@ func TestStreamNotRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
+	// 订阅需要权威身份（issue #146）：身份有效但实例未挂载数据面 → 仍按在册判定 404。
+	headers := bindAgentForTest(t, ts, "prod", "ghost")
 	req, err := http.NewRequest(http.MethodGet, ts.URL+"/beacon/v1/agent/stream?namespace=prod&serverId=ghost", nil)
 	if err != nil {
 		t.Fatalf("构造请求失败: %v", err)
 	}
-	req.Header.Set("X-Beacon-Token", testAgentToken)
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("请求失败: %v", err)
@@ -152,7 +162,7 @@ func TestStreamConnectReconcile(t *testing.T) {
 		t.Fatalf("建配置应 201，实际 %d", code)
 	}
 
-	events, cancel := openStream(t, ts.URL, "namespace=prod&serverId=lobby-1")
+	events, cancel := openStream(t, ts, "namespace=prod&serverId=lobby-1")
 	defer cancel()
 
 	// 首事件应为 config-changed（对账补发落下的配置增量）。
@@ -185,7 +195,7 @@ func TestStreamLivePushOnPublish(t *testing.T) {
 
 	// agent 已对齐：先开一条流读到当前 config md5，再以该 md5 重开（对账无补发、直接 ready）。
 	// 简化：第一条流直接拿对账补发事件里的 md5。
-	probe, probeCancel := openStream(t, ts.URL, "namespace=prod&serverId=lobby-1")
+	probe, probeCancel := openStream(t, ts, "namespace=prod&serverId=lobby-1")
 	cfgEvent := waitForType(t, probe, "config-changed", 3*time.Second)
 	waitForType(t, probe, "ready", 3*time.Second)
 	probeCancel()
@@ -195,7 +205,7 @@ func TestStreamLivePushOnPublish(t *testing.T) {
 	}
 
 	// 用已对齐 md5 重开流：对账无补发，直接 ready，随后转直播。
-	events, cancel := openStream(t, ts.URL, "namespace=prod&serverId=lobby-1&configMd5="+curMD5)
+	events, cancel := openStream(t, ts, "namespace=prod&serverId=lobby-1&configMd5="+curMD5)
 	defer cancel()
 	// 已对齐 config；文件/拓扑通道首连仍补发一次，排到 ready 即可。
 	waitForType(t, events, "ready", 3*time.Second)
@@ -226,13 +236,13 @@ func TestStreamOnlyAffected(t *testing.T) {
 	mkGroup("area2", "v: 1\n")
 
 	// s1 先对齐 area1 当前 md5（拿对账补发的 config md5 后重开）。
-	probe, probeCancel := openStream(t, ts.URL, "namespace=prod&serverId=s1")
+	probe, probeCancel := openStream(t, ts, "namespace=prod&serverId=s1")
 	cfgEvent := waitForType(t, probe, "config-changed", 3*time.Second)
 	waitForType(t, probe, "ready", 3*time.Second)
 	probeCancel()
 	curMD5 := extractMD5(cfgEvent.data)
 
-	events, cancel := openStream(t, ts.URL, "namespace=prod&serverId=s1&configMd5="+curMD5)
+	events, cancel := openStream(t, ts, "namespace=prod&serverId=s1&configMd5="+curMD5)
 	defer cancel()
 	// 已对齐 config；排掉文件/拓扑首连补发直到 ready，使后续“无事件”窗口判定干净。
 	waitForType(t, events, "ready", 3*time.Second)

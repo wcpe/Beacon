@@ -17,6 +17,10 @@ func TestAgentRESTFlow(t *testing.T) {
 		t.Fatalf("创建发现环境应 201，实际 %d：%v", code, body)
 	}
 
+	// v1 数据面（心跳 / 发现 / 有效配置）在 issue #146 之后要求权威身份：
+	// 先为该实例建立已确认的 v2 身份，后续 agent 面请求一律携带这些头。
+	agentHeaders := bindAgentForTest(t, ts, "prod", "lobby-1")
+
 	// 注册（未指派 → resolvedZone null、assigned false）
 	code, res := doJSON(t, http.MethodPost, reg, map[string]any{
 		"namespace": "prod", "serverId": "lobby-1", "role": "bukkit",
@@ -30,7 +34,7 @@ func TestAgentRESTFlow(t *testing.T) {
 	}
 
 	// 心跳
-	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/heartbeat", map[string]any{
+	if code, _ := doAgentJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/heartbeat", agentHeaders, map[string]any{
 		"namespace": "prod", "serverId": "lobby-1"}); code != http.StatusOK {
 		t.Fatalf("心跳应 200，实际 %d", code)
 	}
@@ -48,14 +52,14 @@ func TestAgentRESTFlow(t *testing.T) {
 		t.Fatalf("同地址重连应 200，实际 %d", code)
 	}
 
-	// 心跳未注册 → 404
-	if code, nr := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/heartbeat", map[string]any{
-		"namespace": "prod", "serverId": "ghost"}); code != http.StatusNotFound || nr["code"] != "NOT_REGISTERED" {
-		t.Fatalf("未注册心跳应 404 NOT_REGISTERED，实际 %d：%v", code, nr)
+	// 心跳声明非本源实例 → 404 COMMAND_NOT_FOUND（身份与自报归属不符，统一不泄露存在性）
+	if code, nr := doAgentJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/heartbeat", agentHeaders, map[string]any{
+		"namespace": "prod", "serverId": "ghost"}); code != http.StatusNotFound || nr["code"] != "COMMAND_NOT_FOUND" {
+		t.Fatalf("冒充他服心跳应 404 COMMAND_NOT_FOUND，实际 %d：%v", code, nr)
 	}
 
 	// 发现：在线实例含 lobby-1
-	code, disc := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace=prod", nil)
+	code, disc := doAgentJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace=prod", agentHeaders, nil)
 	if code != http.StatusOK {
 		t.Fatalf("发现应 200，实际 %d", code)
 	}
@@ -75,7 +79,7 @@ func TestAgentRESTFlow(t *testing.T) {
 	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/lobby-1/offline?namespace=prod&operator=admin", nil); code != http.StatusOK {
 		t.Fatalf("下线应 200，实际 %d", code)
 	}
-	code, disc2 := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace=prod", nil)
+	code, disc2 := doAgentJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/discovery?namespace=prod", agentHeaders, nil)
 	if insts, _ := disc2["instances"].([]any); code != http.StatusOK || len(insts) != 0 {
 		t.Fatalf("下线后发现应为空，实际 %v", disc2["instances"])
 	}
@@ -98,9 +102,11 @@ func TestEffectiveRESTFlow(t *testing.T) {
 		"namespace": "prod", "serverId": "s1", "address": "10.0.0.1:1"}); code != http.StatusOK {
 		t.Fatalf("注册应 200，实际 %d", code)
 	}
+	// 有效配置端点要求权威身份（issue #146）。
+	s1Headers := bindAgentForTest(t, ts, "prod", "s1")
 
 	// 首拉（md5 空）→ 200 带 items 与 md5
-	code, eff := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/config/effective?namespace=prod&serverId=s1&md5=", nil)
+	code, eff := doAgentJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/config/effective?namespace=prod&serverId=s1&md5=", s1Headers, nil)
 	if code != http.StatusOK {
 		t.Fatalf("首拉应 200，实际 %d", code)
 	}
@@ -110,14 +116,14 @@ func TestEffectiveRESTFlow(t *testing.T) {
 	}
 
 	// 带当前 md5 + 短超时 → 304
-	if code, _ := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/config/effective?namespace=prod&serverId=s1&md5="+md5+"&timeoutMs=150", nil); code != http.StatusNotModified {
+	if code, _ := doAgentJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/config/effective?namespace=prod&serverId=s1&md5="+md5+"&timeoutMs=150", s1Headers, nil); code != http.StatusNotModified {
 		t.Fatalf("无变更应 304，实际 %d", code)
 	}
 
-	// 未注册 → 404 NOT_REGISTERED
-	code, nr := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/config/effective?namespace=prod&serverId=ghost&md5=", nil)
-	if code != http.StatusNotFound || nr["code"] != "NOT_REGISTERED" {
-		t.Fatalf("未注册应 404 NOT_REGISTERED，实际 %d：%v", code, nr)
+	// 声明非本源实例 → 404 COMMAND_NOT_FOUND（身份与自报归属不符，统一不泄露存在性）
+	code, nr := doAgentJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/config/effective?namespace=prod&serverId=ghost&md5=", s1Headers, nil)
+	if code != http.StatusNotFound || nr["code"] != "COMMAND_NOT_FOUND" {
+		t.Fatalf("冒充他服拉配置应 404 COMMAND_NOT_FOUND，实际 %d：%v", code, nr)
 	}
 }
 

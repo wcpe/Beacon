@@ -19,7 +19,6 @@ export default function EventsTab({ orderId }: EventsTabProps) {
 
   return (
     <PageAsyncSection
-      keepContentWhileRefreshing
       isLoading={isLoading}
       isError={isError}
       error={error}

@@ -69,7 +69,7 @@ describe('/configs 作用域五层与空层首次贡献', () => {
     expect(within(dialog).getByText('添加本层配置：BC 集群')).toBeInTheDocument()
 
     // 结构树 Combobox 选 bc-main
-    await user.click(within(dialog).getByRole('textbox', { name: '选择作用域实体' }))
+    await user.click(within(dialog).getByRole('combobox', { name: '选择作用域实体' }))
     await user.click(await screen.findByRole('option', { name: 'bc-main' }))
     await user.click(within(dialog).getByRole('button', { name: '开始编辑' }))
 
@@ -140,7 +140,7 @@ describe('/configs diff 三描述符', () => {
     await user.click(screen.getByRole('tab', { name: '差异对比' }))
 
     // 左侧：层 head（namespace），键入候选名搜索后选择
-    const leftScope = await screen.findByRole('textbox', { name: '左侧选择层' })
+    const leftScope = await screen.findByRole('combobox', { name: '左侧选择层' })
     await user.click(leftScope)
     await user.type(leftScope, 'prod')
     await user.click(await screen.findByRole('option', { name: 'namespace / prod' }))
@@ -148,11 +148,11 @@ describe('/configs diff 三描述符', () => {
     // 右侧：历史版本（namespace 链 v1），层与版本均可键入搜索
     await user.click(screen.getByRole('combobox', { name: '右侧描述类型' }))
     await user.click(await screen.findByRole('option', { name: '历史版本' }))
-    const rightScope = await screen.findByRole('textbox', { name: '右侧选择层' })
+    const rightScope = await screen.findByRole('combobox', { name: '右侧选择层' })
     await user.click(rightScope)
     await user.type(rightScope, 'prod')
     await user.click(await screen.findByRole('option', { name: 'namespace / prod' }))
-    const rightVersion = await screen.findByRole('textbox', { name: '右侧选择版本' })
+    const rightVersion = await screen.findByRole('combobox', { name: '右侧选择版本' })
     await user.click(rightVersion)
     await user.type(rightVersion, 'v1')
     await user.click(await screen.findByRole('option', { name: /^v1 · / }))
@@ -177,7 +177,7 @@ describe('/configs 版本链回退与撤销层贡献', () => {
     renderPage(<ConfigsPage />)
     await openDetail(user, 'plugins/Essentials/config.yml')
     await user.click(screen.getByRole('tab', { name: '版本链' }))
-    expect(await screen.findByRole('textbox', { name: '选择作用域' })).toHaveValue('namespace / prod')
+    expect(await screen.findByRole('combobox', { name: '选择作用域' })).toHaveValue('namespace / prod')
 
     // 默认链 = namespace，行出现 v2 / v1
     const v1Cell = await screen.findByText('v1')
@@ -306,7 +306,7 @@ describe('/configs 有效预览目标选择器', () => {
     await user.click(screen.getByRole('tab', { name: '有效配置' }))
 
     // 目标类型预选为命名空间基线；可键入候选名称后切「按服务器」→ 服务端搜索选 lobby-1
-    const targetType = await screen.findByRole('textbox', { name: '目标类型' })
+    const targetType = await screen.findByRole('combobox', { name: '目标类型' })
     expect(targetType).toHaveValue('仅命名空间基线')
     await user.click(targetType)
     expect(await screen.findByRole('option', { name: '仅命名空间基线' })).toHaveAttribute('aria-selected', 'true')

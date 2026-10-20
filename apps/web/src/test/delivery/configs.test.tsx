@@ -70,7 +70,7 @@ describe('/configs 配置中心页', () => {
 
     // 格式下拉显示当前预选值，并支持键入筛选后选择
     const dialog = await screen.findByRole('dialog')
-    const format = within(dialog).getByRole('textbox', { name: '格式' })
+    const format = within(dialog).getByRole('combobox', { name: '格式' })
     expect(format).toHaveValue('yaml')
     await user.click(format)
     await user.type(format, 'properties')
@@ -235,7 +235,7 @@ describe('/configs 配置中心页', () => {
     expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
 
     await user.click(scopeTrigger)
-    await user.click(await screen.findByRole('menuitem', { name: /prod/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /prod/ }))
     expect(await screen.findByText('plugins/Essentials/config.yml')).toBeInTheDocument()
     expect(getObservationScopeSelection()).toMatchObject({ namespaceId: 1 })
   })

@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
@@ -19,11 +18,7 @@ import (
 type BrowseHandler struct {
 	svc        *service.AgentCommandService
 	instSvc    *service.InstanceService
-	reportAuth browseReportAuthenticator
-}
-
-type browseReportAuthenticator interface {
-	AuthenticateAgentReport(token, identityID, bootID, addr string) (agentauth.Identity, error)
+	reportAuth agentReportAuthenticator
 }
 
 // NewBrowseHandler 构造处理器（instSvc 供浏览前校验目标在线）。
@@ -32,7 +27,7 @@ func NewBrowseHandler(svc *service.AgentCommandService, instSvc *service.Instanc
 }
 
 // SetReportAuthenticator 注入浏览回传的 v2 权威身份校验器。
-func (h *BrowseHandler) SetReportAuthenticator(authn browseReportAuthenticator) { h.reportAuth = authn }
+func (h *BrowseHandler) SetReportAuthenticator(authn agentReportAuthenticator) { h.reportAuth = authn }
 
 // Browse 只读取指定 commandId 的一次性结果；创建命令由 POST /browse 处理。
 // namespace 为可选 query 参数：显式给出时按 (serverId, namespace) 联合定位，缺省则由 service 按 serverId 反查，
@@ -154,13 +149,12 @@ func (h *BrowseHandler) BrowseResult(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if h == nil || h.svc == nil || h.reportAuth == nil {
+	if h == nil || h.svc == nil {
 		render.WriteError(w, r, apperr.ErrUnauthorized)
 		return
 	}
-	identity, err := h.reportAuth.AuthenticateAgentReport(r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"), r.Header.Get("X-Beacon-Boot"), r.RemoteAddr)
-	if err != nil {
-		render.WriteError(w, r, err)
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
 		return
 	}
 	if err := h.svc.ReceiveBrowseResult(identity, req.CommandID, req.OK,

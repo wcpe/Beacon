@@ -1,6 +1,6 @@
 # ADR-0009：管理面鉴权从 P2 前移
 
-**状态**：已接受
+**状态**：已接受；**agent 侧「共享 token 维持现状、不升级为安全边界」的条款已被 [ADR-0094](0094-v1-agent-data-plane-authoritative-identity.md) 取代**（管理面鉴权前移的其余结论不变）
 
 ## 背景
 

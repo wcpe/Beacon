@@ -87,7 +87,6 @@ function TreeLevelPicker({ namespaceId, level, value, onChange, excludeIds, id }
 
   return (
     <PageAsyncSection
-      keepContentWhileRefreshing
       isLoading={treeQuery.isLoading}
       isError={treeQuery.isError}
       error={treeQuery.error}
@@ -151,7 +150,6 @@ function ServerSearchPicker({ namespaceId, value, onChange, excludeIds, id }: Se
         />
       </div>
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={serversQuery.isLoading}
         isError={serversQuery.isError}
         error={serversQuery.error}

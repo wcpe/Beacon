@@ -2,19 +2,29 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 )
+
+// fileSyncIdentityOf 由命令反推一个归属正确的权威身份，供正常路径用例使用。
+// file-sync 数据面要求调用者是命令所属实例（blob 侧另有源/目标约束）。
+func fileSyncIdentityOf(cmd *model.AgentCommand) agentauth.Identity {
+	return agentauth.Identity{Namespace: cmd.NamespaceCode, ServerID: cmd.ServerID, IdentityID: "test-" + cmd.ServerID}
+}
 
 func TestNormalizeFileSyncDirectory(t *testing.T) {
 	valid := map[string]string{
@@ -88,7 +98,7 @@ func TestFileSyncSourceManifestAndStartDispatchTargetCommand(t *testing.T) {
 	task := mustCreateFileSyncTask(t, svc)
 	sourceCmd := latestFileSyncCommand(t, db, task.ID, model.CommandTypeFileSyncSource)
 	markCommandFetched(t, db, sourceCmd.ID)
-	if err := svc.ReceiveSourceManifest(sourceCmd.ID, []FileSyncManifestFile{
+	if err := svc.ReceiveSourceManifest(fileSyncIdentityOf(sourceCmd), task.ID, sourceCmd.ID, []FileSyncManifestFile{
 		{Path: "config.yml", Size: 12, Hash: testSHA256("config.yml")},
 	}, "127.0.0.1"); err != nil {
 		t.Fatalf("回传源清单失败：%v", err)
@@ -113,6 +123,57 @@ func TestFileSyncSourceManifestAndStartDispatchTargetCommand(t *testing.T) {
 	}
 }
 
+// TestFileSyncStoreBlobRejectsTerminalTask 覆盖终态任务不再接受源 agent 上传 blob。
+//
+// 为什么必须拒：blob 目录按 taskId 分片且没有任务级清理路径，终态任务继续落盘只会留下
+// 无人回收的垃圾；同时用非终态用例反向确认拦截条件没有过宽。
+func TestFileSyncStoreBlobRejectsTerminalTask(t *testing.T) {
+	const content = "config.yml"
+	// 用真实 sha256：非终态用例会真的走完落盘并按内容校验，占位哈希会被判为非法参数。
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	identity := agentauth.Identity{Namespace: "prod", ServerID: "source-1", IdentityID: "test-source-1"}
+
+	cases := []struct {
+		name    string
+		status  string
+		wantErr error
+	}{
+		{name: "已完成任务拒写", status: model.FileSyncTaskStatusSucceeded, wantErr: apperr.ErrFileSyncTaskState},
+		{name: "已失败任务拒写", status: model.FileSyncTaskStatusFailed, wantErr: apperr.ErrFileSyncTaskState},
+		{name: "已终止任务拒写", status: model.FileSyncTaskStatusTerminated, wantErr: apperr.ErrFileSyncTaskState},
+		{name: "熔断任务拒写", status: model.FileSyncTaskStatusCircuitBroken, wantErr: apperr.ErrFileSyncTaskState},
+		{name: "非终态任务仍可写入", status: model.FileSyncTaskStatusCached},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, db, reg := newFileSyncTestService(t)
+			registerFileSyncInstance(t, reg, "prod", "source-1", "bukkit")
+			task := mustCreateFileSyncTask(t, svc)
+			if err := db.Model(&model.FileSyncTask{}).Where("id = ?", task.ID).
+				Update("status", tc.status).Error; err != nil {
+				t.Fatalf("把任务置为 %s 失败：%v", tc.status, err)
+			}
+
+			err := svc.StoreBlob(identity, task.ID, hash, strings.NewReader(content))
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("任务状态 %s 时应允许写入 blob，实际错误：%v", tc.status, err)
+				}
+				if _, statErr := os.Stat(svc.blobPath(task.ID, hash)); statErr != nil {
+					t.Fatalf("任务状态 %s 时应已落盘 blob，实际 stat 失败：%v", tc.status, statErr)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("任务状态 %s 时应返回 %v，实际：%v", tc.status, tc.wantErr, err)
+			}
+			if _, statErr := os.Stat(svc.blobPath(task.ID, hash)); !os.IsNotExist(statErr) {
+				t.Fatalf("任务状态 %s 时不应落盘 blob，实际 stat 结果：%v", tc.status, statErr)
+			}
+		})
+	}
+}
+
 func TestFileSyncTargetResultCircuitBreaksWhenBatchFailureRateExceeded(t *testing.T) {
 	svc, db, reg := newFileSyncTestService(t)
 	for _, id := range []string{"source-1", "target-1", "target-2", "target-3"} {
@@ -127,7 +188,7 @@ func TestFileSyncTargetResultCircuitBreaksWhenBatchFailureRateExceeded(t *testin
 	}
 	sourceCmd := latestFileSyncCommand(t, db, task.ID, model.CommandTypeFileSyncSource)
 	markCommandFetched(t, db, sourceCmd.ID)
-	if err := svc.ReceiveSourceManifest(sourceCmd.ID, []FileSyncManifestFile{
+	if err := svc.ReceiveSourceManifest(fileSyncIdentityOf(sourceCmd), task.ID, sourceCmd.ID, []FileSyncManifestFile{
 		{Path: "config.yml", Size: 12, Hash: testSHA256("config.yml")},
 	}, "127.0.0.1"); err != nil {
 		t.Fatalf("回传源清单失败：%v", err)
@@ -145,10 +206,10 @@ func TestFileSyncTargetResultCircuitBreaksWhenBatchFailureRateExceeded(t *testin
 	for _, cmd := range cmds {
 		markCommandFetched(t, db, cmd.ID)
 	}
-	if err := svc.ReceiveTargetResult(cmds[0].ID, FileSyncTargetResult{OK: true, BackupPath: ".beacon/a", CurrentFileCount: 1, ChangedFileCount: 1}); err != nil {
+	if err := svc.ReceiveTargetResult(fileSyncIdentityOf(&cmds[0]), task.ID, cmds[0].ID, FileSyncTargetResult{OK: true, BackupPath: ".beacon/a", CurrentFileCount: 1, ChangedFileCount: 1}); err != nil {
 		t.Fatalf("回传成功目标失败：%v", err)
 	}
-	if err := svc.ReceiveTargetResult(cmds[1].ID, FileSyncTargetResult{OK: false, Reason: "磁盘不可写"}); err != nil {
+	if err := svc.ReceiveTargetResult(fileSyncIdentityOf(&cmds[1]), task.ID, cmds[1].ID, FileSyncTargetResult{OK: false, Reason: "磁盘不可写"}); err != nil {
 		t.Fatalf("回传失败目标失败：%v", err)
 	}
 	got, err := repository.NewFileSyncRepository(db).GetTask(task.ID)
@@ -178,7 +239,7 @@ func TestFileSyncTargetResultDispatchesNextBatchAfterFirstBatchSucceeds(t *testi
 	}
 	for _, cmd := range cmds {
 		markCommandFetched(t, db, cmd.ID)
-		if err := svc.ReceiveTargetResult(cmd.ID, FileSyncTargetResult{OK: true, BackupPath: ".beacon/a"}); err != nil {
+		if err := svc.ReceiveTargetResult(fileSyncIdentityOf(&cmd), task.ID, cmd.ID, FileSyncTargetResult{OK: true, BackupPath: ".beacon/a"}); err != nil {
 			t.Fatalf("回传首批目标结果失败：%v", err)
 		}
 	}
@@ -210,13 +271,13 @@ func TestFileSyncTargetResultCompletesTaskAfterLastBatchSucceeds(t *testing.T) {
 	}
 	for _, cmd := range applyCommands(t, db, task.ID) {
 		markCommandFetched(t, db, cmd.ID)
-		if err := svc.ReceiveTargetResult(cmd.ID, FileSyncTargetResult{OK: true, BackupPath: ".beacon/a"}); err != nil {
+		if err := svc.ReceiveTargetResult(fileSyncIdentityOf(&cmd), task.ID, cmd.ID, FileSyncTargetResult{OK: true, BackupPath: ".beacon/a"}); err != nil {
 			t.Fatalf("回传目标结果失败：%v", err)
 		}
 	}
 	cmds := applyCommands(t, db, task.ID)
 	markCommandFetched(t, db, cmds[len(cmds)-1].ID)
-	if err := svc.ReceiveTargetResult(cmds[len(cmds)-1].ID, FileSyncTargetResult{OK: true, BackupPath: ".beacon/b"}); err != nil {
+	if err := svc.ReceiveTargetResult(fileSyncIdentityOf(&cmds[len(cmds)-1]), task.ID, cmds[len(cmds)-1].ID, FileSyncTargetResult{OK: true, BackupPath: ".beacon/b"}); err != nil {
 		t.Fatalf("回传最后一批目标结果失败：%v", err)
 	}
 
@@ -321,7 +382,7 @@ func TestFileSyncControlActionsUseStateMachineAndAudit(t *testing.T) {
 	var err error
 	sourceCmd := latestFileSyncCommand(t, db, task.ID, model.CommandTypeFileSyncSource)
 	markCommandFetched(t, db, sourceCmd.ID)
-	if err := svc.ReceiveSourceManifest(sourceCmd.ID, []FileSyncManifestFile{
+	if err := svc.ReceiveSourceManifest(fileSyncIdentityOf(sourceCmd), task.ID, sourceCmd.ID, []FileSyncManifestFile{
 		{Path: "config.yml", Size: 12, Hash: testSHA256("config.yml")},
 	}, "127.0.0.1"); err != nil {
 		t.Fatalf("回传源清单失败：%v", err)
@@ -354,7 +415,7 @@ func TestFileSyncEventsReplayPersistedLogsAndPushLive(t *testing.T) {
 	}
 	sourceCmd := latestFileSyncCommand(t, svc.db, task.ID, model.CommandTypeFileSyncSource)
 	markCommandFetched(t, svc.db, sourceCmd.ID)
-	if err := svc.ReceiveSourceManifest(sourceCmd.ID, []FileSyncManifestFile{
+	if err := svc.ReceiveSourceManifest(fileSyncIdentityOf(sourceCmd), task.ID, sourceCmd.ID, []FileSyncManifestFile{
 		{Path: "config.yml", Size: 12, Hash: testSHA256("config.yml")},
 	}, "127.0.0.1"); err != nil {
 		t.Fatalf("回传源清单失败：%v", err)
@@ -403,7 +464,7 @@ func TestFileSyncEventsPushSourceReadyTaskPatch(t *testing.T) {
 
 	sourceCmd := latestFileSyncCommand(t, svc.db, task.ID, model.CommandTypeFileSyncSource)
 	markCommandFetched(t, svc.db, sourceCmd.ID)
-	if err := svc.ReceiveSourceManifest(sourceCmd.ID, []FileSyncManifestFile{
+	if err := svc.ReceiveSourceManifest(fileSyncIdentityOf(sourceCmd), task.ID, sourceCmd.ID, []FileSyncManifestFile{
 		{Path: "config.yml", Size: 12, Hash: testSHA256("config.yml")},
 	}, "127.0.0.1"); err != nil {
 		t.Fatalf("回传源清单失败：%v", err)
@@ -502,7 +563,7 @@ func mustCreateReadyFileSyncTask(t *testing.T, svc *FileSyncService, db *gorm.DB
 	}
 	sourceCmd := latestFileSyncCommand(t, db, task.ID, model.CommandTypeFileSyncSource)
 	markCommandFetched(t, db, sourceCmd.ID)
-	if err := svc.ReceiveSourceManifest(sourceCmd.ID, []FileSyncManifestFile{
+	if err := svc.ReceiveSourceManifest(fileSyncIdentityOf(sourceCmd), task.ID, sourceCmd.ID, []FileSyncManifestFile{
 		{Path: "config.yml", Size: 12, Hash: testSHA256("config.yml")},
 	}, "127.0.0.1"); err != nil {
 		t.Fatalf("回传源清单失败：%v", err)

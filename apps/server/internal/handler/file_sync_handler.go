@@ -22,11 +22,18 @@ import (
 // FileSyncHandler 处理多级灰度文件同步管理端 API（FR-129/FR-131）。
 type FileSyncHandler struct {
 	svc *service.FileSyncService
+	// reportAuth 校验 v1 数据面调用者的权威身份；未注入时数据面端点失败关闭。
+	reportAuth agentReportAuthenticator
 }
 
 // NewFileSyncHandler 构造处理器。
 func NewFileSyncHandler(svc *service.FileSyncService) *FileSyncHandler {
 	return &FileSyncHandler{svc: svc}
+}
+
+// SetReportAuthenticator 注入 v1 数据面（agent 回传/下载）的权威身份校验器。
+func (h *FileSyncHandler) SetReportAuthenticator(authn agentReportAuthenticator) {
+	h.reportAuth = authn
 }
 
 type fileSyncCreateRequest struct {
@@ -262,7 +269,12 @@ func (h *FileSyncHandler) Events(w http.ResponseWriter, r *http.Request) {
 
 // ReceiveManifest 处理源 agent 的文件清单回传。
 func (h *FileSyncHandler) ReceiveManifest(w http.ResponseWriter, r *http.Request) {
-	if _, ok := parseUintParam(w, r, "taskId"); !ok {
+	taskID, ok := parseUintParam(w, r, "taskId")
+	if !ok {
+		return
+	}
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
 		return
 	}
 	var req fileSyncManifestRequest
@@ -270,7 +282,7 @@ func (h *FileSyncHandler) ReceiveManifest(w http.ResponseWriter, r *http.Request
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if err := h.svc.ReceiveSourceManifest(req.CommandID, req.Files, clientIP(r)); err != nil {
+	if err := h.svc.ReceiveSourceManifest(identity, taskID, req.CommandID, req.Files, clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
@@ -283,7 +295,12 @@ func (h *FileSyncHandler) UploadBlob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.StoreBlob(taskID, chi.URLParam(r, "hash"), r.Body); err != nil {
+	// 身份必须早于读 body：否则未认证连接可用任意 taskId 直接消耗磁盘。
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	if err := h.svc.StoreBlob(identity, taskID, chi.URLParam(r, "hash"), r.Body); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
@@ -296,7 +313,11 @@ func (h *FileSyncHandler) DownloadBlob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	file, size, err := h.svc.OpenBlob(taskID, chi.URLParam(r, "hash"))
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	file, size, err := h.svc.OpenBlob(identity, taskID, chi.URLParam(r, "hash"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -314,7 +335,13 @@ func (h *FileSyncHandler) DownloadBlob(w http.ResponseWriter, r *http.Request) {
 
 // TargetResult 处理目标 agent 的同步结果回传。
 func (h *FileSyncHandler) TargetResult(w http.ResponseWriter, r *http.Request) {
-	if _, ok := parseUintParam(w, r, "taskId"); !ok {
+	taskID, ok := parseUintParam(w, r, "taskId")
+	if !ok {
+		return
+	}
+	// 与 manifest 同理：不许用他人 taskId 把别人的同步任务标成完成或失败。
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
 		return
 	}
 	var req fileSyncTargetResultRequest
@@ -327,7 +354,7 @@ func (h *FileSyncHandler) TargetResult(w http.ResponseWriter, r *http.Request) {
 		CurrentFileCount: req.CurrentFileCount, ChangedFileCount: req.ChangedFileCount,
 		SkippedFileCount: req.SkippedFileCount, BytesTotal: req.BytesTotal, BytesDone: req.BytesDone,
 	}
-	if err := h.svc.ReceiveTargetResult(req.CommandID, result); err != nil {
+	if err := h.svc.ReceiveTargetResult(identity, taskID, req.CommandID, result); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

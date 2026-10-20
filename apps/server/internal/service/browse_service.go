@@ -125,7 +125,9 @@ func (s *AgentCommandService) applyRequestBrowseInTx(tx *gorm.DB, p BrowseParams
 	if err := s.repo.WithTx(tx).Create(cmd); err != nil {
 		return nil, err
 	}
-	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{NamespaceCode: p.Namespace, Operator: p.Operator, Action: model.ActionFileBrowse, TargetType: model.TargetTypeCommand, TargetRef: p.ServerID, Detail: fmt.Sprintf(`{"commandId":%d,"op":%q,"path":%q}`, cmd.ID, p.Op, p.Path), Result: model.ResultOK, ClientIP: p.ClientIP}); err != nil {
+	// 用 json.Marshal 而非 `%q` 拼接：path 是外部可控文本，Go 的 %q 对控制字符输出 `\x01`
+	// 而 JSON 不允许 `\x` 转义，会静默写出非法 detail（issue #144）。
+	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{NamespaceCode: p.Namespace, Operator: p.Operator, Action: model.ActionFileBrowse, TargetType: model.TargetTypeCommand, TargetRef: p.ServerID, Detail: auditJSON(map[string]any{"commandId": cmd.ID, "op": p.Op, "path": p.Path}), Result: model.ResultOK, ClientIP: p.ClientIP}); err != nil {
 		return nil, err
 	}
 	return cmd, nil

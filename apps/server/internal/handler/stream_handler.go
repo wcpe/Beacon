@@ -16,6 +16,8 @@ import (
 type StreamHandler struct {
 	svc       *service.InstanceService
 	streamSvc *service.StreamService
+	// reportAuth 解析推送流订阅者的权威身份。
+	reportAuth agentReportAuthenticator
 }
 
 // NewStreamHandler 构造处理器。
@@ -23,12 +25,29 @@ func NewStreamHandler(svc *service.InstanceService, streamSvc *service.StreamSer
 	return &StreamHandler{svc: svc, streamSvc: streamSvc}
 }
 
+// SetReportAuthenticator 注入推送流订阅者的权威身份校验器。
+func (h *StreamHandler) SetReportAuthenticator(authn agentReportAuthenticator) {
+	h.reportAuth = authn
+}
+
 // Stream 处理 GET /beacon/v1/agent/stream（held-open，text/event-stream）。
+//
+// 必须绑定身份：本流推送的是「该实例的配置 / 文件树 / 覆盖集 / 拓扑已变更」通知（含 md5 与变更范围），
+// 订阅归属仅由 query 自报。共享 token 下不绑定身份，任一 agent 都能订阅别人的变更流，
+// 从而旁路拿到他服的配置变动节奏与文件清单指纹。故连接建立前先取权威身份并收敛归属。
 func (h *StreamHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	ns, serverID := q.Get("namespace"), q.Get("serverId")
-	if ns == "" || serverID == "" {
+	// 入参契约不变：namespace / serverId 必须显式给出（缺参仍是 400 INVALID_PARAM）。
+	if q.Get("namespace") == "" || q.Get("serverId") == "" {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return
+	}
+	ns, serverID, ok := bindAgentTarget(w, r, identity, q.Get("namespace"), q.Get("serverId"))
+	if !ok {
 		return
 	}
 	groupHint, err := h.svc.RequireRegistered(ns, serverID)

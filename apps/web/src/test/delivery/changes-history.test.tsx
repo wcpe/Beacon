@@ -107,7 +107,7 @@ describe('/changes/history 交付历史页', () => {
     await screen.findByText('全网核心配置基线对齐')
     expect(screen.getByRole('columnheader', { name: '单号' })).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: '结束时间' })).toBeInTheDocument()
-    expect(screen.getByRole('textbox', { name: '按状态过滤' })).toHaveValue('全部状态')
+    expect(screen.getByRole('combobox', { name: '按状态过滤' })).toHaveValue('全部状态')
   })
 
   it('历史状态筛选支持键入过滤并映射查询参数', async () => {
@@ -121,7 +121,7 @@ describe('/changes/history 交付历史页', () => {
     )
     const user = userEvent.setup()
     renderPage(<ChangesHistoryPage />)
-    const status = await screen.findByRole('textbox', { name: '按状态过滤' })
+    const status = await screen.findByRole('combobox', { name: '按状态过滤' })
 
     expect(status).toHaveValue('全部状态')
     await user.click(status)

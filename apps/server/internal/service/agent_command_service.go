@@ -10,6 +10,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
@@ -136,7 +137,9 @@ func (s *AgentCommandService) applyRequestReverseFetchInTx(tx *gorm.DB, ns, serv
 		NamespaceCode: ns,
 		Operator:      operator, Action: model.ActionFileReverseFetch,
 		TargetType: model.TargetTypeCommand, TargetRef: serverID,
-		Detail: fmt.Sprintf(`{"commandId":%d,"scope":%q,"group":%q,"target":%q}`, cmd.ID, scope, group, target),
+		// 用 json.Marshal 而非 `%q` 拼接：scope/group/target 均为外部可控文本，Go 的 %q 对控制字符
+		// 输出 `\x01`，JSON 不允许 `\x` 转义，会静默写出非法 detail（issue #144）。
+		Detail: auditJSON(map[string]any{"commandId": cmd.ID, "scope": scope, "group": group, "target": target}),
 		Result: model.ResultOK, ClientIP: clientIP,
 	}); e != nil {
 		return nil, e
@@ -191,7 +194,7 @@ func (s *AgentCommandService) applyRequestResyncInTx(tx *gorm.DB, ns, serverID, 
 		NamespaceCode: ns,
 		Operator:      operator, Action: model.ActionInstanceResync,
 		TargetType: model.TargetTypeInstance, TargetRef: serverID,
-		Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q}`, cmd.ID, serverID),
+		Detail: auditJSON(map[string]any{"commandId": cmd.ID, "serverId": serverID}),
 		Result: model.ResultOK, ClientIP: clientIP,
 	}); e != nil {
 		return nil, e
@@ -210,14 +213,19 @@ func (s *AgentCommandService) applyRequestResyncForTest(ns, serverID, operator, 
 	return command, err
 }
 
-// ReceiveResyncResult 接收 agent 回传的强制重同步执行结果（FR-91）：命令须存在、type=resync-config 且处 fetched。
-// ok=true 则 CAS done；否则 CAS failed 并记原因摘要（无敏感内容）。重同步无内容回传，仅推进命令生命周期。
-func (s *AgentCommandService) ReceiveResyncResult(commandID uint, ok bool, reason string) error {
+// ReceiveResyncResult 接收 agent 回传的强制重同步执行结果（FR-91）：命令须存在、type=resync-config 且处 fetched，
+// 且归属正是回传的这台 agent。ok=true 则 CAS done；否则 CAS failed 并记原因摘要（无敏感内容）。
+// 重同步无内容回传，仅推进命令生命周期。
+func (s *AgentCommandService) ReceiveResyncResult(identity agentauth.Identity, commandID uint, ok bool, reason string) error {
 	cmd, err := s.repo.FindByID(commandID)
 	if err != nil {
 		return err
 	}
 	if cmd == nil || cmd.Type != model.CommandTypeResyncConfig {
+		return apperr.ErrCommandNotFound
+	}
+	// 归属校验必须先于任何状态迁移：不合规则按命令不存在拒，命令状态与结果摘要一字不改。
+	if !commandBelongsToAgent(cmd, identity) {
 		return apperr.ErrCommandNotFound
 	}
 	if cmd.Status != model.CommandStatusFetched {
@@ -284,15 +292,20 @@ func (s *AgentCommandService) FetchPending(ns, serverID string) (*model.AgentCom
 }
 
 // ReceiveIngest 接收 agent 回传文件集并 ingest（FR-39，见 ADR-0027）。
-// 命令须存在且处 fetched；控制面入库前再校验（双保险：文件数 / 总量上限、排除 .jar；
+// 命令须存在、处 fetched，且归属正是回传的这台 agent；控制面入库前再校验（双保险：文件数 / 总量上限、排除 .jar；
 // 单文件大小与 path 安全由 FileService.Import 兜底）→复用 Import 落组覆盖（事务内 + file.import 审计）
 // →CAS done；校验 / ingest 失败 CAS failed + 原因摘要（无敏感内容）。
-func (s *AgentCommandService) ReceiveIngest(commandID uint, files []ImportFile, clientIP string) (*ImportResult, error) {
+func (s *AgentCommandService) ReceiveIngest(identity agentauth.Identity, commandID uint, files []ImportFile, clientIP string) (*ImportResult, error) {
 	cmd, err := s.repo.FindByID(commandID)
 	if err != nil {
 		return nil, err
 	}
 	if cmd == nil || cmd.Type != model.CommandTypeIngestPlugins {
+		return nil, apperr.ErrCommandNotFound
+	}
+	// 归属校验必须先于任何写操作：本入口会把回传内容写进真源（分组或单服覆盖层），
+	// 不比对归属则任一 agent 都能凭枚举到的 commandId 把文件塞进别人的分组。
+	if !commandBelongsToAgent(cmd, identity) {
 		return nil, apperr.ErrCommandNotFound
 	}
 	if cmd.Status != model.CommandStatusFetched {
@@ -360,6 +373,25 @@ func (s *AgentCommandService) ExpireStale(before time.Time) (int64, error) {
 	return s.repo.ExpireStale(before)
 }
 
+// commandBelongsToAgent 判断回传命令的归属是否正是当前回传的这台 agent。
+//
+// 为什么每个回传端点都必须比对：commandId 是自增小整数、完全可枚举，而 v1 数据面的 agent 共用
+// 同一把共享 token——token 通过只说明「调用方是某台已接入的 agent」，不代表「它就是命令归属的那台」。
+// 只按 commandId 处理的话，任一 agent 都能用猜到的 id 去推进别人的命令：把别人的重同步提前标 done、
+// 把扫描清单 / 文件内容写进别人的命名空间、把别人的受管任务直接打成 failed（定向 DoS）。
+// 因此归属必须与命令行的权威 namespace / serverId 逐项比对，不一致一律拒。
+//
+// 拒因统一用 ErrCommandNotFound（404）而非 403：403 等于确认「这条命令确实存在、只是不归你」，
+// 可被用来枚举命令、探测他人实例是否存在；404 对「不存在」与「非归属」给同一答案，不泄露存在性。
+// 身份字段为空按未绑定处理（同样拒）：否则零值身份会与 namespace / serverId 为空的命令行互相匹配，
+// 把「没解析出身份」悄悄变成「放行」。
+func commandBelongsToAgent(cmd *model.AgentCommand, identity agentauth.Identity) bool {
+	if cmd == nil || identity.Namespace == "" || identity.ServerID == "" {
+		return false
+	}
+	return cmd.NamespaceCode == identity.Namespace && cmd.ServerID == identity.ServerID
+}
+
 func (s *AgentCommandService) ensureCommandActive(cmd *model.AgentCommand) error {
 	if cmd == nil {
 		return apperr.ErrCommandNotFound
@@ -376,7 +408,7 @@ func (s *AgentCommandService) ensureCommandActive(cmd *model.AgentCommand) error
 // markFailed 把命令从 fetched 迁移 failed（best-effort，CAS 失败仅告警）。
 func (s *AgentCommandService) markFailed(id uint, reason string) {
 	if _, e := s.repo.UpdateStatus(id, model.CommandStatusFetched, model.CommandStatusFailed,
-		fmt.Sprintf(`{"error":%q}`, reason)); e != nil {
+		auditJSON(map[string]any{"error": reason})); e != nil {
 		slog.Warn("标记命令失败态出错", "commandId", id, "原因", e)
 	}
 }

@@ -26,8 +26,8 @@ func driveToManifest(t *testing.T, ts *integrationTestServer, serverID, group st
 	taskID := taskIDFromView(t, task)
 	scanCmdID := int(task["scanCommandId"].(float64))
 	// agent 拉 scan 命令并回清单
-	doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId="+serverID, nil)
-	code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/scan", map[string]any{
+	doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId="+serverID, nil)
+	code, _ := doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/scan", map[string]any{
 		"commandId": scanCmdID, "files": files,
 	})
 	if code != http.StatusOK {
@@ -99,8 +99,8 @@ func TestConflictReviewFullChain(t *testing.T) {
 	}
 	submitCmdID := int(submitted["submitCommandId"].(float64))
 	// agent 拉 submit 命令并回选定内容（A 新内容与已有冲突）
-	doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=conf-1", nil)
-	code, _ = doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
+	doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=conf-1", nil)
+	code, _ = doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
 		"commandId": submitCmdID,
 		"files": []map[string]any{
 			{"path": "A/config.yml", "content": "new: 2\n"},

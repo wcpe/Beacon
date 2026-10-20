@@ -28,6 +28,7 @@ import MasterDetail from '../features/shared/master-detail'
 import ListCard from '../features/shared/list-card'
 import Pager from '../features/observability/pager'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 
 const PAGE_SIZE = 20
 const statuses: (ApprovalStatus | 'all')[] = [
@@ -48,28 +49,30 @@ const requesterTypes: ApprovalRequest['requesterType'][] = ['human', 'api_key', 
 
 type ApprovalAction = 'approve' | 'reject' | 'withdraw'
 
-function displayStatus(status: ApprovalStatus): string {
-  return {
-    pending: '待审批',
-    executing: '执行中',
-    succeeded: '已完成',
-    failed: '执行失败',
-    rejected: '已拒绝',
-    withdrawn: '已撤回',
-    expired: '已过期',
-  }[status]
+// 状态 / 风险 / 主体一律「值 → i18n key」翻译；未知值回退原串，避免把 key 渲进界面。
+function statusLabel(t: TFunction, status: ApprovalStatus): string {
+  return t(`delivery.approvals.status.${status}`, { defaultValue: status })
 }
 
-function displayTimelineType(type: string): string {
-  return type === 'requested' ? '已提交' : type === 'approved' ? '已批准' : displayStatus(type as ApprovalStatus)
+// 时间线条目类型：requested / approved 有专属文案，其余条目类型本身就是申请状态。
+function timelineTypeLabel(t: TFunction, type: string): string {
+  if (type === 'requested' || type === 'approved') {
+    return t(`delivery.approvals.timeline.${type}`, { defaultValue: type })
+  }
+  return statusLabel(t, type as ApprovalStatus)
 }
 
-function displayRisk(risk: ApprovalRequest['riskLevel']): string {
-  return { low: '低', medium: '中', high: '高', critical: '严重' }[risk]
+function riskLabel(t: TFunction, risk: ApprovalRequest['riskLevel']): string {
+  return t(`delivery.approvals.risk.${risk}`, { defaultValue: risk })
 }
 
-function displayPrincipal(type: ApprovalRequest['requesterType']): string {
-  return { human: '人类', api_key: 'API 密钥', mcp: 'MCP', system: '系统' }[type]
+// 风险徽标：语序由两侧译文决定（中文「高风险」/ 英文「High risk」）
+function riskBadgeLabel(t: TFunction, risk: ApprovalRequest['riskLevel']): string {
+  return t('delivery.approvals.riskBadge', { risk: riskLabel(t, risk) })
+}
+
+function principalLabel(t: TFunction, type: ApprovalRequest['requesterType']): string {
+  return t(`delivery.approvals.principal.${type}`, { defaultValue: type })
 }
 
 function formatTime(value?: string | null): string {
@@ -172,22 +175,25 @@ function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFil
         <Combobox
           id="approval-status"
           className="w-36"
-          aria-label="审批状态"
+          aria-label={t('delivery.approvals.filters.status')}
           value={filters.status}
           onChange={(value) => {
             onChange({ status: value as Filters['status'] })
           }}
           options={statuses.map((status) => ({
             value: status,
-            label: status === 'all' ? '全部状态' : displayStatus(status),
+            label:
+              status === 'all'
+                ? t('delivery.approvals.filters.statusAll')
+                : statusLabel(t, status),
           }))}
           allowCustom={false}
           emptyText={t('common.combobox.noMatch')}
         />
         <Input
           id="approval-keyword"
-          aria-label="审批关键字"
-          placeholder="搜索申请编号 / 摘要"
+          aria-label={t('delivery.approvals.filters.keyword')}
+          placeholder={t('delivery.approvals.filters.keywordPlaceholder')}
           value={filters.keyword}
           onChange={(event) => {
             onChange({ keyword: event.target.value })
@@ -228,8 +234,8 @@ function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFil
         <div className="grid gap-2 border-t border-border pt-3 sm:grid-cols-2 xl:grid-cols-4">
           <Input
             id="approval-operation"
-            aria-label="operation / 领域"
-            placeholder="领域，如 config.publish"
+            aria-label={t('delivery.approvals.filters.operation')}
+            placeholder={t('delivery.approvals.filters.operationPlaceholder')}
             value={filters.operationKey}
             onChange={(event) => {
               onChange({ operationKey: event.target.value })
@@ -239,14 +245,14 @@ function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFil
           <Combobox
             id="approval-risk"
             className="w-full"
-            aria-label="风险级别"
+            aria-label={t('delivery.approvals.filters.risk')}
             value={filters.riskLevel === '' ? SELECT_ALL : filters.riskLevel}
             onChange={(value) => {
               onChange({ riskLevel: value === SELECT_ALL ? '' : value })
             }}
             options={[
-              { value: SELECT_ALL, label: '全部风险' },
-              ...riskLevels.map((risk) => ({ value: risk, label: displayRisk(risk) })),
+              { value: SELECT_ALL, label: t('delivery.approvals.filters.riskAll') },
+              ...riskLevels.map((risk) => ({ value: risk, label: riskLabel(t, risk) })),
             ]}
             allowCustom={false}
             emptyText={t('common.combobox.noMatch')}
@@ -254,22 +260,22 @@ function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFil
           <Combobox
             id="approval-requester-type"
             className="w-full"
-            aria-label="申请主体类型"
+            aria-label={t('delivery.approvals.filters.requesterType')}
             value={filters.requesterType === '' ? SELECT_ALL : filters.requesterType}
             onChange={(value) => {
               onChange({ requesterType: value === SELECT_ALL ? '' : value })
             }}
             options={[
-              { value: SELECT_ALL, label: '全部主体' },
-              ...requesterTypes.map((type) => ({ value: type, label: displayPrincipal(type) })),
+              { value: SELECT_ALL, label: t('delivery.approvals.filters.requesterTypeAll') },
+              ...requesterTypes.map((type) => ({ value: type, label: principalLabel(t, type) })),
             ]}
             allowCustom={false}
             emptyText={t('common.combobox.noMatch')}
           />
           <Input
             id="approval-requester"
-            aria-label="申请人"
-            placeholder="申请人"
+            aria-label={t('delivery.approvals.filters.requester')}
+            placeholder={t('delivery.approvals.filters.requesterPlaceholder')}
             value={filters.requesterId}
             onChange={(event) => {
               onChange({ requesterId: event.target.value })
@@ -278,7 +284,7 @@ function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFil
           />
           <Input
             id="approval-created-from"
-            aria-label="创建时间起"
+            aria-label={t('delivery.approvals.filters.createdFrom')}
             type="datetime-local"
             value={filters.createdFrom}
             onChange={(event) => {
@@ -288,7 +294,7 @@ function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFil
           />
           <Input
             id="approval-created-to"
-            aria-label="创建时间止"
+            aria-label={t('delivery.approvals.filters.createdTo')}
             type="datetime-local"
             value={filters.createdTo}
             onChange={(event) => {
@@ -298,7 +304,7 @@ function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFil
           />
           <Input
             id="approval-expires-from"
-            aria-label="过期时间起"
+            aria-label={t('delivery.approvals.filters.expiresFrom')}
             type="datetime-local"
             value={filters.expiresFrom}
             onChange={(event) => {
@@ -308,7 +314,7 @@ function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFil
           />
           <Input
             id="approval-expires-to"
-            aria-label="过期时间止"
+            aria-label={t('delivery.approvals.filters.expiresTo')}
             type="datetime-local"
             value={filters.expiresTo}
             onChange={(event) => {
@@ -357,10 +363,11 @@ function ApprovalTableHead() {
 }
 
 function ApprovalRow({ row, selected, onOpen }: ApprovalRowProps) {
+  const { t } = useTranslation()
   const namespace =
     row.namespaceId === null || row.namespaceId === undefined
-      ? '全局'
-      : `namespace ${String(row.namespaceId)}`
+      ? t('delivery.approvals.list.namespaceGlobal')
+      : t('delivery.approvals.list.namespaceRef', { id: String(row.namespaceId) })
   return (
     <Button
       type="button"
@@ -386,7 +393,7 @@ function ApprovalRow({ row, selected, onOpen }: ApprovalRowProps) {
           variant={row.riskLevel === 'critical' ? 'destructive' : 'secondary'}
           className="shrink-0 text-[10px]"
         >
-          {displayRisk(row.riskLevel)}风险
+          {riskBadgeLabel(t, row.riskLevel)}
         </Badge>
       </span>
       <span className="flex min-w-0 flex-col md:flex-row md:items-center md:gap-1.5">
@@ -394,11 +401,11 @@ function ApprovalRow({ row, selected, onOpen }: ApprovalRowProps) {
         <span className="shrink-0 text-[11px] text-ink-4 md:hidden">{namespace}</span>
       </span>
       <span className="truncate text-xs text-ink-3">
-        {displayPrincipal(row.requesterType)} · {row.requesterId}
+        {principalLabel(t, row.requesterType)} · {row.requesterId}
       </span>
       <span>
         <Badge variant="outline" className="text-[10px]">
-          {displayStatus(row.status)}
+          {statusLabel(t, row.status)}
         </Badge>
       </span>
       <span className="text-[11px] text-ink-4 md:text-right">{formatTime(row.createdAt)}</span>
@@ -433,6 +440,7 @@ interface ApprovalDetailProps {
 }
 
 function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps) {
+  const { t } = useTranslation()
   const evidenceStatus = detail.evidenceStatus ?? 'available'
   const driftStatus = detail.driftStatus ?? 'none'
   const isPending = detail.status === 'pending'
@@ -443,11 +451,11 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
     (detail.expiresAt === null || Date.parse(detail.expiresAt) > Date.now())
   const blockedReason =
     driftStatus === 'detected'
-      ? '当前事实已漂移，需按当前事实重新申请'
+      ? t('delivery.approvals.detail.blocked.drift')
       : evidenceStatus !== 'available'
-        ? '快照或当前证据不可用/已过期'
+        ? t('delivery.approvals.detail.blocked.evidence')
         : detail.expiresAt !== null && Date.parse(detail.expiresAt) <= Date.now()
-          ? '申请已过期'
+          ? t('delivery.approvals.detail.blocked.expired')
           : null
 
   return (
@@ -456,18 +464,18 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
         <div className="font-mono text-xs text-ink-3">{detail.requestId}</div>
         <div className="text-sm font-semibold text-ink-1">{detail.safeSummary}</div>
         <div className="flex flex-wrap gap-2">
-          <Badge variant="outline">{displayStatus(detail.status)}</Badge>
+          <Badge variant="outline">{statusLabel(t, detail.status)}</Badge>
           <Badge variant={detail.riskLevel === 'critical' ? 'destructive' : 'secondary'}>
-            {displayRisk(detail.riskLevel)}风险
+            {riskBadgeLabel(t, detail.riskLevel)}
           </Badge>
         </div>
       </div>
-      <DetailSection title="风险与影响">
+      <DetailSection title={t('delivery.approvals.detail.sections.riskImpact')}>
         <p className="text-sm text-ink-2">{detail.riskSummary}</p>
         <p className="text-sm text-ink-2">{detail.impactSummary}</p>
         <p className="text-sm text-ink-2">{detail.securitySummary}</p>
       </DetailSection>
-      <DetailSection title="申请快照">
+      <DetailSection title={t('delivery.approvals.detail.sections.snapshot')}>
         <dl className="grid gap-1 text-sm">
           {(detail.frozenPayloadSummary ?? []).map((line) => (
             <div className="grid grid-cols-[7rem_1fr] gap-2" key={line.label}>
@@ -477,7 +485,7 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
           ))}
         </dl>
       </DetailSection>
-      <DetailSection title="当前事实">
+      <DetailSection title={t('delivery.approvals.detail.sections.currentFacts')}>
         <dl className="grid gap-1 text-sm">
           {(detail.currentFactsSummary ?? []).map((line) => (
             <div className="grid grid-cols-[7rem_1fr] gap-2" key={line.label}>
@@ -487,7 +495,7 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
           ))}
         </dl>
       </DetailSection>
-      <DetailSection title="快照 / 当前差异">
+      <DetailSection title={t('delivery.approvals.detail.sections.diff')}>
         <div className="grid gap-2 text-sm">
           {(detail.currentDiff ?? []).map((line) => (
             <div
@@ -504,13 +512,13 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
           ))}
         </div>
       </DetailSection>
-      <DetailSection title="时间线">
+      <DetailSection title={t('delivery.approvals.detail.sections.timeline')}>
         <ol className="grid gap-2 text-sm">
           {(detail.timeline ?? []).map((item, index) => (
             <li className="grid grid-cols-[auto_1fr] gap-2" key={`${item.at}-${String(index)}`}>
               <Clock3 className="mt-0.5 size-4 text-ink-4" aria-hidden />
               <span>
-                <strong>{displayTimelineType(item.type)}</strong> · {formatTime(item.at)}
+                <strong>{timelineTypeLabel(t, item.type)}</strong> · {formatTime(item.at)}
                 {item.note ? ` · ${item.note}` : ''}
               </span>
             </li>
@@ -519,7 +527,7 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
       </DetailSection>
       {detail.resultRef ? (
         <a className="text-sm text-brand underline-offset-2 hover:underline" href={detail.resultRef}>
-          查看领域结果与审计
+          {t('delivery.approvals.detail.resultLink')}
         </a>
       ) : null}
       {blockedReason ? (
@@ -529,7 +537,7 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
         </p>
       ) : null}
       {isPending && !detail.canApprove && !detail.canReject && !detail.canWithdraw ? (
-        <p className="text-sm text-ink-3">当前主体没有可执行的审批操作。</p>
+        <p className="text-sm text-ink-3">{t('delivery.approvals.detail.noActions')}</p>
       ) : null}
       {isPending ? (
         <div data-slot="detail-actions-footer" className="sticky bottom-0 z-10 mt-auto -mx-4 flex flex-wrap gap-2 border-t border-border bg-card/95 px-4 py-3 backdrop-blur">
@@ -541,7 +549,7 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
                 onAction('approve')
               }}
             >
-              批准并执行
+              {t('delivery.approvals.actions.approve')}
             </Button>
           ) : null}
           {detail.canReject ? (
@@ -553,7 +561,7 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
                 onAction('reject')
               }}
             >
-              拒绝
+              {t('delivery.approvals.actions.reject')}
             </Button>
           ) : null}
           {detail.canWithdraw ? (
@@ -565,7 +573,7 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
                 onAction('withdraw')
               }}
             >
-              撤回
+              {t('delivery.approvals.actions.withdraw')}
             </Button>
           ) : null}
         </div>
@@ -603,7 +611,7 @@ export default function ApprovalsPage() {
   const mutation = useMutation({
     mutationFn: async ({ type, reason }: { type: ApprovalAction; reason: string }) => {
       if (requestId === undefined) {
-        throw new Error('缺少审批申请编号')
+        throw new Error(t('delivery.approvals.errors.missingRequestId'))
       }
       if (type === 'approve') return approveApproval(requestId)
       if (type === 'reject') return rejectApproval(requestId, reason)
@@ -636,13 +644,17 @@ export default function ApprovalsPage() {
   const total = listQuery.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const actionTitle =
-    action === 'approve' ? '确认批准并执行' : action === 'reject' ? '确认拒绝审批' : '确认撤回申请'
+    action === 'approve'
+      ? t('delivery.approvals.confirm.approveTitle')
+      : action === 'reject'
+        ? t('delivery.approvals.confirm.rejectTitle')
+        : t('delivery.approvals.confirm.withdrawTitle')
   const actionDescription =
     action === 'approve'
-      ? '批准只调用统一审批 API，服务端将自动创建执行任务。'
+      ? t('delivery.approvals.confirm.approveDesc')
       : action === 'reject'
-        ? '拒绝后申请进入终态，必须填写原因。'
-        : '撤回后申请进入终态，原因可选。'
+        ? t('delivery.approvals.confirm.rejectDesc')
+        : t('delivery.approvals.confirm.withdrawDesc')
 
   return (
     <section className="grid gap-4 md:flex md:h-full md:min-h-0 md:flex-col">
@@ -667,7 +679,11 @@ export default function ApprovalsPage() {
                 onReset={() => {
                   setFilters(initialFilters)
                 }}
-                countLabel={listQuery.data ? `共 ${String(total)} 条` : '加载中…'}
+                countLabel={
+                  listQuery.data
+                    ? t('delivery.approvals.list.total', { count: total })
+                    : t('delivery.approvals.list.loading')
+                }
               />
             }
             footer={
@@ -684,7 +700,7 @@ export default function ApprovalsPage() {
               </div>
             ) : listQuery.isError ? (
               <div className="grid gap-2 p-6 text-sm">
-                <p className="text-destructive">审批列表加载失败</p>
+                <p className="text-destructive">{t('delivery.approvals.list.loadFailed')}</p>
                 <Button
                   type="button"
                   variant="outline"
@@ -692,7 +708,7 @@ export default function ApprovalsPage() {
                     void listQuery.refetch()
                   }}
                 >
-                  重试
+                  {t('delivery.approvals.list.retry')}
                 </Button>
               </div>
             ) : list.length === 0 ? (
@@ -700,7 +716,9 @@ export default function ApprovalsPage() {
                 <AlertTriangle className="mx-auto size-6" aria-hidden />
                 <p>
                   {/* 默认 pending 筛选下的全局空态；本页不继承页眉命名空间范围。 */}
-                  {isDefaultPendingFilter(filters) ? '全局暂无待审批' : '当前筛选无结果'}
+                  {isDefaultPendingFilter(filters)
+                    ? t('delivery.approvals.list.emptyAll')
+                    : t('delivery.approvals.list.emptyFiltered')}
                 </p>
                 <Button
                   type="button"
@@ -709,7 +727,7 @@ export default function ApprovalsPage() {
                     setFilters(initialFilters)
                   }}
                 >
-                  清除筛选
+                  {t('delivery.approvals.list.clearFilters')}
                 </Button>
               </div>
             ) : (
@@ -737,7 +755,7 @@ export default function ApprovalsPage() {
             </div>
           ) : detailQuery.isError ? (
             <div className="grid gap-2 text-sm">
-              <p className="text-destructive">审批详情加载失败</p>
+              <p className="text-destructive">{t('delivery.approvals.detail.loadFailed')}</p>
               <Button
                 type="button"
                 variant="outline"
@@ -745,7 +763,7 @@ export default function ApprovalsPage() {
                   void detailQuery.refetch()
                 }}
               >
-                重试
+                {t('delivery.approvals.detail.retry')}
               </Button>
             </div>
           ) : selected ? (
@@ -759,11 +777,11 @@ export default function ApprovalsPage() {
             />
           ) : null
         }
-        detailTitle={selected?.safeSummary ?? '审批详情'}
+        detailTitle={selected?.safeSummary ?? t('delivery.approvals.detail.title')}
         onClose={() => {
           void navigate('/approvals')
         }}
-        closeLabel="关闭详情"
+        closeLabel={t('delivery.approvals.detail.close')}
       />
       <ConfirmDialog
         open={action !== null}
@@ -775,7 +793,13 @@ export default function ApprovalsPage() {
         }}
         title={actionTitle}
         description={actionDescription}
-        confirmLabel={action === 'approve' ? '批准并执行' : action === 'reject' ? '拒绝' : '撤回'}
+        confirmLabel={
+          action === 'approve'
+            ? t('delivery.approvals.actions.approve')
+            : action === 'reject'
+              ? t('delivery.approvals.actions.reject')
+              : t('delivery.approvals.actions.withdraw')
+        }
         confirmVariant={action === 'reject' || action === 'withdraw' ? 'destructive' : 'default'}
         requireReason={action === 'reject'}
         pending={mutation.isPending}

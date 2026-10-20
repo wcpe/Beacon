@@ -118,7 +118,6 @@ export default function SettingsBlock() {
 
   return (
     <PageAsyncSection
-      keepContentWhileRefreshing
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}

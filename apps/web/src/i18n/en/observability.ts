@@ -277,6 +277,8 @@ export const observability = {
     filterKeyword: 'Detail keyword',
     filterResult: 'Result',
     exportFailed: 'Export failed',
+    // 导出范围不支持时的提示（当前仅支持单个命名空间）
+    exportScopeUnsupported: 'Export in the current environment only supports a single namespace scope',
     exporting: 'Exporting…',
     // Time range presets ("All" = unbounded, hot only; cold query requires bounded range)
     filterWindow: 'Time range',

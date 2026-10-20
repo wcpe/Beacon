@@ -17,13 +17,13 @@ func TestServerPageResyncCommandVisible(t *testing.T) {
 
 	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/instances/srv-resync-1/resync?namespace=prod", t.Name()+"-resync", map[string]any{"reason": "集成测试重同步"})
 
-	code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=srv-resync-1", nil)
+	code, pulled := doAgentAuto(t, ts, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=srv-resync-1", nil)
 	if code != http.StatusOK || pulled["type"] != "resync-config" {
 		t.Fatalf("agent 应拉到 resync-config 命令，实际 %d：%v", code, pulled)
 	}
 	cmdID := int(pulled["id"].(float64))
 
-	code, _ = doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/commands/result", map[string]any{
+	code, _ = doAgentAuto(t, ts, http.MethodPost, ts.URL+"/beacon/v1/agent/commands/result", map[string]any{
 		"commandId": cmdID,
 		"ok":        true,
 	})

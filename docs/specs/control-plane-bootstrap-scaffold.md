@@ -11,7 +11,7 @@ Beacon 控制面作为单二进制部署时，运维需手工准备 `config.yml`
 > 修订（首启 `.env` 覆盖 `config.yml` 修复）：原设计在释放 `config.yml` 之外还自动生成一份含重叠字段（`BEACON_HTTP_ADDR` / `BEACON_BOOTSTRAP_TOKEN` / `BEACON_ADMIN_USERNAME`）的 `.env`，因 `.env` 优先级高于 `config.yml`，会静默盖掉运维对 `config.yml` 的修改。现改为**不自动生成 `.env`**，把随机凭据**就地填入释放的 `config.yml`**；下文已反映此修订。
 
 范围内：
-- **首启脚手架**：启动时若 `-config` 指定路径（默认 `config.yml`）不存在，自动释放内置配置模板到该路径，**并把模板里留空的 `auth.password` / `auth.secret` 就地填入 `crypto/rand` 随机强值**（文件权限 0600，口令写入 `config.yml`、用户打开即见、可改，**不输出到日志**），使首启直接通过校验并启动、**不再 fail-fast**。**已存在则跳过，绝不覆盖用户文件。** `agent-token` 用模板里的固定默认 `beacon-bootstrap-token`——仅防误连、非安全边界（ADR-0009），固定默认让控制面与 agent 样例配置开箱即匹配、无需逐机同步随机值。
+- **首启脚手架**：启动时若 `-config` 指定路径（默认 `config.yml`）不存在，自动释放内置配置模板到该路径，**并把模板里留空的 `auth.password` / `auth.secret` 就地填入 `crypto/rand` 随机强值**（文件权限 0600，口令写入 `config.yml`、用户打开即见、可改，**不输出到日志**），使首启直接通过校验并启动、**不再 fail-fast**。**已存在则跳过，绝不覆盖用户文件。** `agent-token` 用模板里的固定默认 `beacon-bootstrap-token`——该默认值**仅供注册 / 机器注册通道**（判定受信内部调用方），数据面须换成 agent 所属命名空间的 access token（见 [ADR-0094](../adr/0094-v1-agent-data-plane-authoritative-identity.md)），固定默认让控制面与 agent 样例配置在注册阶段开箱即匹配、无需逐机同步随机值。
 - **不自动生成 `.env`**：凭据落在 `config.yml`（即真源），不再额外写 `.env`——避免自动生成的 `.env` 因优先级更高而静默盖掉 `config.yml`。
 - **.env 加载（保留）**：若当前目录存在**运维手动放置**的 `.env`，解析其 `KEY=VALUE` 注入进程环境变量，供既有 `applyEnv` 覆盖链消费。**真实环境变量优先**：仅填补未设置的键。
 - **加载顺序**：内置默认 → `.env` 注入 env → yaml 文件 → 环境变量覆盖。生效优先级：真实 env > `.env` > `config.yml` > 内置默认。

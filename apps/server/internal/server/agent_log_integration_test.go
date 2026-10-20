@@ -30,7 +30,9 @@ func TestAgentLogTailFullChain(t *testing.T) {
 	if code != http.StatusOK || len(asSlice(audits["items"])) == 0 {
 		t.Fatalf("应有 instance.tail-logs 审计，实际 %d：%v", code, audits["items"])
 	}
-	code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=log-1", nil)
+	// 拉命令要求权威身份（issue #146）：沿用本用例自己建立的那套身份，
+	// 不能另建一套——同一 serverId 的第二套身份会与该用例的身份审批幂等键冲突。
+	code, pulled := doAgentJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=log-1", agentHeaders, nil)
 	if code != http.StatusOK || pulled["type"] != "tail-logs" || int(pulled["id"].(float64)) != cmdID {
 		t.Fatalf("agent 应拉到指定 tail-logs 命令，实际 %d：%v", code, pulled)
 	}

@@ -87,7 +87,6 @@ export default function DetailView({ fileId }: DetailViewProps) {
       )}
 
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={detailQuery.isLoading}
         isError={detailQuery.isError}
         error={detailQuery.error}

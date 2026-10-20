@@ -20,6 +20,7 @@
 - **E2E**：跨平台纯 Go 入口 `go test -tags=e2e -timeout=30m ./apps/server/test/e2e/{directory,override,metrics}`（默认 sqlite、无需 docker，可选 mysql），自管控制面 + 真实 agent，跑关键时序（首次接入、发布热更、目录注入、三方覆盖，见 ARCHITECTURE 时序与 PRD §6）；CI 见 `.github/workflows/e2e.yml`，运行细节见 `docs/OPERATIONS.md` §7。
 - **前端 E2E**：Playwright 两套——**假后端**（mock 模式，`cd web && pnpm test:e2e`）走演示模式登录，跑主页面可达 / 配置发布回滚 / 文件树 / 命令观测 / 密钥闭环，**PR 必跑门禁**（`ci.yml` 的 `web-e2e`）；**真后端**（sqlite 控制面 + 真 admin 登录，`pnpm test:e2e:real`）跑关键链路，重型，随 `e2e.yml` 手动 / 定时触发。
 - **何时跑**：单元 / 集成 / 前端假后端 E2E 随每次改动与 CI；后端 E2E 与前端真后端 E2E 在发版前（`sdd-release-version` / `sdd-hotfix`）至少跑一遍。
+- **逐用例超时（前端 vitest）**：默认继承 `apps/web/vitest.config.ts` 的全局 `testTimeout`；只有用例**自身**数据规模大 / 交互步骤多、单跑耗时已贴近全局上限（余量不足 2 倍）时才显式传第三个参数放宽，并在用例上方用中文注释写明为何需要更长时限与实测耗时。禁止用放宽超时掩盖真实卡死、死循环或竞态；也禁止为缩短耗时删断言、缩小数据规模或降低覆盖。
 
 ## 2. 必测的高风险区
 - **merge 覆盖链合并**：标量覆盖 / map 深合并 / list 整替 / null 删键 / 序列化 md5 幂等 —— 穷举单测。

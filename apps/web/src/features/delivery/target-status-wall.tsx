@@ -91,9 +91,12 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
   const rollbackFailedCount = items.filter((row) => row.rollbackStatus === 'failed').length
 
   // 切单或筛选变化时清空勾选：跨批次的残留勾选会让「已选 N 台」与实际提交范围对不上。
+  // 幂等键必须一并重置：它的生命周期跟随当前变更单，否则提交失败后不关弹窗直接切单，
+  // 会把旧键带到新单（后端去重键不含资源 ID，payload 变了即判幂等键复用，申请被静默吞掉）。
   useEffect(() => {
     setSelected([])
-  }, [orderId, batchNo])
+    keyRef.value = null
+  }, [orderId, batchNo, keyRef])
 
   const selectableOnPage = useMemo(
     () => items.filter((row) => row.pushedAt != null).map((row) => row.serverId),

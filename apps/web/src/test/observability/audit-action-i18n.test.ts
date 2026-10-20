@@ -4,63 +4,18 @@
 //
 // 此前用人工硬编码清单只覆盖 29 个动作，后端新增动作不会让测试变红（漏测严重）；
 // 现改为读 apps/server/internal/model/enums.go 正则提取，新增常量即纳入守护。
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+// 「定位并解析 enums.go」的逻辑抽到 ./enums-source，与动作清单同源守护（audit-actions-source.test.ts）共用。
 import i18next, { type TFunction } from 'i18next'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { observability } from '../../i18n/observability'
 import { observability as enObservability } from '../../i18n/en/observability'
+import { ENUMS_GO_PATH, readBackendActions } from './enums-source'
 
 /** 审计 action i18n key 前缀（与 features/observability/audit-action-label.ts 保持一致） */
 const ACTION_KEY_PREFIX = 'observability.audits.action'
 
-/**
- * 定位后端枚举真源 enums.go。
- * vitest 工作目录为 apps/web，jsdom 下 import.meta.url 非 file 协议——
- * 故以 cwd 为主候选向上回溯，测试文件位置为次候选；任一命中即用，全未命中则报错而非静默跳过。
- */
-function locateEnumsGo(): string {
-  const roots = [process.cwd()]
-  try {
-    roots.push(dirname(fileURLToPath(import.meta.url)))
-  } catch {
-    // jsdom 下 import.meta.url 可能非 file 协议，忽略此候选
-  }
-  const candidates: string[] = []
-  for (const root of roots) {
-    let dir = resolve(root)
-    // 最多向上 6 层：apps/web → apps → 仓库根（容错不同 cwd / 目录布局）
-    for (let depth = 0; depth < 6; depth += 1) {
-      candidates.push(join(dir, 'apps/server/internal/model/enums.go'))
-      candidates.push(join(dir, 'server/internal/model/enums.go'))
-      const parent = dirname(dir)
-      if (parent === dir) {
-        break
-      }
-      dir = parent
-    }
-  }
-  const hit = candidates.find((candidate) => existsSync(candidate))
-  if (hit === undefined) {
-    throw new Error(
-      `未找到后端枚举真源 enums.go（已尝试 ${String(candidates.length)} 个候选路径，如 ${candidates[0]}）——` +
-        '测试无法校验审计动作覆盖，请检查工作目录或路径候选',
-    )
-  }
-  return hit
-}
-
-const ENUMS_GO_PATH = locateEnumsGo()
-
 /** 后端全部审计动作字面值（真源：model.Action* = "..."） */
-function readBackendActions(): string[] {
-  const source = readFileSync(ENUMS_GO_PATH, 'utf-8')
-  const matches = source.matchAll(/^\s*Action[A-Za-z0-9_]*\s*=\s*"([^"]+)"/gm)
-  return [...matches].map((m) => m[1])
-}
-
 const BACKEND_ACTIONS = readBackendActions()
 const zhActionMap: Record<string, string> = observability.audits.action
 const enActionMap: Record<string, string> = enObservability.audits.action

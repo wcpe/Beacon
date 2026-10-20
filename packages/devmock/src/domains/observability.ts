@@ -35,6 +35,11 @@ interface ObservabilityState {
   alertEvents: AlertEventItem[]
 }
 
+// 审计种子动作：仅用于生成 mock 审计行的「动作 + 目标类型」配对，是后端真实枚举的一个小子集，
+// 不是筛选候选清单。审计页动作筛选的真源是 apps/server/internal/model/enums.go 的 model.Action*，
+// 由 scripts/gen-audit-actions.mjs 生成到 apps/web/src/pages/audits/audit-actions.generated.ts，
+// 并受 test/observability/audit-actions-source.test.ts 守护（issue #152）。
+// 需要新的 mock 组合时在此追加即可，不必与生成物对齐——mock 只需覆盖有代表性的目标类型。
 const AUDIT_ACTIONS: { action: string; targetType: string }[] = [
   { action: 'identity.approved', targetType: 'agent-identity' },
   { action: 'identity.rejected', targetType: 'agent-identity' },

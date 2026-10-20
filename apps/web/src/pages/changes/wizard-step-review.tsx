@@ -180,7 +180,6 @@ export default function WizardStepReview({
       </div>
 
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={impactQuery.isLoading || detailQuery.isLoading}
         isError={impactQuery.isError || detailQuery.isError}
         error={impactQuery.error ?? detailQuery.error}

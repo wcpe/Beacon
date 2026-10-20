@@ -28,11 +28,37 @@ type FileHandler struct {
 	ovrSvc   *service.OverrideEffectiveService
 	insSvc   *service.InstanceService
 	settings longpollSettings // 长轮询挂起上限从设置 store 读，热生效（FR-61）
+	// reportAuth 解析文件树 / 覆盖集拉取端点的调用者权威身份。
+	reportAuth agentReportAuthenticator
 }
 
 // NewFileHandler 构造处理器。
 func NewFileHandler(svc *service.FileService, effSvc *service.FileEffectiveService, ovrSvc *service.OverrideEffectiveService, insSvc *service.InstanceService, settings longpollSettings) *FileHandler {
 	return &FileHandler{svc: svc, effSvc: effSvc, ovrSvc: ovrSvc, insSvc: insSvc, settings: settings}
+}
+
+// SetReportAuthenticator 注入文件树 / 覆盖集拉取端点的权威身份校验器。
+func (h *FileHandler) SetReportAuthenticator(authn agentReportAuthenticator) {
+	h.reportAuth = authn
+}
+
+// bindAgentFileTarget 是文件树 / 覆盖集四个拉取端点共用的身份绑定入口：
+// 先解析权威身份，再把 query 自报的 namespace/serverId 收敛到身份，返回后续应使用的归属值。
+//
+// 为什么这四个端点必须绑定：它们回的是**文件正文**（配置、脚本、覆盖集成员），
+// 而 namespace/serverId 只是 query 参数——共享 token 之下换个参数就能把别服的整棵文件树拉走。
+func (h *FileHandler) bindAgentFileTarget(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	// 入参契约不变：namespace / serverId 必须显式给出（缺参仍是 400 INVALID_PARAM）。
+	q := r.URL.Query()
+	if q.Get("namespace") == "" || q.Get("serverId") == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return "", "", false
+	}
+	identity, ok := authenticateAgentReport(w, r, h.reportAuth)
+	if !ok {
+		return "", "", false
+	}
+	return bindAgentTarget(w, r, identity, q.Get("namespace"), q.Get("serverId"))
 }
 
 // fileView 是文件对象对外视图（content 仅详情返回）。
@@ -568,18 +594,17 @@ type manifestEntryView struct {
 // Manifest 处理 GET /beacon/v1/agent/files/manifest（长轮询）。
 // agent 带当前 fileTreeMd5；变了 200 返回新 manifest（path→md5，不含内容），未变到超时 304。
 func (h *FileHandler) Manifest(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	ns, serverID, agentMD5 := q.Get("namespace"), q.Get("serverId"), q.Get("md5")
-	if ns == "" || serverID == "" {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
+	ns, serverID, ok := h.bindAgentFileTarget(w, r)
+	if !ok {
 		return
 	}
+	agentMD5 := r.URL.Query().Get("md5")
 	groupHint, err := h.insSvc.RequireRegistered(ns, serverID)
 	if err != nil {
 		render.WriteError(w, r, err) // 未注册 → 404 NOT_REGISTERED
 		return
 	}
-	timeout := resolveHoldTimeout(h.settings, q.Get("timeoutMs"))
+	timeout := resolveHoldTimeout(h.settings, r.URL.Query().Get("timeoutMs"))
 	tree, changed, err := h.effSvc.WaitFileTree(r.Context(), ns, serverID, groupHint, agentMD5, timeout)
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -603,9 +628,12 @@ func (h *FileHandler) Manifest(w http.ResponseWriter, r *http.Request) {
 // Content 处理 GET /beacon/v1/agent/files/content?namespace=&serverId=&path=。
 // agent 比对 manifest 后逐个取变更文件的整文件内容。
 func (h *FileHandler) Content(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	ns, serverID, path := q.Get("namespace"), q.Get("serverId"), q.Get("path")
-	if ns == "" || serverID == "" || path == "" {
+	ns, serverID, ok := h.bindAgentFileTarget(w, r)
+	if !ok {
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
@@ -646,18 +674,17 @@ type overrideSetEntryView struct {
 // agent 带当前 overrideMd5；变了 200 返回适用覆盖集（目标根 + 重载命令 + 成员 path，不含内容），未变到超时 304。
 // 与文件长轮询复用同一唤醒集合（同属通道B），但与配置 md5、fileTreeMd5 相互独立（见 ADR-0010/0011）。
 func (h *FileHandler) OverrideManifest(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	ns, serverID, agentMD5 := q.Get("namespace"), q.Get("serverId"), q.Get("md5")
-	if ns == "" || serverID == "" {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
+	ns, serverID, ok := h.bindAgentFileTarget(w, r)
+	if !ok {
 		return
 	}
+	agentMD5 := r.URL.Query().Get("md5")
 	groupHint, err := h.insSvc.RequireRegistered(ns, serverID)
 	if err != nil {
 		render.WriteError(w, r, err) // 未注册 → 404 NOT_REGISTERED
 		return
 	}
-	timeout := resolveHoldTimeout(h.settings, q.Get("timeoutMs"))
+	timeout := resolveHoldTimeout(h.settings, r.URL.Query().Get("timeoutMs"))
 	eff, changed, err := h.ovrSvc.WaitOverride(r.Context(), ns, serverID, groupHint, agentMD5, timeout)
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -683,9 +710,13 @@ func (h *FileHandler) OverrideManifest(w http.ResponseWriter, r *http.Request) {
 // OverrideContent 处理 GET /beacon/v1/agent/override-sets/content?namespace=&serverId=&set=&path=（FR-15）。
 // agent 比对覆盖集成员 manifest 后逐个取成员整文件内容，落盘到该集 targetRoot（经 OverrideApplier）。
 func (h *FileHandler) OverrideContent(w http.ResponseWriter, r *http.Request) {
+	ns, serverID, ok := h.bindAgentFileTarget(w, r)
+	if !ok {
+		return
+	}
 	q := r.URL.Query()
-	ns, serverID, setName, path := q.Get("namespace"), q.Get("serverId"), q.Get("set"), q.Get("path")
-	if ns == "" || serverID == "" || setName == "" || path == "" {
+	setName, path := q.Get("set"), q.Get("path")
+	if setName == "" || path == "" {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}

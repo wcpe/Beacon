@@ -190,7 +190,6 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
       </div>
 
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={scopesQuery.isLoading || versionsQuery.isLoading}
         isError={scopesQuery.isError || versionsQuery.isError}
         error={scopesQuery.error ?? versionsQuery.error}

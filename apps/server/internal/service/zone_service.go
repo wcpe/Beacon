@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -146,7 +145,9 @@ func (s *ZoneService) applyAssignInTx(tx *gorm.DB, ns, serverID, group, zone, op
 	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 		NamespaceCode: ns, Operator: operator, Action: action,
 		TargetType: model.TargetTypeZone, TargetRef: ns + "/" + serverID,
-		Detail: fmt.Sprintf(`{"group":"%s","zone":"%s"}`, group, zone), Result: model.ResultOK, ClientIP: clientIP,
+		// 用 json.Marshal 而非 `"%s"` 拼接：group/zone 为外部可控文本，直接塞进引号内既不转义
+		// 控制字符也不转义引号，会静默写出非法 detail（issue #144）。
+		Detail: auditJSON(map[string]any{"group": group, "zone": zone}), Result: model.ResultOK, ClientIP: clientIP,
 	}); err != nil {
 		return nil, err
 	}

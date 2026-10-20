@@ -259,7 +259,7 @@ func TestImprintApprovalActivatesGrantAfterAgentResult(t *testing.T) {
 	if ok, err := repository.NewAgentCommandRepository(db).UpdateStatus(cmd.ID, model.CommandStatusPending, model.CommandStatusFetched, ""); err != nil || !ok {
 		t.Fatalf("模拟 agent 领取拓印命令失败: ok=%v err=%v", ok, err)
 	}
-	if _, err := commands.ReceiveIngest(cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: "safe: true"}}, ""); err != nil {
+	if _, err := commands.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: "safe: true"}}, ""); err != nil {
 		t.Fatalf("接收拓印内容失败: %v", err)
 	}
 	var grant model.SensitiveAccessGrant
@@ -287,7 +287,7 @@ func TestImprintConfirmApprovalUsesWorkerReceipt(t *testing.T) {
 	if _, err := commands.FetchPending("prod", "lobby-1"); err != nil {
 		t.Fatalf("领取拓印命令失败: %v", err)
 	}
-	if _, err := commands.ReceiveIngest(cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: "safe: true\n"}}, ""); err != nil {
+	if _, err := commands.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: "safe: true\n"}}, ""); err != nil {
 		t.Fatalf("回传拓印内容失败: %v", err)
 	}
 	md5 := filetree.ContentMD5("safe: true\n")
@@ -344,7 +344,7 @@ func TestImprintConfirmReceiptFailureRollsBack(t *testing.T) {
 		t.Fatalf("领取拓印命令失败: %v", err)
 	}
 	content := "safe: rollback\n"
-	if _, err := commands.ReceiveIngest(cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: content}}, ""); err != nil {
+	if _, err := commands.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: content}}, ""); err != nil {
 		t.Fatalf("回传拓印内容失败: %v", err)
 	}
 	ticket, err := commands.RequestImprintConfirmApproval(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", filetree.ContentMD5(content),
@@ -448,7 +448,7 @@ func prepareImprintConfirmExecution(t *testing.T) (*gorm.DB, *AgentCommandServic
 	if _, err := commands.FetchPending("prod", "lobby-1"); err != nil {
 		t.Fatalf("领取拓印命令失败: %v", err)
 	}
-	if _, err := commands.ReceiveIngest(cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: "safe: true\n"}}, ""); err != nil {
+	if _, err := commands.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: "safe: true\n"}}, ""); err != nil {
 		t.Fatalf("回传拓印内容失败: %v", err)
 	}
 	ticket, err := commands.RequestImprintConfirmApproval(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", filetree.ContentMD5("safe: true\n"),
@@ -584,7 +584,7 @@ func TestReceiveResyncResultRejectsArchivedTarget(t *testing.T) {
 	if err := db.Model(&model.Server{}).Where("id = ?", server.ID).Update("lifecycle", model.ServerLifecycleArchived).Error; err != nil {
 		t.Fatalf("归档 server 失败: %v", err)
 	}
-	if err := svc.ReceiveResyncResult(cmd.ID, true, ""); err != apperr.ErrCommandNotFound {
+	if err := svc.ReceiveResyncResult(testAgentIdentityOf("prod", "archived"), cmd.ID, true, ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("归档后的迟到回传应按命令失效处理，实际 %v", err)
 	}
 	stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
@@ -604,7 +604,7 @@ func TestReceiveIngestHappy(t *testing.T) {
 		{Path: "AllinCore/config.yml", Content: "a: 1\n"},
 		{Path: "AllinCore/lang.yml", Content: "hi: hello\n"},
 	}
-	res, err := svc.ReceiveIngest(cmd.ID, files, "10.0.0.2")
+	res, err := svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, files, "10.0.0.2")
 	if err != nil {
 		t.Fatalf("ingest 应成功: %v", err)
 	}
@@ -635,18 +635,18 @@ func TestReceiveIngestRejectsJarAndState(t *testing.T) {
 	cmdRepo := repository.NewAgentCommandRepository(db)
 
 	// 不存在的命令 → COMMAND_NOT_FOUND
-	if _, err := svc.ReceiveIngest(99999, []ImportFile{{Path: "a.yml", Content: "x"}}, ""); err != apperr.ErrCommandNotFound {
+	if _, err := svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), 99999, []ImportFile{{Path: "a.yml", Content: "x"}}, ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("不存在命令应 ErrCommandNotFound，实际 %v", err)
 	}
 	// pending（未拉取）状态回传 → 不可回传
 	_, _ = applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	pend, _ := cmdRepo.FindOldestPending("prod", "lobby-1")
-	if _, err := svc.ReceiveIngest(pend.ID, []ImportFile{{Path: "a.yml", Content: "x"}}, ""); err != apperr.ErrCommandNotFound {
+	if _, err := svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), pend.ID, []ImportFile{{Path: "a.yml", Content: "x"}}, ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("pending 状态回传应被拒，实际 %v", err)
 	}
 	// 拉取后回传含 .jar → ErrInvalidPath，命令转 failed
 	cmd, _ := svc.FetchPending("prod", "lobby-1")
-	if _, err := svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "Evil/plugin.jar", Content: "MZ"}}, ""); err != apperr.ErrInvalidPath {
+	if _, err := svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "Evil/plugin.jar", Content: "MZ"}}, ""); err != apperr.ErrInvalidPath {
 		t.Fatalf("含 jar 应 ErrInvalidPath，实际 %v", err)
 	}
 	got, _ := cmdRepo.FindByID(cmd.ID)
@@ -661,7 +661,7 @@ func TestReceiveIngestServerScope(t *testing.T) {
 	svc := newCommandSvc(db)
 	_, _ = applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeServer, "area1", "lobby-1", "alice", "")
 	cmd, _ := svc.FetchPending("prod", "lobby-1")
-	if _, err := svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, ""); err != nil {
+	if _, err := svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, ""); err != nil {
 		t.Fatalf("server 层 ingest 应成功: %v", err)
 	}
 	fileRepo := repository.NewFileObjectRepository(db)
@@ -686,7 +686,7 @@ func TestReceiveIngestAllowsAgentSelfDir(t *testing.T) {
 
 	_, _ = applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	cmd, _ := svc.FetchPending("prod", "lobby-1")
-	if _, err := svc.ReceiveIngest(cmd.ID, []ImportFile{
+	if _, err := svc.ReceiveIngest(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, []ImportFile{
 		{Path: "BeaconAgent/config.yml", Content: "endpoints: x\n"},
 		{Path: "LuckPerms/config.yml", Content: "a: 1\n"},
 	}, ""); err != nil {
@@ -743,7 +743,7 @@ func TestReceiveResyncResultHappy(t *testing.T) {
 	_, _ = svc.applyRequestResyncForTest("prod", "lobby-1", "alice", "")
 	cmd, _ := svc.FetchPending("prod", "lobby-1")
 
-	if err := svc.ReceiveResyncResult(cmd.ID, true, ""); err != nil {
+	if err := svc.ReceiveResyncResult(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, true, ""); err != nil {
 		t.Fatalf("回传成功应推进命令: %v", err)
 	}
 	got, _ := cmdRepo.FindByID(cmd.ID)
@@ -759,24 +759,24 @@ func TestReceiveResyncResultFailedAndGuards(t *testing.T) {
 	cmdRepo := repository.NewAgentCommandRepository(db)
 
 	// 不存在的命令 → COMMAND_NOT_FOUND
-	if err := svc.ReceiveResyncResult(99999, true, ""); err != apperr.ErrCommandNotFound {
+	if err := svc.ReceiveResyncResult(testAgentIdentityOf("prod", "lobby-1"), 99999, true, ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("不存在命令应 ErrCommandNotFound，实际 %v", err)
 	}
 	// pending（未拉取）状态回传 → 不可回传
 	_, _ = svc.applyRequestResyncForTest("prod", "lobby-1", "alice", "")
 	pend, _ := cmdRepo.FindOldestPending("prod", "lobby-1")
-	if err := svc.ReceiveResyncResult(pend.ID, true, ""); err != apperr.ErrCommandNotFound {
+	if err := svc.ReceiveResyncResult(testAgentIdentityOf("prod", "lobby-1"), pend.ID, true, ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("pending 状态回传应被拒，实际 %v", err)
 	}
 	// 非 resync-config 类型命令（ingest-plugins）回传 → 类型不符拒
 	_, _ = applyRequestReverseFetchForTest(svc, "prod", "other-1", model.ScopeGroup, "area1", "", "alice", "")
 	ingestCmd, _ := svc.FetchPending("prod", "other-1")
-	if err := svc.ReceiveResyncResult(ingestCmd.ID, true, ""); err != apperr.ErrCommandNotFound {
+	if err := svc.ReceiveResyncResult(testAgentIdentityOf("prod", "other-1"), ingestCmd.ID, true, ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("非 resync-config 类型回传应被拒，实际 %v", err)
 	}
 	// 拉取后回传 ok=false → 命令转 failed
 	cmd, _ := svc.FetchPending("prod", "lobby-1")
-	if err := svc.ReceiveResyncResult(cmd.ID, false, "重拉失败"); err != nil {
+	if err := svc.ReceiveResyncResult(testAgentIdentityOf("prod", "lobby-1"), cmd.ID, false, "重拉失败"); err != nil {
 		t.Fatalf("失败回传不应返回错误（仅推进命令）: %v", err)
 	}
 	got, _ := cmdRepo.FindByID(cmd.ID)

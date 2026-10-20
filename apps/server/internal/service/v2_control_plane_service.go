@@ -30,8 +30,14 @@ const (
 	defaultPendingTTL = 72 * time.Hour
 )
 
+// auditJSON 把审计 detail 序列化成 JSON 文本。
+// 序列化失败时告警并退化为空串：入参异常不该静默写出一条空 detail 而无人察觉。
 func auditJSON(v any) string {
-	raw, _ := json.Marshal(v)
+	raw, err := json.Marshal(v)
+	if err != nil {
+		slog.Warn("审计 detail 序列化失败，本次审计将写入空 detail", "原因", redact.DesensitizeErr(err))
+		return ""
+	}
 	return string(raw)
 }
 

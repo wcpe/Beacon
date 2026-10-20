@@ -43,7 +43,6 @@ export default function ConfigCard({ data, isLoading, isError, error }: ConfigCa
       </div>
 
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={isLoading}
         isError={isError}
         error={error}
