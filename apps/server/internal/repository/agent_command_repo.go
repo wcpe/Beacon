@@ -254,8 +254,8 @@ func (r *AgentCommandRepository) UpdateStatusWithLogContent(id uint, content str
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("id = ? AND status = ?", id, model.CommandStatusFetched).
 		Updates(map[string]any{
-			"status": model.CommandStatusDone,
-			"log_content": content,
+			"status":                 model.CommandStatusDone,
+			"log_content":            content,
 			"log_content_expires_at": expiresAt.UTC(),
 		})
 	if res.Error != nil {
