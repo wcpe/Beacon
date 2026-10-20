@@ -4,7 +4,7 @@
 import { useTranslation } from 'react-i18next'
 import { Activity, Cpu, Database, MemoryStick, Server, Tag, Timer } from 'lucide-react'
 
-import { Badge, SectionHeader, cn, levelText, ratioLevel } from '@beacon/ui'
+import { Badge, JumpValue, SectionHeader, cn, levelText, ratioLevel } from '@beacon/ui'
 import type { ReactNode } from 'react'
 import type { SystemStatus } from '@beacon/contracts'
 
@@ -16,12 +16,22 @@ function Metric({
   label,
   value,
   valueClass,
+  jumpValue,
 }: {
   icon: ReactNode
   label: string
   value: ReactNode
   valueClass?: string
+  /**
+   * 可比较的数值文本，用于触发跳动。
+   * 主数值是复合节点（如「7 MB / 18 MB」由两个 span 拼成）时，把拼好的完整文本
+   * 从这里传入——否则 typeof value !== 'string' 会让跳动被静默跳过。
+   */
+  jumpValue?: string
 }) {
+  // 优先用显式传入的比较文本；再退化到「value 本身是字符串」的情形。
+  const comparable = jumpValue ?? (typeof value === 'string' ? value : undefined)
+  const valueNode = comparable === undefined ? value : <JumpValue value={comparable} />
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 shadow-card">
       <div className="flex items-center gap-2">
@@ -31,7 +41,7 @@ function Metric({
         <span className="text-[11.5px] font-medium text-ink-3">{label}</span>
       </div>
       <div className={cn('text-[19px] leading-none font-bold tracking-[-0.3px] text-ink-1 tnum', valueClass)}>
-        {value}
+        {valueNode}
       </div>
     </div>
   )
@@ -89,6 +99,7 @@ export default function RuntimeCard({ status }: { status: SystemStatus }) {
         <Metric
           icon={<MemoryStick className="size-[15px]" />}
           label={t('system.health.runtime.heap')}
+          jumpValue={`${formatBytes(status.runtime.heapAlloc)} / ${formatBytes(status.runtime.heapSys)}`}
           value={
             <span className="text-[15px]">
               {formatBytes(status.runtime.heapAlloc)} / {formatBytes(status.runtime.heapSys)}

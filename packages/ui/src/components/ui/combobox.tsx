@@ -65,6 +65,7 @@ export function Combobox({
   emptyText = '无匹配候选',
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false)
+  const anchorRef = React.useRef<HTMLDivElement>(null)
   // 键入草稿：严格模式下与 value 解耦（键入仅过滤，不立即上报）
   const [query, setQuery] = React.useState('')
 
@@ -124,7 +125,7 @@ export function Combobox({
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
       {/* Anchor 用 DOM 元素承接 ref（Input 非 forwardRef），并把宽度透传给下拉内容 */}
-      <PopoverPrimitive.Anchor className={cn('relative block', className)}>
+      <PopoverPrimitive.Anchor ref={anchorRef} className={cn('relative block', className)}>
         {/* 右内侧补一个 chevron，让控件一眼可辨为下拉（与 select 触发器视觉一致）；
             clearable 时在 chevron 左侧再补一个 × 清空按钮。
             pointer-events-none 不挡输入；输入框右侧 padding 随有无清空按钮调整，避免文本压住图标 */}
@@ -155,11 +156,15 @@ export function Combobox({
         <PopoverPrimitive.Content
           data-slot="combobox-content"
           align="start"
-          sideOffset={4}
+          sideOffset={6}
           // 阻止聚焦回退到触发器，保持输入框焦点以便连续键入过滤
           onOpenAutoFocus={(e) => { e.preventDefault(); }}
+          // 输入框属于锚点区域，点击回到输入位置时不关闭候选面板
+          onInteractOutside={(e) => {
+            if (e.target instanceof Node && anchorRef.current?.contains(e.target)) e.preventDefault()
+          }}
           className={cn(
-            'z-50 max-h-60 w-(--radix-popover-trigger-width) min-w-36 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-[var(--sh-pop)] ring-1 ring-foreground/10',
+            'z-50 max-h-60 w-(--radix-popover-trigger-width) min-w-36 overflow-y-auto scrollbar-hide rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-[var(--sh-pop)] ring-1 ring-border/60',
           )}
         >
           <div role="listbox">
@@ -173,7 +178,7 @@ export function Combobox({
                   aria-selected={opt.value === value}
                   className={cn(
                     'cursor-pointer rounded-md px-2 py-1.5 text-sm outline-none transition-colors duration-100 select-none hover:bg-accent hover:text-accent-foreground',
-                    opt.value === value && 'bg-accent/60 text-accent-foreground',
+                    opt.value === value && 'bg-accent text-accent-foreground',
                   )}
                   onClick={() => { handlePick(opt); }}
                 >

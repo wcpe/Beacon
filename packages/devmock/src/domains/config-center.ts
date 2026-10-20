@@ -26,7 +26,7 @@ import type {
 } from '@beacon/contracts'
 import { jsonError, mockDelete, mockGet, mockPatch, mockPost, paginate, pathParam, queryStr, readBody } from '../http'
 import { getClusterState, namespaceOfZone, type ClusterState } from '../data/cluster'
-import type { MockScenario } from '../scenario'
+import { getMockDataVolumeCount, type MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { isoOffset, pseudoSha256 } from '../support'
 import {
@@ -263,6 +263,30 @@ function buildConfig(scenario: MockScenario): ConfigState {
         [],
         [{ scopeLevel: 'namespace', scopeRefId: 1, contents: [`enabled: true\nweight: ${String(i % 50)}`] }],
       )
+    }
+  }
+  const targetCount = getMockDataVolumeCount()
+  if (targetCount > 0) {
+    const namespaceIds = Array.from(new Set(state.files.filter((file) => file.deletedAt === null).map((file) => file.namespaceId)))
+    for (const namespaceId of namespaceIds) {
+      let visibleCount = state.files.filter((file) => file.namespaceId === namespaceId && file.deletedAt === null).length
+      let sequence = 1
+      while (visibleCount < targetCount) {
+        const name = `plugins/MockData/Fixture${String(sequence).padStart(4, '0')}/config.yml`
+        if (!state.files.some((file) => file.namespaceId === namespaceId && file.name === name)) {
+          seedFile(
+            state,
+            namespaceId,
+            name,
+            'yaml',
+            `数据量验收配置 ${String(sequence)}`,
+            [],
+            [{ scopeLevel: 'namespace', scopeRefId: namespaceId, contents: [`enabled: true\nweight: ${String(sequence % 50)}`] }],
+          )
+          visibleCount += 1
+        }
+        sequence += 1
+      }
     }
   }
   return state

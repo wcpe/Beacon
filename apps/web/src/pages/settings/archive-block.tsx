@@ -6,10 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { Archive, Database } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
-  DataTable,
   DestructiveConfirmDialog,
   Select,
   SelectContent,
@@ -25,6 +23,8 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ArchiveJob } from '@beacon/contracts'
 
 import {
@@ -230,7 +230,7 @@ export default function ArchiveBlock() {
       </div>
       <div className="grid gap-4">
         {/* 目标库 + 各域水位总览 */}
-        <AsyncSection
+        <PageAsyncSection
           isLoading={overviewQuery.isLoading}
           isError={overviewQuery.isError}
           error={overviewQuery.error}
@@ -285,7 +285,7 @@ export default function ArchiveBlock() {
               </Table>
             </>
           )}
-        </AsyncSection>
+        </PageAsyncSection>
 
         {/* 任务列表主从：主列（吸顶过滤 + 自区滚 + 吸底分页）+ 点行右侧非模态详情面板 */}
         <MasterDetail
@@ -298,13 +298,13 @@ export default function ArchiveBlock() {
                 ) : undefined
               }
             >
-              <AsyncSection
+              <PageAsyncSection
                 isLoading={jobsQuery.isLoading}
                 isError={jobsQuery.isError}
                 error={jobsQuery.error}
                 skeleton={<TableSkeleton columns={columns.length} rows={4} />}
               >
-                <DataTable
+                <PageDataTable
                   columns={columns}
                   rows={jobs}
                   rowKey={(row) => String(row.id)}
@@ -315,7 +315,7 @@ export default function ArchiveBlock() {
                   }}
                   rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
                 />
-              </AsyncSection>
+              </PageAsyncSection>
             </ListCard>
           }
           detail={

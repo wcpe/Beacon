@@ -1,3 +1,11 @@
+/* 应用层样式：只放「与 apps/web 的 DOM 结构或路由强绑定」的东西。
+   — html/body 基础
+   — 壳层专属动画（路由切换 shell-route-enter、侧栏状态点 status-breathe）
+
+   通用视觉原语（任何消费 @beacon/ui 的应用都该有的动效/工具类）一律放
+   packages/ui/src/styles.css 的 @theme，用 --animate-* 注册后由工具类消费。
+   入场/退场类预设动画由 tw-animate-css 提供，不要在这里重复定义。 */
+
 html {
   background: var(--background);
 }
@@ -10,4 +18,49 @@ body {
     ui-sans-serif,
     system-ui,
     sans-serif;
+}
+
+@keyframes shell-route-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.995);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+[data-slot='route-transition'] {
+  animation: shell-route-enter 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 侧栏控制面状态点的呼吸效果：用光晕扩散 + 轻微明暗表达"心跳"，
+   不改变元素几何尺寸（避免在 56px 图标轨里引发布局抖动）。 */
+@keyframes status-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+
+  50% {
+    opacity: 0.72;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
+  }
+}
+
+.animate-status-breathe {
+  animation: status-breathe 2.4s ease-in-out infinite;
+}
+
+/* 减少动态效果：真正停掉呼吸动画，而不是只把它放慢——
+   放慢后的 infinite 光晕扩散仍会持续闪烁，对前庭敏感用户依旧构成动效负担。
+   停止动画不丢语义：状态点本身由 bg-ok / bg-crit / bg-ink-4 静态着色，
+   旁边还有状态文字（xl 断点）与 aria-label / title 描述，不依赖动画传达状态。 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-status-breathe {
+    animation: none;
+  }
 }

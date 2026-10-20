@@ -9,6 +9,7 @@ import { ChevronDown, ChevronRight, ExternalLink, Search } from 'lucide-react'
 import { Badge, Input } from '@beacon/ui'
 
 import licenseData from '../data/third-party-licenses.json'
+import PageTitle from '../shell/page-title'
 
 /** 与仓库根 LICENSE 字节级一致的 MIT 正文。 */
 export const MIT_LICENSE_TEXT = `MIT License
@@ -98,6 +99,8 @@ export default function LicensePage() {
 
   return (
     <section className="grid max-w-5xl gap-4" data-slot="license-page">
+      {/* 页面级 h1（sr-only）：词表页无可见大标题（视觉以搜索框 + 清单为主），只补语义 */}
+      <PageTitle titleKey="common.license.pageTitle" />
 
       {/* 搜索 + 运行时依赖表（参考截图：单一清单） */}
       <div className="grid gap-3" data-slot="license-deps">

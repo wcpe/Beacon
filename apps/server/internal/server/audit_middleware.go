@@ -86,11 +86,9 @@ var coveredWriteRoutes = map[string]struct{}{
 	"DELETE /admin/v1/instances/{serverId}/offline":     {},
 	"POST /admin/v1/instances/{serverId}/reverse-fetch": {},
 	"POST /admin/v1/instances/{serverId}/imprint":       {},
-	// 取 agent 日志触发（FR-88：instance.tail-logs，service 在事务内自记专项审计，detail 不含日志内容）
-	"POST /admin/v1/instances/{serverId}/logs": {},
-	// 已批准日志正文的一次性消费：grant 原子状态迁移是唯一事实，兜底审计不得记录正文。
-	"POST /admin/v1/instances/{serverId}/logs/grants/{grantId}/consume": {},
-	// 文件浏览申请与一次性消费：前者由 worker 专项审计，后者只推进 grant 状态，兜底审计不得记录浏览结果。
+	// 日志命令创建、日志查询与浏览命令/结果读取均由 service 写专项审计，detail 仅含目标和计数。
+	"POST /admin/v1/instances/{serverId}/logs":                            {},
+	"POST /admin/v1/instances/{serverId}/logs/grants/{grantId}/consume":   {},
 	"POST /admin/v1/instances/{serverId}/browse":                          {},
 	"POST /admin/v1/instances/{serverId}/browse/grants/{grantId}/consume": {},
 	// 强制重同步触发（FR-91：instance.resync，service 在事务内自记专项审计，detail 不含内容）
@@ -204,7 +202,7 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/server-placement-transfers": {},
 	// 健康权重版本化配置全量替换（health-weights.update，service 在事务内自记专项审计）
 	"PUT /admin/v2/settings/health-weights": {},
-	// 跨服消息 payload：旧正文入口拒绝；申请由 ApprovalService 自记审批审计，消费仅允许由 grant 服务成功一次。
+	// 跨服消息 payload 直读由 MessagePayloadService 先写元数据审计再返回，detail 不含 payload 正文。
 	"POST /admin/v2/messages/{messageId}/payload":                   {},
 	"POST /admin/v2/messages/{messageId}/payload/approval-requests": {},
 	"POST /admin/v2/sensitive-access-grants/{grantId}/consume":      {},
@@ -227,8 +225,7 @@ var coveredWriteRoutes = map[string]struct{}{
 	// 文件资产批量重扫（FR-163：asset.rescan，AssetService 在事务内自记专项审计，detail 记目标 serverId + force）
 	"POST /admin/v2/assets/rescan": {},
 	// 文件资产内容预览 / diff / 敏感规则修改（FR-164）：service 内自记 asset.preview / asset.diff /
-	// asset.sensitive_rule_update 专项审计（detail 绝不含文件内容）。预览申请由 ApprovalService 自记审批审计，
-	// grant 消费与消息 payload 的同类端点一致，作为一次性授权状态变更由专用服务处理；均登记于此避免兜底双记。
+	// asset.sensitive_rule_update 专项审计（detail 绝不含文件内容）；直读兼容端点均由 service 自记，避免兜底双记。
 	"POST /admin/v2/assets/preview/approval-requests":          {},
 	"POST /admin/v2/assets/preview/grants/{grantId}/consume":   {},
 	"POST /admin/v2/assets/pair-read/approval-requests":        {},

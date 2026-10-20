@@ -7,6 +7,7 @@ import type { LucideIcon } from 'lucide-react'
 
 import { cn } from '@beacon/ui'
 
+import PageTitle from '../shell/page-title'
 import ArchiveBlock from './settings/archive-block'
 import SettingsBlock from './settings/settings-block'
 import WeightsBlock from './settings/weights-block'
@@ -25,6 +26,9 @@ export default function SettingsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局。
+          页内左侧分区导航用 <nav aria-label> 兜住分区名，不与本标题冲突。 */}
+      <PageTitle titleKey="nav.settings" />
       <div className="grid gap-4 lg:grid-cols-[13rem_minmax(0,1fr)]">
         {/* 左侧吸顶分区导航：切换分区只换右侧内容，不滚长页 */}
         <nav

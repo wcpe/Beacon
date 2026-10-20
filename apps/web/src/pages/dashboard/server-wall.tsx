@@ -9,7 +9,6 @@ import { Link } from 'react-router-dom'
 import { ChevronRight, Network, Server } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   SectionHeader,
   Table,
@@ -23,6 +22,7 @@ import {
   levelSolid,
   type HealthLevel,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { HealthItem } from '@beacon/contracts'
 
 import { fetchHealthList } from '../../api/metrics'
@@ -68,7 +68,7 @@ export default function ServerWall() {
 
   // 列表主体
   const body = (
-    <AsyncSection
+    <PageAsyncSection
       isLoading={query.isPending}
       isError={query.isError}
       error={query.error}
@@ -142,7 +142,7 @@ export default function ServerWall() {
           </TableBody>
         </Table>
       )}
-    </AsyncSection>
+    </PageAsyncSection>
   )
 
   // 下钻链接：href 与文案不变

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -18,6 +18,7 @@ import {
   SlidersHorizontal,
   Terminal,
   TrendingUp,
+  Truck,
   Users,
   Zap,
 } from 'lucide-react'
@@ -69,10 +70,12 @@ import {
   type HealthSegment,
   IconStat,
   Input,
+  JumpValue,
   KpiCard,
   Label,
   MarkdownLite,
   MiniSparkline,
+  PageHeader,
   ratioLevel,
   ScrollArea,
   Select,
@@ -82,6 +85,7 @@ import {
   SelectValue,
   Separator,
   CardGridSkeleton,
+  FormSkeleton,
   Sheet,
   SheetContent,
   SheetDescription,
@@ -197,6 +201,69 @@ function ButtonPreview() {
           离线
         </Badge>
         <Badge variant="brand">品牌</Badge>
+      </div>
+    </ComponentShell>
+  )
+}
+
+// 数值跳动：值变化时放大 + 高亮一次，用于「会随轮询更新的数字」，
+// 让更新本身可被看见（单纯变色或透明度变化在小幅波动下无法察觉）。
+function JumpValuePreview() {
+  const [cpu, setCpu] = useState(12)
+  const [heap, setHeap] = useState(64)
+
+  useEffect(() => {
+    // 每 2 秒造一次数值变化，演示跳动效果
+    const timer = setInterval(() => {
+      setCpu(() => Math.floor(Math.random() * 40) + 5)
+      setHeap(() => Math.floor(Math.random() * 60) + 40)
+    }, 2000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [])
+
+  return (
+    <ComponentShell>
+      <div className="flex flex-wrap items-center gap-6 text-sm">
+        <div className="flex items-center gap-1.5">
+          <span className="text-ink-3">CPU</span>
+          <JumpValue value={`${String(cpu)}%`} className="font-medium tabular-nums text-ink-1" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-ink-3">堆内存</span>
+          <JumpValue value={`${String(heap)}/128 MB`} className="font-medium tabular-nums text-ink-1" />
+        </div>
+        <p className="text-xs text-ink-4">数值每 2 秒变化一次，变化瞬间跳动并短暂转为品牌色。</p>
+      </div>
+    </ComponentShell>
+  )
+}
+
+function PageHeaderPreview() {
+  return (
+    <ComponentShell>
+      <div className="space-y-6">
+        {/* 完整形态：图标 + 大标题 + 一行解释 + 右侧常用操作与「文档」入口 */}
+        <PageHeader
+          icon={<Truck />}
+          title="变更单"
+          description="一次交付就是一单：审批、分批推送、观察与回滚都在同一单里完成。"
+          actions={
+            <>
+              <Button size="sm">新建变更单</Button>
+              <Button variant="outline" size="sm">
+                文档
+              </Button>
+            </>
+          }
+        />
+        <Separator />
+        {/* 退化形态：无图标、无操作时只留标题与解释；长文案按省略号降级 */}
+        <PageHeader
+          title="服务端二进制"
+          description="查看每台服务器上报的二进制版本、可升级候选与漂移提示，超长解释会以省略号收尾而不是把布局撑破。"
+        />
       </div>
     </ComponentShell>
   )
@@ -481,6 +548,8 @@ function FeedbackPreview() {
         <TableSkeleton columns={3} rows={2} />
         <CardGridSkeleton count={2} gridClass="grid grid-cols-2 gap-2" />
         <TileGridSkeleton count={2} />
+        {/* 表单骨架：标签 + 输入框形状，比表格骨架更贴合设置项排版 */}
+        <FormSkeleton fields={2} withHint withActions />
       </div>
     </ComponentShell>
   )
@@ -737,7 +806,7 @@ const items: MuseumItem[] = [
     title: '加载与反馈',
     group: '交互反馈',
     description: '展示异步三态、骨架屏、Toast 容器和常用骨架组合。',
-    exports: ['AsyncSection', 'Skeleton', 'TableSkeleton', 'CardGridSkeleton', 'TileGridSkeleton', 'Toaster'],
+    exports: ['AsyncSection', 'Skeleton', 'TableSkeleton', 'CardGridSkeleton', 'TileGridSkeleton', 'FormSkeleton', 'Toaster'],
     states: ['loading', 'error', 'toast', 'table skeleton', 'card skeleton'],
     preview: <FeedbackPreview />,
   },
@@ -768,13 +837,27 @@ const items: MuseumItem[] = [
     preview: <DashboardPreview />,
   },
   {
-    id: 'section-header',
-    title: '区段标题',
+    id: 'jump-value',
+    title: '数值跳动',
     group: '展示组件',
-    description: '卡内 / 页内区段标题：图标 + 标题 + 计数 + 右侧操作；base/lg 两档。',
-    exports: ['SectionHeader'],
-    states: ['with actions', 'section base', 'section lg'],
-    preview: <SectionHeaderPreview />,
+    description: '值变化时放大并短暂转为品牌色，用于会随轮询更新的数字（如控制面 CPU / 堆内存）。',
+    exports: ['JumpValue', 'JumpValueProps'],
+    states: ['首次渲染不跳动', '值变化时跳动', 'prefers-reduced-motion 降级为变色'],
+    preview: <JumpValuePreview />,
+  },
+  {
+    id: 'section-header',
+    title: '页级与区段标题',
+    group: '展示组件',
+    description: '页级标题：图标 + 大标题 + 一行解释 + 右侧操作；区段标题：图标 + 标题 + 计数 + 右侧操作，base/lg 两档。',
+    exports: ['PageHeader', 'SectionHeader'],
+    states: ['page header', 'with actions', 'no icon', 'section base', 'section lg'],
+    preview: (
+      <div className="grid gap-4">
+        <PageHeaderPreview />
+        <SectionHeaderPreview />
+      </div>
+    ),
   },
   {
     id: 'text',

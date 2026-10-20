@@ -1,6 +1,7 @@
 // /lobby-clusters 大厅集群页测试：独立于区服树，覆盖入口就绪、空态、排水保护与迁移写闭环。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { delay, http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import LobbyClustersPage from '../../pages/lobby-clusters'
@@ -28,6 +29,23 @@ describe('/lobby-clusters 大厅集群页', () => {
     expect(await screen.findByText('lobby-1')).toBeInTheDocument()
     expect(screen.getByText('大厅成员（仅 Bukkit）')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '前往待确认身份' })).toHaveAttribute('href', '/servers')
+  })
+
+  it('首屏显示大厅摘要与成员表骨架，加载完成后显示真实空态', async () => {
+    useScenario('normal')
+    server.use(
+      http.get('/admin/v2/lobby-clusters', async () => {
+        await delay(120)
+        return HttpResponse.json({ items: [], total: 0 })
+      }),
+    )
+    const { container } = renderPage(<LobbyClustersPage />)
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-slot="page-skeleton"]')).toBeInTheDocument()
+    })
+    expect(await screen.findByText('无大厅成员时，BC 首次连接拒绝；先确认 Bukkit 身份，再迁入。')).toBeInTheDocument()
+    expect(container.querySelector('[data-slot="page-skeleton"]')).not.toBeInTheDocument()
   })
 
   it('空态明确说明 BC 首次连接会被拒绝', async () => {

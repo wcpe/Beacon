@@ -67,63 +67,78 @@ export default function DestructiveConfirmDialog({
 }: DestructiveConfirmDialogProps) {
   // 手输复述草稿：每次打开时清空，避免残留上次输入
   const [typed, setTyped] = useState('')
+  const [asyncError, setAsyncError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (open) setTyped('')
+    if (open) {
+      setTyped('')
+      setAsyncError(null)
+    }
   }, [open])
 
   // 高摩擦档须手输与 confirmPhrase 相符（首尾空白不计，避免名称带尾空格时照抄也无法确认而卡死）；
   // 仍区分大小写以保留摩擦强度。无 confirmPhrase 时该闸恒通过。
   const phraseMatches = !confirmPhrase || typed.trim() === confirmPhrase.trim()
   const canConfirm = phraseMatches && !pending
+  const visibleError = errorText ?? asyncError
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!pending) {
+          onOpenChange(next)
+        }
+      }}
+    >
+      <AlertDialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
 
-        {/* 影响摘要：脱链哪层 / 影响哪些服 */}
-        {impacts && impacts.length > 0 && (
-          <ul className="list-disc space-y-1 rounded-md bg-muted/50 px-5 py-3 text-sm text-muted-foreground">
-            {impacts.map((line, i) => (
-              <li key={i}>{line}</li>
-            ))}
-          </ul>
-        )}
+        <div className="min-h-0 grid gap-4 overflow-y-auto pr-1">
+          {/* 影响摘要：脱链哪层 / 影响哪些服 */}
+          {impacts && impacts.length > 0 && (
+            <ul className="list-disc space-y-1 rounded-md bg-muted/50 px-5 py-3 text-sm text-muted-foreground">
+              {impacts.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          )}
 
-        {/* 高摩擦档：手输复述指定短语才放行 */}
-        {confirmPhrase && (
-          <div className="space-y-1.5">
-            <Label htmlFor="destructive-confirm-phrase">
-              {confirmPhraseLabel(confirmPhrase)}
-            </Label>
-            <Input
-              id="destructive-confirm-phrase"
-              aria-label={confirmPhraseAriaLabel}
-              value={typed}
-              onChange={(e) => { setTyped(e.target.value); }}
-              placeholder={confirmPhrase}
-              autoComplete="off"
-              className="font-mono"
-            />
-          </div>
-        )}
+          {/* 高摩擦档：手输复述指定短语才放行 */}
+          {confirmPhrase && (
+            <div className="space-y-1.5">
+              <Label htmlFor="destructive-confirm-phrase">
+                {confirmPhraseLabel(confirmPhrase)}
+              </Label>
+              <Input
+                id="destructive-confirm-phrase"
+                aria-label={confirmPhraseAriaLabel}
+                value={typed}
+                onChange={(e) => { setTyped(e.target.value); }}
+                placeholder={confirmPhrase}
+                autoComplete="off"
+                className="font-mono"
+                disabled={pending}
+              />
+            </div>
+          )}
 
-        {/* 写失败 / 业务拒绝：独立错误区，不叠 description/impacts */}
-        {errorText ? (
-          <p
-            role="alert"
-            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-          >
-            {errorText}
-          </p>
-        ) : null}
+          {/* 写失败 / 业务拒绝：独立错误区，不叠 description/impacts */}
+          {visibleError !== null && visibleError !== '' ? (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {visibleError}
+            </p>
+          ) : null}
+        </div>
 
         <AlertDialogFooter>
-          <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogCancel disabled={pending}>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
             disabled={!canConfirm}
@@ -136,11 +151,16 @@ export default function DestructiveConfirmDialog({
               }
               if (result != null && typeof (result as PromiseLike<unknown>).then === 'function') {
                 e.preventDefault()
-                void Promise.resolve(result).then((keep) => {
-                  if (keep !== false) {
-                    onOpenChange(false)
-                  }
-                })
+                void Promise.resolve(result).then(
+                  (keep) => {
+                    if (keep !== false) {
+                      onOpenChange(false)
+                    }
+                  },
+                  (error: unknown) => {
+                    setAsyncError(error instanceof Error ? error.message : String(error))
+                  },
+                )
               }
             }}
           >

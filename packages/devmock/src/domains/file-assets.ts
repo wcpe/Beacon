@@ -5,7 +5,7 @@ import { HttpResponse, type HttpHandler } from 'msw'
 import type {
   AssetCompareGroup,
   AssetCompareResponse,
-  AssetDiffResponse,
+  AssetDiffResponse as ContractAssetDiffResponse,
   AssetItem,
   AssetListResponse,
   AssetPreviewResponse,
@@ -15,9 +15,12 @@ import type {
 } from '@beacon/contracts'
 import { jsonError, mockGet, mockPost, mockPut, paginate, queryStr, readBody } from '../http'
 import { getClusterState } from '../data/cluster'
-import type { MockScenario } from '../scenario'
+import { getMockDataVolumeCount, type MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { BASE_MS, hashString, isoOffset, pseudoSha256, uuidFrom } from '../support'
+
+// 直接复用共享契约：left/right 为必填可空，与后端 writeDiff 的实际输出一致。
+type AssetDiffResponse = ContractAssetDiffResponse
 
 // 默认敏感路径规则（spec §4.6 默认清单）
 const DEFAULT_SENSITIVE_PATTERNS = [
@@ -117,7 +120,40 @@ function buildAssets(scenario: MockScenario): AssetState {
       scanDurationMs: 800 + (serverHash % 4200),
     })
   }
-  return { assets, scans, patterns: [...DEFAULT_SENSITIVE_PATTERNS] }
+  const volumeCount = getMockDataVolumeCount()
+  let volumeAssets = assets
+  if (volumeCount > 0) {
+    volumeAssets = []
+    const namespaceIds = Array.from(new Set(servers.map((server) => server.namespaceId)))
+    for (const namespaceId of namespaceIds) {
+      const namespaceAssets = assets.filter((asset) => asset.namespaceId === namespaceId)
+      const targetCount = scenario === 'huge' ? Math.max(namespaceAssets.length, volumeCount) : volumeCount
+      const selected = namespaceAssets.slice(0, targetCount)
+      const server = servers.find((candidate) => candidate.namespaceId === namespaceId)
+      const template = selected[0] ?? assets[0]
+      // template 来自索引访问，本项目未开启 noUncheckedIndexedAccess，故类型上不含 undefined；
+      // 真正可能为空的是 servers.find() 的结果。
+      if (server !== undefined) {
+        for (let index = selected.length; index < targetCount; index += 1) {
+          const path = `plugins/MockData/fixture-${String(index + 1).padStart(4, '0')}.yml`
+          selected.push({
+            ...template,
+            serverId: server.serverId,
+            namespaceId,
+            path,
+            ext: 'yml',
+            sha256: pseudoSha256(`asset-volume:${String(namespaceId)}:${String(index)}`),
+            size: 1024 + (index % 4096),
+            mtimeMs: BASE_MS - index * 1000,
+            isText: true,
+            scannedAt: isoOffset(-(index % 1800) * 1000),
+          })
+        }
+      }
+      volumeAssets = volumeAssets.concat(selected)
+    }
+  }
+  return { assets: volumeAssets, scans, patterns: [...DEFAULT_SENSITIVE_PATTERNS] }
 }
 
 const getAssetState: () => AssetState = defineScenarioStore(buildAssets)
@@ -260,16 +296,16 @@ export const fileAssetsHandlers: HttpHandler[] = [
 
   // 文本文件安全预览（敏感命中须填原因；二进制只回元数据）
   mockPost('/admin/v2/assets/preview', async ({ request }) => {
-    const body = await readBody<{ serverId?: string; path?: string; reason?: string }>(request)
-    if (!body.serverId || !body.path) {
-      return jsonError(400, 'invalid_param', 'serverId / path 必填')
+    const body = await readBody<{ namespaceId?: number; serverId?: string; path?: string; reason?: string }>(request)
+    if (body.namespaceId === undefined || !body.serverId || !body.path) {
+      return jsonError(400, 'invalid_param', 'namespaceId / serverId / path 必填')
     }
     const state = getAssetState()
-    const row = state.assets.find((a) => a.serverId === body.serverId && a.path === body.path)
+    const row = state.assets.find((asset) => asset.namespaceId === body.namespaceId && asset.serverId === body.serverId && asset.path === body.path)
     if (!row) {
       return jsonError(404, 'asset_not_found', '该服清单中不存在此文件')
     }
-    const server = getClusterState().servers.find((s) => s.serverId === body.serverId)
+    const server = getClusterState().servers.find((s) => s.namespaceId === body.namespaceId && s.serverId === body.serverId)
     if (!server?.online) {
       return jsonError(504, 'asset_agent_offline', 'agent 离线，无法实时读取文件内容')
     }
@@ -293,8 +329,8 @@ export const fileAssetsHandlers: HttpHandler[] = [
   // 两侧文件内容 diff（哈希相同短路；二进制 / 超限拒绝）
   mockPost('/admin/v2/assets/diff', async ({ request }) => {
     const body = await readBody<{
-      left?: { serverId: string; path: string }
-      right?: { serverId: string; path: string }
+      left?: { namespaceId: number; serverId: string; path: string }
+      right?: { namespaceId: number; serverId: string; path: string }
       reason?: string
     }>(request)
     if (!body.left || !body.right) {
@@ -303,8 +339,8 @@ export const fileAssetsHandlers: HttpHandler[] = [
     const state = getAssetState()
     const leftRef = body.left
     const rightRef = body.right
-    const left = state.assets.find((a) => a.serverId === leftRef.serverId && a.path === leftRef.path)
-    const right = state.assets.find((a) => a.serverId === rightRef.serverId && a.path === rightRef.path)
+    const left = state.assets.find((asset) => asset.namespaceId === leftRef.namespaceId && asset.serverId === leftRef.serverId && asset.path === leftRef.path)
+    const right = state.assets.find((asset) => asset.namespaceId === rightRef.namespaceId && asset.serverId === rightRef.serverId && asset.path === rightRef.path)
     if (!left || !right) {
       return jsonError(404, 'asset_not_found', 'diff 目标文件不存在于清单')
     }
@@ -315,7 +351,7 @@ export const fileAssetsHandlers: HttpHandler[] = [
       return jsonError(403, 'asset_sensitive_path', '命中敏感路径规则，diff 必须填写原因', { sensitive: true })
     }
     if (left.sha256 === right.sha256) {
-      return HttpResponse.json({ identical: true } satisfies AssetDiffResponse)
+      return HttpResponse.json({ identical: true, left: null, right: null } satisfies AssetDiffResponse)
     }
     const response: AssetDiffResponse = {
       identical: false,

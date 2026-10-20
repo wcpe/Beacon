@@ -77,17 +77,23 @@ export default function SensitiveRulesDialog({ open, onOpenChange }: SensitiveRu
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) {
+        if (!next && !saveMutation.isPending) {
           onOpenChange(false)
         }
       }}
     >
-      <DialogContent className="max-w-2xl">
+      <DialogContent
+        className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] overflow-hidden max-w-2xl"
+        showCloseButton={!saveMutation.isPending}
+        onInteractOutside={(event) => {
+          event.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="text-ink-1">{t('delivery.assets.sensitiveRules.title')}</DialogTitle>
           <DialogDescription>{t('delivery.assets.sensitiveRules.hint')}</DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3">
+        <div className="min-h-0 grid gap-3 overflow-y-auto pr-1">
           <div className="space-y-1.5">
             <Label htmlFor="asset-sensitive-rules">{t('delivery.assets.sensitiveRules.label')}</Label>
             <Textarea
@@ -101,21 +107,23 @@ export default function SensitiveRulesDialog({ open, onOpenChange }: SensitiveRu
               rows={10}
               className="font-mono text-xs"
               placeholder={t('delivery.assets.sensitiveRules.placeholder')}
-              disabled={rulesQuery.isLoading}
+              disabled={rulesQuery.isLoading || rulesQuery.isError}
             />
             {!rulesQuery.isLoading && nextPatterns.length === 0 && (
               <p className="text-xs text-warn">{t('delivery.assets.sensitiveRules.empty')}</p>
             )}
           </div>
           {rulesQuery.isError && (
-            <p className="text-sm text-crit">{t('delivery.assets.sensitiveRules.loadError')}</p>
+            <p role="alert" className="text-sm text-crit">{messageOf(rulesQuery.error)}</p>
           )}
-          {saveError !== null && <p className="text-sm text-crit">{saveError}</p>}
+          {saveError !== null && <p role="alert" className="text-sm text-crit">{saveError}</p>}
           {saved && <p className="text-sm text-ok">{t('delivery.assets.sensitiveRules.saved')}</p>}
         </div>
         <DialogFooter>
           <Button
+            type="button"
             variant="outline"
+            disabled={saveMutation.isPending}
             onClick={() => {
               onOpenChange(false)
             }}
@@ -123,7 +131,8 @@ export default function SensitiveRulesDialog({ open, onOpenChange }: SensitiveRu
             {t('delivery.assets.sensitiveRules.cancel')}
           </Button>
           <Button
-            disabled={rulesQuery.isLoading || saveMutation.isPending}
+            type="button"
+            disabled={rulesQuery.isLoading || rulesQuery.isError || rulesQuery.data === undefined || saveMutation.isPending}
             onClick={() => {
               saveMutation.mutate(nextPatterns)
             }}
@@ -134,4 +143,8 @@ export default function SensitiveRulesDialog({ open, onOpenChange }: SensitiveRu
       </DialogContent>
     </Dialog>
   )
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof ApiClientError || error instanceof Error ? error.message : String(error)
 }

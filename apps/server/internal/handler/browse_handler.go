@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -13,7 +15,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
-// BrowseHandler 编排需审批的 Agent 文件浏览：创建申请、接收回传、一次消费结果。
+// BrowseHandler 编排受限 Agent 文件浏览：创建命令、接收回传、一次读取结果。
 type BrowseHandler struct {
 	svc        *service.AgentCommandService
 	instSvc    *service.InstanceService
@@ -32,9 +34,31 @@ func NewBrowseHandler(svc *service.AgentCommandService, instSvc *service.Instanc
 // SetReportAuthenticator 注入浏览回传的 v2 权威身份校验器。
 func (h *BrowseHandler) SetReportAuthenticator(authn browseReportAuthenticator) { h.reportAuth = authn }
 
-// Browse 是旧浏览入口，固定失败关闭，不能绕过审批直接读取结果。
+// Browse 只读取指定 commandId 的一次性结果；创建命令由 POST /browse 处理。
+// namespace 为可选 query 参数：显式给出时按 (serverId, namespace) 联合定位，缺省则由 service 按 serverId 反查，
+// 反查出现跨环境同名歧义时按不存在拒绝——不为了兼容而放弃命名空间隔离。
 func (h *BrowseHandler) Browse(w http.ResponseWriter, r *http.Request) {
-	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+	q := r.URL.Query()
+	rawID := q.Get("commandId")
+	if rawID == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	commandID, err := strconv.ParseUint(rawID, 10, 0)
+	if err != nil || commandID == 0 {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	if h == nil || h.svc == nil {
+		render.WriteError(w, r, apperr.ErrInternal)
+		return
+	}
+	result, err := h.svc.ReadBrowseResult(uint(commandID), q.Get("namespace"), chi.URLParam(r, "serverId"), auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, json.RawMessage(result))
 }
 
 type browseApprovalRequest struct {
@@ -51,10 +75,10 @@ type consumeBrowseRequest struct {
 	CommandID uint `json:"commandId"`
 }
 
-// Request 创建文件浏览审批申请；批准 worker 才能下发 fs-browse 命令。
+// Request 直接创建受限浏览命令并返回 commandId。
 func (h *BrowseHandler) Request(w http.ResponseWriter, r *http.Request) {
 	if h == nil || h.svc == nil || h.instSvc == nil {
-		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		render.WriteError(w, r, apperr.ErrInternal)
 		return
 	}
 	var req browseApprovalRequest
@@ -63,26 +87,47 @@ func (h *BrowseHandler) Request(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serverID := chi.URLParam(r, "serverId")
-	if _, err := h.instSvc.Get(req.Namespace, serverID); err != nil {
+	h.startBrowse(w, r, service.BrowseParams{
+		Namespace: req.Namespace, ServerID: serverID, Op: req.Op, Path: req.Path,
+		Offset: req.Offset, Limit: req.Limit, MaxDepth: req.MaxDepth,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+}
+
+func (h *BrowseHandler) startBrowse(w http.ResponseWriter, r *http.Request, params service.BrowseParams) {
+	if strings.TrimSpace(params.Namespace) == "" || strings.TrimSpace(params.ServerID) == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	if h == nil || h.svc == nil || h.instSvc == nil {
+		render.WriteError(w, r, apperr.ErrInternal)
+		return
+	}
+	if _, err := h.instSvc.Get(params.Namespace, params.ServerID); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	ticket, err := h.svc.RequestBrowseApproval(service.BrowseParams{Namespace: req.Namespace, ServerID: serverID, Op: req.Op, Path: req.Path, Offset: req.Offset, Limit: req.Limit, MaxDepth: req.MaxDepth, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r)}, req.Reason, r.Header.Get("Idempotency-Key"), requestPrincipal(r))
+	commandID, err := h.svc.RequestBrowse(r.Context(), params)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, ticket)
+	render.WriteJSON(w, http.StatusAccepted, map[string]any{"commandId": commandID, "status": "pending"})
 }
 
-// ConsumeApproved 仅允许原申请主体一次性消费已由 Agent 回传的浏览结果。
+// ConsumeApproved 保留旧 grant 路径作为兼容定位器，读取权限由 management.read 能力控制。
+// namespace 同 Browse：可选 query 参数，缺省由 service 按 serverId 反查。
 func (h *BrowseHandler) ConsumeApproved(w http.ResponseWriter, r *http.Request) {
 	var req consumeBrowseRequest
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.CommandID == 0 {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	result, err := h.svc.ConsumeApprovedBrowse(chi.URLParam(r, "grantId"), req.CommandID, requestPrincipal(r))
+	if h == nil || h.svc == nil {
+		render.WriteError(w, r, apperr.ErrInternal)
+		return
+	}
+	result, err := h.svc.ReadBrowseResult(req.CommandID, r.URL.Query().Get("namespace"), chi.URLParam(r, "serverId"), auth.Operator(r.Context()), clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

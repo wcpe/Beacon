@@ -7,11 +7,9 @@ import { Link } from 'react-router-dom'
 import { Network, Server, UserPlus } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
-  DataTable,
   Input,
   Label,
   Sheet,
@@ -22,6 +20,8 @@ import {
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { AgentIdentityItem } from '@beacon/contracts'
 
 import { ApiClientError, approveIdentity, fetchIdentities, rejectIdentity } from '../../api/cluster'
@@ -209,15 +209,15 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
               <Link className="w-fit text-brand hover:underline" to={`/approvals/${encodeURIComponent(approvalRequestID)}`}>查看统一审批</Link>
             </div>
           )}
-          <AsyncSection isLoading={query.isPending} isError={query.isError} error={query.error}>
-            <DataTable
+          <PageAsyncSection isLoading={query.isPending} isError={query.isError} error={query.error}>
+            <PageDataTable
               columns={columns}
               rows={pendingRows}
               rowKey={(row) => row.identityId}
               emptyText={t('cluster.servers.pending.empty')}
               density="compact"
             />
-          </AsyncSection>
+          </PageAsyncSection>
         </div>
 
         {/* 确认接入：占用冲突时强制解绑勾选（不勾选则后端 409） */}

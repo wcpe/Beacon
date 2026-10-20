@@ -24,11 +24,21 @@ import { fallbackHandlers } from './http'
 
 export {
   MOCK_SCENARIOS,
+  MOCK_DATA_VOLUMES,
+  MOCK_LATENCIES,
   getMockScenario,
   setMockScenario,
   subscribeMockScenario,
+  getMockDataVolume,
+  getMockDataVolumeCount,
+  setMockDataVolume,
+  subscribeMockDataVolume,
+  getMockLatency,
+  getMockLatencyMilliseconds,
+  setMockLatency,
+  subscribeMockLatency,
 } from './scenario'
-export type { MockScenario } from './scenario'
+export type { MockScenario, MockDataVolume, MockLatency } from './scenario'
 export { resetMockData } from './store'
 export { MOCK_TRACE_ID, errorBody } from './http'
 export { BASE_MS } from './support'

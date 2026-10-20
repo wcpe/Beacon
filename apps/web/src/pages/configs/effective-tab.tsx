@@ -7,17 +7,13 @@ import { useTranslation } from 'react-i18next'
 import { FileCheck } from 'lucide-react'
 
 import {
-  AsyncSection,
   Button,
+  Combobox,
   Label,
   SectionHeader,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   cn,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigFileDetail, ConfigScopeLevel } from '@beacon/contracts'
 
 import { fetchConfigEffective, type EffectiveQuery } from '../../api/delivery-configs'
@@ -72,28 +68,23 @@ export default function EffectiveTab({ fileId, file }: EffectiveTabProps) {
           <Label htmlFor="config-effective-target-type">
             {t('delivery.configs.detail.effective.targetTypeLabel')}
           </Label>
-          <Select
+          <Combobox
+            id="config-effective-target-type"
+            className="w-56"
+            aria-label={t('delivery.configs.detail.effective.targetTypeLabel')}
             value={targetType}
-            onValueChange={(value) => {
+            onChange={(value) => {
               setTargetType(value as ConfigScopeLevel)
               setPickedRef(null)
             }}
-          >
-            <SelectTrigger
-              id="config-effective-target-type"
-              className="w-56"
-              aria-label={t('delivery.configs.detail.effective.targetTypeLabel')}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SCOPE_LEVELS.map((level) => (
-                <SelectItem key={level} value={level}>
-                  {t(`delivery.configs.detail.effective.targetTypes.${level}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={SCOPE_LEVELS.map((level) => ({
+              value: level,
+              label: t(`delivery.configs.detail.effective.targetTypes.${level}`),
+            }))}
+            allowCustom={false}
+            placeholder={t('delivery.configs.detail.effective.targetTypeLabel')}
+            emptyText={t('common.combobox.noMatch')}
+          />
         </div>
         {targetType !== 'namespace' && (
           <div className="w-64 space-y-1.5">
@@ -126,7 +117,12 @@ export default function EffectiveTab({ fileId, file }: EffectiveTabProps) {
         </Button>
       </div>
 
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+      <PageAsyncSection
+        keepContentWhileRefreshing
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+      >
         {query.data && (
           <div className="grid gap-4">
             <p className="tnum text-sm text-ink-3">
@@ -217,7 +213,7 @@ export default function EffectiveTab({ fileId, file }: EffectiveTabProps) {
             </div>
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

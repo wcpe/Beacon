@@ -463,6 +463,7 @@ export const observability = {
       'instance.heartbeat': '实例心跳',
       'instance.lost': '实例失联',
       'instance.tail-logs': '拉取实例日志',
+      'instance.tail-logs-read': '读取实例日志正文',
       'instance.resync': '强制实例重同步',
       'instance.bc-directory-resync': '重同步实例 BC 目录',
       // 配置文件（经典通道）
@@ -474,6 +475,7 @@ export const observability = {
       'file.enable': '启用文件',
       'file.import': '导入文件',
       'file.browse': '浏览实例文件',
+      'file.browse-read': '读取浏览正文',
       // 反向抓取 / 按需拓印（FR-39 / FR-46 / FR-58）
       'file.reverse-fetch': '触发反向抓取',
       'file.reverse-fetch-scan': '反向抓取·扫描',

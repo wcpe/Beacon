@@ -464,6 +464,7 @@ export const observability = {
       'instance.heartbeat': 'Instance heartbeat',
       'instance.lost': 'Instance lost',
       'instance.tail-logs': 'Tail instance logs',
+      'instance.tail-logs-read': 'Read instance log content',
       'instance.resync': 'Force instance resync',
       'instance.bc-directory-resync': 'Resync instance BC directory',
       // Config files (classic channel)
@@ -475,6 +476,7 @@ export const observability = {
       'file.enable': 'Enable file',
       'file.import': 'Import file',
       'file.browse': 'Browse instance files',
+      'file.browse-read': 'Read browsed content',
       // Reverse fetch / on-demand imprint (FR-39 / FR-46 / FR-58)
       'file.reverse-fetch': 'Trigger reverse fetch',
       'file.reverse-fetch-scan': 'Reverse fetch · scan',

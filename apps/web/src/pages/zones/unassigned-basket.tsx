@@ -9,7 +9,8 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { GripVertical, Inbox, Network, PanelRightClose, Server } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, Checkbox, cn } from '@beacon/ui'
+import { Badge, Button, Checkbox, cn } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ServerItem } from '@beacon/contracts'
 
 import { type ApprovalTicket, fetchLobbyClusters, fetchServers, fetchZoneTree, transferServerPlacement } from '../../api/cluster'
@@ -225,7 +226,7 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
-        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+        <PageAsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
           {rows.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-ink-3">
               {t('cluster.zones.basket.empty')}
@@ -306,7 +307,7 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
               {query.isFetchingNextPage ? t('cluster.zones.basket.loadingMore') : t('cluster.zones.basket.loadMore')}
             </Button>
           )}
-        </AsyncSection>
+        </PageAsyncSection>
       </div>
 
       {/* 底部操作条：选择集提示 + 「分配到…」 */}

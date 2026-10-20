@@ -25,9 +25,9 @@ describe('/namespaces 页', () => {
     useScenario('normal')
     renderPage(<NamespacesPage />)
 
-    // 命名空间 列表出现已知 namespace（种子数据含 default）
+    // 命名空间列表出现已知 namespace（种子数据含 default），不再展示 mock 生命周期评审区块
     expect(await screen.findByText(/强隔离/)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '命名空间生命周期评审（Mock）' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '命名空间生命周期评审' })).not.toBeInTheDocument()
     // 至少渲染一行 namespace
     await waitFor(() => {
       expect(screen.getAllByRole('row').length).toBeGreaterThan(1)

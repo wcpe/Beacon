@@ -1,5 +1,5 @@
 // 消息链路页（/messages，FR-181）：跨服消息链路检索与逐跳追踪。元数据永不含 payload；
-// payload 仅经审批申请与一次性授权流程按需获取，批准前不请求正文。
+// 填写原因后直读 payload；读取前由后端完成专项审计，未存储时不提供正文入口。
 // 查询防护：精确 messageId / correlationId 直查；热查询可仅时间窗（全局近期）；冷查询仍须 selector。
 // 进页默认 committed 近 1h 全局查询。游标分页；「包含归档」冷查询（FR-152）。行点击右侧详情面板。
 import { useMemo, useState } from 'react'
@@ -8,16 +8,16 @@ import { useTranslation } from 'react-i18next'
 import { MessagesSquare, Search } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
-  DataTable,
   Input,
   Skeleton,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { MessageItem, MsgStatus } from '@beacon/contracts'
 
 import { fetchMessageDetail, fetchMessages, type MessagesQuery } from '../api/connections'
@@ -29,6 +29,7 @@ import WindowSelect, { WINDOW_MS, type WindowKey } from '../features/observabili
 import PayloadDialog from '../features/observability/payload-dialog'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
+import PageTitle from '../shell/page-title'
 
 const PAGE_SIZE = 20
 const STATUSES = ['accepted', 'dispatched', 'delivered', 'failed', 'expired'] as const
@@ -274,6 +275,8 @@ export default function MessagesPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.messages" />
       <MasterDetail
         master={
           <ListCard
@@ -295,13 +298,13 @@ export default function MessagesPage() {
               ) : undefined
             }
           >
-            <AsyncSection
+            <PageAsyncSection
               isLoading={query.isLoading}
               isError={query.isError}
               error={query.error}
               skeleton={<TableSkeleton columns={columns.length} rows={8} />}
             >
-              <DataTable
+              <PageDataTable
                 columns={columns}
                 rows={rows}
                 rowKey={(row) => row.messageId}
@@ -312,7 +315,7 @@ export default function MessagesPage() {
                 }}
                 rowClassName={(row) => (row.messageId === selectedId ? 'bg-brand-50/60' : undefined)}
               />
-            </AsyncSection>
+            </PageAsyncSection>
           </ListCard>
         }
         detail={selected === null ? null : <MessageDetailPanel row={selected} />}
@@ -392,7 +395,7 @@ function MessageDetailPanel({ row }: { row: MessageItem }) {
 
       <MessageHops messageId={row.messageId} />
 
-      {/* payload 仅可提交审批申请；未存储时禁入口。 */}
+      {/* payload 填写原因后直读；读取前由后端完成专项审计，未存储时禁入口。 */}
       <div className="border-t border-border pt-2.5">
         {row.payloadStored ? (
           <Button
@@ -432,7 +435,7 @@ function MessageHops({ messageId }: { messageId: string }) {
   return (
     <div className="border-t border-border pt-2.5">
       <p className="mb-1.5 text-xs font-semibold text-ink-2">{t('observability.messages.hopsTitle')}</p>
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
@@ -474,7 +477,7 @@ function MessageHops({ messageId }: { messageId: string }) {
         ) : (
           <span className="text-xs text-ink-4">{t('observability.messages.dash')}</span>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </div>
   )
 }

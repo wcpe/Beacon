@@ -213,7 +213,7 @@ func TestPreviewNotFound(t *testing.T) {
 	}
 }
 
-// TestPreviewSensitiveGuard 命中敏感清单无 reason → 403 且不建命令 / 不审计；填 reason → 放行 + 审计带 sensitiveOverride。
+// TestPreviewSensitiveGuard 命中敏感清单无 reason → 403 且不建命令 / 不审计；填 reason → 放行并仅审计元数据。
 func TestPreviewSensitiveGuard(t *testing.T) {
 	db := newAssetSvcTestDB(t)
 	svc := newAssetSvc(db, true)
@@ -228,7 +228,7 @@ func TestPreviewSensitiveGuard(t *testing.T) {
 		t.Fatal("敏感拒绝不应建命令 / 审计")
 	}
 
-	// 填 reason → 放行 + 审计带 sensitiveOverride + 原因。
+	// 填 reason → 放行 + 审计标记敏感放行并把原因文本写入 detail（合规追溯），但绝不保存正文。
 	stop := startAgentSim(t, db, svc, textReply)
 	defer stop()
 	res, err := svc.applyPreviewForTest(context.Background(), PreviewParams{
@@ -237,8 +237,15 @@ func TestPreviewSensitiveGuard(t *testing.T) {
 	if err != nil || !res.Sensitive {
 		t.Fatalf("填 reason 应放行且 sensitive=true，实际 res=%+v err=%v", res, err)
 	}
-	if !auditDetailContains(t, db, model.ActionAssetPreview, "sensitiveOverride") || !auditDetailContains(t, db, model.ActionAssetPreview, "排查登录异常") {
-		t.Fatal("敏感放行审计应含 sensitiveOverride + 原因原文")
+	// ADR-0093 决策 4：原因只作放行输入，不写入审计 detail。
+	if !auditDetailContains(t, db, model.ActionAssetPreview, "sensitiveOverride") {
+		t.Fatal("敏感放行审计必须标记 sensitiveOverride")
+	}
+	if auditDetailContains(t, db, model.ActionAssetPreview, "排查登录异常") {
+		t.Fatal("按 ADR-0093，原因文本不得写入审计 detail")
+	}
+	if auditDetailContains(t, db, model.ActionAssetPreview, "内容:") {
+		t.Fatal("审计 detail 绝不应含文件内容")
 	}
 }
 
@@ -280,24 +287,82 @@ func TestPreviewInvalidParam(t *testing.T) {
 	}
 }
 
-// TestAssetContentReadsRequireApprovedGrant 锁定 preview/diff 不得经旧服务直建
-// Agent 命令或返回正文；批准后的 command/grant 消费链路由 FR-209 adapter 接管。
-func TestAssetContentReadsRequireApprovedGrant(t *testing.T) {
+// TestAssetContentReadsAreDirectAndAudited 验证 preview/diff 可直读，且专项审计记原因但不含正文。
+func TestAssetContentReadsAreDirectAndAudited(t *testing.T) {
 	db := newAssetSvcTestDB(t)
 	svc := newAssetSvc(db, true)
 	left := seedPreviewServer(t, db, "prod", "lobby-1")
 	right := seedPreviewServer(t, db, "prod", "lobby-2")
 	seedAsset(t, db, left, "a.yml", "left", 10, true)
 	seedAsset(t, db, right, "a.yml", "right", 10, true)
+	stop := startAgentSim(t, db, svc, textReply)
+	defer stop()
 
-	if res, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "a.yml", Operator: "alice"}); err == nil || res != nil {
-		t.Fatalf("未批准的预览不得返回内容：res=%+v err=%v", res, err)
+	const reason = "核对线上配置"
+	preview, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "a.yml", Reason: reason, Operator: "alice"})
+	if err != nil || preview == nil || preview.Content == nil {
+		t.Fatalf("preview 应可直读：result=%+v err=%v", preview, err)
 	}
-	if res, err := svc.Diff(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "alice"}); err == nil || res != nil {
-		t.Fatalf("未批准的 diff 不得返回内容：res=%+v err=%v", res, err)
+	diff, err := svc.Diff(context.Background(), DiffParams{
+		Left: AssetRef{ServerID: "lobby-1", Path: "a.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.yml"}, Reason: reason, Operator: "alice",
+	})
+	if err != nil || diff == nil || diff.Identical || diff.Left == nil || diff.Right == nil {
+		t.Fatalf("diff 应可直读：result=%+v err=%v", diff, err)
 	}
-	if len(allCommands(t, db)) != 0 || countAudit(t, db, model.ActionAssetPreview) != 0 || countAudit(t, db, model.ActionAssetDiff) != 0 {
-		t.Fatal("未批准读取不得创建 Agent 命令或写内容查看审计")
+	if len(allCommands(t, db)) != 3 || countAudit(t, db, model.ActionAssetPreview) != 1 || countAudit(t, db, model.ActionAssetDiff) != 1 {
+		t.Fatal("direct preview/diff 应创建命令并各写一条专项审计")
+	}
+	if auditDetailContains(t, db, model.ActionAssetPreview, *preview.Content) ||
+		auditDetailContains(t, db, model.ActionAssetDiff, diff.Left.Content) ||
+		auditDetailContains(t, db, model.ActionAssetDiff, diff.Right.Content) {
+		t.Fatal("文件正文不得进入审计 detail")
+	}
+	// ADR-0093 决策 4：原因文本不写入审计 detail（只作放行输入），正文同样不得进入。
+	if auditDetailContains(t, db, model.ActionAssetPreview, reason) ||
+		auditDetailContains(t, db, model.ActionAssetDiff, reason) {
+		t.Fatal("按 ADR-0093，preview / diff 审计 detail 不得记录原因文本")
+	}
+}
+
+// TestPreviewAndDiffResolveSameServerIDByNamespace 同名 serverId 在不同 namespace 下须分别定位正确文件。
+func TestPreviewAndDiffResolveSameServerIDByNamespace(t *testing.T) {
+	db := newAssetSvcTestDB(t)
+	svc := newAssetSvc(db, true)
+	leftServerRow := seedPreviewServer(t, db, "prod", "shared")
+	rightServerRow := seedPreviewServer(t, db, "staging", "shared")
+	var leftNS, rightNS model.Namespace
+	if err := db.Where("code = ?", "prod").First(&leftNS).Error; err != nil {
+		t.Fatalf("读取 prod namespace 失败: %v", err)
+	}
+	if err := db.Where("code = ?", "staging").First(&rightNS).Error; err != nil {
+		t.Fatalf("读取 staging namespace 失败: %v", err)
+	}
+	seedAsset(t, db, leftServerRow, "same.yml", "left-hash", 10, true)
+	seedAsset(t, db, rightServerRow, "same.yml", "right-hash", 10, true)
+	stop := startAgentSim(t, db, svc, textReply)
+	defer stop()
+
+	leftPreview, err := svc.Preview(context.Background(), PreviewParams{
+		NamespaceID: leftNS.ID, ServerID: "shared", Path: "same.yml", Operator: "alice",
+	})
+	if err != nil || leftPreview == nil || leftPreview.SHA256 != "left-hash" {
+		t.Fatalf("prod 同名 serverId 应解析到 prod 文件，结果=%+v err=%v", leftPreview, err)
+	}
+	rightPreview, err := svc.Preview(context.Background(), PreviewParams{
+		NamespaceID: rightNS.ID, ServerID: "shared", Path: "same.yml", Operator: "alice",
+	})
+	if err != nil || rightPreview == nil || rightPreview.SHA256 != "right-hash" {
+		t.Fatalf("staging 同名 serverId 应解析到 staging 文件，结果=%+v err=%v", rightPreview, err)
+	}
+
+	diff, err := svc.Diff(context.Background(), DiffParams{
+		Left:     AssetRef{NamespaceID: leftNS.ID, ServerID: "shared", Path: "same.yml"},
+		Right:    AssetRef{NamespaceID: rightNS.ID, ServerID: "shared", Path: "same.yml"},
+		Operator: "alice",
+	})
+	if err != nil || diff == nil || diff.Identical || diff.Left == nil || diff.Right == nil ||
+		diff.Left.SHA256 != "left-hash" || diff.Right.SHA256 != "right-hash" {
+		t.Fatalf("diff 两侧应分别按 namespaceId 定位，结果=%+v err=%v", diff, err)
 	}
 }
 
@@ -331,7 +396,7 @@ func TestDiffIdentical(t *testing.T) {
 	seedAsset(t, db, rr, "a.yml", "same", 10, true)
 
 	res, err := svc.applyDiffForTest(context.Background(), DiffParams{
-		Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "a",
+		Left: AssetRef{ServerID: "lobby-1", Path: "a.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.yml"}, Operator: "a",
 	})
 	if err != nil || !res.Identical {
 		t.Fatalf("同哈希应 identical，实际 res=%+v err=%v", res, err)
@@ -356,7 +421,7 @@ func TestDiffDifferent(t *testing.T) {
 	defer stop()
 
 	res, err := svc.applyDiffForTest(context.Background(), DiffParams{
-		Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "a",
+		Left: AssetRef{ServerID: "lobby-1", Path: "a.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.yml"}, Operator: "a",
 	})
 	if err != nil || res.Identical || res.Left == nil || res.Right == nil {
 		t.Fatalf("不同哈希应返回双侧内容，实际 res=%+v err=%v", res, err)
@@ -374,7 +439,7 @@ func TestDiffUnsupported(t *testing.T) {
 	rr := seedPreviewServer(t, db, "prod", "lobby-2")
 	seedAsset(t, db, l, "a.jar", "h1", 10, false) // 二进制
 	seedAsset(t, db, rr, "a.jar", "h2", 10, true)
-	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "a.jar"}, Right: AssetRef{"lobby-2", "a.jar"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
+	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{ServerID: "lobby-1", Path: "a.jar"}, Right: AssetRef{ServerID: "lobby-2", Path: "a.jar"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
 		t.Fatalf("二进制侧应 asset_diff_unsupported，实际 %v", err)
 	}
 
@@ -384,7 +449,7 @@ func TestDiffUnsupported(t *testing.T) {
 	r2 := seedPreviewServer(t, db2, "prod", "s2")
 	seedAsset(t, db2, l2, "big.yml", "h1", 1<<20, true) // 超 512KiB
 	seedAsset(t, db2, r2, "big.yml", "h2", 10, true)
-	if _, err := svc2.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{"s1", "big.yml"}, Right: AssetRef{"s2", "big.yml"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
+	if _, err := svc2.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{ServerID: "s1", Path: "big.yml"}, Right: AssetRef{ServerID: "s2", Path: "big.yml"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
 		t.Fatalf("超限侧应 asset_diff_unsupported，实际 %v", err)
 	}
 	if len(allCommands(t, db2)) != 0 {
@@ -400,7 +465,7 @@ func TestDiffSensitiveGuard(t *testing.T) {
 	rr := seedPreviewServer(t, db, "prod", "lobby-2")
 	seedAsset(t, db, l, "plugins/Beacon/config.yml", "h1", 10, true) // 敏感
 	seedAsset(t, db, rr, "plugins/Beacon/config.yml", "h2", 10, true)
-	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "plugins/Beacon/config.yml"}, Right: AssetRef{"lobby-2", "plugins/Beacon/config.yml"}, Operator: "a"}); err != apperr.ErrAssetSensitivePath {
+	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{ServerID: "lobby-1", Path: "plugins/Beacon/config.yml"}, Right: AssetRef{ServerID: "lobby-2", Path: "plugins/Beacon/config.yml"}, Operator: "a"}); err != apperr.ErrAssetSensitivePath {
 		t.Fatalf("敏感无 reason 应 asset_sensitive_path，实际 %v", err)
 	}
 }

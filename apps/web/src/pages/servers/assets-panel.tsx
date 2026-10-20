@@ -33,11 +33,9 @@ import {
 } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
-  DataTable,
   DestructiveConfirmDialog,
   DropdownMenu,
   DropdownMenuContent,
@@ -55,11 +53,14 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
+  TableSkeleton,
   cn,
   levelText,
   type DataTableColumn,
   type KpiTone,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { HealthItem, MetricsSeriesPoint, ServerItem } from '@beacon/contracts'
 import {
   ApiClientError,
@@ -79,6 +80,7 @@ import {
   useEnvNamespaceScope,
   useEnvScopePending,
 } from '../../features/env/use-env-scope'
+import PageSkeleton from '../../features/shared/page-skeleton'
 import { notifyError, notifySuccess } from '../../lib/notify'
 import { LEVEL_META, badgeOf } from './health-level'
 import ReasonDialog from './reason-dialog'
@@ -140,7 +142,15 @@ interface AssetsPanelProps {
   initialKeyword?: string
 }
 
-export default function AssetsPanel({
+export default function AssetsPanel(props: AssetsPanelProps) {
+  return (
+    <PageAsyncSection isLoading={false}>
+      <AssetsPanelContent {...props} />
+    </PageAsyncSection>
+  )
+}
+
+function AssetsPanelContent({
   namespaceId,
   onViewHealth,
   onOpenPending,
@@ -774,7 +784,13 @@ export default function AssetsPanel({
       {/* KPI 卡带：紧凑网格，图标在左 + 文字 + 数值 */}
       <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-8">
         {kpiCards.map((c) => (
-          <KpiCard key={c.key} label={c.label} value={c.value} icon={c.icon} tone={c.tone} />
+          <KpiCard
+            key={c.key}
+            label={c.label}
+            value={c.value}
+            icon={c.icon}
+            tone={c.tone}
+          />
         ))}
       </div>
 
@@ -899,8 +915,17 @@ export default function AssetsPanel({
 
         {/* 列表区：自身滚动（max-height），页面整体高度可控，1000+ 台亦不无限增高 */}
         <div className="max-h-[calc(100vh-20rem)] overflow-y-auto px-4 pt-2 pb-1">
-          <AsyncSection isLoading={query.isPending} isError={query.isError} error={query.error}>
-            <DataTable
+          <PageAsyncSection
+            isLoading={query.isPending}
+            isError={query.isError}
+            error={query.error}
+            skeleton={
+              <PageSkeleton>
+                <TableSkeleton columns={columns.length} rows={8} />
+              </PageSkeleton>
+            }
+          >
+            <PageDataTable
               columns={columns}
               rows={rows}
               rowKey={(row) => String(row.id)}
@@ -912,7 +937,7 @@ export default function AssetsPanel({
               // 遗留行（无活跃身份）整行淡化，与正常在线资产一眼区分
               rowClassName={(row) => (!canTransitionIdentity(row) ? 'opacity-60' : undefined)}
             />
-          </AsyncSection>
+          </PageAsyncSection>
         </div>
 
         {/* 服务端分页控件（吸底于卡片） */}

@@ -331,8 +331,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("获取底层连接池失败: %w", err)
 	}
-	// 进程 CPU% 采样器（gopsutil）：构造时预热一次基线，端点每次取自上次调用以来的占比。
+	// 进程 CPU% 采样器（gopsutil）：后台每 5 秒采样一次写入内存，端点请求只读缓存，
+	// 不再每次现算（避免基线随请求间隔漂移导致失真，也省掉请求路径上的系统调用）。
 	cpuSampler := service.NewGopsutilCPUSampler()
+	// 关停时停掉后台采样协程（Stop 可重复调用、对 nil 采样器安全）：
+	// 此前 Stop 全仓只有测试调用，后台 ticker 协程只能随进程退出被 OS 回收，
+	// 自更新 / 回滚重启路径下同一进程内的协程生命周期也不受控。
+	// 接在这里（run 返回前执行）的语义是「HTTP 已优雅关停、协程仍在运行」，正是设计要求的位置。
+	defer cpuSampler.Stop()
 	// 连通探测注入**带预算**的探测器（P1-1）：原生 `(*sql.DB).Ping()` 在池被占满时无界等待，
 	// 而本端点恰是排障时最需要可用的——事故症状会在这里原样复现。经 store.NewBoundedPinger
 	// 拿到包装层（继承 call 预算），拿不到时它自行回退到原生池的 PingContext（仍可被 ctx 中断）。
@@ -463,6 +469,16 @@ func run() error {
 	commandService.SetApprovalService(approvalService)
 	commandService.SetSensitiveAccessGrants(sensitiveAccessGrants)
 	mcpToolRegistry.SetAgentCommandService(commandService)
+	// Deprecated: 直读改造后，浏览（fs-browse）与实时日志（tail-logs）都不再走「申请-批准-消费」链路，
+	// 对应审批入口（RequestBrowseApproval / RequestTailLogsApproval / ConsumeApprovedBrowse / ConsumeApprovedLogs）
+	// 已无 handler 调用。这里**保留注册**而不是注销，原因：
+	//  1) 库中可能仍存在改造前创建、尚未执行的审批单，注销适配器会让它们执行失败（worker 找不到适配器），
+	//      历史单据的落地 / 回放能力随之丢失；
+	//  2) 注销后该操作类型从审批中心的操作枚举里消失，历史单据的详情展示会退化成未知操作；
+	//  3) 注册本身不产生新单据——没有任何 handler 能创建这类申请，故不会被「批准出永无人消费的审批单」。
+	// 注意 fs-browse 这一项在下面 RegisterAssetPreviewApprovalAdapter 会以同一 operationKey 覆盖（后者生效），
+	// 故这里的浏览适配器实际已是兼容占位；tail-logs 没有覆盖者，注销它会真实影响历史单据。
+	// 待确认历史单据可下线后再统一注销（属产品决策，不在本次修复范围）。
 	service.RegisterAgentCommandApprovalAdapters(approvalRegistry, commandService, sensitiveAccessGrants)
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffectiveService)
@@ -503,8 +519,13 @@ func run() error {
 	agentLogService.SetNotifier(notifier)
 	agentLogService.SetApprovalService(approvalService)
 	agentLogService.SetSensitiveAccessGrants(sensitiveAccessGrants)
+	// Deprecated: 日志正文改为直读（/admin/v1/instances/{serverId}/logs 直读 + 专项审计）后，
+	// RequestTailLogsApproval / ConsumeApprovedLogs 已无 handler 调用。保留适配器注册仅为兼容
+	// 改造前已创建、尚未执行的 tail-logs 审批单（注销会让它们无法落地，且历史单据展示退化为未知操作）。
+	// 注册本身不产生新单据——没有入口能创建这类申请。
 	service.RegisterAgentLogApprovalAdapter(approvalRegistry, agentLogService, sensitiveAccessGrants)
 	agentLogHandler := handler.NewAgentLogHandler(agentLogService, instanceService)
+	agentLogHandler.SetReportAuthenticator(v2ControlPlaneService)
 
 	// 控制面自观测页（FR-82）：聚合控制面进程内部运行态——DB 连接池（与 FR-33 同一 sqlDB）、
 	// 长轮询四通道挂起数（配置 / 文件 / 拓扑 / 命令 Hub）、注册表规模（按健康状态）、命令队列深度（按状态）。
@@ -722,7 +743,8 @@ func run() error {
 	// 游标分页 + 逐表短路防全量扫描；payload 受控查看先写 message.payload.view 审计后返回内容。
 	connQueryService := service.NewConnQueryService(connDetailRepo)
 	v2ConnectionAdminHandler := handler.NewV2ConnectionAdminHandler(connQueryService, settingsService)
-	messagePayloadService := service.NewMessagePayloadService(messageRepo)
+	messagePayloadService := service.NewMessagePayloadService(messageRepo, auditRepo)
+	messagePayloadService.SetNamespaceRepository(nsRepo)
 	messageQueryService := service.NewMessageQueryService(messageRepo)
 	v2MessageAdminHandler := handler.NewV2MessageAdminHandler(
 		messageQueryService,

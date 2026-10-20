@@ -109,7 +109,10 @@ func (r *ApprovalRequestRepository) ListPage(filter ApprovalRequestListFilter) (
 		return nil, 0, err
 	}
 	var reqs []model.ApprovalRequest
-	if err := q.Order("CASE WHEN status = 'pending' THEN 0 ELSE 1 END, CASE WHEN status = 'pending' THEN expires_at END ASC, CASE WHEN status <> 'pending' THEN created_at END DESC, id DESC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&reqs).Error; err != nil {
+	// 默认按创建时间倒序（最新的在最上面）：审批中心是"最近发生了什么"的视角，
+	// 按 id 兜底保证同一时间戳内顺序稳定。不再把 pending 提前、也不按过期时间排序——
+	// 那会让列表顺序随状态跳变，用户难以按时间追查。
+	if err := q.Order("created_at DESC, id DESC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&reqs).Error; err != nil {
 		return nil, 0, err
 	}
 	return reqs, total, nil

@@ -2,21 +2,28 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
@@ -154,14 +161,164 @@ func TestBrowseResultHandlerInvalidBody(t *testing.T) {
 	}
 }
 
-// TestBrowseHandlerMissingNamespace 旧浏览入口在参数校验前即审批失败关闭。
+// TestBrowseHandlerMissingNamespace 直接浏览缺少 namespace 时应按参数错误拒绝。
 func TestBrowseHandlerMissingNamespace(t *testing.T) {
 	svc, _ := newBrowseTestSvc(t)
 	h := NewBrowseHandler(svc, nil)
 	r := httptest.NewRequest(http.MethodGet, "/admin/v1/instances/lobby-1/browse", nil)
 	w := httptest.NewRecorder()
 	h.Browse(w, r)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("旧浏览入口应 409，实际 %d", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("缺少 namespace 应返回 400，实际 %d", w.Code)
+	}
+}
+
+// TestBrowseHandlerGetWithoutCommandIDDoesNotCreate GET 只能读取指定命令结果，不能创建浏览命令。
+func TestBrowseHandlerGetWithoutCommandIDDoesNotCreate(t *testing.T) {
+	svc, db := newBrowseTestSvc(t)
+	registry := runtime.NewRegistry()
+	if _, err := registry.Register(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Address: "127.0.0.1:25565"}, time.Minute, time.Now().UTC()); err != nil {
+		t.Fatalf("注册在线实例失败: %v", err)
+	}
+	instSvc := service.NewInstanceService(nil, registry, nil, nil, nil, time.Second, time.Minute)
+	h := NewBrowseHandler(svc, instSvc)
+	r := httptest.NewRequest(http.MethodGet, "/admin/v1/instances/lobby-1/browse?namespace=prod&op=list", nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("serverId", "lobby-1")
+	r = r.WithContext(context.WithValue(auth.WithOperator(r.Context(), "alice"), chi.RouteCtxKey, routeContext))
+	w := httptest.NewRecorder()
+	h.Browse(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("缺 commandId 的 GET 应拒绝而非创建命令，实际 %d：%s", w.Code, w.Body.String())
+	}
+	var count int64
+	if err := db.Model(&model.AgentCommand{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("GET 不得创建浏览命令，数量=%d err=%v", count, err)
+	}
+}
+
+// prepareBrowseReadScope 迁移并清理读路径反查所需的 namespace / server 表（与其它用例共享同一内存库）。
+func prepareBrowseReadScope(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}); err != nil {
+		t.Fatalf("迁移 namespace / server 表失败: %v", err)
+	}
+	for _, tbl := range []string{"server", "namespace"} {
+		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
+			t.Fatalf("清表 %s 失败: %v", tbl, err)
+		}
+	}
+}
+
+// seedBrowseScopeServer 写入一条 (namespace, serverId) 归属，供读路径按 serverId 反查命名空间。
+func seedBrowseScopeServer(t *testing.T, db *gorm.DB, namespaceCode, serverID string) {
+	t.Helper()
+	var namespace model.Namespace
+	if err := db.Where("code = ?", namespaceCode).First(&namespace).Error; err != nil {
+		namespace = model.Namespace{Code: namespaceCode, Name: namespaceCode}
+		if err := db.Create(&namespace).Error; err != nil {
+			t.Fatalf("创建 namespace %s 失败: %v", namespaceCode, err)
+		}
+	}
+	if err := db.Create(&model.Server{NamespaceID: namespace.ID, ServerID: serverID, Kind: "backend"}).Error; err != nil {
+		t.Fatalf("创建 server %s/%s 失败: %v", namespaceCode, serverID, err)
+	}
+}
+
+// doBrowseGet 以指定 serverId 路由参数与操作人上下文调用 GET 读正文端点。
+func doBrowseGet(t *testing.T, h *BrowseHandler, target, serverID string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("serverId", serverID)
+	r = r.WithContext(context.WithValue(auth.WithOperator(r.Context(), "alice"), chi.RouteCtxKey, routeContext))
+	w := httptest.NewRecorder()
+	h.Browse(w, r)
+	return w
+}
+
+// TestBrowseHandlerRejectsCrossNamespaceRead GET 读正文必须限定在请求的 namespace；
+// 同名 serverId 跨环境共存时缺省 namespace 无法消歧，一律按不存在拒绝。
+func TestBrowseHandlerRejectsCrossNamespaceRead(t *testing.T) {
+	svc, db := newBrowseTestSvc(t)
+	prepareBrowseReadScope(t, db)
+	seedBrowseScopeServer(t, db, "prod", "lobby-1")
+	seedBrowseScopeServer(t, db, "test", "lobby-1")
+	h := NewBrowseHandler(svc, nil)
+	const result = `{"path":"Demo/config.yml","content":"enabled: true\n"}`
+	cmd := &model.AgentCommand{
+		NamespaceCode: "test", ServerID: "lobby-1", Type: model.CommandTypeFsBrowse,
+		Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`,
+		BrowseResult: result, Operator: "alice",
+	}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建浏览命令失败: %v", err)
+	}
+	path := "/admin/v1/instances/lobby-1/browse?commandId=" + strconv.FormatUint(uint64(cmd.ID), 10)
+
+	if w := doBrowseGet(t, h, path+"&namespace=prod", "lobby-1"); w.Code != http.StatusNotFound {
+		t.Fatalf("跨 namespace 读取应按不存在拒绝，实际 %d：%s", w.Code, w.Body.String())
+	}
+	if w := doBrowseGet(t, h, path, "lobby-1"); w.Code != http.StatusNotFound {
+		t.Fatalf("同名 serverId 跨环境歧义应拒绝，实际 %d：%s", w.Code, w.Body.String())
+	}
+	w := doBrowseGet(t, h, path+"&namespace=test", "lobby-1")
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != result {
+		t.Fatalf("正确 namespace 应返回正文，实际 %d：%s", w.Code, w.Body.String())
+	}
+}
+
+// TestBrowseHandlerReadWithoutNamespaceUsesUniqueScope 未带 namespace 的旧调用方在归属唯一时仍可读，保持向后兼容。
+func TestBrowseHandlerReadWithoutNamespaceUsesUniqueScope(t *testing.T) {
+	svc, db := newBrowseTestSvc(t)
+	prepareBrowseReadScope(t, db)
+	seedBrowseScopeServer(t, db, "prod", "lobby-9")
+	h := NewBrowseHandler(svc, nil)
+	const result = `{"path":"Demo/config.yml","content":"enabled: true\n"}`
+	cmd := &model.AgentCommand{
+		NamespaceCode: "prod", ServerID: "lobby-9", Type: model.CommandTypeFsBrowse,
+		Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`,
+		BrowseResult: result, Operator: "alice",
+	}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建浏览命令失败: %v", err)
+	}
+	path := "/admin/v1/instances/lobby-9/browse?commandId=" + strconv.FormatUint(uint64(cmd.ID), 10)
+	w := doBrowseGet(t, h, path, "lobby-9")
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != result {
+		t.Fatalf("归属唯一时应按 serverId 反查成功，实际 %d：%s", w.Code, w.Body.String())
+	}
+}
+
+// TestBrowseHandlerRejectsExpiredResult 过期正文经 handler 读取时不得返回正文。
+func TestBrowseHandlerRejectsExpiredResult(t *testing.T) {
+	svc, db := newBrowseTestSvc(t)
+	prepareBrowseReadScope(t, db)
+	seedBrowseScopeServer(t, db, "prod", "lobby-8")
+	if !db.Migrator().HasColumn("agent_command", "browse_result_expires_at") {
+		if err := db.Exec("ALTER TABLE agent_command ADD COLUMN browse_result_expires_at datetime").Error; err != nil {
+			t.Fatalf("添加浏览结果过期测试列失败: %v", err)
+		}
+	}
+	h := NewBrowseHandler(svc, nil)
+	cmd := &model.AgentCommand{
+		NamespaceCode: "prod", ServerID: "lobby-8", Type: model.CommandTypeFsBrowse,
+		Status: model.CommandStatusDone, Payload: `{"op":"file","path":"Demo/config.yml"}`,
+		BrowseResult: `{"content":"敏感正文"}`, Operator: "alice",
+	}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建浏览命令失败: %v", err)
+	}
+	if err := db.Model(&model.AgentCommand{}).Where("id = ?", cmd.ID).
+		Update("browse_result_expires_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+		t.Fatalf("设置浏览结果过期时间失败: %v", err)
+	}
+	path := "/admin/v1/instances/lobby-8/browse?commandId=" + strconv.FormatUint(uint64(cmd.ID), 10)
+	w := doBrowseGet(t, h, path+"&namespace=prod", "lobby-8")
+	if w.Code != http.StatusGone {
+		t.Fatalf("过期正文应按已消费拒绝，实际 %d：%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "敏感正文") {
+		t.Fatalf("过期正文绝不能出现在响应里，实际 %s", w.Body.String())
 	}
 }

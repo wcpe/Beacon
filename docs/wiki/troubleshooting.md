@@ -3,6 +3,8 @@
 先保护玩家，再收集证据，最后做最小的可逆操作。不要为排障直接改数据库、复制 identity 文件、泄露令牌，或在生产环境反复重启全部 BC/子服。
 
 > **版本边界**：以下以 v2 控制面和 Agent 行为为准。遇到旧 `/admin/v1`、v1 Agent 接口或 Redis 消息字段时，仅按兼容路径查阅旧文档；新问题不要回退设计到 Redis 或业务插件直连 HTTP。
+>
+> **内容读取口径已变更**：日志、目录浏览、文件资产正文与差异、消息 payload 已改为按 `management.read` 直读并强审计，不再走审批与一次性授权；仅敏感配置明文、反向抓取冲突与拓印差异仍保留审批。
 
 ## 1. 首先收集什么
 
@@ -31,7 +33,7 @@
 | **大量 `503` + `DB_WAIT_TIMEOUT`** | **等 DB 连接超时**：连接池被长事务占满，或并发超过池容量 | **不是控制面崩了**。查 `beacon_self_db_pool_wait_*`（等待时长）与慢事务，而不是重启。详见下方「DB 等待上限」。 |
 | **所有需 DB 的端点挂起、`healthz` 却 200** | **锁序互等**（永久挂起、不可自愈） | **重启前先取 goroutine 栈**，重启会毁掉唯一证据。见 §3。 |
 | Agent 在较新 BungeeCord 上启动即失败 | BungeeCord 的 maven-resolver 升到 2，旧 TabooLib 抛 `NoSuchMethodError` | 症状为加载阶段抛 `NoSuchMethodError: MavenRepositorySystemUtils.newServiceLocator()`。用本版本附带的新版 agent jar 替换；旧版 BungeeCord 不受影响。 |
-| 敏感内容返回 409/410 | 普通读取已关闭，或一次性授权已消费/过期 | 由原申请 human 通过对应授权消费端点领取；核对目标版本/哈希，不要复制正文到审计或工单。 |
+| 敏感正文读不到（`403` / `404` / `410`） | 正文读取已改为 `content.read` 直执：`403` 是缺 `management.read` 能力；`404 COMMAND_NOT_FOUND` 是命令不存在或不属于该 serverId；`410`（`sensitive_access_consumed`）是浏览结果已被读过一次或已过期清理 | 补齐能力后重试；目录浏览结果读过即清、有效期 5 分钟，需要再读就重新发起一次浏览命令（`POST /browse`）。仍在审批范畴的敏感配置明文、反向抓取冲突与拓印差异返回 `409 operation_requires_approval`，由原申请 human 通过对应授权消费端点领取；任何情况都不要把正文复制到审计或工单。 |
 | namespace / server 显示 archived 或 tombstoned | 生命周期操作已执行或正在等待审批 | 已归档资源只读且不能参与运行面；恢复或永久删除必须重新走影响预览、原因和审批流程。 |
 | 告警持续出现 | 根因未恢复或事件未处理 | 从告警跳到服务器、命令和审计；确认修复后再「标记处理」关闭事件（「标记已读」仅表示已知悉、事件仍在跟进）。实例被外部删除且不在受管目录时，超过失联阈值会由控制面自动消解（`handled_by=system`）。 |
 

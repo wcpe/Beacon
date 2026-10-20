@@ -138,7 +138,7 @@ export const DEMO_VERSION = 'v1.4.0'
 export const DEMO_NEXT_VERSION = 'v1.4.1'
 
 export const systemHandlers: HttpHandler[] = [
-  // 控制面自身状态（版本 / 运行时长 / DB 连通 / 在线实例数 / Go 运行时）
+  // 控制面状态（进程 CPU 与 Go 堆内存）
   mockGet('/admin/v1/system/status', () => {
     const cluster = getClusterState()
     const online = cluster.servers.filter((s) => s.online).length

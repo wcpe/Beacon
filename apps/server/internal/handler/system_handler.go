@@ -10,7 +10,6 @@ import (
 
 // SystemHandler 处理控制面自身状态 admin 请求（FR-33）：
 // 版本 / 运行时长 / DB 连通 / 在线实例数 / 采样器状态 / Go 运行时资源。
-// 区别于 FR-32 的 agent 网络聚合指标——这里是控制面进程本身的健康。
 type SystemHandler struct {
 	svc *service.SystemService
 }

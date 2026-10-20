@@ -11,16 +11,16 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
 import {
-  AsyncSection,
   Badge,
   Button,
-  DataTable,
   DestructiveConfirmDialog,
   SummaryStrip,
   TableSkeleton,
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { CreateMCPClientBody, MCPClientItem } from '@beacon/contracts'
 
 import { randomId } from '../lib/random-id'
@@ -37,6 +37,7 @@ import { formatIso } from '../features/system/format'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
 import PlaintextDialog from '../features/shared/plaintext-dialog'
+import PageTitle from '../shell/page-title'
 import ConfigCard from './mcp-clients/config-card'
 import CreateDialog from './mcp-clients/create-dialog'
 import DetailPanel from './mcp-clients/detail-panel'
@@ -194,6 +195,8 @@ export default function McpClientsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.mcpClients" />
 
       <ConfigCard
         data={configQuery.data}
@@ -278,7 +281,7 @@ export default function McpClientsPage() {
               </div>
             }
           >
-            <AsyncSection
+            <PageAsyncSection
               error={query.error}
               isError={query.isError}
               isLoading={query.isLoading}
@@ -288,7 +291,7 @@ export default function McpClientsPage() {
               {items.length === 0 ? (
                 <p className="px-1 py-8 text-center text-sm text-ink-3">{t('system.mcpClients.empty')}</p>
               ) : (
-                <DataTable
+                <PageDataTable
                   columns={columns}
                   onRowClick={(row) => {
                     setSelectedId(row.clientId)
@@ -297,7 +300,7 @@ export default function McpClientsPage() {
                   rowKey={(row) => row.clientId}
                 />
               )}
-            </AsyncSection>
+            </PageAsyncSection>
           </ListCard>
         }
         onClose={() => {

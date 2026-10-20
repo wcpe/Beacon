@@ -10,7 +10,21 @@ import { Link } from 'react-router-dom'
 
 import { RotateCcw, Server } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, DataTable, SectionHeader, type DataTableColumn } from '@beacon/ui'
+import {
+  AsyncSection,
+  Badge,
+  Button,
+  Checkbox,
+  DataTable,
+  SectionHeader,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  TableSkeleton,
+  type DataTableColumn,
+} from '@beacon/ui'
 import type { ChangeTarget } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
@@ -120,18 +134,19 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
     if (canSelect) {
       base.push({
         header: t('delivery.changes.detail.targets.columns.select'),
+        headClassName: 'w-8',
+        className: 'w-8',
         cell: (row) => {
           const rollbackable = row.pushedAt != null
           return (
-            <input
-              type="checkbox"
-              className="size-4 align-middle"
+            <Checkbox
               aria-label={row.serverId}
               checked={selected.includes(row.serverId)}
               disabled={!rollbackable}
               title={rollbackable ? undefined : t('delivery.changes.detail.targets.noRollbackTarget')}
-              onChange={(e) => {
-                toggleOne(row.serverId, e.target.checked)
+              // Radix 回调给 boolean | 'indeterminate'：逐行勾选只有两态，非 true 一律按取消处理
+              onCheckedChange={(checked) => {
+                toggleOne(row.serverId, checked === true)
               }}
             />
           )
@@ -141,10 +156,12 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
     base.push(
       {
         header: t('delivery.changes.detail.targets.columns.serverId'),
-        cell: (row) => <span className="font-mono">{row.serverId}</span>,
+        cell: (row) => <span className="font-mono" title={row.serverId}>{row.serverId}</span>,
       },
       {
         header: t('delivery.changes.detail.targets.columns.batch'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
         cell: (row) => <span className="tnum">#{String(row.batchNo)}</span>,
       },
       {
@@ -214,7 +231,12 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
         icon={<Server className="size-4" />}
         title={t('delivery.changes.detail.targets.title')}
       />
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+      <AsyncSection
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+        skeleton={<TableSkeleton columns={canSelect ? 9 : 8} rows={6} />}
+      >
         <div className="grid gap-2">
           {/* 汇总一行：全单总台数 + 本页失败 / 回滚失败计数（计数只覆盖当前页，故显式标「本页」） */}
           <p className="text-xs text-ink-3">
@@ -229,24 +251,32 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
           {canSelect && (
             <div className="flex flex-wrap items-center gap-2 text-xs">
               {batches != null && batches.length > 1 && (
-                <label className="flex items-center gap-1.5 text-ink-3">
+                <span className="flex items-center gap-1.5 text-ink-3">
                   {t('delivery.changes.detail.targets.columns.batch')}
-                  <select
-                    className="rounded border border-line-1 bg-transparent px-1.5 py-0.5"
-                    aria-label={t('delivery.changes.detail.targets.columns.batch')}
+                  {/* Radix Select 不接受空字符串取值：沿用原有的 '0' 作为「不筛」哨兵，
+                      内部状态 batchNo 仍是 0（对外语义与原来的原生 select 完全一致）。 */}
+                  <Select
                     value={String(batchNo)}
-                    onChange={(e) => {
-                      setBatchNo(Number(e.target.value))
+                    onValueChange={(value) => {
+                      setBatchNo(Number(value))
                     }}
                   >
-                    <option value="0">—</option>
-                    {batches.map((no) => (
-                      <option key={no} value={String(no)}>
-                        #{no}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <SelectTrigger
+                      size="sm"
+                      aria-label={t('delivery.changes.detail.targets.columns.batch')}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">—</SelectItem>
+                      {batches.map((no) => (
+                        <SelectItem key={no} value={String(no)}>
+                          #{no}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </span>
               )}
               <Button
                 variant="outline"
@@ -272,7 +302,7 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
                   setDialogOpen(true)
                 }}
               >
-                <RotateCcw className="size-4" />
+                <RotateCcw className="size-3.5" />
                 {allSelected
                   ? t('delivery.changes.detail.targets.rollbackSelectedAll')
                   : t('delivery.changes.detail.targets.rollbackSelected')}
@@ -288,6 +318,7 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
             rowKey={(row) => `${row.serverId}:${String(row.batchNo)}`}
             emptyText={t('delivery.changes.detail.batches.empty')}
             density="compact"
+            rowClassName={(row) => (selected.includes(row.serverId) ? 'bg-brand-50 hover:bg-brand-50' : undefined)}
           />
           <Pager page={page} total={total} pageSize={TARGET_PAGE_SIZE} onPageChange={setPage} />
         </div>

@@ -2,7 +2,12 @@
 // 写操作直接改缓存内的可变对象（页面操作后列表状态真的变化）；
 // 切换场景（或测试调用 resetMockData）即整体重建，回到该场景初始数据。
 
-import { getMockScenario, subscribeMockScenario, type MockScenario } from './scenario'
+import {
+  getMockScenario,
+  subscribeMockScenario,
+  subscribeMockDataVolume,
+  type MockScenario,
+} from './scenario'
 
 type StoreBuilder<T> = (scenario: MockScenario) => T
 
@@ -33,5 +38,9 @@ export function resetMockData(): void {
 
 // 场景切换即重置：保证"切换场景或刷新页面时重置"的验收语义
 subscribeMockScenario(() => {
+  resetMockData()
+})
+
+subscribeMockDataVolume(() => {
   resetMockData()
 })

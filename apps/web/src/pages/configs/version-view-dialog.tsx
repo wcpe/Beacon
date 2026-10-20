@@ -3,12 +3,12 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import {
-  AsyncSection,
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchConfigVersion } from '../../api/delivery-configs'
 
@@ -33,17 +33,24 @@ export default function VersionViewDialog({ versionId, onOpenChange }: VersionVi
         }
       }}
     >
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="grid-rows-[auto_minmax(0,1fr)] max-h-[calc(100dvh-2rem)] overflow-hidden max-w-2xl">
         <DialogHeader>
           <DialogTitle className="text-ink-1">{t('delivery.configs.detail.versions.view')}</DialogTitle>
         </DialogHeader>
-        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-          {query.data && (
-            <pre className="max-h-[60vh] overflow-auto rounded-xl border border-border bg-surface-2 p-3 font-mono text-xs whitespace-pre-wrap text-ink-2">
-              {query.data.content === '' ? '(空)' : query.data.content}
-            </pre>
-          )}
-        </AsyncSection>
+        <div className="min-h-0 overflow-y-auto pr-1">
+          <PageAsyncSection
+            keepContentWhileRefreshing
+            isLoading={query.isLoading}
+            isError={query.isError}
+            error={query.error}
+          >
+            {query.data && (
+              <pre className="max-h-[60vh] overflow-auto rounded-xl border border-border bg-surface-2 p-3 font-mono text-xs whitespace-pre-wrap text-ink-2">
+                {query.data.content === '' ? '(空)' : query.data.content}
+              </pre>
+            )}
+          </PageAsyncSection>
+        </div>
       </DialogContent>
     </Dialog>
   )

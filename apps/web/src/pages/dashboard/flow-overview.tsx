@@ -7,7 +7,8 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { ChartLine, ChevronRight } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton, SectionHeader } from '@beacon/ui'
+import { CardGridSkeleton, SectionHeader } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchConnStats } from '../../api/connections'
 import { ApiClientError } from '../../api/http'
@@ -100,7 +101,7 @@ export default function FlowOverview() {
   return (
     <section className="grid grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-3.5 shadow-card">
       {header}
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError && !endpointPending}
         error={query.error}
@@ -170,7 +171,7 @@ export default function FlowOverview() {
             </div>
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

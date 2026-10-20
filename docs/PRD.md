@@ -109,7 +109,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-184 | GA 原样复制：从最终 RC 复制产品资产并创建正式 tag | P10 RC | v1.1.0-rc.1 → v1.1.0 | 远端 GA 须与最终 RC 指向同一提交，并将 GitHub 产品资产逐项原样复制后核验；仅 `agent-api`/`agent-kit` 可为 `X.Y.Z` Maven 正式坐标重新生成制品 | 已交付@v1.1.0（待远端公开） |
 | FR-185 | 稳定版在线更新收敛与关键链路修复：只自动发现 GA，兼容迁移旧 prerelease 设置并修复检查/进度缺口 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 内置更新只消费 stable GA；旧 update.channel=prerelease 自动规范化为 stable，响应 channel 字段保留并固定为 stable；手动检查强制绕缓存；检查不得覆盖下载进度；前端按开关与周期低频轮询，RC 不得进入普通在线更新 | 已交付@v1.1.0（待远端公开） |
 | FR-186 | 管理台侧栏图标轨折叠与动画：展开/折叠宽度过渡，折叠后保留图标轨，去掉侧栏底部重复身份 | 对齐中间版 | 0.31.x | 桌面展开约 232px、折叠约 60px 图标轨且有宽度动画；折叠态仅 logo+图标+tooltip 可导航；侧栏底部无操作人块；折叠钮贴侧栏右缘随宽动画；shell 测试绿；真机 Browser 点折叠/展开 | 已交付@v1.1.0（待远端公开） |
-| FR-187 | 管理台双段页眉与身份收敛：对齐 ReClaude 式段 1 指标槽 + 段 2 工具条，身份只在页眉 | 对齐中间版 | 0.31.x | 页眉视觉两段；段 2 左环境过滤（FR-178 不回退）、右搜索/语言/通知 + 用户头像下拉（名/角色/登出）；真鉴权身份仅页眉一处；演示模式仍显 demo 徽标与场景切换；shell/auth 测试绿；真机可登出 | 已交付@v1.1.0（待远端公开） |
+| FR-187 | 管理台双段页眉与身份收敛：对齐 ReClaude 式段 1 指标槽 + 段 2 工具条，身份只在页眉 | 对齐中间版 | 0.31.x | 页眉视觉两段；段 2 左环境过滤（FR-178 不回退）、右搜索/语言/通知 + 用户头像下拉（名/角色/登出）；真鉴权身份仅页眉一处；演示模式不在页眉显示徽标或场景切换，右下角仅 demo 模式显示可拖拽 Mock 开发工具浮球，数据量与接口延时可独立组合，数据场景仍可切换；常规生产构建不包含工具；shell/auth 测试绿；真机可登出 | 已交付@v1.1.0（待远端公开） |
 | FR-188 | 全局运维指标条真数据：段 1 固定展示控制面全局态并低频轮询 | 对齐中间版 | 0.31.x | 五项：控制面在线、Agent 在线数、待确认注册、未处理告警、进行中变更单；优先复用现有 list/status API 前端聚合，失败单项「—」不整条崩；15–30s 轮询不风暴；mock 与真机抽查量级不矛盾 | 已交付@v1.1.0（待远端公开） |
 | FR-189 | 小屏抽屉侧栏：窄视口默认隐藏侧栏，汉堡打开抽屉导航 | 对齐中间版 | 0.31.x | `<md` 默认无占位侧栏；打开抽屉可导航，点遮罩或导航后关闭；与桌面图标轨态互不污染；真机或窄视口 Browser 验收 | 已交付@v1.1.0（待远端公开） |
 | FR-190 | 站内开源许可页：侧栏底栏进入 /license 展示 MIT 全文 | 对齐中间版 | 0.31.x | 点底栏「开源许可」进 `/license`；页内 MIT 与版权；标题 `Beacon - 开源许可`；不进主导航 | 已交付@v1.1.0（待远端公开） |
@@ -131,7 +131,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-206 | 人类与机器主体及语义能力授权 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 登录用户、API key 与 MCP client 统一映射主体；人类可提交并审批自己的请求，所有机器主体在服务层永久禁止审批；规格见 [human-and-machine-principals-and-capability-authorization](specs/human-and-machine-principals-and-capability-authorization.md) | 已交付@v1.1.0（待远端公开） |
 | FR-207 | 危险操作统一审批核心 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 高危操作先形成不可变审批请求，人类“批准并执行”，数据库持久化执行器可靠执行；固定 24 小时过期、全链路留档、失败关闭；规格见 [dangerous-operation-approval-core](specs/dangerous-operation-approval-core.md) | 已交付@v1.1.0（待远端公开） |
 | FR-208 | 身份、凭据、信任与拓扑危险操作适配 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 身份解绑/禁用、凭据与信任授予、拓扑迁移等按后果接入统一审批；撤销信任/凭据、禁用身份等止损动作可直接执行并强审计；规格见 [identity-credential-trust-and-topology-dangerous-operations](specs/identity-credential-trust-and-topology-dangerous-operations.md) | 已交付@v1.1.0（待远端公开） |
-| FR-209 | Agent 命令与敏感内容访问审批 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 任意 Agent 命令、实时日志、文件内容、敏感明文与 payload 访问必须经批准的执行许可，结果与证据完整留档；规格见 [agent-command-and-sensitive-content-approval](specs/agent-command-and-sensitive-content-approval.md) | 已交付@v1.1.0（待远端公开） |
+| FR-209 | Agent 命令与敏感内容访问授权 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 写入型 Agent 命令、敏感配置明文与非读取危险操作仍经审批；实时日志、受限目录浏览、文件资产预览/差异与消息 payload 按 `management.read` 直执并强审计，审计不含正文；规格见 [agent-command-and-sensitive-content-approval](specs/agent-command-and-sensitive-content-approval.md) 与 [ADR-0093](adr/0093-direct-sensitive-content-reads.md) | 已交付@v1.1.0（待远端公开） |
 | FR-210 | 控制面升级、回滚与系统设置审批 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 升级/回滚与高影响设置已接统一审批冻结、资产/备份哈希和设置 CAS；重启对账已实现（reconcileActivatingRestart）；真机完整验收 external-blocked；规格见 [control-plane-upgrade-rollback-and-settings-approval](specs/control-plane-upgrade-rollback-and-settings-approval.md) | 已交付@v1.1.0（待远端公开） |
 | FR-211 | 配置、文件、覆盖集与交付审批适配 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 配置/文件写入、覆盖、删除、投递、灰度与回滚复用既有变更单状态机，通过统一审批内核发放单次执行许可，不发生双重审批；规格见 [config-file-override-set-and-delivery-approval](specs/config-file-override-set-and-delivery-approval.md) | 已交付@v1.1.0（待远端公开） |
 | FR-212 | 全局审批中心 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 顶级 `/approvals` 页面集中查看、筛选、批准并执行、驳回和追溯危险操作；审批中心不受页眉观测筛选影响；规格见 [approval-center](specs/approval-center.md) | 已交付@v1.1.0（待远端公开） |
@@ -191,6 +191,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-269 | 交付链路网络韧性与错误透传（fix，交付优化批 2）：上传 / 下载重试无退避（控制面抖动即打满）；清单非 200 一律折叠为 `null`（`409 config_artifact_missing` 等拒单原因不可诊断）；命令被单飞门拒收或 `orderId` 非法时静默丢弃；清单与命令单号一致性无人校验（错单清单会覆盖本服文件）。改为重试按指数退避 + 抖动、失败结果保留 HTTP 状态码与错误码、被拒 / 非法命令补回执或 ERROR 日志（定位口径按控制面实际实现：该身份 + 该单 + 该 phase 类型最新的在途 fetched 命令，agent 只保证不静默丢弃）、清单 `orderId` 与命令一致性 fail-closed 校验 | 待排期 | v1.5.0 | 退避序列可断言；失败原因含状态码与错误码；被拒命令有回执、无处回执的形态有 ERROR 日志；单号不一致拒绝动盘；单测覆盖；真机待验 | 已交付@v1.5.0 |
 | FR-270 | 目标级（子集）回滚（feat，交付优化批 2，回滚组）：回滚粒度从整单扩展为可选目标子集——管理台目标列表勾选（支持按批/区筛选）与 MCP 同能力；只回滚选中目标的文件，配置版本不回退并在界面与记录明示"配置未回退"；全选等价整单回滚；单主状态不变、目标级独立记录。规格见 [delivery-rollback-resilience](specs/delivery-rollback-resilience.md)（回滚模型在 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) §4.7 之上扩展） | 待排期 | v1.5.0 | 真机 20 台交付后选 3 台回滚：仅 3 台文件还原、其余 17 台不动、明示配置未回退、审计可查；MCP 同能力实测 | 已交付@v1.5.0 |
 | FR-271 | 交付版本可见与回滚记录（feat，交付优化批 2，回滚组）：每台服显示"当前交付版本"（= 最近一条 activated 且未回滚的交付记录，含单号/标题/时间），回滚后正确回退显示；每次回滚动作（整单/子集/重试：谁/何时/为何/哪些台/每台结果）落可查记录，从变更单与审计两路可追溯。规格见 [delivery-rollback-resilience](specs/delivery-rollback-resilience.md)（回滚模型在 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) §4.7 之上扩展） | 待排期 | v1.5.0 | 服务器详情与目标列表显示当前版本且回滚后正确回退；回滚记录完整可查；真机实测 | 已交付@v1.5.0 |
+| FR-272 | 页眉展示控制面进程 CPU 与 Go 堆内存占用，使用独立低频轮询。规格见 [control-plane-resource-header](specs/control-plane-resource-header.md) | 待排期 | 待排期 | CPU / 堆使用率超过 80% 呈警；不可用显示「—」且轮询失败保留旧值；独立 8s 轮询；`lg` 以下隐藏；中英文与浏览器核对清单齐备 | 开发中 |
 
 ## 5. 非功能需求（NFR）
 
@@ -266,7 +267,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 - **FR-206**：每次调用均可还原为唯一 human/api_key/mcp/system 主体与能力快照；人类可自提自批，任何机器主体调用审批接口均由服务层稳定拒绝并审计。
 - **FR-207**：高危调用不直接产生业务副作用；批准动作原子签发一次性执行许可并可靠调度，重复提交不重放；24 小时过期、撤回、驳回、执行失败和证据均可查询。
 - **FR-208**：危险目录覆盖身份、凭据、信任和拓扑动作且有自动覆盖检查；授权/启用/迁移走审批，撤销/禁用等止损动作直接执行并留下强审计。
-- **FR-209**：Agent 命令、实时日志、文件内容、敏感明文和 payload 的所有入口在没有匹配执行许可时失败关闭；审批快照与实际目标、参数、结果完全可核对。
+- **FR-209**：未列入 `content.read` 的 Agent 命令、敏感配置明文及危险操作在没有匹配执行许可时失败关闭；日志、受限目录、文件资产与消息 payload 读取按 `management.read` 直执并有 service 专项审计，审计 detail 不含正文。
 - **FR-210**：升级、回滚与高影响系统设置均可预览影响并由统一审批执行；失败不被误报为成功，审批记录可关联升级任务或设置版本。
 - **FR-211**：既有变更单继续持有领域状态，统一审批只负责授权执行；创建人可自批，批准并执行不再要求二次启动，也不会叠加旧审批门。
 - **FR-212**：`/approvals` 覆盖空态、常规、超大量与异常态，列表和详情可按状态/风险/来源/申请人/时间筛选；批准并执行、驳回、审计追溯经浏览器 mockup 评审后接真。

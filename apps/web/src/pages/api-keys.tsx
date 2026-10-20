@@ -8,16 +8,16 @@ import { useTranslation } from 'react-i18next'
 import { KeyRound } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
-  DataTable,
   DestructiveConfirmDialog,
   SummaryStrip,
   TableSkeleton,
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { ApiKeyItem } from '@beacon/contracts'
 
 import { randomId } from '../lib/random-id'
@@ -34,6 +34,7 @@ import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
 import PlaintextDialog from '../features/shared/plaintext-dialog'
 import Pager from '../features/observability/pager'
+import PageTitle from '../shell/page-title'
 import CreateDialog from './api-keys/create-dialog'
 import DetailPanel from './api-keys/detail-panel'
 
@@ -199,13 +200,13 @@ export default function ApiKeysPage() {
         toolbar={toolbar}
         footer={total > PAGE_SIZE ? <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} /> : undefined}
       >
-        <AsyncSection
+        <PageAsyncSection
           isLoading={query.isLoading}
           isError={query.isError}
           error={query.error}
           skeleton={<TableSkeleton columns={columns.length} rows={6} />}
         >
-          <DataTable
+          <PageDataTable
             columns={columns}
             rows={pageItems}
             rowKey={(row) => String(row.id)}
@@ -216,13 +217,15 @@ export default function ApiKeysPage() {
             }}
             rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
           />
-        </AsyncSection>
+        </PageAsyncSection>
       </ListCard>
     </div>
   )
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.apiKeys" />
       <MasterDetail
         master={master}
         detail={

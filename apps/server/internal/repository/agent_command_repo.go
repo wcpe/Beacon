@@ -261,13 +261,13 @@ func (r *AgentCommandRepository) UpdateStatusWithLogContent(id uint, content str
 // UpdateStatusWithBrowseResult 把命令从 fetched CAS 迁移 done 并转存浏览回传结果（FR-110）：仅当当前 status=fetched 才迁移。
 // result 即 agent 回传的浏览结果 JSON（瞬态：目录清单 / 子树 / 文件内容）；等待中的 admin 取一次即用、过期清理一并清空。
 // 返回是否命中（前态不符 / 不存在则 false）。
-func (r *AgentCommandRepository) UpdateStatusWithBrowseResult(id uint, result string) (bool, error) {
+func (r *AgentCommandRepository) UpdateStatusWithBrowseResult(id uint, result string, expiresAt time.Time) (bool, error) {
 	if err := r.ensureCommandTargetActive(id); err != nil {
 		return false, err
 	}
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("id = ? AND status = ?", id, model.CommandStatusFetched).
-		Updates(map[string]any{"status": model.CommandStatusDone, "browse_result": result})
+		Updates(map[string]any{"status": model.CommandStatusDone, "browse_result": result, "browse_result_expires_at": expiresAt.UTC()})
 	if res.Error != nil {
 		return false, res.Error
 	}
@@ -278,7 +278,7 @@ func (r *AgentCommandRepository) UpdateStatusWithBrowseResult(id uint, result st
 func (r *AgentCommandRepository) ClearBrowseResult(id uint, result string) (bool, error) {
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("id = ? AND type = ? AND status = ? AND browse_result = ?", id, model.CommandTypeFsBrowse, model.CommandStatusDone, result).
-		Update("browse_result", "")
+		Updates(map[string]any{"browse_result": "", "browse_result_expires_at": nil})
 	if res.Error != nil {
 		return false, res.Error
 	}
@@ -292,7 +292,20 @@ func (r *AgentCommandRepository) ClearBrowseResults(ids []uint) (int64, error) {
 	}
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("id IN ? AND type = ? AND status = ? AND browse_result <> ''", ids, model.CommandTypeFsBrowse, model.CommandStatusDone).
-		Update("browse_result", "")
+		Updates(map[string]any{"browse_result": "", "browse_result_expires_at": nil})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// ClearExpiredBrowseResults 清空所有已过独立到期时间且未消费的 done 浏览正文。
+// 过期时间为空的历史结果也立即清除，避免旧数据因迁移后没有期限继续滞留。
+func (r *AgentCommandRepository) ClearExpiredBrowseResults(now time.Time) (int64, error) {
+	res := r.db.Model(&model.AgentCommand{}).
+		Where("type = ? AND status = ? AND browse_result <> '' AND (browse_result_expires_at IS NULL OR browse_result_expires_at <= ?)",
+			model.CommandTypeFsBrowse, model.CommandStatusDone, now.UTC()).
+		Updates(map[string]any{"browse_result": "", "browse_result_expires_at": nil})
 	if res.Error != nil {
 		return 0, res.Error
 	}
@@ -440,7 +453,7 @@ func (r *AgentCommandRepository) ExpireForTarget(namespace, serverID string) (in
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("namespace = ? AND server_id = ? AND status IN ?", namespace, serverID,
 			[]string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady}).
-		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "browse_result": ""})
+		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "browse_result": "", "browse_result_expires_at": nil})
 	if res.Error != nil {
 		return 0, res.Error
 	}
@@ -454,7 +467,7 @@ func (r *AgentCommandRepository) ExpireStale(before time.Time) (int64, error) {
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("status IN ? AND created_at < ?",
 			[]string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady}, before).
-		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "browse_result": ""})
+		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "browse_result": "", "browse_result_expires_at": nil})
 	if res.Error != nil {
 		return 0, res.Error
 	}

@@ -4,7 +4,9 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { AsyncSection, Badge, DataTable, type DataTableColumn } from '@beacon/ui'
+import { Badge, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import {
   fetchChangeImpact,
@@ -46,7 +48,7 @@ export default function ImpactTab({ order }: ImpactTabProps) {
     () => [
       {
         header: t('delivery.changes.detail.impact.columns.serverId'),
-        cell: (row) => <span className="font-mono">{row.serverId}</span>,
+        cell: (row) => <span className="font-mono" title={row.serverId}>{row.serverId}</span>,
       },
       {
         header: t('delivery.changes.detail.impact.columns.online'),
@@ -64,10 +66,30 @@ export default function ImpactTab({ order }: ImpactTabProps) {
           ),
       },
       { header: t('delivery.changes.detail.impact.columns.level'), cell: (row) => row.level },
-      { header: t('delivery.changes.detail.impact.columns.add'), cell: (row) => row.addCount },
-      { header: t('delivery.changes.detail.impact.columns.update'), cell: (row) => row.updateCount },
-      { header: t('delivery.changes.detail.impact.columns.delete'), cell: (row) => row.deleteCount },
-      { header: t('delivery.changes.detail.impact.columns.skip'), cell: (row) => row.skipCount },
+      {
+        header: t('delivery.changes.detail.impact.columns.add'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
+        cell: (row) => row.addCount,
+      },
+      {
+        header: t('delivery.changes.detail.impact.columns.update'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
+        cell: (row) => row.updateCount,
+      },
+      {
+        header: t('delivery.changes.detail.impact.columns.delete'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
+        cell: (row) => row.deleteCount,
+      },
+      {
+        header: t('delivery.changes.detail.impact.columns.skip'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
+        cell: (row) => row.skipCount,
+      },
       {
         header: t('delivery.changes.detail.impact.columns.configScopes'),
         cell: (row) =>
@@ -90,7 +112,13 @@ export default function ImpactTab({ order }: ImpactTabProps) {
   const targetsTotal = query.data?.targets.total ?? 0
 
   return (
-    <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+    <PageAsyncSection
+      keepContentWhileRefreshing
+      isLoading={query.isLoading}
+      isError={query.isError}
+      error={query.error}
+      skeleton={<TableSkeleton columns={8} rows={6} />}
+    >
       <section className="grid gap-4">
         {/* 共享编排预览：范围 / 批次 / 生效方式 / 影响面汇总 */}
         {summary && <OrderOrchestration order={order} summary={summary} />}
@@ -100,7 +128,7 @@ export default function ImpactTab({ order }: ImpactTabProps) {
           <h4 className="text-[13px] font-semibold text-ink-2">
             {t('delivery.changes.detail.impact.targetsTitle')}
           </h4>
-          <DataTable
+          <PageDataTable
             columns={columns}
             rows={query.data?.targets.items}
             rowKey={(row) => row.serverId}
@@ -114,6 +142,6 @@ export default function ImpactTab({ order }: ImpactTabProps) {
           />
         </div>
       </section>
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }

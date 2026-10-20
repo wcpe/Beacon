@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -102,8 +103,13 @@ func TestRequestResyncApprovalOnlyExecutesAfterWorker(t *testing.T) {
 	}
 }
 
-// TestTailLogsApprovalGrantFlow 验证日志正文只在 Agent 回传后向原申请主体一次性开放。
-func TestTailLogsApprovalGrantFlow(t *testing.T) {
+// TestDeprecatedTailLogsApprovalPathFailsClosed 验证已废弃的日志审批入口仍然 fail-closed。
+//
+// 日志正文现在是直读（RequestTailLogs + ReadCommand 直写专项审计），本用例**不**再断言
+// 「必须审批后才能读」，那已不是产品语义。它锁的是废弃链路的兜底行为：
+// 审批单落地的命令仍绑定原申请主体，非原主体 / 重复消费一律拒绝——
+// 这样历史遗留的审批单不会被绕过，将来删入口时也能立刻发现权限语义被破坏。
+func TestDeprecatedTailLogsApprovalPathFailsClosed(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	registry := authz.NewApprovalRegistry()
 	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
@@ -113,8 +119,8 @@ func TestTailLogsApprovalGrantFlow(t *testing.T) {
 	logs.SetSensitiveAccessGrants(grants)
 	RegisterAgentLogApprovalAdapter(registry, logs, grants)
 
-	if _, err := logs.RequestTailLogs("prod", "lobby-1", "alice", "127.0.0.1"); !errors.Is(err, apperr.ErrForbidden) {
-		t.Fatalf("公开日志下发必须拒绝旁路，实际 %v", err)
+	if _, err := logs.RequestTailLogs("", "", "alice", "127.0.0.1"); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("日志直读缺少目标时应拒绝，实际 %v", err)
 	}
 	ticket, err := logs.RequestTailLogsApproval("prod", "lobby-1", "排查启动异常", "tail-approval-1", "alice", "127.0.0.1", auth.HumanPrincipal("alice"))
 	if err != nil {
@@ -133,7 +139,7 @@ func TestTailLogsApprovalGrantFlow(t *testing.T) {
 	if ok, err := repository.NewAgentCommandRepository(db).UpdateStatus(cmd.ID, model.CommandStatusPending, model.CommandStatusFetched, ""); err != nil || !ok {
 		t.Fatalf("模拟 agent 领取日志命令失败: ok=%v err=%v", ok, err)
 	}
-	if err := logs.ReceiveLogs(cmd.ID, []AgentLogLine{{Level: "INFO", Text: "已脱敏日志"}}, "127.0.0.1"); err != nil {
+	if err := logs.ReceiveLogs(agentauth.Identity{Namespace: "prod", ServerID: "lobby-1"}, cmd.ID, []AgentLogLine{{Level: "INFO", Text: "已脱敏日志"}}, "127.0.0.1"); err != nil {
 		t.Fatalf("回传日志失败: %v", err)
 	}
 	var grant model.SensitiveAccessGrant
@@ -152,8 +158,12 @@ func TestTailLogsApprovalGrantFlow(t *testing.T) {
 	}
 }
 
-// TestBrowseApprovalGrantFlow 验证文件浏览正文只能在审批 worker 入队、Agent 回传后由原申请主体一次性消费。
-func TestBrowseApprovalGrantFlow(t *testing.T) {
+// TestDeprecatedBrowseApprovalPathFailsClosed 验证已废弃的浏览审批入口仍然 fail-closed。
+//
+// 浏览正文现在是直读（RequestBrowse + ReadBrowseResult 直写专项审计），本用例**不**再断言
+// 「必须审批后才能读」。它锁的是废弃链路的兜底行为：审批单落地的命令仍绑定原申请主体，
+// 非原主体 / 重复消费一律拒绝，且审计 detail 不含回传正文。
+func TestDeprecatedBrowseApprovalPathFailsClosed(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	commands := newCommandSvc(db)
 	registry := authz.NewApprovalRegistry()
@@ -163,8 +173,8 @@ func TestBrowseApprovalGrantFlow(t *testing.T) {
 	commands.SetSensitiveAccessGrants(grants)
 	RegisterAgentCommandApprovalAdapters(registry, commands, grants)
 
-	if _, err := commands.RequestBrowse(context.Background(), BrowseParams{Namespace: "prod", ServerID: "lobby-1", Op: model.BrowseOpFile, Path: "Demo/config.yml", Operator: "alice"}); !errors.Is(err, apperr.ErrForbidden) {
-		t.Fatalf("公开浏览下发必须拒绝旁路，实际 %v", err)
+	if _, err := commands.RequestBrowse(context.Background(), BrowseParams{}); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("浏览直读缺少目标时应拒绝，实际 %v", err)
 	}
 	ticket, err := commands.RequestBrowseApproval(BrowseParams{Namespace: "prod", ServerID: "lobby-1", Op: model.BrowseOpFile, Path: "Demo/config.yml", Operator: "alice", ClientIP: "127.0.0.1"}, "核对线上文件", "browse-approval-1", auth.HumanPrincipal("alice"))
 	if err != nil {
@@ -813,6 +823,69 @@ func TestExpireStale(t *testing.T) {
 	}
 }
 
+// TestRequestTailLogsConcurrentSingleActive 验证同一目标的并发取日志请求最多创建一条在途命令。
+func TestRequestTailLogsConcurrentSingleActive(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	logs := NewAgentLogService(db, repository.NewAgentCommandRepository(db), repository.NewAuditLogRepository(db))
+	const requests = 16
+	start := make(chan struct{})
+	results := make(chan error, requests)
+	var wait sync.WaitGroup
+	for range requests {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			_, err := logs.RequestTailLogs("prod", "lobby-1", "alice", "127.0.0.1")
+			results <- err
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	successes := 0
+	rejected := 0
+	for err := range results {
+		if err == nil {
+			successes++
+			continue
+		}
+		if errors.Is(err, apperr.ErrAgentLogActive) {
+			rejected++
+			continue
+		}
+		t.Fatalf("并发请求只允许成功或以 active 错误拒绝，实际 %v", err)
+	}
+	if successes != 1 || rejected != requests-1 {
+		t.Fatalf("同一目标应恰有一条活跃日志命令，成功=%d 拒绝=%d", successes, rejected)
+	}
+	var active int64
+	if err := db.Model(&model.AgentCommand{}).Where("namespace = ? AND server_id = ? AND type = ? AND status IN ?",
+		"prod", "lobby-1", model.CommandTypeTailLogs, []string{model.CommandStatusPending, model.CommandStatusFetched}).Count(&active).Error; err != nil || active != 1 {
+		t.Fatalf("数据库中应恰有一条活跃日志命令，数量=%d err=%v", active, err)
+	}
+}
+
+// TestReadLatestRejectsCorruptLogContent 损坏的日志 JSON 必须失败，不能作为空日志写成功审计。
+func TestReadLatestRejectsCorruptLogContent(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	logs := NewAgentLogService(db, repository.NewAgentCommandRepository(db), repository.NewAuditLogRepository(db))
+	cmd := &model.AgentCommand{
+		NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeTailLogs,
+		Status: model.CommandStatusDone, LogContent: "{损坏的日志 JSON", Operator: "alice",
+	}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建损坏日志命令失败: %v", err)
+	}
+	if _, err := logs.ReadLatest("prod", "lobby-1", "alice", "127.0.0.1"); err == nil {
+		t.Fatal("日志 JSON 解码失败必须返回错误")
+	}
+	var audits int64
+	if err := db.Model(&model.AuditLog{}).Where("action = ?", model.ActionInstanceTailLogs).Count(&audits).Error; err != nil || audits != 0 {
+		t.Fatalf("解码失败不得写成功读取审计，数量=%d err=%v", audits, err)
+	}
+}
+
 // TestRequestResyncApprovalRejectsWithActionableErrors 验证强制重同步提审的四类前置失败
 // 各自返回可区分的错误码，而不是统一的泛化 403。
 //
@@ -869,5 +942,55 @@ func TestRequestResyncApprovalRejectsWithActionableErrors(t *testing.T) {
 				t.Fatal("不应复用泛化 FORBIDDEN")
 			}
 		})
+	}
+}
+
+// TestReceiveLogsBindsToReportingAgent 验证日志回传必须绑定到发起命令的那台 agent。
+//
+// 动机：ReceiveLogs 此前只校验 type 与 status，不校验命令归属。任一持有 agent token 的实例
+// 只要猜到自增 commandID，就能把自己的日志覆盖到别人的命令上，进而被原申请主体的授权读取。
+// 这里要求非归属 agent 与空身份一律 ErrCommandNotFound，且不得改动原始行。
+func TestReceiveLogsBindsToReportingAgent(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	logs := NewAgentLogService(db, repository.NewAgentCommandRepository(db), repository.NewAuditLogRepository(db))
+	cmd := &model.AgentCommand{
+		NamespaceCode: "prod", ServerID: "lobby-1", Type: model.CommandTypeTailLogs,
+		Status: model.CommandStatusFetched, Operator: "alice",
+	}
+	if err := db.Create(cmd).Error; err != nil {
+		t.Fatalf("创建待回传日志命令失败: %v", err)
+	}
+
+	for name, identity := range map[string]agentauth.Identity{
+		"空身份":          {},
+		"缺少 namespace": {ServerID: "lobby-1", IdentityID: "identity"},
+		"缺少 serverId":  {Namespace: "prod", IdentityID: "identity"},
+		"命名空间不符":       {Namespace: "staging", ServerID: "lobby-1", IdentityID: "identity"},
+		"服务器不符":        {Namespace: "prod", ServerID: "lobby-2", IdentityID: "identity"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// 用「越权者」的日志行回传，校验失败时绝不能落库。
+			err := logs.ReceiveLogs(identity, cmd.ID, []AgentLogLine{{Level: "INFO", Text: "越权写入"}}, "10.0.0.9")
+			if !errors.Is(err, apperr.ErrCommandNotFound) {
+				t.Fatalf("非归属 agent 回传应 ErrCommandNotFound，实际 %v", err)
+			}
+			stored, ferr := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+			if ferr != nil {
+				t.Fatalf("读取命令失败: %v", ferr)
+			}
+			if stored.LogContent != "" || stored.Status != model.CommandStatusFetched {
+				t.Fatalf("被拒回传不得改写命令: status=%s content=%q", stored.Status, stored.LogContent)
+			}
+		})
+	}
+
+	// 归属 agent 正常回传仍须成功，避免守卫误伤主链路。
+	if err := logs.ReceiveLogs(agentauth.Identity{Namespace: "prod", ServerID: "lobby-1", IdentityID: "identity"}, cmd.ID,
+		[]AgentLogLine{{Level: "INFO", Text: "正常日志"}}, "127.0.0.1"); err != nil {
+		t.Fatalf("归属 agent 回传应成功: %v", err)
+	}
+	stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if err != nil || stored.Status != model.CommandStatusDone || stored.LogContent == "" {
+		t.Fatalf("归属 agent 回传后应为 done 且有内容: status=%s err=%v", stored.Status, err)
 	}
 }

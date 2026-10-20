@@ -245,8 +245,9 @@ function ReviewCard({ subjectLabel, reviewState, onStateChange, children }: {
     <section className="grid gap-3 rounded-xl border border-dashed border-brand-200 bg-brand-50/30 p-4" aria-label={t('system.lifecycle.mockLabel', { subject: subjectLabel })}>
       <div className="flex flex-wrap items-center gap-2">
         <div>
+          {/* 「仅供确认交互、不调真实后端」这类说明不再常驻页面：
+              组件本身只在 demo 模式挂载，mock 身份由右下角 Mock 开发工具统一标识。 */}
           <h2 className="text-sm font-semibold text-ink-1">{t('system.lifecycle.title', { subject: subjectLabel })}</h2>
-          <p className="mt-0.5 text-xs text-ink-3">{t('system.lifecycle.demoOnly')}</p>
         </div>
         <div className="ml-auto flex flex-wrap gap-1" aria-label={t('system.lifecycle.scenarios')}>
           {reviewStates.map((state) => (

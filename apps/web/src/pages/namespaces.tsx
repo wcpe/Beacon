@@ -8,9 +8,7 @@ import { Link } from 'react-router-dom'
 import { Boxes, Search, ShieldCheck } from 'lucide-react'
 
 import {
-  AsyncSection,
   Button,
-  DataTable,
   DestructiveConfirmDialog,
   Dialog,
   DialogContent,
@@ -24,6 +22,8 @@ import {
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { NamespaceItem, NamespaceTrustItem, TrustCapability } from '@beacon/contracts'
 
 import {
@@ -38,10 +38,9 @@ import {
   type GrantTrustBody,
 } from '../api/system'
 import type { ApprovalTicket } from '../api/cluster'
+import PageTitle from '../shell/page-title'
 import SystemReasonDialog from '../features/system/reason-dialog'
 import { formatIso } from '../features/system/format'
-import { isDemoMode } from '../demo-mode'
-import LifecycleMockReview from '../features/lifecycle/mock-review'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
 import Pager from '../features/observability/pager'
@@ -278,13 +277,13 @@ export default function NamespacesPage() {
       toolbar={toolbar}
       footer={total > PAGE_SIZE ? <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} /> : undefined}
     >
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={6} />}
       >
-        <DataTable
+        <PageDataTable
           columns={columns}
           rows={items}
           rowKey={(row) => String(row.id)}
@@ -295,12 +294,14 @@ export default function NamespacesPage() {
           }}
           rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
         />
-      </AsyncSection>
+      </PageAsyncSection>
     </ListCard>
   )
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.namespaces" />
       {/* 隔离原则提示：品牌浅底 + 盾牌图标，突出「默认强隔离、显式授予放通」 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
@@ -347,8 +348,6 @@ export default function NamespacesPage() {
           <Link className="w-fit text-brand hover:underline" to={`/approvals/${encodeURIComponent(grantTicket.approvalRequestId)}`}>查看统一审批</Link>
         </div>
       )}
-
-      {isDemoMode() && <LifecycleMockReview subject="namespace" />}
 
       {/* 创建 namespace 弹窗 */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

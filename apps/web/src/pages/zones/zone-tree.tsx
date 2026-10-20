@@ -21,7 +21,8 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, cn, DestructiveConfirmDialog } from '@beacon/ui'
+import { Badge, Button, cn, DestructiveConfirmDialog, Skeleton } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ServerItem, ZoneTreeResponse } from '@beacon/contracts'
 
 import {
@@ -44,6 +45,7 @@ import {
 import { readAssignDrag, writeAssignDrag, type AssignDragPayload } from '../../features/cluster/assign-drag'
 import { messageOf as assignMessageOf, useAssignServers } from '../../features/cluster/use-assign-servers'
 import { notifyError, notifySuccess } from '../../lib/notify'
+import PageSkeleton from '../../features/shared/page-skeleton'
 import ReasonDialog from '../servers/reason-dialog'
 import CreateNodeDialog from './create-node-dialog'
 import DragConfirmDialog, { type PendingDrop } from './drag-confirm-dialog'
@@ -585,7 +587,26 @@ export default function ZoneTree({
       )}
 
       <div className="max-h-[calc(100vh-16rem)] overflow-y-auto p-3">
-        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+        <PageAsyncSection
+          isLoading={query.isLoading}
+          isError={query.isError}
+          error={query.error}
+          skeleton={
+            <PageSkeleton className="grid gap-1">
+              {[0, 1, 2, 1, 2, 0].map((level, index) => (
+                <div
+                  key={index}
+                  className="flex h-10 items-center gap-2 rounded-lg border border-border px-3"
+                  style={{ paddingLeft: `${String(12 + level * 20)}px` }}
+                >
+                  <Skeleton className="size-4 shrink-0" />
+                  <Skeleton className="h-4 w-36" />
+                  <Skeleton className="ml-auto h-5 w-16" />
+                </div>
+              ))}
+            </PageSkeleton>
+          }
+        >
           {tree?.clusters.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-ink-3">
               {t('cluster.zones.tree.empty')}
@@ -787,7 +808,7 @@ export default function ZoneTree({
               })}
             </ul>
           )}
-        </AsyncSection>
+        </PageAsyncSection>
       </div>
 
       <CreateNodeDialog

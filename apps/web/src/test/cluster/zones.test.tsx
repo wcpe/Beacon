@@ -2,7 +2,7 @@
 // 勾选批量分配写闭环、可搜索树目标选择器、拖拽落区（原生 HTML5）。未分配收敛为窄栏入口，故分配用例先开栏。
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ZonesPage from '../../pages/zones'
@@ -60,6 +60,21 @@ describe('/zones 区服分配页', () => {
     expect(await findZoneRow('bc-main')).toBeInTheDocument()
     expect(await findZoneRow('华东大区')).toBeInTheDocument()
     expect(await findZoneRow('area-1')).toBeInTheDocument()
+  })
+
+  it('首屏显示区服树骨架，加载完成后显示真实空态', async () => {
+    useScenario('empty')
+    server.use(
+      http.get('/admin/v2/zone-tree', async () => {
+        await delay(120)
+        return HttpResponse.json({ namespaceId: 0, clusters: [], unassignedCount: 0 })
+      }),
+    )
+    const { container } = renderPage(<ZonesPage />)
+
+    expect(container.querySelector('[data-slot="page-skeleton"]')).toBeInTheDocument()
+    expect(await screen.findByText('尚未建立任何 BC 集群，先新建一个集群开始规划区服')).toBeInTheDocument()
+    expect(container.querySelector('[data-slot="page-skeleton"]')).not.toBeInTheDocument()
   })
 
   it('集群节点标注代理角色计数', async () => {

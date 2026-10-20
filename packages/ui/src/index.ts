@@ -2,10 +2,11 @@ export { default as AnchorRailLayout, AnchorSectionBlock, type AnchorSection } f
 export { default as AsyncSection } from './components/AsyncSection'
 export { default as DataTable, type DataTableColumn } from './components/DataTable'
 export { default as DestructiveConfirmDialog } from './components/DestructiveConfirmDialog'
+export { default as JumpValue, type JumpValueProps } from './components/JumpValue'
 export { default as MarkdownLite } from './components/MarkdownLite'
 export { default as SectionHeader } from './components/SectionHeader'
 export { default as SummaryStrip, type SummaryItem, type SummaryTone } from './components/SummaryStrip'
-export { CardGridSkeleton, TableSkeleton, TileGridSkeleton } from './components/skeletons'
+export { CardGridSkeleton, FormSkeleton, TableSkeleton, TileGridSkeleton } from './components/skeletons'
 export { default as GaugeRing } from './components/dashboard/GaugeRing'
 export { default as HealthBar, type HealthSegment } from './components/dashboard/HealthBar'
 export { default as IconStat } from './components/dashboard/IconStat'
@@ -80,6 +81,7 @@ export {
 } from './components/ui/dropdown-menu'
 export { Input } from './components/ui/input'
 export { Label } from './components/ui/label'
+export { PageHeader } from './components/ui/page-header'
 export { ScrollArea, ScrollBar } from './components/ui/scroll-area'
 export {
   Select,

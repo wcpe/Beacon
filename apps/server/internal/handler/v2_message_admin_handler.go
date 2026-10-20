@@ -245,22 +245,8 @@ func (h *V2MessageAdminHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"edges": edges})
 }
 
-// Payload 处理 POST /admin/v2/messages/{messageId}/payload：原因必填 → 先写审计后返回内容（无权限由 readonlyWriteGuard 403）。
+// Payload 处理 POST /admin/v2/messages/{messageId}/payload：先写元数据审计再返回正文。
 func (h *V2MessageAdminHandler) Payload(w http.ResponseWriter, r *http.Request) {
-	_, err := h.payloadS.View(service.ViewPayloadParams{})
-	if err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-}
-
-// RequestPayloadApproval 处理专用 payload 审批申请，旧正文端点不会隐式建申请。
-func (h *V2MessageAdminHandler) RequestPayloadApproval(w http.ResponseWriter, r *http.Request) {
-	principal, ok := auth.FromContext(r.Context())
-	if !ok {
-		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
-		return
-	}
 	var body struct {
 		Reason string `json:"reason"`
 	}
@@ -268,29 +254,69 @@ func (h *V2MessageAdminHandler) RequestPayloadApproval(w http.ResponseWriter, r 
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	request, err := h.payloadS.RequestAccess(chi.URLParam(r, "messageId"), body.Reason, r.Header.Get("Idempotency-Key"), principal, clientIP(r))
+	scope, err := resolveObservationScope(r, h.scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, map[string]any{"requestId": request.RequestID, "status": request.Status})
-}
-
-// ConsumePayloadGrant 处理原申请主体的一次性 payload 消费。
-func (h *V2MessageAdminHandler) ConsumePayloadGrant(w http.ResponseWriter, r *http.Request) {
-	principal, ok := auth.FromContext(r.Context())
-	if !ok {
-		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+	result, err := h.payloadS.View(service.ViewPayloadParams{
+		MessageID: chi.URLParam(r, "messageId"), Reason: body.Reason,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r), TraceID: render.TraceID(r.Context()),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All,
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
 		return
 	}
+	render.WriteJSON(w, http.StatusOK, payloadResponseJS{Payload: result.Payload, SHA256: result.SHA256, Size: result.Size})
+}
+
+// RequestPayloadApproval 保留旧路径名，直接读取消息正文并写元数据审计。
+func (h *V2MessageAdminHandler) RequestPayloadApproval(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		MessageID string `json:"messageId"`
+		Reason string `json:"reason"`
 	}
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	result, err := h.payloadS.Consume(chi.URLParam(r, "grantId"), body.MessageID, principal)
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	result, err := h.payloadS.View(service.ViewPayloadParams{
+		MessageID: chi.URLParam(r, "messageId"), Reason: body.Reason,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r), TraceID: render.TraceID(r.Context()),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All,
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, payloadResponseJS{Payload: result.Payload, SHA256: result.SHA256, Size: result.Size})
+}
+
+// ConsumePayloadGrant 兼容旧 grant 路径，但 payload 读取只校验 management.read 能力。
+func (h *V2MessageAdminHandler) ConsumePayloadGrant(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MessageID string `json:"messageId"`
+		Reason    string `json:"reason"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	result, err := h.payloadS.View(service.ViewPayloadParams{
+		MessageID: body.MessageID, Reason: body.Reason,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r), TraceID: render.TraceID(r.Context()),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All,
+	})
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

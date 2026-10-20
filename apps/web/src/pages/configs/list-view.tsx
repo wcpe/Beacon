@@ -1,22 +1,22 @@
-// 配置文件列表（主从布局主列）：ListCard 吸顶工具条（标题 / 新建 / 回收站 / keyword）+ 自区滚列表 + 吸底分页。
+// 配置文件列表（主从布局主列）：ListCard 吸顶工具条（条数 / keyword / 白话提示）+ 自区滚列表 + 吸底分页。
+// 页面级标题与新建 / 回收站等操作已上移页头（PageHeader），此处只留列表自己的筛选与计数。
 // 点行选中（右侧非模态详情面板打开），行「删除」移入回收站（模态确认）。四态齐全（loading/error/empty/huge 分页）。
-import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Files, Trash2 } from 'lucide-react'
+import { Files, Layers, Trash2 } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
-  DataTable,
   DestructiveConfirmDialog,
   Input,
-  SummaryStrip,
+  KpiCard,
+  TableSkeleton,
   type DataTableColumn,
-  type SummaryItem,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigFileItem } from '@beacon/contracts'
 
 import ListCard from '../../features/shared/list-card'
@@ -24,6 +24,7 @@ import Pager from '../../features/delivery/pager'
 import { ApiClientError } from '../../api/delivery'
 import { createConfigFile, deleteConfigFile, fetchConfigFiles } from '../../api/delivery-configs'
 import CreateDialog from './create-dialog'
+import EmptyGuide from './empty-guide'
 
 const PAGE_SIZE = 15
 
@@ -31,21 +32,33 @@ interface ListViewProps {
   namespaceId: number
   selectedId: number | null
   onSelect: (file: ConfigFileItem) => void
-  onOpenTrash: () => void
-  // 页级操作（命名空间选择器等）：并入列表工具条标题行右侧，不另起独立操作行
-  actions?: ReactNode
+  // 新建弹窗开关由页面持有（页头按钮与列表空态引导共用同一个开关），弹窗本体仍在本视图内
+  createOpen: boolean
+  onCreateOpenChange: (open: boolean) => void
 }
 
-export default function ListView({ namespaceId, selectedId, onSelect, onOpenTrash, actions }: ListViewProps) {
+export default function ListView({
+  namespaceId,
+  selectedId,
+  onSelect,
+  createOpen,
+  onCreateOpenChange,
+}: ListViewProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
 
   const [keyword, setKeyword] = useState('')
   const [page, setPage] = useState(1)
-  const [createOpen, setCreateOpen] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [removeTarget, setRemoveTarget] = useState<ConfigFileItem | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
+
+  // 弹窗每次打开都清掉上一次的失败提示（开关由页头按钮控制，这里只跟随开合清理）
+  useEffect(() => {
+    if (createOpen) {
+      setCreateError(null)
+    }
+  }, [createOpen])
 
   const query = useQuery({
     queryKey: ['configs', 'files', namespaceId, keyword, page],
@@ -72,7 +85,7 @@ export default function ListView({ namespaceId, selectedId, onSelect, onOpenTras
       }),
     onSuccess: async () => {
       await invalidate()
-      setCreateOpen(false)
+      onCreateOpenChange(false)
     },
     onError: (error) => {
       setCreateError(messageOf(error))
@@ -93,22 +106,13 @@ export default function ListView({ namespaceId, selectedId, onSelect, onOpenTras
   const total = query.data?.total ?? 0
   const items = query.data?.items ?? []
 
-  // 概要条：从本页已取 items 聚合——文件总数（服务端 total 权威）+ 本页可见文件的贡献层合计
-  const summaryItems: SummaryItem[] =
-    items.length > 0
-      ? [
-          { label: t('delivery.configs.list.summary.files'), value: total },
-          {
-            label: t('delivery.configs.list.summary.layers'),
-            value: items.reduce((sum, it) => sum + it.contributingLayerCount, 0),
-          },
-        ]
-      : []
+  // KPI 从本页已取 items 聚合：文件总数以服务端 total 为准，贡献层数统计当前页可见文件。
+  const contributingLayerCount = items.reduce((sum, item) => sum + item.contributingLayerCount, 0)
 
   const columns: DataTableColumn<ConfigFileItem>[] = [
     {
       header: t('delivery.configs.list.columns.name'),
-      cell: (row) => <span className="font-mono text-ink-1">{row.name}</span>,
+      cell: (row) => <span className="block max-w-56 truncate font-mono text-ink-1" title={row.name}>{row.name}</span>,
     },
     {
       header: t('delivery.configs.list.columns.format'),
@@ -116,12 +120,14 @@ export default function ListView({ namespaceId, selectedId, onSelect, onOpenTras
     },
     {
       header: t('delivery.configs.list.columns.layers'),
-      cell: (row) => <span className="tnum text-ink-2">{row.contributingLayerCount}</span>,
+      headClassName: 'text-right',
+      className: 'text-right tabular-nums',
+      cell: (row) => row.contributingLayerCount,
     },
     {
       header: t('delivery.configs.list.columns.hash'),
       cell: (row) => (
-        <span className="font-mono text-xs text-ink-3">
+        <span className="font-mono text-xs text-ink-3" title={row.effectiveHash ?? undefined}>
           {row.effectiveHash ? row.effectiveHash.slice(0, 10) : '-'}
         </span>
       ),
@@ -132,11 +138,16 @@ export default function ListView({ namespaceId, selectedId, onSelect, onOpenTras
     },
     {
       header: '',
+      headClassName: 'w-28 text-right',
+      className: 'w-28 text-right',
       cell: (row) => (
-        <div className="flex flex-wrap justify-end gap-1.5">
+        <div className="flex justify-end gap-1.5">
+          {/* 行内删除：危险色只在确认框里出现。列表里用 ghost + 悬停转危险色，
+              避免每行一片红实底把表格压得刺眼（危险操作的最终确认仍在 AlertDialog）。 */}
           <Button
             size="sm"
             variant="ghost"
+            className="text-ink-3 hover:bg-destructive/10 hover:text-destructive"
             onClick={(e) => {
               // 阻止冒泡到行点击（行点击用于打开详情面板）
               e.stopPropagation()
@@ -144,6 +155,7 @@ export default function ListView({ namespaceId, selectedId, onSelect, onOpenTras
               setRemoveTarget(row)
             }}
           >
+            <Trash2 className="size-3.5" aria-hidden />
             {t('delivery.configs.remove.action')}
           </Button>
         </div>
@@ -153,32 +165,6 @@ export default function ListView({ namespaceId, selectedId, onSelect, onOpenTras
 
   const toolbar = (
     <div className="grid gap-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-1">
-          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
-            <Files className="size-[15px]" />
-          </span>
-          {t('delivery.configs.list.title')}
-          {total > 0 && <span className="text-xs font-normal text-ink-3">{total}</span>}
-        </span>
-        <div className="flex items-center gap-1.5">
-          <Button variant="outline" size="sm" onClick={onOpenTrash}>
-            <Trash2 className="size-3.5" aria-hidden />
-            {t('delivery.configs.list.trash')}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              setCreateError(null)
-              setCreateOpen(true)
-            }}
-          >
-            {t('delivery.configs.list.create')}
-          </Button>
-          {/* 页级操作（命名空间选择器等）并入同一行右侧，不另起独立操作行 */}
-          {actions}
-        </div>
-      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('delivery.configs.list.keyword')}
@@ -190,38 +176,79 @@ export default function ListView({ namespaceId, selectedId, onSelect, onOpenTras
           }}
           className="w-64"
         />
+        {/* 标题已上移到页头，工具条只留条数，让「现在有几条」在当前筛选下始终可见 */}
+        {total > 0 && (
+          <span className="tnum ml-auto text-xs text-ink-3">{t('delivery.configs.list.total', { total })}</span>
+        )}
       </div>
+      {/* 白话提示：解释「贡献层数 / 有效配置」这一最容易卡住的口径 */}
+      <p className="text-xs text-ink-3">{t('delivery.tips.configsListLayers')}</p>
     </div>
   )
 
+  // 空态引导：确无任何配置文件（非搜索造成的空）时用引导代替空表格
+  const showEmptyGuide =
+    namespaceId > 0 && !query.isLoading && !query.isError && total === 0 && keyword.trim() === ''
+
   return (
-    <div className="grid gap-3.5">
-      {summaryItems.length > 0 && <SummaryStrip items={summaryItems} />}
+    <div className="grid gap-3.5 md:min-h-0 md:flex-1 md:flex md:flex-col">
+      {items.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:shrink-0">
+          <KpiCard
+            icon={<Files className="size-4" aria-hidden />}
+            label={t('delivery.configs.list.summary.files')}
+            value={total}
+            tone="brand"
+          />
+          <KpiCard
+            icon={<Layers className="size-4" aria-hidden />}
+            label={t('delivery.configs.list.summary.layers')}
+            value={contributingLayerCount}
+            tone="ok"
+          />
+        </div>
+      )}
 
       <ListCard
+        fill
         toolbar={toolbar}
         footer={total > PAGE_SIZE ? <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} /> : undefined}
       >
-        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-          <DataTable
-            columns={columns}
-            rows={query.data?.items}
-            rowKey={(row) => String(row.id)}
-            emptyText={t('delivery.configs.list.empty')}
-            density="compact"
-            onRowClick={(row) => {
-              onSelect(row)
+        {showEmptyGuide ? (
+          <EmptyGuide
+            onCreate={() => {
+              onCreateOpenChange(true)
             }}
-            rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
           />
-        </AsyncSection>
+        ) : (
+          <PageAsyncSection
+            isLoading={query.isLoading}
+            isError={query.isError}
+            error={query.error}
+            skeleton={<TableSkeleton columns={6} rows={6} />}
+          >
+            <PageDataTable
+              columns={columns}
+              rows={query.data?.items}
+              rowKey={(row) => String(row.id)}
+              emptyText={t('delivery.configs.list.empty')}
+              density="compact"
+              stickyHeader
+              onRowClick={(row) => {
+                onSelect(row)
+              }}
+              rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50 hover:bg-brand-50' : undefined)}
+            />
+          </PageAsyncSection>
+        )}
       </ListCard>
 
       <CreateDialog
         open={createOpen}
         onOpenChange={(open) => {
+          // 只在关闭时回写（打开由页头按钮驱动），避免受控 Dialog 反复请求打开
           if (!open) {
-            setCreateOpen(false)
+            onCreateOpenChange(false)
           }
         }}
         pending={createMutation.isPending}
@@ -241,14 +268,13 @@ export default function ListView({ namespaceId, selectedId, onSelect, onOpenTras
             }
           }}
           title={t('delivery.configs.remove.title')}
-          description={removeError ?? t('delivery.configs.remove.desc')}
+          description={t('delivery.configs.remove.desc')}
           confirmLabel={t('delivery.configs.remove.confirm')}
+          errorText={removeError}
           cancelLabel={t('delivery.configs.create.cancel')}
           impacts={[removeTarget.name]}
           pending={removeMutation.isPending}
-          onConfirm={() => {
-            removeMutation.mutate(removeTarget.id)
-          }}
+          onConfirm={() => removeMutation.mutateAsync(removeTarget.id)}
         />
       )}
     </div>

@@ -7,7 +7,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { CardGridSkeleton } from '@beacon/ui'
+
 import { fetchMetricsSummary } from '../../api/metrics'
+import PageSkeleton from '../../features/shared/page-skeleton'
 import KpiStrip from './kpi-strip'
 
 export default function HealthOverview() {
@@ -18,8 +21,20 @@ export default function HealthOverview() {
   })
   const data = query.data
 
-  // 无任何服务器视为空态（接入引导）
-  const isEmpty = data?.byKind.proxy.total === 0 && data.byKind.backend.total === 0
+  // 首屏加载：给与 KPI 卡同形的骨架，避免空白闪烁。
+  // 有缓存数据的后台重新获取不替换内容（避免每次刷新闪白）。
+  if (query.isPending) {
+    return (
+      <section className="grid gap-2">
+        <PageSkeleton>
+          <CardGridSkeleton count={4} />
+        </PageSkeleton>
+      </section>
+    )
+  }
+
+  // 无任何服务器视为空态（接入引导）。data 在加载完成后才读取，此处置空防御。
+  const isEmpty = (data?.byKind.proxy.total ?? 0) === 0 && (data?.byKind.backend.total ?? 0) === 0
 
   return (
     <section className="grid gap-2">

@@ -3,16 +3,21 @@
 // 彻底删除、敏感值脱敏与占位符提示（回填后无变化被拒）、有效预览目标选择器、元数据编辑。
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import ConfigsPage from '../../pages/configs'
 import { fetchConfigFiles, fetchConfigVersions, saveConfigVersion } from '../../api/delivery-configs'
+import { setObservationScope } from '../../features/env/observation-scope'
 import { createTestServer, renderPage, useScenario } from './harness'
 
 const server = createTestServer()
 
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' })
+})
+// 命名空间范围取自页眉观测范围选择器：固定到 mock 的 prod 命名空间（env 1 → namespace 1）
+beforeEach(() => {
+  setObservationScope({ kind: 'env', envId: 1, namespaceId: 1 })
 })
 afterEach(() => {
   server.resetHandlers()
@@ -134,16 +139,22 @@ describe('/configs diff 三描述符', () => {
     await openDetail(user, 'plugins/Essentials/config.yml')
     await user.click(screen.getByRole('tab', { name: '差异对比' }))
 
-    // 左侧：层 head（namespace）
-    await user.click(await screen.findByRole('combobox', { name: '左侧选择层' }))
+    // 左侧：层 head（namespace），键入候选名搜索后选择
+    const leftScope = await screen.findByRole('textbox', { name: '左侧选择层' })
+    await user.click(leftScope)
+    await user.type(leftScope, 'prod')
     await user.click(await screen.findByRole('option', { name: 'namespace / prod' }))
 
-    // 右侧：历史版本（namespace 链 v1）
+    // 右侧：历史版本（namespace 链 v1），层与版本均可键入搜索
     await user.click(screen.getByRole('combobox', { name: '右侧描述类型' }))
     await user.click(await screen.findByRole('option', { name: '历史版本' }))
-    await user.click(await screen.findByRole('combobox', { name: '右侧选择层' }))
+    const rightScope = await screen.findByRole('textbox', { name: '右侧选择层' })
+    await user.click(rightScope)
+    await user.type(rightScope, 'prod')
     await user.click(await screen.findByRole('option', { name: 'namespace / prod' }))
-    await user.click(await screen.findByRole('combobox', { name: '右侧选择版本' }))
+    const rightVersion = await screen.findByRole('textbox', { name: '右侧选择版本' })
+    await user.click(rightVersion)
+    await user.type(rightVersion, 'v1')
     await user.click(await screen.findByRole('option', { name: /^v1 · / }))
 
     await user.click(screen.getByRole('button', { name: '对比' }))
@@ -166,6 +177,7 @@ describe('/configs 版本链回退与撤销层贡献', () => {
     renderPage(<ConfigsPage />)
     await openDetail(user, 'plugins/Essentials/config.yml')
     await user.click(screen.getByRole('tab', { name: '版本链' }))
+    expect(await screen.findByRole('textbox', { name: '选择作用域' })).toHaveValue('namespace / prod')
 
     // 默认链 = namespace，行出现 v2 / v1
     const v1Cell = await screen.findByText('v1')
@@ -293,8 +305,12 @@ describe('/configs 有效预览目标选择器', () => {
     await openDetail(user, 'plugins/Essentials/config.yml')
     await user.click(screen.getByRole('tab', { name: '有效配置' }))
 
-    // 目标类型切「按服务器」→ 服务端搜索选 lobby-1
-    await user.click(await screen.findByRole('combobox', { name: '目标类型' }))
+    // 目标类型预选为命名空间基线；可键入候选名称后切「按服务器」→ 服务端搜索选 lobby-1
+    const targetType = await screen.findByRole('textbox', { name: '目标类型' })
+    expect(targetType).toHaveValue('仅命名空间基线')
+    await user.click(targetType)
+    expect(await screen.findByRole('option', { name: '仅命名空间基线' })).toHaveAttribute('aria-selected', 'true')
+    await user.type(targetType, '服务器')
     await user.click(await screen.findByRole('option', { name: '按服务器' }))
     await user.type(screen.getByLabelText('搜索服务器 ID'), 'lobby')
     await user.click(await screen.findByRole('option', { name: 'lobby-1' }))

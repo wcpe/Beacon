@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Table,
@@ -14,6 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ArchiveJob, ArchiveJobItem } from '@beacon/contracts'
 
 import { fetchArchiveJobDetail } from '../../api/system'
@@ -99,7 +99,12 @@ export default function ArchiveDetailPanel({ job, onRetry, onCancel }: ArchiveDe
 
       {/* 逐域进度与校验明细 */}
       <div className="border-t border-border pt-3">
-        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+        <PageAsyncSection
+          keepContentWhileRefreshing
+          isLoading={query.isLoading}
+          isError={query.isError}
+          error={query.error}
+        >
           {detail && (
             <Table>
               <TableHeader>
@@ -124,7 +129,7 @@ export default function ArchiveDetailPanel({ job, onRetry, onCancel }: ArchiveDe
               </TableBody>
             </Table>
           )}
-        </AsyncSection>
+        </PageAsyncSection>
       </div>
     </div>
   )

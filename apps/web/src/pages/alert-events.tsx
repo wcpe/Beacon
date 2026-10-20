@@ -8,11 +8,9 @@ import { useTranslation } from 'react-i18next'
 import { Check, CheckCheck, TriangleAlert } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
-  DataTable,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -23,6 +21,8 @@ import {
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { AlertEventItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../api/http'
@@ -37,6 +37,7 @@ import {
 import FilterSelect from '../features/observability/filter-select'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
+import PageTitle from '../shell/page-title'
 import Pager from '../features/observability/pager'
 import AlertDetailPanel, { type HandleIntent } from './alert-events/alert-detail-panel'
 import AlertKpi from './alert-events/alert-kpi'
@@ -606,49 +607,53 @@ export default function AlertEventsPage() {
   )
 
   const master = (
-    <div className="grid gap-3.5">
-      <AlertKpi total={total} items={query.data?.items ?? []} />
-      <ListCard
-        toolbar={toolbar}
-        footer={
-          total > PAGE_SIZE ? (
-            <Pager
-              page={page}
-              pageCount={pageCount}
-              total={total}
-              onPageChange={(next) => {
-                setPage(next)
-                clearSelection()
-              }}
-            />
-          ) : undefined
-        }
-      >
-        <AsyncSection
-          isLoading={query.isPending}
-          isError={query.isError}
-          error={query.error}
-          skeleton={<TableSkeleton columns={columns.length} rows={8} />}
+    <PageAsyncSection isLoading={false}>
+      <div className="grid gap-3.5">
+        <AlertKpi total={total} items={query.data?.items ?? []} />
+        <ListCard
+          toolbar={toolbar}
+          footer={
+            total > PAGE_SIZE ? (
+              <Pager
+                page={page}
+                pageCount={pageCount}
+                total={total}
+                onPageChange={(next) => {
+                  setPage(next)
+                  clearSelection()
+                }}
+              />
+            ) : undefined
+          }
         >
-          <DataTable
-            columns={columns}
-            rows={rows}
-            rowKey={(row) => String(row.id)}
-            emptyText={t('observability.alertEvents.listEmpty')}
-            density="compact"
-            onRowClick={(row) => {
-              setErrorText(null)
-              setSelectedId(row.id)
-            }}
-            rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
-          />
-        </AsyncSection>
-      </ListCard>
-    </div>
+          <PageAsyncSection
+            isLoading={query.isPending}
+            isError={query.isError}
+            error={query.error}
+            skeleton={<TableSkeleton columns={columns.length} rows={8} />}
+          >
+            <PageDataTable
+              columns={columns}
+              rows={rows}
+              rowKey={(row) => String(row.id)}
+              emptyText={t('observability.alertEvents.listEmpty')}
+              density="compact"
+              onRowClick={(row) => {
+                setErrorText(null)
+                setSelectedId(row.id)
+              }}
+              rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
+            />
+          </PageAsyncSection>
+        </ListCard>
+      </div>
+    </PageAsyncSection>
   )
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.alertEvents" />
       <MasterDetail
         master={master}
         detail={

@@ -7,13 +7,13 @@ import { useTranslation } from 'react-i18next'
 import { Radio } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
-  DataTable,
   SectionHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { CommandItem } from '@beacon/contracts'
 
 import { fetchCommands } from '../../api/observability'
@@ -104,14 +104,14 @@ export default function CommandQueue({ onView, selectedId }: CommandQueueProps) 
         title={t('observability.commands.queueTitle')}
         count={rows.length > 0 ? t('observability.common.total', { count: rows.length }) : undefined}
       />
-      <AsyncSection
+      <PageAsyncSection
         isLoading={pendingQuery.isPending || fetchedQuery.isPending}
         isError={pendingQuery.isError || fetchedQuery.isError}
         error={pendingQuery.error ?? fetchedQuery.error}
         skeleton={<TableSkeleton columns={columns.length} rows={4} />}
       >
         <div className="max-h-[16rem] overflow-y-auto rounded-xl border border-border bg-card shadow-card">
-          <DataTable
+          <PageDataTable
             columns={columns}
             rows={rows}
             rowKey={(row) => String(row.commandId)}
@@ -121,7 +121,7 @@ export default function CommandQueue({ onView, selectedId }: CommandQueueProps) 
             rowClassName={(row) => (row.commandId === selectedId ? 'bg-brand-50/60' : undefined)}
           />
         </div>
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

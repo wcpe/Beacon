@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import { CircleCheck, CircleX } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Sheet,
   SheetContent,
@@ -21,6 +20,7 @@ import {
   levelSolid,
   levelText,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchHealthDetail } from '../../api/cluster'
 import { fetchDeliveredVersions } from '../../api/delivery-changes'
@@ -71,7 +71,12 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
           <SheetDescription className="font-mono">{serverId}</SheetDescription>
         </SheetHeader>
         <div className="grid gap-4 px-4 pb-6">
-          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+          <PageAsyncSection
+            keepContentWhileRefreshing
+            isLoading={query.isLoading}
+            isError={query.isError}
+            error={query.error}
+          >
             {detail && (
               <>
                 {/* 健康分总览卡：大号分值 + 等级 / 可调度药丸 + 分值条 */}
@@ -188,7 +193,7 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
                 </div>
               </>
             )}
-          </AsyncSection>
+          </PageAsyncSection>
         </div>
       </SheetContent>
     </Sheet>

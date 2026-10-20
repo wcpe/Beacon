@@ -1,16 +1,23 @@
 // /changes 变更单页测试：常规列表渲染、空态引导、审批写闭环、批次推进写闭环、提审必填原因。
-import { screen, waitFor, within } from '@testing-library/react'
+// 命名空间范围自本页移除选择器后取自页眉观测范围选择器（真源 features/env/observation-scope），
+// 因此用例统一在 beforeEach 里把范围固定到 mock 的 prod 命名空间（id=1）。
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { delay, http, HttpResponse } from 'msw'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import ChangesPage from '../../pages/changes'
+import { getObservationScopeSelection, setObservationScope } from '../../features/env/observation-scope'
 import { createTestServer, renderPage, useScenario } from './harness'
 
 const server = createTestServer()
 
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' })
+})
+beforeEach(() => {
+  // mock 数据仓的变更单都在 prod 命名空间（id=1）；env 1（生产）映射到该 namespace
+  setObservationScope({ kind: 'env', envId: 1, namespaceId: 1 })
 })
 afterEach(() => {
   server.resetHandlers()
@@ -24,14 +31,22 @@ describe('/changes 变更单页', () => {
     useScenario('normal')
     renderPage(<ChangesPage />)
 
+    // 页头：大标题 + 一行解释
+    expect(await screen.findByRole('heading', { level: 1, name: '变更单' })).toBeInTheDocument()
+    expect(
+      screen.getByText(/变更单为交付执行单元/),
+    ).toBeInTheDocument()
     // 列表出现已知草稿单
     expect(await screen.findByText('大厅插件升级 v2.4')).toBeInTheDocument()
     // 状态徽标（草稿）出现
     expect(await screen.findAllByText('草稿')).not.toHaveLength(0)
   })
 
+  // 空态引导只在「命名空间存在但一单都没有」时出现（empty 场景连命名空间都没有，
+  // 那时写操作页会把用户指回页眉选命名空间，所以用常规场景把列表接口打成空来验证引导本身）
   it('空态给出任务卡引导（三张任务说明卡 + 引导创建按钮）', async () => {
-    useScenario('empty')
+    useScenario('normal')
+    server.use(http.get('*/admin/v2/change-orders', () => HttpResponse.json({ items: [], total: 0 })))
     renderPage(<ChangesPage />)
 
     // 空态不再是一句空文案，而是任务说明卡 + 大号引导创建按钮
@@ -53,7 +68,32 @@ describe('/changes 变更单页', () => {
     // 吸顶工具条：引导创建（主）+ 高级创建（保留原表单）+ 状态筛选始终可见
     expect(screen.getByRole('button', { name: '引导创建' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '高级创建' })).toBeInTheDocument()
-    expect(screen.getByLabelText('按状态过滤')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '按状态过滤' })).toHaveValue('全部状态')
+  })
+
+  it('状态筛选支持键入过滤并映射查询参数', async () => {
+    useScenario('normal')
+    const urls: string[] = []
+    server.use(
+      http.get('*/admin/v2/change-orders', ({ request }) => {
+        urls.push(request.url)
+        return HttpResponse.json({ items: [], total: 0 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+    const status = await screen.findByRole('textbox', { name: '按状态过滤' })
+
+    expect(status).toHaveValue('全部状态')
+    await user.click(status)
+    expect(await screen.findByRole('option', { name: '全部状态' })).toHaveAttribute('aria-selected', 'true')
+    await user.type(status, '已完成')
+    await user.click(await screen.findByRole('option', { name: '已完成' }))
+
+    await waitFor(() => {
+      expect(status).toHaveValue('已完成')
+      expect(urls.some((url) => new URL(url).searchParams.get('status') === 'completed')).toBe(true)
+    })
   })
 
   it('页头「交付流程」入口以模态弹窗展示五步生命周期', async () => {
@@ -84,6 +124,7 @@ describe('/changes 变更单页', () => {
     }
     await user.click(row)
     await screen.findByRole('button', { name: '返回列表' })
+    expect(document.querySelector('[data-slot="detail-actions-footer"]')).toHaveClass('sticky', 'bottom-0', 'mt-auto')
 
     // 审批决定只在统一审批中心：详情页不得再出现通过 / 驳回（旧入口真机 403）
     expect(screen.queryByRole('button', { name: '通过' })).not.toBeInTheDocument()
@@ -483,15 +524,111 @@ describe('/changes 变更单页', () => {
     expect(screen.queryByRole('button', { name: '返回列表' })).not.toBeInTheDocument()
   })
 
-  it('作用域选择走组件库 Select（可展开命名空间选项）', async () => {
+  // 页内不再有命名空间选择器：范围唯一真源是页眉观测范围选择器（切换页眉范围后列表随之重取）
+  it('作用域取自页眉观测范围：页内无命名空间选择器，范围切换后列表重取', async () => {
     useScenario('normal')
-    const user = userEvent.setup()
     renderPage(<ChangesPage />)
     await screen.findByText('大厅插件升级 v2.4')
 
-    // NamespacePicker 现为组件库 Select（combobox 角色），可展开出命名空间选项
-    await user.click(screen.getByRole('combobox', { name: '选择 命名空间' }))
-    expect(await screen.findByRole('option', { name: 'test' })).toBeInTheDocument()
+    // 页内不放第二套命名空间选择器（旧的 NamespacePicker 已删除）
+    expect(screen.queryByRole('combobox', { name: '选择 命名空间' })).not.toBeInTheDocument()
+    expect(document.querySelector('#delivery-namespace')).toBeNull()
+
+    // 页眉范围切到「测试」环境（env 2 → namespace 2）后，列表按新范围重取（该 ns 无种子单 → 空态引导）
+    act(() => {
+      setObservationScope({ kind: 'env', envId: 2, namespaceId: 2 })
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('大厅插件升级 v2.4')).not.toBeInTheDocument()
+    })
+    expect(await screen.findByText('还没有变更单')).toBeInTheDocument()
+  })
+
+  it('页眉未选具体命名空间时保留全局范围、显示引导并禁用建单入口', async () => {
+    useScenario('normal')
+    setObservationScope({ kind: 'all' })
+    renderPage(<ChangesPage />)
+
+    expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
+    expect(screen.queryByText('大厅插件升级 v2.4')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '引导创建' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '高级创建' })).toBeDisabled()
+    expect(getObservationScopeSelection()).toEqual({ kind: 'all' })
+  })
+
+  // 兜底：确实没有任何可用命名空间（env 列表为空）时仍引导去页眉选择，并禁用写操作、不伪造数据
+  it('无可用命名空间时给出引导并禁用写操作', async () => {
+    useScenario('normal')
+    setObservationScope({ kind: 'all' })
+    // 没有任何 env / namespace 映射：默认值无从补齐，页面必须回到引导而非硬猜
+    server.use(http.get('*/admin/v2/envs', () => HttpResponse.json({ items: [], total: 0 })))
+    renderPage(<ChangesPage />)
+
+    expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
+    // 两个建单入口都禁用（写目标不明确，不得对「全部命名空间」执行）
+    expect(screen.getByRole('button', { name: '引导创建' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '高级创建' })).toBeDisabled()
+    // 不渲染列表（列表按命名空间取数，不伪造「全部命名空间」的数据）
+    expect(screen.queryByText('大厅插件升级 v2.4')).not.toBeInTheDocument()
+    // 只读帮助入口仍可用
+    expect(screen.getByRole('button', { name: '交付流程' })).toBeEnabled()
+  })
+
+  it('高级创建误点遮罩不丢草稿，关闭后重开会重置', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    await screen.findByText('大厅插件升级 v2.4')
+    await user.click(screen.getByRole('button', { name: '高级创建' }))
+    const dialog = await screen.findByRole('dialog')
+    const title = within(dialog).getAllByRole('textbox')[0]
+    await user.type(title, '临时交付标题')
+
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]')
+    if (!overlay) {
+      throw new Error('未找到弹窗遮罩')
+    }
+    await user.click(overlay)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(title).toHaveValue('临时交付标题')
+
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+    await user.click(screen.getByRole('button', { name: '高级创建' }))
+    expect(within(await screen.findByRole('dialog')).getAllByRole('textbox')[0]).toHaveValue('')
+  })
+
+  it('高级创建提交中阻止取消、Escape 与遮罩关闭，失败保留弹窗和错误', async () => {
+    useScenario('normal')
+    server.use(
+      http.post('*/admin/v2/change-orders', async () => {
+        await delay(500)
+        return HttpResponse.json({ code: 'temporary_failure', message: '模拟创建失败' }, { status: 503 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    await screen.findByText('大厅插件升级 v2.4')
+    await user.click(screen.getByRole('button', { name: '高级创建' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getAllByRole('textbox')[0], '失败后保留的标题')
+    const submit = within(dialog).getByRole('button', { name: '创建草稿' })
+    await user.click(submit)
+    await waitFor(() => expect(submit).toBeDisabled())
+    expect(within(dialog).getByRole('button', { name: '取消' })).toBeDisabled()
+
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]')
+    if (!overlay) {
+      throw new Error('未找到弹窗遮罩')
+    }
+    await user.click(overlay)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    expect(await within(dialog).findByText('模拟创建失败')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   it('整单回滚走审批申请：提交后仅票据反馈，单据状态不变', async () => {

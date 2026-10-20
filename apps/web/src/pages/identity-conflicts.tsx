@@ -6,9 +6,11 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { ShieldCheck } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton } from '@beacon/ui'
+import { CardGridSkeleton } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 
 import { fetchIdentities, fetchNamespaces } from '../api/cluster'
+import PageTitle from '../shell/page-title'
 import ConflictCard from './identity-conflicts/conflict-card'
 
 export default function IdentityConflictsPage() {
@@ -32,7 +34,9 @@ export default function IdentityConflictsPage() {
 
   return (
     <section className="grid gap-4">
-      <AsyncSection
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.identityConflicts" />
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
@@ -58,7 +62,7 @@ export default function IdentityConflictsPage() {
             ))}
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

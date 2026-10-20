@@ -9,7 +9,7 @@ import { useMutation } from '@tanstack/react-query'
 import { Loader2, TriangleAlert } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
-import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from '@beacon/ui'
+import { Button, Card, CardContent, CardHeader, Input, Label } from '@beacon/ui'
 
 import { ApiClientError } from '../api/cluster'
 import { login } from '../api/auth'
@@ -61,10 +61,14 @@ export default function LoginPage() {
     <div className="app-bg flex min-h-screen flex-col items-center justify-center gap-4 p-4 text-foreground">
       <Card className="w-full max-w-[380px] shadow-pop">
         <CardHeader className="items-center gap-2 text-center">
-          {/* 品牌横向锁定：灯塔 mark（放大、无盒子）+ Beacon 字标并排 */}
+          {/* 品牌横向锁定：灯塔 mark（放大、无盒子）+ Beacon 字标并排。
+              字标即本页唯一的页面标题，故直接用 h1 承担地标职责：Tailwind preflight 已把标题的
+              字号 / 字重 / 外边距归一到与普通元素一致，再沿用 CardTitle 原有类名，视觉零变化。 */}
           <div className="flex items-center justify-center gap-2.5">
             <img alt="" className="size-11" src="/logo.svg" />
-            <CardTitle className="text-[22px] tracking-[0.2px]">{t('auth.login.title')}</CardTitle>
+            <h1 className="font-heading text-base leading-snug font-medium text-[22px] tracking-[0.2px] group-data-[size=sm]/card:text-sm">
+              {t('auth.login.title')}
+            </h1>
           </div>
           <p className="text-[13px] text-ink-3">{t('auth.login.subtitle')}</p>
         </CardHeader>

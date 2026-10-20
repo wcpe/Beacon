@@ -7,7 +7,6 @@ import { useTranslation } from 'react-i18next'
 import { Activity, ArrowUpRight, Gauge, MemoryStick, TrendingUp, Users } from 'lucide-react'
 
 import {
-  AsyncSection,
   Card,
   CardContent,
   Checkbox,
@@ -21,6 +20,7 @@ import {
   SelectValue,
   TableSkeleton,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { MetricsSeriesPoint } from '@beacon/contracts'
 
 import { fetchMetricsSeries } from '../../api/metrics'
@@ -143,7 +143,7 @@ export default function SeriesPanel({
         />
       </div>
 
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
@@ -218,7 +218,7 @@ export default function SeriesPanel({
             })}
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

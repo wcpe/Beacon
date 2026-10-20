@@ -9,16 +9,19 @@ import { Link } from 'react-router-dom'
 import { ArrowRight, ArrowRightLeft, ExternalLink, GitCompareArrows, Info } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
-  DataTable,
   SummaryStrip,
+  Skeleton,
+  TableSkeleton,
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { MessageEdgeStat } from '@beacon/contracts'
 
 import { fetchMessageEdges, fetchMessageTypeStats } from '../../api/cluster'
+import PageSkeleton from '../../features/shared/page-skeleton'
 import SampleMessages from './sample-messages'
 
 // 边的失败率阈值：超过即视为异常边高亮
@@ -133,7 +136,19 @@ export default function EdgesPanel() {
           { label: t('cluster.topology.data.maxP95'), value: `${String(aggregates.maxP95)}ms` },
         ]}
       />
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+      <PageAsyncSection
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+        skeleton={
+          <PageSkeleton className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <TableSkeleton columns={columns.length} rows={8} />
+            </div>
+            <Skeleton className="h-48 w-[248px] shrink-0 rounded-lg" />
+          </PageSkeleton>
+        }
+      >
         {/* 仅广播等非点对点流量：明示边表口径 + 类型汇总，避免「没数据」误判 */}
         {emptyIsBroadcastOnly ? (
           <div className="grid gap-3 rounded-lg border border-border bg-surface-2 p-3 text-sm">
@@ -171,7 +186,7 @@ export default function EdgesPanel() {
         {/* 主从布局：链路表占主区，选中明细进右侧固定侧面板（不落页面底部、不 reflow 主区） */}
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <DataTable
+            <PageDataTable
               columns={columns}
               rows={edges}
               rowKey={(edge) => edgeKey(edge)}
@@ -241,7 +256,7 @@ export default function EdgesPanel() {
             )}
           </aside>
         </div>
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

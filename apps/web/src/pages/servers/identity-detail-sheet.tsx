@@ -2,7 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
-import { AsyncSection, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@beacon/ui'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchIdentityDetail, setIdentityEndpointOverride } from '../../api/cluster'
 import ReasonDialog from './reason-dialog'
@@ -42,7 +43,12 @@ export default function IdentityDetailSheet({ identityId, onOpenChange }: Identi
           <SheetDescription className="font-mono">{shortIdentityId(identityId)}</SheetDescription>
         </SheetHeader>
         <div className="px-4 pb-6">
-          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+          <PageAsyncSection
+            keepContentWhileRefreshing
+            isLoading={query.isLoading}
+            isError={query.isError}
+            error={query.error}
+          >
             {detail && (
               <dl className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
                 <IdentityField label="服务器 ID" value={detail.serverId ?? '待分配服务器 ID'} mono />
@@ -128,7 +134,7 @@ export default function IdentityDetailSheet({ identityId, onOpenChange }: Identi
                 )}
               </section>
             )}
-          </AsyncSection>
+          </PageAsyncSection>
         </div>
       </SheetContent>
       <ReasonDialog

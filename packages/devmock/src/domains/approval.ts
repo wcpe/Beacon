@@ -25,7 +25,7 @@ import {
   type MockRequestInfo,
 } from '../http'
 import { defineScenarioStore } from '../store'
-import type { MockScenario } from '../scenario'
+import { getMockDataVolumeCount, type MockScenario } from '../scenario'
 import { isoOffset, pseudoSha256 } from '../support'
 import { deliveryApprovalSpecs } from './delivery-approval-bridge'
 import { enqueueApprovedChangeOrder } from './delivery'
@@ -298,6 +298,25 @@ function buildApproval(scenario: MockScenario): ApprovalState {
       )
     }
   }
+  const statuses: ApprovalStatus[] = ['pending', 'executing', 'succeeded', 'failed']
+  for (let i = rows.length; i < getMockDataVolumeCount(); i += 1) {
+    rows.push(
+      makeApproval({
+        ordinal: 20_000 + i,
+        requestId: `apr_volume_${String(i + 1).padStart(4, '0')}`,
+        operationKey: 'delivery.approve',
+        resourceType: 'change-order',
+        resourceId: String(10_000 + i),
+        riskLevel: i % 3 === 0 ? 'critical' : 'high',
+        status: statuses[i % statuses.length],
+        requesterType: i % 5 === 0 ? 'mcp' : 'human',
+        requesterId: i % 5 === 0 ? 'mcp:batch' : 'ops-chen',
+        namespaceId: 1,
+        safeSummary: `数据量验收审批 #${String(i + 1).padStart(4, '0')}`,
+        ageMs: (i + 1) * HOUR,
+      }),
+    )
+  }
   return { rows, executionPolls: {}, demoGrantStatus: {} }
 }
 
@@ -496,16 +515,6 @@ async function createDemoApproval(info: MockRequestInfo): Promise<Response> {
   return createApproval(operationKey, resourceType, resourceId, requestReason, safeSummary)
 }
 
-async function createMessagePayloadApproval(info: MockRequestInfo): Promise<Response> {
-  const body = await readBody<{ reason?: string }>(info.request)
-  const messageId = pathParam(info, 'messageId')
-  const reason = body.reason?.trim()
-  if (!messageId || !reason) {
-    return jsonError(400, 'invalid_approval_request', '消息 payload 审批申请参数无效')
-  }
-  return createApproval('message.payload.read', 'message', messageId, reason, '申请查看消息 payload；正文不进入审批记录')
-}
-
 function createApproval(
   operationKey: DemoApprovalRequestInput['operationKey'],
   resourceType: string,
@@ -550,7 +559,6 @@ function consumeDemoGrant(info: MockRequestInfo): Response {
 
 export const approvalHandlers: HttpHandler[] = [
   mockPost('/admin/v2/approval-requests', createDemoApproval),
-  mockPost('/admin/v2/messages/:messageId/payload/approval-requests', createMessagePayloadApproval),
   mockPost('/_demo/approval-requests/:requestId/sensitive-access/consume', consumeDemoGrant),
   mockGet('/admin/v2/approval-requests', ({ request }) => listApprovals(request)),
   mockGet('/admin/v2/approvals', ({ request }) => listApprovals(request)),

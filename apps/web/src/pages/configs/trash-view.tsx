@@ -5,13 +5,14 @@ import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Trash2 } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
-  DataTable,
   SectionHeader,
+  TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import type { TrashItem } from '@beacon/contracts'
 
@@ -72,7 +73,7 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
   const columns: DataTableColumn<TrashItem>[] = [
     {
       header: t('delivery.configs.trash.columns.name'),
-      cell: (row) => <span className="font-mono text-ink-1">{row.name}</span>,
+      cell: (row) => <span className="block max-w-56 truncate font-mono text-ink-1" title={row.name}>{row.name}</span>,
     },
     {
       header: t('delivery.configs.trash.columns.status'),
@@ -89,16 +90,18 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
     },
     {
       header: t('delivery.configs.trash.columns.deletedAt'),
-      cell: (row) => (row.deletedAt !== null ? new Date(row.deletedAt).toLocaleString() : '-'),
+      cell: (row) => <span className="tnum">{row.deletedAt !== null ? new Date(row.deletedAt).toLocaleString() : '-'}</span>,
     },
     {
       header: '',
+      headClassName: 'w-52 text-right',
+      className: 'w-52 text-right',
       cell: (row) => (
         <div className="flex flex-col items-end gap-1">
-          <div className="flex flex-wrap justify-end gap-1.5">
+          <div className="flex justify-end gap-1.5">
             <Button
               size="sm"
-              variant="ghost"
+              variant="outline"
               disabled={restoreMutation.isPending}
               onClick={() => {
                 setRestoreError((prev) => {
@@ -114,6 +117,7 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
             <Button
               size="sm"
               variant="ghost"
+              className="text-ink-3 hover:bg-destructive/10 hover:text-destructive"
               onClick={() => {
                 setPurgeError(null)
                 setPurgeTarget(row)
@@ -144,15 +148,20 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
       />
 
 
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-        <DataTable
+      <PageAsyncSection
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+        skeleton={<TableSkeleton columns={5} rows={6} />}
+      >
+        <PageDataTable
           columns={columns}
           rows={query.data?.items}
           rowKey={(row) => String(row.id)}
           emptyText={t('delivery.configs.trash.empty')}
           density="compact"
         />
-      </AsyncSection>
+      </PageAsyncSection>
 
       <Pager
         page={page}
@@ -174,6 +183,7 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
           title={t('delivery.configs.trash.purgeTitle')}
           description={t('delivery.configs.trash.purgeDesc')}
           confirmLabel={t('delivery.configs.trash.purgeConfirm')}
+          confirmVariant="destructive"
           impacts={[purgeTarget.name]}
           pending={purgeMutation.isPending}
           errorText={purgeError}

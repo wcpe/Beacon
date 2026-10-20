@@ -28,7 +28,7 @@ import type {
 } from '@beacon/contracts'
 import { internalError, jsonError, mockGet, mockPost, readBody, pathParam, queryInt, queryStr, queryTimeMs } from '../http'
 import { defineScenarioStore } from '../store'
-import { getMockScenario, type MockScenario } from '../scenario'
+import { getMockDataVolumeCount, getMockScenario, type MockScenario } from '../scenario'
 import { BASE_MS, isoOffset, pseudoSha256 } from '../support'
 
 // mock 客户端行：在契约视图基础上补 hash 位（mock 不落库，仅保持结构可扩展）
@@ -381,10 +381,12 @@ function buildInvocations(scenario: MockScenario): MCPInvocationItem[] {
   if (scenario === 'empty') {
     return []
   }
+  const volumeCount = getMockDataVolumeCount()
+  const targetCount = scenario === 'huge' ? Math.max(INVOCATION_HUGE_COUNT, volumeCount) : volumeCount
   const recipes =
-    scenario === 'huge'
-      ? // 超大量场景按配方循环铺开、每行间隔 3 分钟（跨昨日与今日），保证多页续翻与过滤都可验证
-        Array.from({ length: INVOCATION_HUGE_COUNT }, (_, i) => ({
+    scenario === 'huge' || volumeCount > 0
+      ? // 按配方循环铺开、每行间隔 3 分钟（跨昨日与今日），保证多页续翻与过滤都可验证
+        Array.from({ length: targetCount }, (_, i) => ({
           ...MCP_INVOCATION_RECIPES[i % MCP_INVOCATION_RECIPES.length],
           minutesAgo: i * 3 + 1,
         }))

@@ -2,6 +2,7 @@ package service
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -13,16 +14,37 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
-// MessagePayloadService 管理 payload 的审批申请与一次性受控读取。
+type messagePayloadAuditWriter interface {
+	Create(entry *model.AuditLog) error
+}
+
+type messageNamespaceReader interface {
+	FindByID(id uint) (*model.Namespace, error)
+}
+
+// MessagePayloadService 管理 payload 直读审计与旧审批兼容入口。
 type MessagePayloadService struct {
-	repo     *repository.MessageRepository
-	approval *ApprovalService
-	grants   *SensitiveAccessGrantService
+	repo        *repository.MessageRepository
+	auditWriter messagePayloadAuditWriter
+	namespaces  messageNamespaceReader
+	approval    *ApprovalService
+	grants      *SensitiveAccessGrantService
 }
 
 // NewMessagePayloadService 构造服务。
-func NewMessagePayloadService(repo *repository.MessageRepository) *MessagePayloadService {
-	return &MessagePayloadService{repo: repo}
+func NewMessagePayloadService(repo *repository.MessageRepository, auditWriters ...messagePayloadAuditWriter) *MessagePayloadService {
+	svc := &MessagePayloadService{repo: repo}
+	if len(auditWriters) != 0 {
+		svc.auditWriter = auditWriters[0]
+	}
+	return svc
+}
+
+// SetNamespaceRepository 装配消息所属 namespace 查询器，用于范围审计与 namespaceCode 归属。
+func (s *MessagePayloadService) SetNamespaceRepository(namespaces messageNamespaceReader) {
+	if s != nil {
+		s.namespaces = namespaces
+	}
 }
 
 // SetSensitiveAccessApproval 装配 payload 审批申请和一次性授权消费链路。
@@ -33,11 +55,13 @@ func (s *MessagePayloadService) SetSensitiveAccessApproval(approval *ApprovalSer
 
 // ViewPayloadParams 是一次 payload 查看请求（operator/clientIp/traceId 为鉴权链与请求上下文注入）。
 type ViewPayloadParams struct {
-	MessageID string
-	Reason    string
-	Operator  string
-	ClientIP  string
-	TraceID   string
+	MessageID    string
+	Reason       string
+	Operator     string
+	ClientIP     string
+	TraceID      string
+	NamespaceIDs []uint
+	Scoped       bool
 }
 
 // PayloadResult 是 payload 查看响应（对齐 contracts MessagePayloadResponse）。
@@ -47,9 +71,63 @@ type PayloadResult struct {
 	Size    int
 }
 
-// View 是旧正文直出入口，现已永久关闭。
-func (s *MessagePayloadService) View(_ ViewPayloadParams) (PayloadResult, error) {
-	return PayloadResult{}, apperr.ErrOperationRequiresApproval
+// View 直接读取 payload；先写入仅含消息引用、哈希、大小与原因文本的审计，再返回正文。
+// 审计写失败即拒绝返回正文，保证「看了必留痕」。
+func (s *MessagePayloadService) View(p ViewPayloadParams) (PayloadResult, error) {
+	if s == nil || s.repo == nil || s.auditWriter == nil {
+		return PayloadResult{}, apperr.ErrInternal
+	}
+	if strings.TrimSpace(p.MessageID) == "" || strings.TrimSpace(p.Operator) == "" {
+		return PayloadResult{}, apperr.ErrInvalidParam
+	}
+	reason := strings.TrimSpace(p.Reason)
+	if reason == "" {
+		return PayloadResult{}, apperr.ErrApprovalReasonRequired
+	}
+	if len([]rune(reason)) > 255 {
+		return PayloadResult{}, apperr.ErrInvalidParam
+	}
+	trace, err := s.repo.FindByMessageID(p.MessageID)
+	if err != nil {
+		return PayloadResult{}, err
+	}
+	if trace == nil || (p.Scoped && !namespaceInScope(trace.NamespaceID, p.NamespaceIDs)) {
+		return PayloadResult{}, apperr.ErrMessageNotFound
+	}
+	if s.namespaces == nil {
+		return PayloadResult{}, apperr.ErrInternal
+	}
+	namespace, err := s.namespaces.FindByID(trace.NamespaceID)
+	if err != nil {
+		return PayloadResult{}, err
+	}
+	if namespace == nil {
+		return PayloadResult{}, apperr.ErrMessageNotFound
+	}
+	payload, err := s.repo.FindPayload(p.MessageID)
+	if err != nil {
+		return PayloadResult{}, err
+	}
+	if payload == nil || payload.Payload == "" {
+		return PayloadResult{}, apperr.ErrMessageNotFound
+	}
+	hash := payloadSHA256(payload.Payload)
+	result := PayloadResult{Payload: payload.Payload, SHA256: hash, Size: len(payload.Payload)}
+	// detail 只记消息引用、哈希与大小，绝不记 payload 正文，也不记原因文本（ADR-0093 决策 4）；
+	// 用 json.Marshal 保证 detail 恒为合法 JSON。
+	detail, err := json.Marshal(map[string]any{
+		"messageId": p.MessageID, "sha256": hash, "size": len(payload.Payload),
+	})
+	if err != nil {
+		return PayloadResult{}, err
+	}
+	if err := s.auditWriter.Create(&model.AuditLog{
+		NamespaceCode: namespace.Code, Operator: p.Operator, Action: model.ActionMessagePayloadView, TargetType: model.TargetTypeMessage,
+		TargetRef: p.MessageID, Detail: string(detail), Result: model.ResultOK, ClientIP: p.ClientIP,
+	}); err != nil {
+		return PayloadResult{}, err
+	}
+	return result, nil
 }
 
 // RequestAccess 创建消息 payload 的专用审批申请；冻结消息 ID 与当前正文 SHA-256，绝不冻结正文。

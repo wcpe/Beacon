@@ -1,6 +1,8 @@
 # 功能规格：统一审批中心
 
 > 状态：草拟　·　关联 PRD：FR-212　·　决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)　·　依赖：[dangerous-operation-approval-core.md](dangerous-operation-approval-core.md)
+>
+> **内容读取口径已被 [ADR-0093](../adr/0093-direct-sensitive-content-reads.md) 取代**：日志、目录浏览、文件资产正文与差异、消息 payload 读取改为 `content.read` 直读 + 强制审计，不再产生审批申请；本规格中涉及这些内容的一次性授权描述已按现状改写。
 
 ## 1. 背景与目标
 
@@ -52,7 +54,7 @@
 | POST | `/admin/v2/approval-requests/{id}/credential-secret/redeem` | 原申请 human 在凭据审批成功后一次性领取明文；审批详情与页面 DOM 不显示明文 |
 
 - 审批申请仅允许由已登记 adapter 所在的领域入口完成规范化、脱敏、前置校验与冻结；审批中心 UI 不提供“手填 operation/payload”表单，也不能绕过 adapter。
-- 对 `message.payload.read` 等一次性敏感内容审批，`succeeded` 详情仅向原申请主体返回 `{ sensitiveAccessGrant: { grantId } }`；该引用只用于既有消费端点，详情不返回正文、正文哈希或可由前端推导的授权标识。
+- 对 `message.payload.read` 等已按 [ADR-0093](../adr/0093-direct-sensitive-content-reads.md) 改为 `content.read` 直读的内容，**不再产生审批申请**；前端改为填原因后直接读取，正文在读取时即由后端 service 写专项审计（审计不含正文），审批详情与页面 DOM 均不显示明文。仅仍在审批范畴的操作（敏感配置明文、反向抓取冲突、拓印差异等）沿用「`succeeded` 详情返回 `{ sensitiveAccessGrant: { grantId } }`、由原申请主体经既有消费端点一次性领取」的旧口径，该引用只用于消费端点，详情不返回正文、正文哈希或可由前端推导的授权标识。
 - 前端不推导状态、不合并领域状态来“修正”审批状态；current diff 是 adapter 只读投影，不是审批记录。
 - 详情响应携带服务端按当前认证主体计算的 `canApprove`、`canReject`、`canWithdraw`；页面不得从申请人类型或名称猜测权限。
 - adapter 只能以持久化 targetRef/namespaceId 查询实时证据，读取失败统一返回 `evidenceStatus=unavailable` 并禁用批准；不得从 frozen payload 还原或推断当前事实。

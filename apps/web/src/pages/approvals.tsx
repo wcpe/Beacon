@@ -1,8 +1,16 @@
+// 审批中心（/approvals）：汇总所有范围待审批申请的全局收件箱与详情主从视图。
+// 本页是唯一审批入口，不继承页眉环境 / 命名空间筛选；保留申请自身的命名空间信息供辨识。
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, Clock3, ShieldAlert } from 'lucide-react'
-import { Badge, Button, Input } from '@beacon/ui'
+import { AlertTriangle, ChevronDown, ChevronRight, ClipboardCheck, Clock3, ShieldAlert, SlidersHorizontal } from 'lucide-react'
+import {
+  Badge,
+  Button,
+  Combobox,
+  Input,
+  PageHeader,
+} from '@beacon/ui'
 
 import type { ApprovalRequest, ApprovalStatus } from '@beacon/contracts'
 
@@ -14,9 +22,10 @@ import {
   withdrawApproval,
   type ApprovalListQuery,
 } from '../api/approvals'
-import { fetchNamespaces } from '../api/cluster'
 import ConfirmDialog from './changes/confirm-dialog'
+import DocHelp from '../features/delivery/doc-help'
 import MasterDetail from '../features/shared/master-detail'
+import ListCard from '../features/shared/list-card'
 import Pager from '../features/observability/pager'
 import { useTranslation } from 'react-i18next'
 
@@ -31,6 +40,11 @@ const statuses: (ApprovalStatus | 'all')[] = [
   'withdrawn',
   'expired',
 ]
+
+// 风险级别 / 申请主体的「不筛选」在筛选状态里存空串，控件边界用 'all' 哨兵显示「全部」并映射回空串。
+const SELECT_ALL = 'all'
+const riskLevels: ApprovalRequest['riskLevel'][] = ['low', 'medium', 'high', 'critical']
+const requesterTypes: ApprovalRequest['requesterType'][] = ['human', 'api_key', 'mcp', 'system']
 
 type ApprovalAction = 'approve' | 'reject' | 'withdraw'
 
@@ -73,7 +87,6 @@ interface Filters {
   riskLevel: string
   requesterType: string
   requesterId: string
-  namespaceId: string
   keyword: string
   createdFrom: string
   createdTo: string
@@ -87,7 +100,6 @@ const initialFilters: Filters = {
   riskLevel: '',
   requesterType: '',
   requesterId: '',
-  namespaceId: 'all',
   keyword: '',
   createdFrom: '',
   createdTo: '',
@@ -98,7 +110,6 @@ const initialFilters: Filters = {
 function isDefaultPendingFilter(filters: Filters): boolean {
   return (
     filters.status === 'pending' &&
-    filters.namespaceId === 'all' &&
     filters.operationKey === '' &&
     filters.riskLevel === '' &&
     filters.requesterType === '' &&
@@ -111,6 +122,7 @@ function isDefaultPendingFilter(filters: Filters): boolean {
   )
 }
 
+// 审批列表始终跨命名空间查询；这里只保留审批中心自己的筛选和分页参数。
 function queryFromFilters(filters: Filters, page: number): ApprovalListQuery {
   return {
     status: filters.status,
@@ -118,12 +130,6 @@ function queryFromFilters(filters: Filters, page: number): ApprovalListQuery {
     riskLevel: filters.riskLevel || undefined,
     requesterType: filters.requesterType || undefined,
     requesterId: filters.requesterId || undefined,
-    namespaceId:
-      filters.namespaceId === 'all'
-        ? undefined
-        : filters.namespaceId === 'global'
-          ? 'global'
-          : Number(filters.namespaceId),
     keyword: filters.keyword || undefined,
     createdFrom: toIso(filters.createdFrom),
     createdTo: toIso(filters.createdTo),
@@ -138,176 +144,180 @@ interface ApprovalFiltersProps {
   filters: Filters
   onChange: (next: Partial<Filters>) => void
   onReset: () => void
+  countLabel: string
 }
 
-function ApprovalFilters({ filters, onChange, onReset }: ApprovalFiltersProps) {
+function ApprovalFilters({ filters, onChange, onReset, countLabel }: ApprovalFiltersProps) {
   const { t } = useTranslation()
-  // 命名空间筛选取真实全量列表（本页为全局审批，不继承页眉 env 作用域）；
-  // 保留 all / global 两个语义哨兵项，其余为真实命名空间 name + #id。
-  const nsQuery = useQuery({ queryKey: ['namespaces'], queryFn: fetchNamespaces })
-  const namespaces = nsQuery.data?.items ?? []
+  // 高级筛选默认收起：审批日常只需「状态 + 关键字」，其余字段（领域/风险/主体/时间窗）
+  // 属于排查场景。收起后筛选区从约 380px 压到 56px，把纵向空间还给列表。
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  // 高级区里是否有已生效的条件：有则即使收起也要给出可视提示，避免"隐藏着却仍在过滤"
+  const advancedActive =
+    filters.operationKey !== '' ||
+    filters.riskLevel !== '' ||
+    filters.requesterType !== '' ||
+    filters.requesterId !== '' ||
+    filters.createdFrom !== '' ||
+    filters.createdTo !== '' ||
+    filters.expiresFrom !== '' ||
+    filters.expiresTo !== ''
+
+  // 命名空间信息只用于申请上下文辨识，不参与本页筛选。
   return (
-    <div className="grid gap-2 rounded-xl border border-border bg-card p-3 shadow-card">
-      <div className="grid gap-2 md:grid-cols-4">
-        <label className="grid gap-1 text-xs text-ink-3">
-          状态
-          <select
-            aria-label="审批状态"
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm text-ink-1"
-            value={filters.status}
-            onChange={(event) => {
-              onChange({ status: event.target.value as Filters['status'] })
-            }}
-          >
-            {statuses.map((status) => (
-              <option key={status} value={status}>
-                {status === 'all' ? '全部状态' : displayStatus(status)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-xs text-ink-3">
-          operation / 领域
+    // 筛选表单作为列表卡的工具栏，与其他交付列表共享卡面、滚动区与分页布局。
+    <div className="grid gap-2.5">
+      {/* 常显行：状态 / 关键字 / 高级开关 / 重置，所有控件单行横排 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Combobox
+          id="approval-status"
+          className="w-36"
+          aria-label="审批状态"
+          value={filters.status}
+          onChange={(value) => {
+            onChange({ status: value as Filters['status'] })
+          }}
+          options={statuses.map((status) => ({
+            value: status,
+            label: status === 'all' ? '全部状态' : displayStatus(status),
+          }))}
+          allowCustom={false}
+          emptyText={t('common.combobox.noMatch')}
+        />
+        <Input
+          id="approval-keyword"
+          aria-label="审批关键字"
+          placeholder="搜索申请编号 / 摘要"
+          value={filters.keyword}
+          onChange={(event) => {
+            onChange({ keyword: event.target.value })
+          }}
+          className="w-56"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9"
+          aria-expanded={advancedOpen}
+          onClick={() => {
+            setAdvancedOpen((prev) => !prev)
+          }}
+        >
+          <SlidersHorizontal className="size-3.5" aria-hidden />
+          {t('delivery.approvals.filters.advanced')}
+          {advancedActive && !advancedOpen ? (
+            <span className="size-1.5 rounded-full bg-brand" aria-hidden />
+          ) : null}
+          <ChevronDown
+            className={[
+              'size-3.5 transition-transform duration-200',
+              advancedOpen ? 'rotate-180' : 'rotate-0',
+            ].join(' ')}
+            aria-hidden
+          />
+        </Button>
+        <span className="tnum ml-auto text-xs text-ink-3">{countLabel}</span>
+        <Button type="button" variant="ghost" size="sm" className="h-9" onClick={onReset}>
+          {t('observability.common.filterReset')}
+        </Button>
+      </div>
+
+      {/* 高级筛选：字段用占位符代替竖排 Label，网格自适应 */}
+      {advancedOpen && (
+        <div className="grid gap-2 border-t border-border pt-3 sm:grid-cols-2 xl:grid-cols-4">
           <Input
+            id="approval-operation"
             aria-label="operation / 领域"
+            placeholder="领域，如 config.publish"
             value={filters.operationKey}
             onChange={(event) => {
               onChange({ operationKey: event.target.value })
             }}
-            placeholder="如 config.publish"
+            className="h-9"
           />
-        </label>
-        <label className="grid gap-1 text-xs text-ink-3">
-          风险
-          <select
+          <Combobox
+            id="approval-risk"
+            className="w-full"
             aria-label="风险级别"
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm text-ink-1"
-            value={filters.riskLevel}
-            onChange={(event) => {
-              onChange({ riskLevel: event.target.value })
+            value={filters.riskLevel === '' ? SELECT_ALL : filters.riskLevel}
+            onChange={(value) => {
+              onChange({ riskLevel: value === SELECT_ALL ? '' : value })
             }}
-          >
-            <option value="">全部风险</option>
-            <option value="low">低</option>
-            <option value="medium">中</option>
-            <option value="high">高</option>
-            <option value="critical">严重</option>
-          </select>
-        </label>
-        <label className="grid gap-1 text-xs text-ink-3">
-          申请主体
-          <select
+            options={[
+              { value: SELECT_ALL, label: '全部风险' },
+              ...riskLevels.map((risk) => ({ value: risk, label: displayRisk(risk) })),
+            ]}
+            allowCustom={false}
+            emptyText={t('common.combobox.noMatch')}
+          />
+          <Combobox
+            id="approval-requester-type"
+            className="w-full"
             aria-label="申请主体类型"
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm text-ink-1"
-            value={filters.requesterType}
-            onChange={(event) => {
-              onChange({ requesterType: event.target.value })
+            value={filters.requesterType === '' ? SELECT_ALL : filters.requesterType}
+            onChange={(value) => {
+              onChange({ requesterType: value === SELECT_ALL ? '' : value })
             }}
-          >
-            <option value="">全部主体</option>
-            <option value="human">人类</option>
-            <option value="api_key">API 密钥</option>
-            <option value="mcp">MCP</option>
-            <option value="system">系统</option>
-          </select>
-        </label>
-      </div>
-      <div className="grid gap-2 md:grid-cols-4">
-        <label className="grid gap-1 text-xs text-ink-3">
-          申请人
+            options={[
+              { value: SELECT_ALL, label: '全部主体' },
+              ...requesterTypes.map((type) => ({ value: type, label: displayPrincipal(type) })),
+            ]}
+            allowCustom={false}
+            emptyText={t('common.combobox.noMatch')}
+          />
           <Input
+            id="approval-requester"
             aria-label="申请人"
+            placeholder="申请人"
             value={filters.requesterId}
             onChange={(event) => {
               onChange({ requesterId: event.target.value })
             }}
+            className="h-9"
           />
-        </label>
-        <label className="grid gap-1 text-xs text-ink-3">
-          目标 namespace
-          <select
-            aria-label="目标命名空间"
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm text-ink-1"
-            value={filters.namespaceId}
-            onChange={(event) => {
-              onChange({ namespaceId: event.target.value })
-            }}
-          >
-            <option value="all">全部命名空间</option>
-            <option value="global">全局操作</option>
-            {namespaces.map((ns) => (
-              <option key={ns.id} value={String(ns.id)}>
-                {ns.displayName ?? ns.name}（#{ns.id}）
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-xs text-ink-3">
-          关键字
           <Input
-            aria-label="审批关键字"
-            value={filters.keyword}
-            onChange={(event) => {
-              onChange({ keyword: event.target.value })
-            }}
-          />
-        </label>
-        <div className="flex items-end justify-end">
-          <Button type="button" variant="ghost" onClick={onReset}>
-            {t('observability.common.filterReset')}
-          </Button>
-        </div>
-      </div>
-      <div className="grid gap-2 md:grid-cols-4">
-        <label className="grid gap-1 text-xs text-ink-3">
-          创建时间起
-          <input
+            id="approval-created-from"
             aria-label="创建时间起"
             type="datetime-local"
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm text-ink-1"
             value={filters.createdFrom}
             onChange={(event) => {
               onChange({ createdFrom: event.target.value })
             }}
+            className="h-9"
           />
-        </label>
-        <label className="grid gap-1 text-xs text-ink-3">
-          创建时间止
-          <input
+          <Input
+            id="approval-created-to"
             aria-label="创建时间止"
             type="datetime-local"
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm text-ink-1"
             value={filters.createdTo}
             onChange={(event) => {
               onChange({ createdTo: event.target.value })
             }}
+            className="h-9"
           />
-        </label>
-        <label className="grid gap-1 text-xs text-ink-3">
-          过期时间起
-          <input
+          <Input
+            id="approval-expires-from"
             aria-label="过期时间起"
             type="datetime-local"
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm text-ink-1"
             value={filters.expiresFrom}
             onChange={(event) => {
               onChange({ expiresFrom: event.target.value })
             }}
+            className="h-9"
           />
-        </label>
-        <label className="grid gap-1 text-xs text-ink-3">
-          过期时间止
-          <input
+          <Input
+            id="approval-expires-to"
             aria-label="过期时间止"
             type="datetime-local"
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm text-ink-1"
             value={filters.expiresTo}
             onChange={(event) => {
               onChange({ expiresTo: event.target.value })
             }}
+            className="h-9"
           />
-        </label>
-      </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -318,39 +328,92 @@ interface ApprovalRowProps {
   onOpen: () => void
 }
 
-function ApprovalRow({ row, selected, onOpen }: ApprovalRowProps) {
-  const namespace = row.namespaceId === null || row.namespaceId === undefined ? '全局' : `namespace ${String(row.namespaceId)}`
+/** 审批列表列宽（表头与行共用，保证列对齐）：
+ *  编号 / 摘要 / 领域 / 申请主体 / 状态 / 创建时间 / 行尾箭头 */
+const APPROVAL_GRID = 'md:grid-cols-[11rem_minmax(0,1.6fr)_minmax(0,1fr)_8rem_5.5rem_7rem_1.5rem]'
+
+/** 表头：桌面显示列名，小屏隐藏（小屏行内自带语义） */
+function ApprovalTableHead() {
+  const { t } = useTranslation()
   return (
-    <button
-      type="button"
+    <div
+      // 与 @beacon/ui 的 TableHead 保持同一套视觉参数：底色 surface-2/70、行高 h-9、
+      // 水平内边距 px-2.5、字号 11px + semibold + 字距。此前这里是 bg-surface-2（不透明）
+      // 加 px-3/py-2/font-medium，所以和其余页面的 DataTable 表头一眼就能看出不同。
       className={[
-        'grid w-full gap-2 border-b border-border px-3 py-3 text-left transition-colors hover:bg-surface-2',
-        selected ? 'bg-brand-50' : '',
+        'sticky top-0 z-10 hidden h-9 items-center gap-3 border-b border-border bg-surface-2/70 px-2.5 text-[11px] font-semibold tracking-[0.02em] whitespace-nowrap text-ink-4 md:grid',
+        APPROVAL_GRID,
+      ].join(' ')}
+    >
+      <span>{t('delivery.approvals.columns.requestId')}</span>
+      <span>{t('delivery.approvals.columns.summary')}</span>
+      <span>{t('delivery.approvals.columns.domain')}</span>
+      <span>{t('delivery.approvals.columns.requester')}</span>
+      <span>{t('delivery.approvals.columns.status')}</span>
+      <span className="text-right">{t('delivery.approvals.columns.createdAt')}</span>
+      <span aria-hidden />
+    </div>
+  )
+}
+
+function ApprovalRow({ row, selected, onOpen }: ApprovalRowProps) {
+  const namespace =
+    row.namespaceId === null || row.namespaceId === undefined
+      ? '全局'
+      : `namespace ${String(row.namespaceId)}`
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      className={[
+        // 单行等高表格行：列对齐、点击区整行，去掉原来三行堆叠造成的纵向浪费。
+        // 水平内边距与表头保持 px-2.5 一致，否则列起点会错开。
+        'grid h-auto w-full justify-start gap-1 whitespace-normal rounded-none border-b border-border px-2.5 py-2 text-left font-normal hover:bg-surface-2',
+        'md:items-center md:gap-3',
+        APPROVAL_GRID,
+        selected ? 'bg-brand-50 hover:bg-brand-50' : '',
       ].join(' ')}
       onClick={onOpen}
       aria-current={selected ? 'true' : undefined}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-xs text-ink-3">{row.requestId}</span>
-        <Badge variant={row.riskLevel === 'critical' ? 'destructive' : 'secondary'}>
+      {/* 桌面：每列一格；小屏：同一 DOM 顺序流式堆叠，靠 mq 控制显隐 */}
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate font-mono text-xs text-ink-3" title={row.requestId}>{row.requestId}</span>
+      </span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate text-sm font-medium text-ink-1" title={row.safeSummary}>{row.safeSummary}</span>
+        <Badge
+          variant={row.riskLevel === 'critical' ? 'destructive' : 'secondary'}
+          className="shrink-0 text-[10px]"
+        >
           {displayRisk(row.riskLevel)}风险
         </Badge>
-        <Badge variant="outline">{displayStatus(row.status)}</Badge>
-        <span className="ml-auto text-xs text-ink-4">{formatTime(row.createdAt)}</span>
-      </div>
-      <div className="grid gap-1 text-sm text-ink-1 md:grid-cols-[1.4fr_1fr_0.8fr]">
-        <span className="font-medium">{row.safeSummary}</span>
-        <span>{row.operationKey}</span>
-        <span>{namespace}</span>
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-3">
-        <span>
-          {displayPrincipal(row.requesterType)} · {row.requesterId}
+      </span>
+      <span className="flex min-w-0 flex-col md:flex-row md:items-center md:gap-1.5">
+        <span className="truncate text-xs text-ink-2">{row.operationKey}</span>
+        <span className="shrink-0 text-[11px] text-ink-4 md:hidden">{namespace}</span>
+      </span>
+      <span className="truncate text-xs text-ink-3">
+        {displayPrincipal(row.requesterType)} · {row.requesterId}
+      </span>
+      <span>
+        <Badge variant="outline" className="text-[10px]">
+          {displayStatus(row.status)}
+        </Badge>
+      </span>
+      <span className="text-[11px] text-ink-4 md:text-right">{formatTime(row.createdAt)}</span>
+      {/* 可进入暗示：与「创建时间」同处第一行第 7 列。必须排在理由行之前，
+          否则会被理由的 col-span 挤到第二行去 */}
+      <span className="hidden items-center justify-end text-ink-4 md:flex" aria-hidden>
+        <ChevronRight className="size-3.5" />
+      </span>
+      {/* 申请理由：第二行整行次要说明（跨全部 7 列） */}
+      {row.requestReason ? (
+        <span className="col-span-full truncate text-[11px] text-ink-4" title={row.requestReason}>
+          {row.requestReason}
         </span>
-        <span>{row.requestReason}</span>
-        <span>过期：{formatTime(row.expiresAt)}</span>
-      </div>
-    </button>
+      ) : null}
+    </Button>
   )
 }
 
@@ -388,7 +451,7 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
           : null
 
   return (
-    <div className="grid gap-4">
+    <div className="flex min-h-full flex-col gap-4">
       <div className="grid gap-1">
         <div className="font-mono text-xs text-ink-3">{detail.requestId}</div>
         <div className="text-sm font-semibold text-ink-1">{detail.safeSummary}</div>
@@ -469,7 +532,7 @@ function ApprovalDetail({ detail, onAction, actionPending }: ApprovalDetailProps
         <p className="text-sm text-ink-3">当前主体没有可执行的审批操作。</p>
       ) : null}
       {isPending ? (
-        <div className="flex flex-wrap gap-2">
+        <div data-slot="detail-actions-footer" className="sticky bottom-0 z-10 mt-auto -mx-4 flex flex-wrap gap-2 border-t border-border bg-card/95 px-4 py-3 backdrop-blur">
           {detail.canApprove ? (
             <Button
               type="button"
@@ -516,13 +579,17 @@ function isConflictError(error: unknown): boolean {
 }
 
 export default function ApprovalsPage() {
+  const { t } = useTranslation()
   const { requestId } = useParams<{ requestId: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [page, setPage] = useState(1)
   const [action, setAction] = useState<ApprovalAction | null>(null)
-  const listParams = useMemo(() => queryFromFilters(filters, page), [filters, page])
+  const listParams = useMemo(
+    () => queryFromFilters(filters, page),
+    [filters, page],
+  )
   const listQuery = useQuery({
     queryKey: ['approvals', 'list', listParams],
     queryFn: () => fetchApprovals(listParams),
@@ -560,6 +627,7 @@ export default function ApprovalsPage() {
   })
 
   useEffect(() => {
+    // 页内筛选变化时回到第 1 页，避免停在已越界的高页码上。
     setPage(1)
   }, [filters])
 
@@ -577,72 +645,77 @@ export default function ApprovalsPage() {
         : '撤回后申请进入终态，原因可选。'
 
   return (
-    <section className="grid gap-4">
-      <div
-        data-slot="global-approval-scope"
-        className="flex items-start gap-2 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-brand"
-      >
-        <ShieldAlert className="mt-0.5 size-4" aria-hidden />
-        全局审批不继承页眉环境或 namespace scope；以下 namespace 仅为页面筛选。
-      </div>
-      <ApprovalFilters
-        filters={filters}
-        onChange={(next) => {
-          setFilters((current) => ({ ...current, ...next }))
-        }}
-        onReset={() => {
-          setFilters(initialFilters)
-        }}
+    <section className="grid gap-4 md:flex md:h-full md:min-h-0 md:flex-col">
+      {/* 页面身份标识：标题与说明统一由 PageHeader 承担，文档入口挂在右侧操作区。 */}
+      <PageHeader
+        icon={<ClipboardCheck />}
+        title={t('nav.approvals')}
+        description={t('delivery.approvals.pageDesc')}
+        actions={<DocHelp topic="approvals" />}
       />
       <MasterDetail
+        fill
         master={
-          <div className="grid gap-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-ink-1">审批申请</h2>
-              <span className="text-xs text-ink-3">
-                {listQuery.data ? `共 ${String(total)} 条` : '加载中…'}
-              </span>
-            </div>
-            <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
-              {listQuery.isLoading ? (
-                <div className="grid gap-2 p-4">
-                  <div className="h-12 animate-pulse rounded bg-muted" />
-                  <div className="h-12 animate-pulse rounded bg-muted" />
-                  <div className="h-12 animate-pulse rounded bg-muted" />
-                </div>
-              ) : listQuery.isError ? (
-                <div className="grid gap-2 p-6 text-sm">
-                  <p className="text-destructive">审批列表加载失败</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      void listQuery.refetch()
-                    }}
-                  >
-                    重试
-                  </Button>
-                </div>
-              ) : list.length === 0 ? (
-                <div className="grid gap-2 p-8 text-center text-sm text-ink-3">
-                  <AlertTriangle className="mx-auto size-6" aria-hidden />
-                  <p>
-                    {isDefaultPendingFilter(filters)
-                      ? '全局暂无待审批'
-                      : '当前筛选无结果'}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setFilters(initialFilters)
-                    }}
-                  >
-                    清除筛选
-                  </Button>
-                </div>
-              ) : (
-                list.map((row) => (
+          <ListCard
+            fill
+            toolbar={
+              <ApprovalFilters
+                filters={filters}
+                onChange={(next) => {
+                  setFilters((current) => ({ ...current, ...next }))
+                }}
+                onReset={() => {
+                  setFilters(initialFilters)
+                }}
+                countLabel={listQuery.data ? `共 ${String(total)} 条` : '加载中…'}
+              />
+            }
+            footer={
+              listQuery.data && total > 0 ? (
+                <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
+              ) : undefined
+            }
+          >
+            {listQuery.isLoading ? (
+              <div className="grid gap-2 p-4">
+                <div className="h-12 animate-pulse rounded bg-muted" />
+                <div className="h-12 animate-pulse rounded bg-muted" />
+                <div className="h-12 animate-pulse rounded bg-muted" />
+              </div>
+            ) : listQuery.isError ? (
+              <div className="grid gap-2 p-6 text-sm">
+                <p className="text-destructive">审批列表加载失败</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    void listQuery.refetch()
+                  }}
+                >
+                  重试
+                </Button>
+              </div>
+            ) : list.length === 0 ? (
+              <div className="grid justify-items-center gap-4 px-4 py-10 text-center text-sm text-ink-3">
+                <AlertTriangle className="mx-auto size-6" aria-hidden />
+                <p>
+                  {/* 默认 pending 筛选下的全局空态；本页不继承页眉命名空间范围。 */}
+                  {isDefaultPendingFilter(filters) ? '全局暂无待审批' : '当前筛选无结果'}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setFilters(initialFilters)
+                  }}
+                >
+                  清除筛选
+                </Button>
+              </div>
+            ) : (
+              <>
+                <ApprovalTableHead />
+                {list.map((row) => (
                   <ApprovalRow
                     key={row.requestId}
                     row={row}
@@ -651,13 +724,10 @@ export default function ApprovalsPage() {
                       void navigate(`/approvals/${encodeURIComponent(row.requestId)}`)
                     }}
                   />
-                ))
-              )}
-            </div>
-            {listQuery.data && total > 0 ? (
-              <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
-            ) : null}
-          </div>
+                ))}
+              </>
+            )}
+          </ListCard>
         }
         detail={
           requestId === undefined ? null : detailQuery.isLoading ? (
@@ -681,7 +751,10 @@ export default function ApprovalsPage() {
           ) : selected ? (
             <ApprovalDetail
               detail={selected}
-              onAction={setAction}
+              onAction={(next) => {
+                mutation.reset()
+                setAction(next)
+              }}
               actionPending={mutation.isPending}
             />
           ) : null
@@ -697,14 +770,16 @@ export default function ApprovalsPage() {
         onOpenChange={(open) => {
           if (!open && !mutation.isPending) {
             setAction(null)
+            mutation.reset()
           }
         }}
         title={actionTitle}
         description={actionDescription}
         confirmLabel={action === 'approve' ? '批准并执行' : action === 'reject' ? '拒绝' : '撤回'}
+        confirmVariant={action === 'reject' || action === 'withdraw' ? 'destructive' : 'default'}
         requireReason={action === 'reject'}
         pending={mutation.isPending}
-        errorText={mutation.error instanceof Error ? mutation.error.message : null}
+        errorText={mutation.isError && mutation.error instanceof Error ? mutation.error.message : null}
         onConfirm={({ reason }) => {
           if (action !== null) {
             mutation.mutate({ type: action, reason })

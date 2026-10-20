@@ -6,12 +6,13 @@ import { useTranslation } from 'react-i18next'
 import { CheckCircle2, Cloud, DownloadCloud, Rocket, Wifi } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   MarkdownLite,
   SectionHeader,
+  Skeleton,
 } from '@beacon/ui'
+import PageAsyncSection from '../features/shared/page-async-section'
 
 import {
   ApiClientError,
@@ -24,7 +25,9 @@ import {
   triggerUpdate,
 } from '../api/system'
 import SystemReasonDialog from '../features/system/reason-dialog'
+import PageSkeleton from '../features/shared/page-skeleton'
 import { formatIso } from '../features/system/format'
+import PageTitle from '../shell/page-title'
 import ProgressCard from './system-version/progress-card'
 
 function messageOf(error: unknown): string {
@@ -130,9 +133,32 @@ export default function SystemVersionPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.systemVersion" />
 
       {/* 版本信息卡（紧凑：版本号 + 渠道 / 状态 + 检查 + 更新说明，不含操作按钮） */}
-      <AsyncSection isLoading={checkQuery.isLoading} isError={checkQuery.isError} error={checkQuery.error}>
+      <PageAsyncSection
+        isLoading={checkQuery.isLoading}
+        isError={checkQuery.isError}
+        error={checkQuery.error}
+        skeleton={
+          <PageSkeleton className="grid gap-3">
+            <Skeleton className="h-4 w-32" />
+            <div className="grid gap-4 rounded-xl border border-border bg-card p-5 shadow-card">
+              <div className="flex items-center gap-3">
+                <Skeleton className="size-10 rounded-xl" />
+                <div className="grid gap-2">
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-6 w-28" />
+                </div>
+                <Skeleton className="ml-auto h-8 w-28" />
+              </div>
+              <Skeleton className="h-3 w-40" />
+              <Skeleton className="h-20 w-full rounded-lg" />
+            </div>
+          </PageSkeleton>
+        }
+      >
         <section className="grid gap-3">
           <SectionHeader icon={<Rocket className="size-4" />} title={t('system.version.sections.info')} />
           <div className="grid gap-4 rounded-xl border border-border bg-card p-5 shadow-card">
@@ -213,7 +239,7 @@ export default function SystemVersionPage() {
             )}
           </div>
         </section>
-      </AsyncSection>
+      </PageAsyncSection>
 
       {/* 更新与渠道 / 维护操作：紧凑双栏，避免长页堆叠 */}
       <div className="grid gap-5 lg:grid-cols-2">
@@ -230,7 +256,11 @@ export default function SystemVersionPage() {
             >
               {t('system.version.trigger')}
             </Button>
-            {progress && progress.phase !== 'idle' ? (
+            {progressQuery.isPending ? (
+              <PageSkeleton>
+                <Skeleton className="h-24 w-full rounded-xl" />
+              </PageSkeleton>
+            ) : progress && progress.phase !== 'idle' ? (
               <ProgressCard
                 progress={progress}
                 cancelling={cancelMutation.isPending}

@@ -93,3 +93,37 @@ export function TileGridSkeleton({
     </div>
   )
 }
+
+interface FormSkeletonProps {
+  // 字段行数（每行 = 标签条 + 输入框占位）
+  fields?: number
+  // 是否渲染右侧说明列（贴近「设置项 + 说明」的双列布局）
+  withHint?: boolean
+  // 底部是否留动作区（保存/重置按钮）
+  withActions?: boolean
+}
+
+// 表单骨架：标签 + 输入框形状的占位，用于设置项、权重、阈值等键值表单的首屏加载。
+// 比 TableSkeleton 更贴合表单形状——表格骨架的等宽列会把「短标签 + 长输入」画成两列格子，
+// 与实际排版不符，加载完成后视觉跳动明显。
+export function FormSkeleton({ fields = 4, withHint = false, withActions = false }: FormSkeletonProps) {
+  return (
+    <div className="grid gap-4" data-slot="form-skeleton">
+      {Array.from({ length: fields }).map((_, i) => (
+        <div key={i} className="grid gap-1.5">
+          <Skeleton className="h-3.5 w-24" />
+          <div className={withHint ? 'grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]' : undefined}>
+            <Skeleton className="h-9 w-full rounded-md" />
+            {withHint && <Skeleton className="h-3 w-full max-w-64 self-center" />}
+          </div>
+        </div>
+      ))}
+      {withActions && (
+        <div className="flex gap-2 pt-1">
+          <Skeleton className="h-9 w-20 rounded-md" />
+          <Skeleton className="h-9 w-20 rounded-md" />
+        </div>
+      )}
+    </div>
+  )
+}

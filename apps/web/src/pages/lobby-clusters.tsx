@@ -5,19 +5,22 @@ import { Link } from 'react-router-dom'
 import { RefreshCw, UserPlus } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
-  DataTable,
+  CardGridSkeleton,
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
   Label,
+  Skeleton,
+  TableSkeleton,
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { LobbyMember, ServerItem } from '@beacon/contracts'
 
 import {
@@ -28,6 +31,8 @@ import {
   transferServerPlacement,
 } from '../api/cluster'
 import NamespaceSelect from '../features/cluster/namespace-select'
+import PageSkeleton from '../features/shared/page-skeleton'
+import PageTitle from '../shell/page-title'
 
 function availability(member: LobbyMember): { label: string; variant: 'ok' | 'warn' | 'off' } {
   if (member.draining) {
@@ -165,6 +170,8 @@ export default function LobbyClustersPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.lobbyClusters" />
       {/* 作用域工具条：命名空间选择器须常驻（其内部 effect 负责在未选时落定首个命名空间，
           放进条件分支会与数据加载形成循环依赖）；与状态卡同为一列内容流，不是独立空行。 */}
       <div className="grid gap-3.5">
@@ -192,11 +199,22 @@ export default function LobbyClustersPage() {
         </div>
       </div>
 
-      <AsyncSection
+      <PageAsyncSection
         isLoading={loading}
         isError={hasError}
         error={error}
-        skeleton={<div className="h-36 animate-pulse rounded-xl bg-surface-2" />}
+        skeleton={
+          <PageSkeleton className="grid gap-3.5">
+            <CardGridSkeleton count={1} gridClass="grid" heightClass="h-20" />
+            <div className="grid gap-3 rounded-xl border border-border bg-card p-4">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-5 w-36" />
+                <Skeleton className="h-8 w-24" />
+              </div>
+              <TableSkeleton columns={columns.length} rows={5} />
+            </div>
+          </PageSkeleton>
+        }
       >
         {detail ? (
           <div className="grid gap-3.5">
@@ -233,7 +251,7 @@ export default function LobbyClustersPage() {
                   无大厅成员时，BC 首次连接拒绝；先确认 Bukkit 身份，再迁入。
                 </div>
               ) : (
-                <DataTable
+                <PageDataTable
                   columns={columns}
                   rows={detail.members}
                   rowKey={(row) => row.serverId}
@@ -254,7 +272,7 @@ export default function LobbyClustersPage() {
             无大厅成员时，BC 首次连接拒绝；先确认 Bukkit 身份，再迁入。
           </div>
         ) : null}
-      </AsyncSection>
+      </PageAsyncSection>
 
       <Dialog
         open={moveInOpen}

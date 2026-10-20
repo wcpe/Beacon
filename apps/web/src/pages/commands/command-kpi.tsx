@@ -14,7 +14,8 @@ import {
   Terminal,
 } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton, KpiCard, type KpiTone } from '@beacon/ui'
+import { CardGridSkeleton, KpiCard, type KpiTone } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchCommandAnalytics } from '../../api/observability'
 
@@ -59,7 +60,7 @@ export default function CommandKpi() {
   }, [query.data])
 
   return (
-    <AsyncSection
+    <PageAsyncSection
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}
@@ -79,6 +80,6 @@ export default function CommandKpi() {
           )
         })}
       </div>
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }

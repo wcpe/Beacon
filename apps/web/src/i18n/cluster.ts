@@ -373,6 +373,7 @@ export const cluster = {
       confirm: '确认查看',
       loading: '获取中…',
       sizeBytes: '大小 {{size}} 字节',
+      sha256: 'SHA-256',
       close: '关闭',
     },
     filter: {

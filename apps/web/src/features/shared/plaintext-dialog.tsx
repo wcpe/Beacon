@@ -3,7 +3,7 @@
 //
 // 由 api-keys（API 密钥）与 mcp-clients（MCP OAuth secret）共用；
 // 文案键经 descriptionKey 传入，避免共用组件耦合到某一页的 i18n 命名空间。
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -35,6 +35,20 @@ export default function PlaintextDialog({
 }: PlaintextDialogProps) {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
+  const copyAttemptRef = useRef(0)
+
+  useEffect(() => {
+    copyAttemptRef.current += 1
+    setCopied(false)
+  }, [open, plaintext])
+
+  const handleOpenChange = (next: boolean): void => {
+    if (!next) {
+      copyAttemptRef.current += 1
+      setCopied(false)
+    }
+    onOpenChange(next)
+  }
 
   const copy = () => {
     // clipboard 在非安全上下文 / 测试环境可能缺失，DOM 类型标注为必有、运行期未必，故先经 unknown 再判空
@@ -43,9 +57,13 @@ export default function PlaintextDialog({
       return
     }
     // 失败静默降级为手动选中展示，不阻断
+    const attempt = copyAttemptRef.current + 1
+    copyAttemptRef.current = attempt
     void clipboard.writeText(plaintext).then(
       () => {
-        setCopied(true)
+        if (open && copyAttemptRef.current === attempt) {
+          setCopied(true)
+        }
       },
       () => {
         // 复制失败不阻断，用户仍可手动选中明文
@@ -54,15 +72,7 @@ export default function PlaintextDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) {
-          setCopied(false)
-        }
-        onOpenChange(next)
-      }}
-    >
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -78,8 +88,9 @@ export default function PlaintextDialog({
         </div>
         <DialogFooter>
           <Button
+            type="button"
             onClick={() => {
-              onOpenChange(false)
+              handleOpenChange(false)
             }}
           >
             {t(`${keysPrefix}.plaintextClose`)}

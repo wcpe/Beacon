@@ -6,7 +6,9 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Workflow } from 'lucide-react'
 
-import { AsyncSection, Badge, Checkbox, DataTable, Input, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import { Badge, Checkbox, Input, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { SchedDecisionItem } from '@beacon/contracts'
 
 import { fetchSchedDecisions } from '../../api/metrics'
@@ -236,13 +238,13 @@ export default function DecisionsPanel() {
                 : undefined
           }
         >
-          <AsyncSection
+          <PageAsyncSection
             isLoading={query.isPending}
             isError={query.isError}
             error={query.error}
             skeleton={<TableSkeleton columns={columns.length} rows={8} />}
           >
-            <DataTable
+            <PageDataTable
               columns={columns}
               rows={decisionRows}
               rowKey={(row) => row.traceId}
@@ -253,7 +255,7 @@ export default function DecisionsPanel() {
               }}
               rowClassName={(row) => (row.traceId === selected ? 'bg-brand-50/60' : undefined)}
             />
-          </AsyncSection>
+          </PageAsyncSection>
         </ListCard>
       }
       detail={selected === null ? null : <DecisionDetail traceId={selected} />}

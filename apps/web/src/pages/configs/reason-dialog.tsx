@@ -26,6 +26,7 @@ interface ReasonDialogProps {
   // 固定附加提示（如回退 / 撤销的「不影响线上，生效需走变更单」，规格 §4.6）
   notice?: string
   confirmLabel: string
+  confirmVariant?: 'default' | 'destructive'
   // 影响预览行（撤销哪层 / 影响哪些服）
   impacts?: string[]
   pending: boolean
@@ -42,6 +43,7 @@ export default function ReasonDialog({
   description,
   notice,
   confirmLabel,
+  confirmVariant = 'default',
   impacts,
   pending,
   errorText,
@@ -60,44 +62,54 @@ export default function ReasonDialog({
   const canConfirm = reason.trim() !== '' && !pending
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!pending) {
+          onOpenChange(next)
+        }
+      }}
+    >
+      <AlertDialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <AlertDialogHeader>
           <AlertDialogTitle className="text-ink-1">{title}</AlertDialogTitle>
           <AlertDialogDescription className="text-ink-3">{description}</AlertDialogDescription>
         </AlertDialogHeader>
 
-        {notice !== undefined && (
-          <p className="rounded-lg border border-warn-bd bg-warn-bg px-3 py-2 text-xs text-warn">{notice}</p>
-        )}
+        <div className="min-h-0 overflow-y-auto pr-1">
+          {notice !== undefined && (
+            <p className="mb-4 rounded-lg border border-warn-bd bg-warn-bg px-3 py-2 text-xs text-warn">{notice}</p>
+          )}
 
-        {impacts && impacts.length > 0 && (
-          <ul className="list-disc space-y-1 rounded-lg border border-border bg-surface-2 px-5 py-3 text-sm text-ink-2">
-            {impacts.map((line, i) => (
-              <li key={i}>{line}</li>
-            ))}
-          </ul>
-        )}
+          {impacts && impacts.length > 0 && (
+            <ul className="mb-4 list-disc space-y-1 rounded-lg border border-border bg-surface-2 px-5 py-3 text-sm text-ink-2">
+              {impacts.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          )}
 
-        <div className="space-y-1.5">
-          <Label htmlFor="config-reason-input">{t('cluster.servers.reason.label')}</Label>
-          <Textarea
-            id="config-reason-input"
-            aria-label={t('cluster.servers.reason.label')}
-            value={reason}
-            onChange={(e) => {
-              setReason(e.target.value)
-            }}
-            placeholder={t('cluster.servers.reason.placeholder')}
-            rows={2}
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="config-reason-input">{t('cluster.servers.reason.label')}</Label>
+            <Textarea
+              id="config-reason-input"
+              aria-label={t('cluster.servers.reason.label')}
+              value={reason}
+              onChange={(e) => {
+                setReason(e.target.value)
+              }}
+              placeholder={t('cluster.servers.reason.placeholder')}
+              rows={2}
+            />
+          </div>
+
+          {errorText && <p role="alert" className="mt-3 text-sm text-crit">{errorText}</p>}
         </div>
 
-        {errorText && <p className="text-sm text-crit">{errorText}</p>}
-
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('delivery.configs.create.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel disabled={pending}>{t('delivery.configs.create.cancel')}</AlertDialogCancel>
           <AlertDialogAction
+            variant={confirmVariant}
             disabled={!canConfirm}
             onClick={(e) => {
               // 阻止 radix 默认关闭，交由调用方在成功后关闭

@@ -8,8 +8,8 @@ import { useTranslation } from 'react-i18next'
 import { SplitSquareHorizontal } from 'lucide-react'
 
 import {
-  AsyncSection,
   Button,
+  Combobox,
   Label,
   SectionHeader,
   Select,
@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigFileDetail, ConfigScopeLevel, ConfigScopeSummary } from '@beacon/contracts'
 
 import { fetchConfigDiff, fetchConfigScopes, fetchConfigVersions } from '../../api/delivery-configs'
@@ -42,11 +43,6 @@ interface DiffSide {
 }
 
 const EMPTY_SIDE: DiffSide = { kind: 'scope', scopeKey: '', versionId: null, targetType: 'namespace', targetRef: null }
-
-// 侧标识串：scope:<level>:<refId>
-function scopeSpec(scope: ConfigScopeSummary): string {
-  return `scope:${scope.scopeLevel}:${String(scope.scopeRefId)}`
-}
 
 /** 组装一侧的 diff 描述串；未选全返回 null */
 function specOf(side: DiffSide, file: ConfigFileDetail): string | null {
@@ -91,7 +87,8 @@ export default function DiffTab({ fileId, file }: DiffTabProps) {
         title={t('delivery.configs.detail.diff.title')}
       />
 
-      <AsyncSection
+      <PageAsyncSection
+        keepContentWhileRefreshing
         isLoading={scopesQuery.isLoading}
         isError={scopesQuery.isError}
         error={scopesQuery.error}
@@ -128,12 +125,17 @@ export default function DiffTab({ fileId, file }: DiffTabProps) {
             {t('delivery.configs.detail.diff.run')}
           </Button>
         </div>
-      </AsyncSection>
+      </PageAsyncSection>
 
       {applied === null ? (
         <p className="text-sm text-ink-3">{t('delivery.configs.detail.diff.pickHint')}</p>
       ) : (
-        <AsyncSection isLoading={diffQuery.isLoading} isError={diffQuery.isError} error={diffQuery.error}>
+        <PageAsyncSection
+          keepContentWhileRefreshing
+          isLoading={diffQuery.isLoading}
+          isError={diffQuery.isError}
+          error={diffQuery.error}
+        >
           {diffQuery.data && (
             <div className="grid gap-3">
               <p className="font-mono text-xs text-ink-3">
@@ -187,7 +189,7 @@ export default function DiffTab({ fileId, file }: DiffTabProps) {
               )}
             </div>
           )}
-        </AsyncSection>
+        </PageAsyncSection>
       )}
     </section>
   )
@@ -252,61 +254,51 @@ function SideSelector({ idPrefix, label, side, onChange, scopes, fileId, file }:
       {(side.kind === 'scope' || side.kind === 'version') && (
         <div className="space-y-1.5">
           <Label htmlFor={`${idPrefix}-scope`}>{t('delivery.configs.detail.diff.pickScope')}</Label>
-          <Select
+          <Combobox
+            id={`${idPrefix}-scope`}
+            className="w-full"
+            aria-label={`${label}${t('delivery.configs.detail.diff.pickScope')}`}
             value={side.scopeKey}
-            onValueChange={(value) => {
+            onChange={(value) => {
               onChange({ ...side, scopeKey: value, versionId: null })
             }}
-          >
-            <SelectTrigger
-              id={`${idPrefix}-scope`}
-              className="w-full"
-              aria-label={`${label}${t('delivery.configs.detail.diff.pickScope')}`}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {scopes.map((s) => (
-                <SelectItem key={scopeSpec(s)} value={`${s.scopeLevel}:${String(s.scopeRefId)}`}>
-                  {s.scopeLevel} / {s.scopeName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={scopes.map((s) => ({
+              value: `${s.scopeLevel}:${String(s.scopeRefId)}`,
+              label: `${s.scopeLevel} / ${s.scopeName}`,
+            }))}
+            allowCustom={false}
+            placeholder={t('delivery.configs.detail.diff.pickScope')}
+            emptyText={t('common.combobox.noMatch')}
+          />
         </div>
       )}
 
       {side.kind === 'version' && side.scopeKey !== '' && (
         <div className="space-y-1.5">
           <Label htmlFor={`${idPrefix}-version`}>{t('delivery.configs.detail.diff.pickVersion')}</Label>
-          <AsyncSection
+          <PageAsyncSection
+            keepContentWhileRefreshing
             isLoading={versionsQuery.isLoading}
             isError={versionsQuery.isError}
             error={versionsQuery.error}
           >
-            <Select
+            <Combobox
+              id={`${idPrefix}-version`}
+              className="w-full"
+              aria-label={`${label}${t('delivery.configs.detail.diff.pickVersion')}`}
               value={side.versionId === null ? '' : String(side.versionId)}
-              onValueChange={(value) => {
+              onChange={(value) => {
                 onChange({ ...side, versionId: Number(value) })
               }}
-            >
-              <SelectTrigger
-                id={`${idPrefix}-version`}
-                className="w-full"
-                aria-label={`${label}${t('delivery.configs.detail.diff.pickVersion')}`}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(versionsQuery.data?.items ?? []).map((v) => (
-                  <SelectItem key={v.versionId} value={String(v.versionId)}>
-                    v{String(v.versionNo)} · {v.contentHash.slice(0, 8)}
-                    {v.isRemoval ? ` · ${t('delivery.configs.detail.versions.removal')}` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </AsyncSection>
+              options={(versionsQuery.data?.items ?? []).map((v) => ({
+                value: String(v.versionId),
+                label: `v${String(v.versionNo)} · ${v.contentHash.slice(0, 8)}${v.isRemoval ? ` · ${t('delivery.configs.detail.versions.removal')}` : ''}`,
+              }))}
+              allowCustom={false}
+              placeholder={t('delivery.configs.detail.diff.pickVersion')}
+              emptyText={t('common.combobox.noMatch')}
+            />
+          </PageAsyncSection>
         </div>
       )}
 
@@ -316,27 +308,22 @@ function SideSelector({ idPrefix, label, side, onChange, scopes, fileId, file }:
             <Label htmlFor={`${idPrefix}-target-type`}>
               {t('delivery.configs.detail.effective.targetTypeLabel')}
             </Label>
-            <Select
+            <Combobox
+              id={`${idPrefix}-target-type`}
+              className="w-full"
+              aria-label={`${label}${t('delivery.configs.detail.effective.targetTypeLabel')}`}
               value={side.targetType}
-              onValueChange={(value) => {
+              onChange={(value) => {
                 onChange({ ...side, targetType: value as ConfigScopeLevel, targetRef: null })
               }}
-            >
-              <SelectTrigger
-                id={`${idPrefix}-target-type`}
-                className="w-full"
-                aria-label={`${label}${t('delivery.configs.detail.effective.targetTypeLabel')}`}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {SCOPE_LEVELS.map((level) => (
-                  <SelectItem key={level} value={level}>
-                    {t(`delivery.configs.detail.effective.targetTypes.${level}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={SCOPE_LEVELS.map((level) => ({
+                value: level,
+                label: t(`delivery.configs.detail.effective.targetTypes.${level}`),
+              }))}
+              allowCustom={false}
+              placeholder={t('delivery.configs.detail.effective.targetTypeLabel')}
+              emptyText={t('common.combobox.noMatch')}
+            />
           </div>
           {side.targetType !== 'namespace' && (
             <div className="space-y-1.5">

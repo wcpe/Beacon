@@ -6,7 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { ChevronRight, Workflow } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton, SectionHeader } from '@beacon/ui'
+import { CardGridSkeleton, SectionHeader } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchSchedSummary } from '../../api/metrics'
 
@@ -56,7 +57,7 @@ export default function SchedOverview() {
   return (
     <section className="grid grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-3.5 shadow-card">
       {header}
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
@@ -108,7 +109,7 @@ export default function SchedOverview() {
             )}
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

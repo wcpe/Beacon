@@ -7,7 +7,7 @@ export const common = {
   superAdmin: '超级管理员',
   // 页眉刷新按钮
   refresh: '刷新',
-  // 页眉控制面在线状态药丸
+  // 侧栏品牌区控制面状态指示
   controlPlaneOnline: '控制面在线',
   scenario: {
     label: '数据场景',
@@ -16,8 +16,41 @@ export const common = {
     huge: '超大量',
     error: '异常',
   },
-  // 顶栏页面面包屑（E3）的无障碍标签
-  breadcrumb: '面包屑',
+  mockDevTools: {
+    title: 'Mock 开发工具',
+    open: '打开 Mock 开发工具',
+    close: '关闭 Mock 开发工具',
+    dataVolume: '数据量档位',
+    latency: '接口延时',
+    scene: '数据场景',
+    currentCombination: '当前组合',
+    combination: '{{volume}} × {{latency}}',
+    reset: '恢复默认',
+    lifecycleReview: {
+      title: '生命周期评审',
+      server: '服务器',
+      namespace: '命名空间',
+    },
+    dragHint: '拖动浮球可移动位置',
+    cartesianHint: '数据量与接口延时彼此独立，可自由组合；切换后自动重新请求。',
+    priorityHint: '空态与异常优先；超大量场景保留既有样例规模，较大数据档可继续扩展。',
+    volume: {
+      baseline: '原始样例',
+      small: '小 · 10 条/域',
+      normal: '常规 · 50 条/域',
+      large: '大 · 500 条/域',
+      xlarge: '超大 · 5000 条/域',
+    },
+    latencyTier: {
+      none: '无 · 0 ms',
+      fast: '快 · 200 ms',
+      slow: '慢 · 800 ms',
+      verySlow: '很慢 · 2500 ms',
+    },
+  },
+  combobox: {
+    noMatch: '没有匹配的候选项',
+  },
   // 顶栏环境过滤器（FR-178 / FR-192）：按环境过滤各页视图的作用域
   envFilter: {
     label: '环境过滤器',
@@ -35,6 +68,9 @@ export const common = {
     emptyMapping: '空映射',
     stopped: '已停止',
     scopeBadge: '范围',
+    scopeLabel: '环境与命名空间',
+    environmentGroup: '环境',
+    namespaceGroup: '命名空间',
     emptyNote: '该环境没有映射命名空间，观测页将显示空态。',
     invalidRangeAria: '观测范围失效，请重新选择环境',
   },
@@ -102,12 +138,20 @@ export const common = {
   // 段 1 指标条（FR-188）
   metrics: {
     placeholderHint: '全局指标加载中…',
+    title: '全局运维指标',
     controlPlaneOffline: '控制面异常',
     controlPlaneUnknown: '控制面状态未知',
     agentOnline: 'Agent 在线',
     pendingRegistrations: '待确认',
     openAlerts: '未处理告警',
     activeChanges: '进行中变更单',
+    openDetail: '展开运维指标明细',
+  },
+  resources: {
+    ariaLabel: '控制面 CPU {{cpu}}，堆内存 {{memory}}，点击查看健康详情',
+    openHealth: '查看控制面健康',
+    cpu: 'CPU',
+    memory: '内存',
   },
   // 表格勾选行无障碍标签
   selectRow: '选择 {{id}}',

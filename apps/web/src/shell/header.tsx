@@ -1,26 +1,33 @@
-// 双段页眉（FR-187/188/189 + FR-193～196）：
-// 段 1 = 全局运维指标真数据；段 2 = 汉堡(小屏) + 环境过滤 + 搜索/语言/通知/刷新 + 用户/演示控件。
+// 单层页眉（FR-187/188/189 + FR-193～196）：
+// 左侧 = 控制面状态点（内含 CPU/内存弹层）+ 环境/命名空间选择器；右侧 = 搜索/语言/通知/刷新 + 账户入口。
+// 不放面包屑：页面身份由各内容页的 PageHeader 大标题承担（见 docs/UX.md §4）。
+// 页眉保持透明、不铺底色也不加分隔线：内容滚动容器起点正好在页眉下沿（不会从页眉背后穿过），
+// 加底色或 backdrop-blur 没有实际收益，且会与 y=8 起浮的侧栏卡片形成错位。
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Menu, Search, X } from 'lucide-react'
-import { useLocation } from 'react-router-dom'
 
-import { Badge, Button } from '@beacon/ui'
+import { Button } from '@beacon/ui'
 
 import { isDemoMode } from '../demo-mode'
 import { useShellStore } from '../store'
-import Breadcrumb from './breadcrumb'
 import CommandPalette from './command-palette'
 import EnvFilter from './env-filter'
 import LanguageMenu from './language-menu'
 import MetricsStrip from './metrics-strip'
+import ControlPlaneResources from './control-plane-resources'
 import NotificationsMenu from './notifications-menu'
 import OperatorMenu from './operator-menu'
 import PageRefreshButton from './page-refresh-button'
-import ScenarioSwitcher from './scenario-switcher'
 
 /** 段 2 右侧工具：搜索 / 语言 / 通知 / 刷新（FR-193～196） */
-function HeaderUtilities({ onOpenSearch }: { onOpenSearch: () => void }) {
+function HeaderUtilities({
+  onOpenSearch,
+  onRefreshingChange,
+}: {
+  onOpenSearch: () => void
+  onRefreshingChange: (isRefreshing: boolean) => void
+}) {
   const { t } = useTranslation()
   return (
     <>
@@ -35,9 +42,15 @@ function HeaderUtilities({ onOpenSearch }: { onOpenSearch: () => void }) {
       >
         <Search className="size-4" />
       </Button>
-      <LanguageMenu />
+      {/* 语言是硬功能入口，不能在小屏直接消失：sm 起就保留（手机横屏/平板可用）。
+          刷新则只在 lg 起显示，小屏可下拉整页刷新，避免占用宝贵横向空间。 */}
+      <div data-slot="header-language-compact" className="hidden sm:inline-flex">
+        <LanguageMenu />
+      </div>
       <NotificationsMenu />
-      <PageRefreshButton />
+      <div data-slot="header-refresh-compact" className="hidden lg:inline-flex">
+        <PageRefreshButton onRefreshingChange={onRefreshingChange} />
+      </div>
     </>
   )
 }
@@ -45,10 +58,10 @@ function HeaderUtilities({ onOpenSearch }: { onOpenSearch: () => void }) {
 export default function Header() {
   const { t } = useTranslation()
   const demo = isDemoMode()
-  const location = useLocation()
   const mobileNavOpen = useShellStore((state) => state.mobileNavOpen)
   const toggleMobileNav = useShellStore((state) => state.toggleMobileNav)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   // 全局 Ctrl/Cmd+K 唤起命令面板（FR-193）
   useEffect(() => {
@@ -66,9 +79,9 @@ export default function Header() {
 
   return (
     <div data-slot="app-header" className="shrink-0">
-      <MetricsStrip />
-      {/* FR-191：段 2 与内容区同底、无横线、无毛玻璃半透明底 */}
-      <header className="flex h-12 items-center gap-3 bg-transparent px-[22px]">
+      {/* 单层页眉：控制面状态点（内含运维指标弹层）+ 环境/命名空间 + 右侧工具。
+          原「指标条 + 工具行」两层已合并，省下 36px 垂直空间。 */}
+      <header className="flex h-12 items-center gap-0.5 bg-transparent px-3 sm:gap-1.5 sm:px-4 md:gap-1 lg:gap-1 lg:px-4 xl:gap-2 xl:px-[22px]">
         {/* 小屏汉堡：打开/关闭抽屉侧栏（FR-189） */}
         <Button
           type="button"
@@ -81,30 +94,20 @@ export default function Header() {
         >
           {mobileNavOpen ? <X className="size-4" /> : <Menu className="size-4" />}
         </Button>
-        {/* 当前页面面包屑（E3）：置于段 2 最左（汉堡之后），先给出「分组 › 页面」身份，
-            其后才是环境/命名空间选择器与右侧工具 */}
-        <Breadcrumb />
-        {location.pathname === '/approvals' || location.pathname.startsWith('/approvals/') ? (
-          <div data-slot="global-approval-header" className="rounded-md bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand">
-            全局审批
-          </div>
-        ) : (
-          <EnvFilter />
-        )}
-        <div className="flex flex-1 items-center justify-end gap-1.5">
+        {/* 控制面状态点：也是运维指标的入口（点开看 Agent 在线 / 待确认 / 告警 / 变更单） */}
+        <MetricsStrip isRefreshing={isRefreshing} />
+        <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
+        {/* 环境 / 命名空间选择器固定在左侧：所有页面（含 /approvals）统一渲染 */}
+        <EnvFilter />
+        <ControlPlaneResources isRefreshing={isRefreshing} />
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
           <HeaderUtilities
             onOpenSearch={() => {
               setPaletteOpen(true)
             }}
+            onRefreshingChange={setIsRefreshing}
           />
-          {demo ? (
-            <>
-              <Badge variant="secondary">{t('common.demoMode')}</Badge>
-              <ScenarioSwitcher />
-            </>
-          ) : (
-            <OperatorMenu />
-          )}
+          {!demo && <OperatorMenu />}
         </div>
       </header>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />

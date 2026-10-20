@@ -9,15 +9,15 @@ import { useSearchParams } from 'react-router-dom'
 import { Cable, Search } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
   Checkbox,
-  DataTable,
   Input,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../features/shared/page-data-table'
+import PageAsyncSection from '../features/shared/page-async-section'
 import type { ConnectionItem } from '@beacon/contracts'
 
 import { fetchConnections, type ConnectionsQuery } from '../api/connections'
@@ -28,6 +28,7 @@ import { useCursorStack } from '../features/observability/use-cursor-stack'
 import WindowSelect, { WINDOW_MS, type WindowKey } from '../features/observability/window-select'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
+import PageTitle from '../shell/page-title'
 
 const PAGE_SIZE = 20
 const STATUSES = ['open', 'closed'] as const
@@ -273,6 +274,8 @@ export default function ConnectionsPage() {
 
   return (
     <section className="grid gap-4">
+      {/* 页面级 h1（sr-only）：本页无可见大标题，只补语义，不参与布局 */}
+      <PageTitle titleKey="nav.connections" />
       <MasterDetail
         master={
           <ListCard
@@ -294,13 +297,13 @@ export default function ConnectionsPage() {
               ) : undefined
             }
           >
-            <AsyncSection
+            <PageAsyncSection
               isLoading={query.isLoading}
               isError={query.isError}
               error={query.error}
               skeleton={<TableSkeleton columns={columns.length} rows={8} />}
             >
-              <DataTable
+              <PageDataTable
                 columns={columns}
                 rows={rows}
                 rowKey={(row) => row.connId}
@@ -311,7 +314,7 @@ export default function ConnectionsPage() {
                 }}
                 rowClassName={(row) => (row.connId === selectedId ? 'bg-brand-50/60' : undefined)}
               />
-            </AsyncSection>
+            </PageAsyncSection>
           </ListCard>
         }
         detail={selected === null ? null : <ConnDetailPanel row={selected} />}

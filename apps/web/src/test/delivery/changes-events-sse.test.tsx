@@ -4,17 +4,22 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChangesPage from '../../pages/changes'
 import { parseSseFrame } from '../../api/delivery-changes'
 import { useChangeEvents } from '../../features/delivery/use-change-events'
+import { setObservationScope } from '../../features/env/observation-scope'
 import { createTestServer, renderPage, useScenario } from './harness'
 
 const server = createTestServer()
 
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' })
+})
+// 命名空间范围取自页眉观测范围选择器：固定到种子单所在的 prod 命名空间（env 1 → namespace 1）
+beforeEach(() => {
+  setObservationScope({ kind: 'env', envId: 1, namespaceId: 1 })
 })
 afterEach(() => {
   server.resetHandlers()

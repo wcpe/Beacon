@@ -363,6 +363,7 @@ export const cluster = {
       confirm: 'Confirm view',
       loading: 'Loading…',
       sizeBytes: 'Size {{size}} bytes',
+      sha256: 'SHA-256',
       close: 'Close',
     },
     filter: {

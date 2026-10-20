@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
-import { Badge, DataTable, cn, type DataTableColumn } from '@beacon/ui'
+import { Badge, Button, DataTable, cn, type DataTableColumn } from '@beacon/ui'
 
 import type { ChangeOrderEvent } from '../../api/delivery-changes'
 import { formatTime } from './format'
@@ -90,6 +90,8 @@ export default function EventsTimeline({ events }: EventsTimelineProps) {
     () => [
       {
         header: t('delivery.preview.timeline.columns.seq'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
         cell: (row) => <span className="tnum text-xs text-ink-3">{row.seq}</span>,
       },
       {
@@ -102,11 +104,13 @@ export default function EventsTimeline({ events }: EventsTimelineProps) {
       },
       {
         header: t('delivery.preview.timeline.columns.batch'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
         cell: (row) => (row.batchNo === null ? '-' : <span className="tnum">#{String(row.batchNo)}</span>),
       },
       {
         header: t('delivery.preview.timeline.columns.target'),
-        cell: (row) => (row.serverId === null ? '-' : <span className="font-mono text-xs">{row.serverId}</span>),
+        cell: (row) => (row.serverId === null ? '-' : <span className="font-mono text-xs" title={row.serverId}>{row.serverId}</span>),
       },
       {
         header: t('delivery.preview.timeline.columns.status'),
@@ -130,20 +134,21 @@ export default function EventsTimeline({ events }: EventsTimelineProps) {
         aria-label={t('delivery.preview.timeline.modeLabel')}
       >
         {(['visual', 'table'] as const).map((value) => (
-          <button
+          // 分段切换器：Button 变体表达选中态（default = 品牌实底 / ghost = 悬停浅底），
+          // 容器统一描边圆角，故按钮自身去掉圆角与外投影
+          <Button
             key={value}
             type="button"
+            size="xs"
+            variant={mode === value ? 'default' : 'ghost'}
             aria-pressed={mode === value}
             onClick={() => {
               setMode(value)
             }}
-            className={cn(
-              'px-3 py-1 text-xs transition-colors',
-              mode === value ? 'bg-brand text-white' : 'bg-background text-ink-2 hover:bg-muted',
-            )}
+            className="rounded-none px-3 shadow-none"
           >
             {t(`delivery.preview.timeline.mode.${value}`)}
-          </button>
+          </Button>
         ))}
       </div>
 

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { FileCog, Layers, Package } from 'lucide-react'
 
-import { cn } from '@beacon/ui'
+import { Button, cn } from '@beacon/ui'
 
 import type { WizardContent } from './wizard-state'
 
@@ -28,14 +28,17 @@ export function ContentTypeCard({ type, selected, onClick }: ContentTypeCardProp
   const { t } = useTranslation()
   const Icon = CARD_ICON[type]
   return (
-    <button
+    // 卡片型选择器：整卡即按钮，选中态由 aria-pressed 暴露；用 ghost 变体复用 Button 的
+    // 焦点环与按压反馈，纵向排布与字号 / 换行在此覆写
+    <Button
       type="button"
+      variant="ghost"
       aria-pressed={selected}
       onClick={onClick}
       className={cn(
-        'grid w-full gap-1.5 rounded-xl border p-3.5 text-left transition-colors',
+        'grid h-auto w-full justify-start gap-1.5 rounded-xl border p-3.5 text-left whitespace-normal',
         selected === true
-          ? 'border-brand bg-brand-50/60 ring-1 ring-brand'
+          ? 'border-brand bg-brand-50/60 ring-1 ring-brand hover:bg-brand-50'
           : 'border-border bg-card hover:border-brand-200 hover:bg-brand-50/30',
       )}
     >
@@ -56,7 +59,7 @@ export function ContentTypeCard({ type, selected, onClick }: ContentTypeCardProp
       <span className="text-xs leading-relaxed text-ink-3">
         {t(`delivery.changes.wizard.content.${type}.hint`)}
       </span>
-    </button>
+    </Button>
   )
 }
 

@@ -197,6 +197,7 @@ func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegis
 	agentLogSvc.SetSensitiveAccessGrants(sensitiveAccessGrants)
 	service.RegisterAgentLogApprovalAdapter(approvalRegistry, agentLogSvc, sensitiveAccessGrants)
 	agentLogHandler := handler.NewAgentLogHandler(agentLogSvc, instSvc)
+	agentLogHandler.SetReportAuthenticator(v2Svc)
 	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)

@@ -1,10 +1,15 @@
 // FR-188：全局运维指标条聚合与降级
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MetricsStrip from '../shell/metrics-strip'
+import { i18next } from '../i18n'
+import { setLocale } from '../state/locale'
+import Sidebar from '../shell/sidebar'
+import { useShellStore } from '../store'
 import '../i18n'
 
 function requestUrl(input: RequestInfo | URL): string {
@@ -24,6 +29,7 @@ function renderStrip() {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
+        <Sidebar />
         <MetricsStrip />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -31,6 +37,7 @@ function renderStrip() {
 }
 
 beforeEach(() => {
+  useShellStore.setState({ sidebarCollapsed: false, mobileNavOpen: false })
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -131,8 +138,10 @@ beforeEach(() => {
   )
 })
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllGlobals()
+  setLocale('zh-CN')
+  await i18next.changeLanguage('zh-CN')
 })
 
 function metricValue(label: string): string {
@@ -144,12 +153,40 @@ function metricValue(label: string): string {
   return valueEl?.textContent ?? ''
 }
 
-describe('全局运维指标条（FR-188）', () => {
-  it('聚合展示五项真数据', async () => {
-    renderStrip()
+describe('全局运维指标（FR-188）', () => {
+  it('状态点说明在线状态与非零计数，且双语同步到悬停提示', async () => {
+    const { container } = renderStrip()
+    const status = container.querySelector('[data-slot="control-plane-status"]')
+    const zhDescription = '控制面在线 · 待确认: 2 · 未处理告警: 1'
     await waitFor(() => {
-      expect(screen.getByText('控制面在线')).toBeInTheDocument()
+      // 控制面状态点现在是页眉内的弹层触发器（页眉已合并为单层）
+      expect(status).toHaveAttribute('data-state', 'online')
+      expect(status).toHaveAttribute('aria-label', zhDescription)
+      expect(status).toHaveAttribute('title', zhDescription)
     })
+    expect(status?.querySelectorAll('[aria-hidden="true"]')).toHaveLength(2)
+
+    setLocale('en')
+    await act(async () => {
+      await i18next.changeLanguage('en')
+    })
+    const enDescription = 'Control plane online · Pending: 2 · Open alerts: 1'
+    await waitFor(() => {
+      expect(status).toHaveAttribute('aria-label', enDescription)
+      expect(status).toHaveAttribute('title', enDescription)
+    })
+
+    setLocale('zh-CN')
+    await act(async () => {
+      await i18next.changeLanguage('zh-CN')
+    })
+    // 指标收进弹层：未打开前不应直接出现在页面上
+    expect(screen.queryByText('Agent 在线')).not.toBeInTheDocument()
+
+    // 状态本体是导航链接（点它进控制面健康页），展开指标改由独立的小箭头触发器承担
+    const menuTrigger = container.querySelector('[data-slot="control-plane-status-menu-trigger"]')
+    expect(menuTrigger).not.toBeNull()
+    await userEvent.click(menuTrigger as HTMLElement)
     await waitFor(() => {
       expect(metricValue('Agent 在线')).toBe('3')
     })
@@ -159,7 +196,14 @@ describe('全局运维指标条（FR-188）', () => {
     expect(metricValue('进行中变更单')).toBe('2')
   })
 
-  it('status 失败时控制面显示异常且其它项可仍为 — 或数', async () => {
+  it('加载期间页眉控制面状态使用中性色未知态', () => {
+    const { container } = renderStrip()
+    const status = container.querySelector('[data-slot="control-plane-status"]')
+    expect(status).toHaveAttribute('data-state', 'unknown')
+    expect(status).toHaveAttribute('aria-label', '控制面状态未知')
+  })
+
+  it('status 失败时侧栏控制面显示异常且其它项可仍为 — 或数', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL) => {
@@ -199,11 +243,16 @@ describe('全局运维指标条（FR-188）', () => {
         return Promise.resolve(new Response('{}', { status: 404 }))
       }),
     )
-    renderStrip()
+    const { container } = renderStrip()
     await waitFor(() => {
-      expect(screen.getByText('控制面异常')).toBeInTheDocument()
+      const status = container.querySelector('[data-slot="control-plane-status"]')
+      expect(status).toHaveAttribute('data-state', 'offline')
+      expect(status).toHaveAttribute('aria-label', '控制面异常')
     })
-    // servers 回落在线数
+    // 指标在弹层内：由小箭头触发器展开（状态本体已改为导航链接）
+    const menuTrigger = container.querySelector('[data-slot="control-plane-status-menu-trigger"]')
+    expect(menuTrigger).not.toBeNull()
+    await userEvent.click(menuTrigger as HTMLElement)
     await waitFor(() => {
       expect(screen.getByText('1')).toBeInTheDocument()
     })

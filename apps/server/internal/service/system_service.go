@@ -32,21 +32,40 @@ type dbPinger interface {
 }
 
 // CPUSampler 是系统状态对进程 CPU 占比的窄依赖：返回 [0,100] 区间的占比与可用性。
-// 真源由 gopsutilCPUSampler（基于 gopsutil process）实现，测试以替身覆盖可用 / 降级两态。
+// 真源由 gopsutilCPUSampler（后台定期采样、内存读值）实现，测试以替身覆盖可用 / 降级两态。
 type CPUSampler interface {
-	// Percent 返回自上次调用以来本进程的 CPU 占比及其是否可用；不可用时降级返回 (0, false)。
+	// Percent 返回本进程最近一次采样的 CPU 占比及其是否可用；不可用时降级返回 (0, false)。
+	// 实现应读内存缓存而非每次现算——见 gopsutilCPUSampler 的说明。
 	Percent() (float64, bool)
+	// Stop 停止后台采样（进程退出时调用）；实现须可重复调用。测试替身可空实现。
+	Stop()
 }
 
-// gopsutilCPUSampler 基于 gopsutil 采集控制面进程自身 CPU 占比。
-// 持有进程句柄并在构造时预热一次（gopsutil Percent(0) 首调返回 0，需先建立基线）；
-// 之后每次 Percent(0) 返回自上次调用以来的占比。采集失败优雅降级（返回不可用），不 panic。
+// cpuSampleInterval 是后台 CPU 采样间隔。
+// 前端页眉轮询 8 秒，采样比它更快才能保证每次请求都拿到新值；这里取 5 秒。
+const cpuSampleInterval = 5 * time.Second
+
+// gopsutilCPUSampler 基于 gopsutil 后台定期采样控制面进程 CPU，请求时只读内存缓存。
+//
+// 为什么不在 Percent() 里现算：gopsutil 的 Percent(0) 用「上次调用到本次的时间差」作分母。
+// 若采样频率跟随外部请求（8 秒一次）且服务长时间无人访问，分母会被拉大到数小时，
+// 结果把「就绪以来的平均值」当成当前占用——实测首屏出现过 100% 的失真值。
+// 改为常驻后台协程固定 5 秒采样一次：分母恒定、基线永不过期，且请求路径不再做系统调用。
+//
+// 采集失败或尚未取到首个样本时降级返回 (0,false)，端点据此走既有的「—」路径。
 type gopsutilCPUSampler struct {
 	proc *process.Process
-	mu   sync.Mutex // 串行化 Percent 调用：gopsutil 内部按上次采样时刻算增量，并发会扰乱基线
+
+	mu    sync.RWMutex
+	pct   float64
+	ready bool
+
+	// stop 用于停止后台采样协程（进程退出时由调用方关闭）。
+	stop chan struct{}
+	once sync.Once
 }
 
-// newGopsutilCPUSampler 创建基于当前进程的 CPU 采样器并预热一次基线。
+// newGopsutilCPUSampler 创建采样器并启动后台采样协程。
 // 进程句柄创建失败（极少见）时返回 nil，调用方据此判定 CPU 不可用并降级。
 func newGopsutilCPUSampler() *gopsutilCPUSampler {
 	proc, err := process.NewProcess(int32(os.Getpid()))
@@ -54,26 +73,59 @@ func newGopsutilCPUSampler() *gopsutilCPUSampler {
 		slog.Warn("创建进程句柄失败，进程 CPU% 将不可用", "错误", err)
 		return nil
 	}
-	// 预热：首调 Percent(0) 仅建立基线、返回 0，丢弃其结果。
+	s := &gopsutilCPUSampler{proc: proc, stop: make(chan struct{})}
+	// 建立基线：gopsutil 首调只记录起点并返回 0，不对外暴露。
 	if _, err := proc.Percent(0); err != nil {
-		slog.Warn("进程 CPU% 预热失败，将在后续采集时重试", "错误", err)
+		slog.Warn("进程 CPU% 基线建立失败，后台采样将在下一轮重试", "错误", err)
 	}
-	return &gopsutilCPUSampler{proc: proc}
+	go s.loop()
+	return s
 }
 
-// Percent 取自上次调用以来的进程 CPU 占比；句柄缺失或采集出错时降级返回 (0, false)。
+// loop 常驻采样：固定间隔读一次，写入内存缓存供请求直接读取。
+func (s *gopsutilCPUSampler) loop() {
+	ticker := time.NewTicker(cpuSampleInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-ticker.C:
+			pct, err := s.proc.Percent(0)
+			if err != nil {
+				slog.Warn("采集进程 CPU% 失败，本次保持上次值", "错误", err)
+				continue
+			}
+			s.mu.Lock()
+			s.pct, s.ready = pct, true
+			s.mu.Unlock()
+		}
+	}
+}
+
+// Stop 停止后台采样协程；可重复调用。
+func (s *gopsutilCPUSampler) Stop() {
+	if s == nil {
+		return
+	}
+	s.once.Do(func() {
+		if s.stop != nil {
+			close(s.stop)
+		}
+	})
+}
+
+// Percent 读取最近一次后台采样值，不做系统调用；尚未取到样本时降级返回 (0, false)。
 func (s *gopsutilCPUSampler) Percent() (float64, bool) {
 	if s == nil || s.proc == nil {
 		return 0, false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	pct, err := s.proc.Percent(0)
-	if err != nil {
-		slog.Warn("采集进程 CPU% 失败，本次降级为不可用", "错误", err)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.ready {
 		return 0, false
 	}
-	return pct, true
+	return s.pct, true
 }
 
 // DBStatus 是数据库连通性的判定结果（不含底层细节，仅展示用）。
@@ -103,7 +155,7 @@ type SystemStatus struct {
 }
 
 // SystemService 汇集控制面自身状态：版本 / 运行时长 / DB 连通 / 在线实例数 / 采样器状态 / Go 运行时资源。
-// 不持 GORM：DB 连通经窄接口 dbPinger 探测；在线实例数读内存注册表（List 返回深拷贝、锁内取）。
+// 不持 GORM：DB 连通经窄接口 dbPinger 探测；在线实例数读内存注册表（StatusCounts 只计数、不深拷贝）。
 type SystemService struct {
 	version        string
 	startedAt      time.Time
@@ -137,7 +189,7 @@ func NewGopsutilCPUSampler() CPUSampler {
 
 // Status 采集一次控制面自身状态快照。
 // DB Ping 同步执行（连接池上的轻量探测，带预算：池耗尽时在预算内快速失败而非挂起）；
-// 在线实例数读内存注册表；Go 运行时资源读 runtime。
+// 在线实例数读内存注册表，Go 运行时资源读 runtime。
 func (s *SystemService) Status() SystemStatus {
 	now := s.now()
 	var ms runtime.MemStats

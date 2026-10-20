@@ -97,7 +97,8 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 - **技术栈**：Vite + React Router + TanStack Query（服务器状态）+ Zustand（客户端状态）+ react-i18next + MSW（经 `packages/devmock`，浏览器与测试共享 handlers）。服务器态 / 客户端态归属边界写入规范（FR-174）。
 - **UI 供给**：组件一律取自 `packages/ui`（@beacon/ui）；每个导出控件在 apps/ui-wiki 有展示页，覆盖率检查进 CI 门禁（FR-175）。开发期启动 / 覆盖率 / 新增控件流程见 [UI-WIKI.md](UI-WIKI.md)。
 - **契约类型独立**：对外响应契约类型（各域 HTTP 响应形状 + 枚举构件 + 通用壳 `Paged` / `MockErrorBody`）的真源在 `packages/contracts`（@beacon/contracts，纯 type-only、无运行时依赖）；`apps/web` 生产代码只 `import type` 自 contracts、不再类型层依赖 mock 包，`packages/devmock` 反向依赖 contracts 并以 handler 的 `satisfies XxxResponse` 锚定契约防漂移。依赖方向与迁移决策见 [ADR-0062](adr/0062-frontend-contract-types-package.md)（FR-155 前置）。
-- **mock-first 交付**：P2 以演示模式做出全量 mock 管理台（FR-159 / FR-172），页面数据形状只依赖 API 契约草案、mock 覆盖空态 / 常规 / 超大量 / 异常四形态、逐页过 mockup 评审门拍板；P3 起后端按域落地时**同阶段把对应页面从 mock 切真并真机验收**，禁止攒到最后统一联调（[ROADMAP](ROADMAP.md) §4）。开发期 `pnpm --filter @beacon/web dev` 恒为演示模式（免登录 + MSW）；常规 `vite build` 不注册 mock。
+- **页眉资源采样（FR-272）**：控制面状态端点采集控制面进程 CPU 与 Go 堆内存，页眉以独立的 8 秒周期轮询展示；CPU 与堆使用率超过 80% 时呈警告色，采集失败显示占位符并保留上次成功值。
+- **mock-first 交付**：P2 以演示模式做出全量 mock 管理台（FR-159 / FR-172），页面数据形状只依赖 API 契约草案、mock 覆盖空态 / 常规 / 超大量 / 异常四形态、逐页过 mockup 评审门拍板；P3 起后端按域落地时**同阶段把对应页面从 mock 切真并真机验收**，禁止攒到最后统一联调（[ROADMAP](ROADMAP.md) §4）。开发期 `pnpm --filter @beacon/web dev` 恒为演示模式（免登录 + MSW）；常规 `vite build` 不注册 mock。devmock 的四态场景与数据量 / 延时独立持久化，统一 handler 包装层注入延时；数据量覆盖交付、配置、资产、审批与 MCP 流水，空态 / 异常优先且 huge 保留旧基线；Mock 开发工具由 demo 条件动态导入，常规 build 剔除。
 - **信息架构**：顶层总览 + 集群 / 可观测 / 交付 / 系统四大域，页面清单、唯一职责与全局交互契约以 [UX.md](UX.md) §2 / §4 为真源；评审门规则见 [.claude/rules/ux-spec.md](../.claude/rules/ux-spec.md)。
 
 ## 7. 关键时序（简要）
@@ -109,7 +110,7 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 - **审批中心读模型**：统一审批请求持久化安全 targetRef 与可选 namespaceId；列表只在数据库安全字段上分页筛选。详情由已登记领域 adapter 以 targetRef 读取当前脱敏事实，失败显式标记不可用；前端只消费该 API 的证据和服务端权限字段，不从冻结载荷或领域页面拼接状态。
 - **文件与覆盖集审批适配**：文件发布、回滚、软删及覆盖集发布、回滚、软删的公开 service 入口失败关闭；申请在同一事务写 `file_pending_change` 加密载荷，批准 worker 以私有领域写入、领域审计与 execution receipt 共用事务，拒绝/撤回/过期使待执行记录失效。
 - **配置破坏性操作审批适配**：配置发布、回滚、软删及批量删除 / 置态的公开 service 入口失败关闭；批量提审先按 ID 去重排序并拒绝跨 namespace，安全 targetRef 与证据快照公开 namespace、排序 ID、版本/启用状态摘要，密文载荷冻结完整目标。批准 worker 在同一事务执行领域写入、审计与 execution receipt。任一目标漂移即整批失败，拒绝/撤回/过期使待执行记录失效。
-- **在线文件正文**：单文件读取先冻结 `namespace/serverId/path/清单 SHA-256`，批准 worker 在同一事务创建 `asset-read` 命令、pending grant 与审批 receipt；提交后才唤醒 Agent。回传只有命令、内容版本和 grant 全部匹配时才激活，原申请主体在五分钟内一次消费瞬态内容。跨服务器差异将左右两侧建为独立审批和独立 grant，并以不透明 pairId 绑定；任一侧拒绝、过期、撤回或哈希漂移均不产出结果。消费任一侧 grant 时服务端原子消费两侧、只在内存比较并返回脱敏摘要，不持久化正文或 diff。旧 preview、diff 与变更单 file-diff 入口固定失败关闭，不再直接下发命令或返回正文。
+- **在线文件正文与敏感内容读取（ADR-0093）**：指定日志、受限目录浏览、文件资产 preview/diff、消息 payload 统一按 `content.read + management.read + direct` 执行，machine principal 可经管理面读取；service 在返回正文前写专项审计，detail 仅含目标、哈希、大小/行数等元数据。资产正文仍经 `asset-read` 命令与内存 relay 瞬态返回；日志只暴露 agent 脱敏环形缓冲；目录结果读取后清理。旧 approval-request/grant REST 路径保留为直读兼容别名，不再签发或校验审批 grant。敏感路径仍要求原因，但审计不保存原因文本或正文。配置敏感明文、反向抓取、拓印、重同步与变更单 file-diff 等未列入范围的操作继续按 FR-209 审批。
 - **服务器归档生命周期**：`server` 的 `active ↔ archived` 只能由统一审批 worker 持许可执行；执行 adapter 在同一数据库事务写生命周期、强审计和执行回执。归档不改写身份绑定、BC/Zone/Lobby 归属、排空或默认入口事实，运行侧统一按 active 谓词排除归档资产。
 - **观测范围**：管理面只读查询在 handler 入口经唯一 `ObservationScopeResolver` 将 `envId`/`namespaceId` 冻结为 namespace 集合；列表、聚合、冷热查询与详情在各自的分页或汇总前消费该集合。该范围不参与任何 mutation 的目标推导。
 - **消息追踪链路**：业务插件经 agent-api `send` / `call` → agent 面上行 → 控制面内存中转维护状态机与 hops（请求 goroutine 不碰 DB）→ 目标 agent 长轮询取走、`ack` 回执 → 终态（delivered/failed/expired）时同事务一次性写 `msg_trace`（+ 可选 `msg_payload`）→ 管理台按 messageId 追链路；payload 查看必须权限 + 填原因 + 先审计（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §4）。

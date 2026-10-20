@@ -2,6 +2,7 @@
 // 非法状态迁移按规格回 409。
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { resetMockData, setMockScenario } from '../index'
+import { uuidFrom } from '../support'
 import { callJson, resetMockWorld, server } from './msw-server'
 
 interface IdentityItem {
@@ -91,19 +92,32 @@ describe('身份确认闭环（approve）', () => {
 })
 
 describe('审批申请写闭环', () => {
-  it('消息 payload 专用入口创建统一审批申请', async () => {
-    const created = await callJson('POST', '/admin/v2/messages/msg-901/payload/approval-requests', {
+  it('消息 payload 旧审批路径直接返回正文与元数据', async () => {
+    const messageId = uuidFrom('msg:0')
+    const result = await callJson('POST', `/admin/v2/messages/${encodeURIComponent(messageId)}/payload/approval-requests`, {
       reason: '排查异常链路失败样本',
     })
+    expect(result.status).toBe(200)
+    if (typeof result.json !== 'object' || result.json === null) {
+      throw new Error('直读响应不是 JSON 对象')
+    }
+    const response = result.json as Record<string, unknown>
+    if (typeof response.payload !== 'string' || typeof response.sha256 !== 'string' || typeof response.size !== 'number') {
+      throw new Error('直读响应缺少正文或元数据')
+    }
+    expect(response.sha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(response).not.toHaveProperty('requestId')
+    expect(response).not.toHaveProperty('status')
+    expect(response.size).toBe(response.payload.length)
+  })
 
-    expect(created.status).toBe(202)
-    expect(created.json).toMatchObject({
-      operationKey: 'message.payload.read',
-      resourceType: 'message',
-      resourceId: 'msg-901',
-      requestReason: '排查异常链路失败样本',
-      status: 'pending',
+  it('消息 payload 查看拒绝纯空白原因', async () => {
+    const messageId = uuidFrom('msg:0')
+    const result = await callJson('POST', `/admin/v2/messages/${encodeURIComponent(messageId)}/payload`, {
+      reason: ' \t\n ',
     })
+    expect(result.status).toBe(400)
+    expect((result.json as { code: string }).code).toBe('missing_reason')
   })
 
   it('批准待审批申请时按路径参数定位并记录 executing 时间线', async () => {

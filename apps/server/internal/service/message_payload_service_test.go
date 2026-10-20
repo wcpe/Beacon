@@ -3,6 +3,7 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -28,6 +29,18 @@ func (f *fakeAuditWriter) Create(e *model.AuditLog) error {
 	}
 	f.entries = append(f.entries, e)
 	return nil
+}
+
+type fakePayloadNamespaceReader struct{}
+
+func (fakePayloadNamespaceReader) FindByID(id uint) (*model.Namespace, error) {
+	return &model.Namespace{ID: id, Code: "prod"}, nil
+}
+
+func newPayloadServiceForTest(repo *repository.MessageRepository, audit messagePayloadAuditWriter) *MessagePayloadService {
+	svc := NewMessagePayloadService(repo, audit)
+	svc.SetNamespaceRepository(fakePayloadNamespaceReader{})
+	return svc
 }
 
 // uuidV7At 构造高 48 位内嵌毫秒的 UUIDv7 文本（service 测试用）。
@@ -64,85 +77,122 @@ func seedPayloadMsg(t *testing.T, repo *repository.MessageRepository, id, payloa
 	}
 }
 
-// TestPayloadViewReasonValidation 旧正文直读入口无论参数为何都必须失败关闭。
+// TestPayloadViewReasonValidation 验证直接读取仍要求有效原因且不会把正文带入审计。
 func TestPayloadViewReasonValidation(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_reason"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo)
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "r1")
 	seedPayloadMsg(t, repo, id, "body", false)
 
-	for _, reason := range []string{"", "   ", strings.Repeat("字", 256)} {
+	for _, reason := range []string{"", "   "} {
 		_, err := svc.View(ViewPayloadParams{MessageID: id, Reason: reason, Operator: "op"})
-		if !errors.Is(err, apperr.ErrOperationRequiresApproval) {
-			t.Fatalf("原因 %q 应要求审批，实际 %v", reason, err)
+		if !errors.Is(err, apperr.ErrApprovalReasonRequired) {
+			t.Fatalf("原因 %q 应被拒绝，实际 %v", reason, err)
 		}
+	}
+	_, err := svc.View(ViewPayloadParams{MessageID: id, Reason: strings.Repeat("字", 256), Operator: "op"})
+	if !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("过长原因应被拒绝，实际 %v", err)
 	}
 	if len(audit.entries) != 0 {
 		t.Fatalf("原因非法时不应写审计，实际 %d 条", len(audit.entries))
 	}
 }
 
-// TestPayloadViewNotFound 旧正文直读入口不得因目标存在性泄露信息。
+// TestPayloadViewNotFound 验证不存在的消息不会返回正文或写成功审计。
 func TestPayloadViewNotFound(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_404"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo)
+	svc := newPayloadServiceForTest(repo, audit)
 	_, err := svc.View(ViewPayloadParams{MessageID: uuidV7At(time.Now().UTC().UnixMilli(), "nf"), Reason: "查", Operator: "op"})
-	if !errors.Is(err, apperr.ErrOperationRequiresApproval) {
-		t.Fatalf("应要求审批，实际 %v", err)
+	if !errors.Is(err, apperr.ErrMessageNotFound) {
+		t.Fatalf("不存在消息应返回 not found，实际 %v", err)
 	}
 	if len(audit.entries) != 0 {
 		t.Fatalf("消息不存在时不应写审计")
 	}
 }
 
-// TestPayloadViewAuditFailFailsRequest 旧入口关闭后不依赖审计写入，也绝不返回正文。
+// TestPayloadViewAuditFailFailsRequest 验证审计落库失败时不返回正文。
 func TestPayloadViewAuditFailFailsRequest(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_auditfail"))
-	svc := NewMessagePayloadService(repo)
+	audit := &fakeAuditWriter{failErr: errors.New("审计不可用")}
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "af")
 	seedPayloadMsg(t, repo, id, "机密内容", false)
 
 	res, err := svc.View(ViewPayloadParams{MessageID: id, Reason: "排查", Operator: "op"})
 	if err == nil {
-		t.Fatalf("旧入口必须拒绝，实际 err=nil")
+		t.Fatalf("审计失败应拒绝返回正文")
 	}
 	if res.Payload != "" {
 		t.Fatalf("审计失败时绝不应返回 payload 内容，实际 %q", res.Payload)
 	}
 }
 
-// TestPayloadViewSuccessAuditsFirst 锁定旧服务不再返回 payload 或写旧查看审计。
+// TestPayloadViewRejectsOutsideObservationScope 域外 messageId 不得读取正文或写成功审计。
+func TestPayloadViewRejectsOutsideObservationScope(t *testing.T) {
+	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_out_of_scope"))
+	audit := &fakeAuditWriter{}
+	svc := newPayloadServiceForTest(repo, audit)
+	id := uuidV7At(time.Now().UTC().UnixMilli(), "scope")
+	seedPayloadMsg(t, repo, id, "域外正文", false)
+
+	result, err := svc.View(ViewPayloadParams{
+		MessageID: id, Reason: "排查", Operator: "alice", Scoped: true, NamespaceIDs: []uint{8},
+	})
+	if !errors.Is(err, apperr.ErrMessageNotFound) || result.Payload != "" {
+		t.Fatalf("域外 messageId 应按未命中拒绝，result=%+v err=%v", result, err)
+	}
+	if len(audit.entries) != 0 {
+		t.Fatalf("域外 messageId 不得写成功审计，实际 %d 条", len(audit.entries))
+	}
+}
+
+// TestPayloadViewSuccessAuditsFirst 验证返回 payload 前已有只含元数据与原因、归属正确 namespace 的审计。
 func TestPayloadViewSuccessAuditsFirst(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_ok"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo)
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "ok")
 	secret := `{"pw":"top-secret-xyz"}`
 	seedPayloadMsg(t, repo, id, secret, true)
 
 	res, err := svc.View(ViewPayloadParams{MessageID: id, Reason: "跨域排查", Operator: "alice"})
-	if !errors.Is(err, apperr.ErrOperationRequiresApproval) || res.Payload != "" || len(audit.entries) != 0 {
-		t.Fatalf("旧服务应拒绝且零正文零审计：res=%+v audits=%d err=%v", res, len(audit.entries), err)
+	if err != nil || res.Payload != secret || len(audit.entries) != 1 {
+		t.Fatalf("直读应返回正文并先写审计：res=%+v audits=%d err=%v", res, len(audit.entries), err)
+	}
+	if strings.Contains(audit.entries[0].Detail, secret) || !strings.Contains(audit.entries[0].Detail, res.SHA256) {
+		t.Fatalf("审计只能含哈希等元数据，detail=%q", audit.entries[0].Detail)
+	}
+	// ADR-0093 决策 4：原因只作放行输入，不写入审计 detail。
+	if strings.Contains(audit.entries[0].Detail, "跨域排查") {
+		t.Fatalf("按 ADR-0093，审计 detail 不得记录原因文本，detail=%q", audit.entries[0].Detail)
+	}
+	if !json.Valid([]byte(audit.entries[0].Detail)) {
+		t.Fatalf("审计 detail 必须是合法 JSON，detail=%q", audit.entries[0].Detail)
+	}
+	if audit.entries[0].NamespaceCode != "prod" {
+		t.Fatalf("payload 读取审计应归属消息 namespace prod，实际 %q", audit.entries[0].NamespaceCode)
 	}
 }
 
-// TestPayloadViewRequiresApprovedGrant 锁定 payload 正文不能通过旧服务直读：
-// 未绑定由审批签发的一次性授权时不得查询正文、更不得留下普通查看审计。
-func TestPayloadViewRequiresApprovedGrant(t *testing.T) {
+// TestPayloadViewDirectReadWithAudit 验证消息正文直读不再依赖审批 grant，但仍先写审计。
+// 直读是产品意图（不恢复旧审批语义）；本用例只锁「直读 + 必留痕」这条契约。
+func TestPayloadViewDirectReadWithAudit(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_grant_required"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo)
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "grant")
-	seedPayloadMsg(t, repo, id, "不应直出", false)
+	seedPayloadMsg(t, repo, id, "允许直读", false)
 
 	res, err := svc.View(ViewPayloadParams{MessageID: id, Reason: "排查", Operator: "alice"})
-	if err == nil {
-		t.Fatal("未绑定审批授权不得返回 payload")
+	if err != nil || res.Payload != "允许直读" || len(audit.entries) != 1 {
+		t.Fatalf("正文读取应无需 grant 且写审计：res=%+v audits=%d err=%v", res, len(audit.entries), err)
 	}
-	if res.Payload != "" || len(audit.entries) != 0 {
-		t.Fatalf("直读拒绝不得返回正文或写普通查看审计：res=%+v audits=%d", res, len(audit.entries))
+	if audit.entries[0].Action != model.ActionMessagePayloadView {
+		t.Fatalf("直读必须写 message.payload.view 审计，实际 %q", audit.entries[0].Action)
 	}
 }
 
@@ -198,16 +248,16 @@ func TestMessagePayloadApprovalGrantFlow(t *testing.T) {
 	}
 }
 
-// TestPayloadViewStoredFalseStillAudits 未落库时旧服务同样只能要求审批，不写旧审计。
+// TestPayloadViewStoredFalseStillAudits 未存储 payload 时不得写成功审计或返回正文。
 func TestPayloadViewStoredFalseStillAudits(t *testing.T) {
 	repo := repository.NewMessageRepository(openSchedQuerySQLite(t, "payload_none"))
 	audit := &fakeAuditWriter{}
-	svc := NewMessagePayloadService(repo)
+	svc := newPayloadServiceForTest(repo, audit)
 	id := uuidV7At(time.Now().UTC().UnixMilli(), "no")
 	seedPayloadMsg(t, repo, id, "", false) // 无 payload
 
 	res, err := svc.View(ViewPayloadParams{MessageID: id, Reason: "查", Operator: "op"})
-	if !errors.Is(err, apperr.ErrOperationRequiresApproval) || res.Payload != "" || len(audit.entries) != 0 {
-		t.Fatalf("旧服务应拒绝且零正文零审计：res=%+v audits=%d err=%v", res, len(audit.entries), err)
+	if !errors.Is(err, apperr.ErrMessageNotFound) || res.Payload != "" || len(audit.entries) != 0 {
+		t.Fatalf("payload 不存在时应失败且零正文零审计：res=%+v audits=%d err=%v", res, len(audit.entries), err)
 	}
 }

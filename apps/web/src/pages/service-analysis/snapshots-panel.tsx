@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, History, TrendingDown, TrendingUp } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Card,
   CardContent,
@@ -18,6 +17,7 @@ import {
   SectionHeader,
   TableSkeleton,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { HealthLevel, HealthSnapshotPoint } from '@beacon/contracts'
 
 import { fetchHealthSnapshots } from '../../api/metrics'
@@ -95,7 +95,7 @@ export default function SnapshotsPanel({ serverIds }: SnapshotsPanelProps) {
         />
       </div>
 
-      <AsyncSection
+      <PageAsyncSection
         isLoading={isLoading}
         isError={isError}
         error={error}
@@ -106,7 +106,7 @@ export default function SnapshotsPanel({ serverIds }: SnapshotsPanelProps) {
             <SnapshotCard key={serverId} serverId={serverId} points={queries[idx]?.data?.items ?? []} />
           ))}
         </div>
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

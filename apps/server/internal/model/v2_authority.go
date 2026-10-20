@@ -190,7 +190,7 @@ func (LobbyCluster) TableName() string { return "lobby_cluster" }
 type Server struct {
 	ID                 uint   `gorm:"primaryKey;autoIncrement"`
 	NamespaceID        uint   `gorm:"column:namespace_id;not null;uniqueIndex:uk_server_id,priority:1;index"`
-	ServerID           string `gorm:"column:server_id;size:64;not null;uniqueIndex:uk_server_id,priority:2"`
+	ServerID           string `gorm:"column:server_id;size:64;not null;uniqueIndex:uk_server_id,priority:2;index:idx_server_server_id"`
 	DisplayName        string `gorm:"column:display_name;size:128"`
 	Kind               string `gorm:"column:kind;size:16;not null"`
 	BCClusterID        *uint  `gorm:"column:bc_cluster_id;index"`

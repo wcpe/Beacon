@@ -792,9 +792,9 @@ export const system = {
   },
   lifecycle: {
     subject: { namespace: 'namespace', server: 'server' },
-    title: '{{subject}} lifecycle review (Mock)',
+    // 页面标题不再带「（Mock）」后缀；右下角的 Mock 开发工具浮球会标明演示身份。
+    title: '{{subject}} lifecycle review',
     mockLabel: '{{subject}} lifecycle review mock',
-    demoOnly: 'For interaction and copy review only; it never calls the real backend.',
     scenarios: 'Lifecycle review scenarios',
     states: { normal: 'Normal', empty: 'Empty', loading: 'Loading', error: 'Error', huge: 'Huge' },
     empty: 'No archived {{subject}} has a lifecycle operation available. Archive an asset before requesting permanent deletion.',

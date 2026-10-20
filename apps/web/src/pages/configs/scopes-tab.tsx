@@ -7,7 +7,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Layers, Plus } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, SectionHeader, cn } from '@beacon/ui'
+import { Badge, Button, SectionHeader, cn } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ConfigFileDetail, ConfigScopeLevel, ConfigScopeSummary } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
@@ -105,7 +106,12 @@ export default function ScopesTab({ fileId, file }: ScopesTabProps) {
         icon={<Layers className="size-4" />}
         title={t('delivery.configs.detail.scopes.title')}
       />
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+      <PageAsyncSection
+        keepContentWhileRefreshing
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+      >
         <div className="grid gap-2.5">
           {SCOPE_LEVELS.map((level) => {
             const rows = scopes.filter((s) => s.scopeLevel === level)
@@ -171,6 +177,7 @@ export default function ScopesTab({ fileId, file }: ScopesTabProps) {
                           <Button
                             size="sm"
                             variant="ghost"
+                            className="text-ink-3 hover:bg-destructive/10 hover:text-destructive"
                             onClick={() => {
                               setRevokeError(null)
                               setRevokeTarget(row)
@@ -187,7 +194,7 @@ export default function ScopesTab({ fileId, file }: ScopesTabProps) {
             )
           })}
         </div>
-      </AsyncSection>
+      </PageAsyncSection>
 
       {addLevel && (
         <AddScopeDialog
@@ -241,6 +248,7 @@ export default function ScopesTab({ fileId, file }: ScopesTabProps) {
           description={t('delivery.configs.revoke.desc')}
           notice={t('delivery.configs.noLiveEffect')}
           confirmLabel={t('delivery.configs.revoke.confirm')}
+          confirmVariant="destructive"
           impacts={[`${revokeTarget.scopeLevel} / ${revokeTarget.scopeName}`]}
           pending={revokeMutation.isPending}
           errorText={revokeError}

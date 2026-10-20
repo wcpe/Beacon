@@ -87,6 +87,7 @@ export const DASHBOARD_PAGE: NavPage = {
   Component: DashboardPage,
 }
 
+// 全局审批：归入「交付」域首项（审批是交付链路的闸门），侧栏带全局 pending 红点
 export const APPROVALS_PAGE: NavPage = {
   path: '/approvals',
   titleKey: 'nav.approvals',
@@ -132,6 +133,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     titleKey: 'nav.groups.delivery',
     pages: [
+      // 审批是交付动作的闸门，置于交付域首位（UX.md §2）
+      APPROVALS_PAGE,
       { path: '/assets', titleKey: 'nav.assets', icon: FolderArchive, Component: AssetsPage },
       { path: '/configs', titleKey: 'nav.configs', icon: FileSliders, Component: ConfigsPage },
       { path: '/changes', titleKey: 'nav.changes', icon: GitPullRequestArrow, Component: ChangesPage },
@@ -168,6 +171,6 @@ export const NAV_GROUPS: NavGroup[] = [
   },
 ]
 
-// 全部页面的扁平列表（路由注册用）
-export const ALL_PAGES: NavPage[] = [DASHBOARD_PAGE, APPROVALS_PAGE, ...NAV_GROUPS.flatMap((group) => group.pages)]
+// 全部页面的扁平列表（路由注册用）：顶层页 + 四大域全部页，各页只出现一次（避免重复注册路由）
+export const ALL_PAGES: NavPage[] = [DASHBOARD_PAGE, ...NAV_GROUPS.flatMap((group) => group.pages)]
 

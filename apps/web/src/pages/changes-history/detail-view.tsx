@@ -9,17 +9,18 @@ import { Link } from 'react-router-dom'
 import { Layers, Server } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
   Button,
-  DataTable,
   SectionHeader,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
+  TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { ChangeTarget } from '@beacon/contracts'
 
 import Pager from '../../features/delivery/pager'
@@ -55,32 +56,28 @@ export default function DetailView({ orderId }: DetailViewProps) {
   const detail = detailQuery.data
 
   return (
-    <div className="grid gap-4">
-      {/* 状态 + 回滚 / 结束操作（面板标题已由 MasterDetail 头部承担） */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
-        <div className="flex flex-wrap items-center gap-3">
-          {detail && <StatusBadge status={detail.status} />}
+    <div className="flex min-h-full flex-col gap-4">
+      {/* 状态先行展示；回滚与跳转操作固定在详情滚动区底部 */}
+      {detail && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
+          <StatusBadge status={detail.status} />
         </div>
-        <div className="flex items-center gap-2">
-          {detail && <OrderRollbackActions order={detail} />}
-          {detail && (
-            <Button variant="ghost" size="sm" asChild>
-              <Link to={`/changes?order=${String(detail.id)}`}>
-                {t('delivery.changesHistory.list.openInChanges')}
-              </Link>
-            </Button>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* 回滚信息横幅 + 回滚中逐目标进度 + 回滚动作记录（FR-271） */}
       {detail && <RollbackBanner order={detail} />}
       {detail && <RollbackRecordsSection orderId={detail.id} />}
 
-      <AsyncSection isLoading={detailQuery.isLoading} isError={detailQuery.isError} error={detailQuery.error}>
+      <PageAsyncSection
+        keepContentWhileRefreshing
+        isLoading={detailQuery.isLoading}
+        isError={detailQuery.isError}
+        error={detailQuery.error}
+        skeleton={<TableSkeleton columns={4} rows={6} />}
+      >
         {detail && (
           <Tabs defaultValue="replay">
-            <TabsList>
+            <TabsList variant="line">
               <TabsTrigger value="replay">{t('delivery.changesHistory.detail.tabs.replay')}</TabsTrigger>
               <TabsTrigger value="content">{t('delivery.changesHistory.detail.tabs.content')}</TabsTrigger>
               <TabsTrigger value="orchestration">
@@ -88,22 +85,36 @@ export default function DetailView({ orderId }: DetailViewProps) {
               </TabsTrigger>
               <TabsTrigger value="timeline">{t('delivery.changesHistory.detail.tabs.timeline')}</TabsTrigger>
             </TabsList>
-            <TabsContent value="replay" className="pt-3">
+            <TabsContent value="replay" className="pt-4">
               <ReplayTab detail={detail} />
             </TabsContent>
-            <TabsContent value="content" className="pt-3">
+            <TabsContent value="content" className="pt-4">
               {/* 当时改了什么：共享变更内容预览（含配置版本反查与行级 diff） */}
               <OrderChangePreview items={detail.items} orderId={detail.id} />
             </TabsContent>
-            <TabsContent value="orchestration" className="pt-3">
+            <TabsContent value="orchestration" className="pt-4">
               <OrchestrationTab detail={detail} />
             </TabsContent>
-            <TabsContent value="timeline" className="pt-3">
+            <TabsContent value="timeline" className="pt-4">
               <TimelineTab orderId={detail.id} />
             </TabsContent>
           </Tabs>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
+
+      {detail && (
+        <div data-slot="detail-actions-footer" className="sticky bottom-0 z-10 mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card/95 px-3 py-2.5 backdrop-blur">
+          <StatusBadge status={detail.status} />
+          <div className="flex items-center gap-2">
+            <OrderRollbackActions order={detail} />
+            <Button variant="ghost" size="sm" asChild>
+              <Link to={`/changes?order=${String(detail.id)}`}>
+                {t('delivery.changesHistory.list.openInChanges')}
+              </Link>
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -124,10 +135,12 @@ function ReplayTab({ detail }: { detail: ChangeOrderDetail }) {
     () => [
       {
         header: t('delivery.changesHistory.detail.columns.serverId'),
-        cell: (row) => <span className="font-mono">{row.serverId}</span>,
+        cell: (row) => <span className="font-mono" title={row.serverId}>{row.serverId}</span>,
       },
       {
         header: t('delivery.changesHistory.detail.columns.batch'),
+        headClassName: 'text-right',
+        className: 'text-right tabular-nums',
         cell: (row) => <span className="tnum">#{String(row.batchNo)}</span>,
       },
       {
@@ -172,15 +185,20 @@ function ReplayTab({ detail }: { detail: ChangeOrderDetail }) {
           icon={<Server className="size-4" />}
           title={t('delivery.changesHistory.detail.targetsTitle')}
         />
-        <AsyncSection isLoading={targetsQuery.isLoading} isError={targetsQuery.isError} error={targetsQuery.error}>
-          <DataTable
+        <PageAsyncSection
+          keepContentWhileRefreshing
+          isLoading={targetsQuery.isLoading}
+          isError={targetsQuery.isError}
+          error={targetsQuery.error}
+        >
+          <PageDataTable
             columns={targetColumns}
             rows={targetsQuery.data?.items}
             rowKey={(row) => `${row.serverId}:${String(row.batchNo)}`}
             emptyText={t('delivery.changes.detail.batches.empty')}
             density="compact"
           />
-        </AsyncSection>
+        </PageAsyncSection>
         <Pager page={page} total={targetsTotal} pageSize={TARGET_PAGE_SIZE} onPageChange={setPage} />
       </div>
     </div>
@@ -195,9 +213,14 @@ function OrchestrationTab({ detail }: { detail: ChangeOrderDetail }) {
     queryFn: () => fetchChangeImpact(detail.id, 1, 1),
   })
   return (
-    <AsyncSection isLoading={impactQuery.isLoading} isError={impactQuery.isError} error={impactQuery.error}>
+    <PageAsyncSection
+      keepContentWhileRefreshing
+      isLoading={impactQuery.isLoading}
+      isError={impactQuery.isError}
+      error={impactQuery.error}
+    >
       {impactQuery.data && <OrderOrchestration order={detail} summary={impactQuery.data.summary} />}
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }
 
@@ -208,8 +231,13 @@ function TimelineTab({ orderId }: { orderId: number }) {
     queryFn: () => fetchChangeEvents(orderId),
   })
   return (
-    <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+    <PageAsyncSection
+      keepContentWhileRefreshing
+      isLoading={query.isLoading}
+      isError={query.isError}
+      error={query.error}
+    >
       <EventsTimeline events={query.data?.events ?? []} />
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }

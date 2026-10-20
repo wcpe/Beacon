@@ -7,7 +7,8 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { GitCompareArrows } from 'lucide-react'
 
-import { AsyncSection, TableSkeleton, cn } from '@beacon/ui'
+import { TableSkeleton, cn } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { HealthDetail, HealthItem, HealthLevel, ServerItem } from '@beacon/contracts'
 
 import { fetchServers } from '../../api/cluster'
@@ -225,7 +226,7 @@ export default function ComparePanel({ serverIds }: ComparePanelProps) {
         </div>
       </div>
 
-      <AsyncSection
+      <PageAsyncSection
         isLoading={isLoading}
         isError={isError}
         error={error}
@@ -258,7 +259,7 @@ export default function ComparePanel({ serverIds }: ComparePanelProps) {
             </table>
           </div>
         )}
-      </AsyncSection>
+      </PageAsyncSection>
     </section>
   )
 }

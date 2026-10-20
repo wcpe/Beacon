@@ -6,13 +6,13 @@ import { useTranslation } from 'react-i18next'
 import { Activity, CircleAlert, Cpu, Gauge, Network, Server, Users } from 'lucide-react'
 
 import {
-  AsyncSection,
   CardGridSkeleton,
   KpiCard,
   cn,
   levelSolid,
   type HealthLevel,
 } from '@beacon/ui'
+import PageAsyncSection from '../../features/shared/page-async-section'
 
 import { fetchMetricsSummary } from '../../api/metrics'
 
@@ -95,7 +95,7 @@ export default function KpiStrip() {
   const data = query.data
 
   return (
-    <AsyncSection
+    <PageAsyncSection
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}
@@ -238,7 +238,7 @@ export default function KpiStrip() {
           </div>
         </div>
       )}
-    </AsyncSection>
+    </PageAsyncSection>
   )
 }
 

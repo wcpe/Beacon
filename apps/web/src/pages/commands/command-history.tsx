@@ -11,13 +11,13 @@ import { useSearchParams } from 'react-router-dom'
 import { History } from 'lucide-react'
 
 import {
-  AsyncSection,
   Badge,
-  DataTable,
   Input,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
+import PageDataTable from '../../features/shared/page-data-table'
+import PageAsyncSection from '../../features/shared/page-async-section'
 import type { CommandItem } from '@beacon/contracts'
 
 import { fetchCommands } from '../../api/observability'
@@ -212,13 +212,13 @@ export default function CommandHistory({ onView, selectedId }: CommandHistoryPro
         ) : undefined
       }
     >
-      <AsyncSection
+      <PageAsyncSection
         isLoading={query.isPending}
         isError={query.isError}
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={8} />}
       >
-        <DataTable
+        <PageDataTable
           columns={columns}
           rows={rows}
           rowKey={(row) => String(row.commandId)}
@@ -227,7 +227,7 @@ export default function CommandHistory({ onView, selectedId }: CommandHistoryPro
           onRowClick={onView}
           rowClassName={(row) => (row.commandId === selectedId ? 'bg-brand-50/60' : undefined)}
         />
-      </AsyncSection>
+      </PageAsyncSection>
     </ListCard>
   )
 }

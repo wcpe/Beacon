@@ -80,6 +80,35 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* 可复用的视觉原语：注册到 --animate-* 后自动生成 animate-* 工具类，
+     组件里直接写 class 即可，无需手写 @keyframes 选择器。
+     （入场/退场类的预设动画由 tw-animate-css 提供，此处只放它没有的语义） */
+
+  /* 数值更新时跳动一次：放大 + 品牌色高亮，让「刚更新过」被看见。
+     用于页眉 CPU/内存等会随轮询变化的数字——这类值常在 0%~1% 间波动，
+     单纯变色或透明度变化肉眼无法察觉。 */
+  --animate-value-jump: value-jump 420ms cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* 峰值缩放走变量：减少动效时只需把 --value-jump-peak 置 1，
+     不必再定义一份同名 @keyframes——同名关键帧在产物里的先后由构建决定，
+     靠 @media 里重定义同名 keyframes 覆盖并不可靠（后者按文档顺序胜出）。 */
+  @keyframes value-jump {
+    0% {
+      transform: scale(1);
+      color: inherit;
+    }
+
+    35% {
+      transform: scale(var(--value-jump-peak, 1.28));
+      color: var(--brand);
+    }
+
+    100% {
+      transform: scale(1);
+      color: inherit;
+    }
+  }
 }
 
 :root {
@@ -101,7 +130,7 @@
   --secondary: oklch(0.988 0.0012 277);
   --secondary-foreground: oklch(0.375 0.025 264);
   /* muted 底 = 次面偏浅冷灰；muted 文字 = 次要墨 #6b7385 */
-  --muted: oklch(0.968 0.0025 264);
+  --muted: oklch(0.955 0.003 264);
   --muted-foreground: oklch(0.52 0.022 266);
   /* 浅靛蓝 #eef0fe（brand-50）：hover / 选中底色；其上文字用 brand-600 #4338ca */
   --accent: oklch(0.958 0.021 282);
@@ -150,7 +179,7 @@
   --off-bd: oklch(0.925 0.004 264);
   /* 双层软阴影（对齐 B）：卡片浮起 + 弹层更深 */
   --sh-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.03);
-  --sh-pop: 0 6px 20px rgba(16, 24, 40, 0.1), 0 2px 6px rgba(16, 24, 40, 0.06);
+  --sh-pop: 0 10px 28px rgba(16, 24, 40, 0.14), 0 3px 8px rgba(16, 24, 40, 0.08);
 
   --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.375 0.025 264);
@@ -255,36 +284,61 @@
   }
 
   /* 应用背景：给整屏加层次与品牌微光（消除「平灰」，衬白卡片浮起）。
-     左上靛蓝光晕 + 右上蓝紫光晕 + 顶部提亮渐变，固定不随滚动，克制不喧宾夺主。 */
+     三点考量：
+     1) 光晕定位在**内容区**而非视口左缘 —— 左侧 sidebar 是实色底，落在 8% 处会被整块盖住；
+     2) 主光晕半径放大到 1200×620 并下压，使首屏标题区之外也有氛围，而不只亮在最顶部一条；
+     3) 追加一枚底部极淡微光 —— 列表较短时页面下半屏本是纯平灰，补一层可避免「上亮下死」。
+     整体仍是背景级存在感，不与前景卡片争夺注意力。 */
   .app-bg {
     background-color: var(--background);
     background-image:
       radial-gradient(
-        1000px 520px at 8% -10%,
-        color-mix(in oklch, var(--brand) 12%, transparent),
-        transparent 60%
+        1200px 620px at 28% -6%,
+        color-mix(in oklch, var(--brand) 20%, transparent),
+        transparent 62%
       ),
       radial-gradient(
-        900px 460px at 98% -8%,
-        color-mix(in oklch, var(--chart-3) 9%, transparent),
-        transparent 56%
+        900px 520px at 96% 2%,
+        color-mix(in oklch, var(--chart-3) 15%, transparent),
+        transparent 58%
       ),
-      linear-gradient(180deg, oklch(0.995 0.004 264), transparent 40%);
+      radial-gradient(
+        1000px 600px at 18% 104%,
+        color-mix(in oklch, var(--brand) 10%, transparent),
+        transparent 62%
+      ),
+      linear-gradient(180deg, oklch(0.995 0.004 264), transparent 38%);
     background-attachment: fixed;
     background-repeat: no-repeat;
   }
   .dark .app-bg {
     background-image:
       radial-gradient(
-        1000px 520px at 8% -10%,
-        color-mix(in oklch, var(--brand) 22%, transparent),
-        transparent 60%
+        1200px 620px at 28% -6%,
+        color-mix(in oklch, var(--brand) 24%, transparent),
+        transparent 62%
       ),
       radial-gradient(
-        900px 460px at 98% -8%,
-        color-mix(in oklch, var(--chart-3) 16%, transparent),
-        transparent 56%
+        900px 520px at 96% 2%,
+        color-mix(in oklch, var(--chart-3) 18%, transparent),
+        transparent 58%
       ),
-      linear-gradient(180deg, oklch(0.22 0.02 277), transparent 42%);
+      radial-gradient(
+        1000px 600px at 18% 104%,
+        color-mix(in oklch, var(--brand) 14%, transparent),
+        transparent 62%
+      ),
+        linear-gradient(180deg, oklch(0.22 0.02 277), transparent 40%);
+  }
+}
+
+/* 减少动态效果：跳动不缩放（避免前庭不适），只保留短暂变色提示「值更新过」。
+   只改变量与时长，不重定义 keyframes——同名关键帧在构建产物中的先后不可控，
+   若在此处再定义一份 value-jump，完整版可能排在后面而胜出，降级就失效了。 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-value-jump {
+    /* 峰值缩放归零由变量接管，keyframes 仍是同一份 */
+    --value-jump-peak: 1;
+    animation-duration: 300ms;
   }
 }
