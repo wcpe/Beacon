@@ -26,7 +26,6 @@ export default function InvocationDetailPanel({ invocationId }: { invocationId: 
 
   return (
     <PageAsyncSection
-      keepContentWhileRefreshing
       error={query.error}
       isError={query.isError}
       isLoading={query.isLoading}

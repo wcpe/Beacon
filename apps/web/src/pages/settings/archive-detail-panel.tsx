@@ -100,7 +100,6 @@ export default function ArchiveDetailPanel({ job, onRetry, onCancel }: ArchiveDe
       {/* 逐域进度与校验明细 */}
       <div className="border-t border-border pt-3">
         <PageAsyncSection
-          keepContentWhileRefreshing
           isLoading={query.isLoading}
           isError={query.isError}
           error={query.error}

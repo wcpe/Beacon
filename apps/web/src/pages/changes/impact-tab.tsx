@@ -113,7 +113,6 @@ export default function ImpactTab({ order }: ImpactTabProps) {
 
   return (
     <PageAsyncSection
-      keepContentWhileRefreshing
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}

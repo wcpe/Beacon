@@ -72,7 +72,6 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
         </SheetHeader>
         <div className="grid gap-4 px-4 pb-6">
           <PageAsyncSection
-            keepContentWhileRefreshing
             isLoading={query.isLoading}
             isError={query.isError}
             error={query.error}

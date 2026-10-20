@@ -118,7 +118,6 @@ export default function EffectiveTab({ fileId, file }: EffectiveTabProps) {
       </div>
 
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}

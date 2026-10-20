@@ -25,8 +25,6 @@ interface PageAsyncSectionProps {
   error?: unknown
   skeleton?: ReactElement
   children: ReactNode
-  // 兼容既有调用方签名：本组件始终保留已有内容，该参数不再改变呈现。
-  keepContentWhileRefreshing?: boolean
   loadingText?: ReactNode
 }
 

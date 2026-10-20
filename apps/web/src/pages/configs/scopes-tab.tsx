@@ -107,7 +107,6 @@ export default function ScopesTab({ fileId, file }: ScopesTabProps) {
         title={t('delivery.configs.detail.scopes.title')}
       />
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}

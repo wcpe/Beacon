@@ -139,7 +139,6 @@ export default function ObserveTab({ orderId }: ObserveTabProps) {
 
   return (
     <PageAsyncSection
-      keepContentWhileRefreshing
       isLoading={query.isLoading}
       isError={query.isError}
       error={query.error}

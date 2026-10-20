@@ -44,7 +44,6 @@ export default function IdentityDetailSheet({ identityId, onOpenChange }: Identi
         </SheetHeader>
         <div className="px-4 pb-6">
           <PageAsyncSection
-            keepContentWhileRefreshing
             isLoading={query.isLoading}
             isError={query.isError}
             error={query.error}

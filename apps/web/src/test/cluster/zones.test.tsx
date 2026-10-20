@@ -104,6 +104,9 @@ describe('/zones 区服分配页', () => {
     expect((await within(zoneItem).findAllByText('game-0041')).length).toBeGreaterThan(0)
   }, 20_000)
 
+  // 本用例比其它用例更吃时间：huge 场景一次渲染 200 台未分配服务器（树 + 窄栏列表），
+  // 还要逐字符输入搜索词触发全量重渲染；单跑约 8s、慢机上约 17s，贴住 20s 上限。
+  // 故显式放宽到 40s（约慢机实测的 2.3 倍余量），不是给全体用例开口子。
   it('huge 场景未分配窄栏显示服务端总数并支持搜索与跨页继续加载', async () => {
     useScenario('huge')
     const user = userEvent.setup()
@@ -121,7 +124,7 @@ describe('/zones 区服分配页', () => {
     const search = screen.getByLabelText('搜索未分配服务器 ID')
     await user.type(search, 'pool-240')
     expect(await screen.findByText('pool-240')).toBeInTheDocument()
-  }, 20_000)
+  }, 40_000)
 
   it('空态给出建集群引导', async () => {
     useScenario('empty')

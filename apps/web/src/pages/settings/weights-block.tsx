@@ -97,7 +97,6 @@ export default function WeightsBlock() {
       </div>
       <div className="grid gap-4">
         <PageAsyncSection
-          keepContentWhileRefreshing
           isLoading={query.isLoading}
           isError={query.isError}
           error={query.error}

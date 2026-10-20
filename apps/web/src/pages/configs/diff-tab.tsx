@@ -88,7 +88,6 @@ export default function DiffTab({ fileId, file }: DiffTabProps) {
       />
 
       <PageAsyncSection
-        keepContentWhileRefreshing
         isLoading={scopesQuery.isLoading}
         isError={scopesQuery.isError}
         error={scopesQuery.error}
@@ -131,7 +130,6 @@ export default function DiffTab({ fileId, file }: DiffTabProps) {
         <p className="text-sm text-ink-3">{t('delivery.configs.detail.diff.pickHint')}</p>
       ) : (
         <PageAsyncSection
-          keepContentWhileRefreshing
           isLoading={diffQuery.isLoading}
           isError={diffQuery.isError}
           error={diffQuery.error}
@@ -277,7 +275,6 @@ function SideSelector({ idPrefix, label, side, onChange, scopes, fileId, file }:
         <div className="space-y-1.5">
           <Label htmlFor={`${idPrefix}-version`}>{t('delivery.configs.detail.diff.pickVersion')}</Label>
           <PageAsyncSection
-            keepContentWhileRefreshing
             isLoading={versionsQuery.isLoading}
             isError={versionsQuery.isError}
             error={versionsQuery.error}
