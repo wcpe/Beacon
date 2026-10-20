@@ -227,18 +227,18 @@ func TestFileSyncDataPlaneRequiresConfirmedIdentity(t *testing.T) {
 	cases := []struct {
 		name string
 		// request 用 fixture 生成对应端点的请求。
-		request func(f *fileSyncIdentityFixture, t *testing.T) *http.Request
+		request func(t *testing.T, f *fileSyncIdentityFixture) *http.Request
 	}{
-		{name: "manifest", request: func(f *fileSyncIdentityFixture, t *testing.T) *http.Request {
+		{name: "manifest", request: func(t *testing.T, f *fileSyncIdentityFixture) *http.Request {
 			return f.manifestRequest(t, f.task.ID, f.sourceCmd.ID)
 		}},
-		{name: "upload-blob", request: func(f *fileSyncIdentityFixture, t *testing.T) *http.Request {
+		{name: "upload-blob", request: func(_ *testing.T, f *fileSyncIdentityFixture) *http.Request {
 			return f.uploadRequest(f.task.ID, testFileSyncHash("config.yml"), []byte("config.yml"))
 		}},
-		{name: "download-blob", request: func(f *fileSyncIdentityFixture, t *testing.T) *http.Request {
+		{name: "download-blob", request: func(_ *testing.T, f *fileSyncIdentityFixture) *http.Request {
 			return f.downloadRequest(f.task.ID, testFileSyncHash("config.yml"))
 		}},
-		{name: "target-result", request: func(f *fileSyncIdentityFixture, t *testing.T) *http.Request {
+		{name: "target-result", request: func(t *testing.T, f *fileSyncIdentityFixture) *http.Request {
 			return f.targetResultRequest(t, f.task.ID, f.targetCmd.ID)
 		}},
 	}
@@ -247,7 +247,7 @@ func TestFileSyncDataPlaneRequiresConfirmedIdentity(t *testing.T) {
 		t.Run(tc.name+"/未注入校验器失败关闭", func(t *testing.T) {
 			f := newFileSyncIdentityFixture(t)
 			f.handler.SetReportAuthenticator(nil)
-			rec := f.do(t, tc.request(f, t))
+			rec := f.do(t, tc.request(t, f))
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("未注入身份校验器时必须失败关闭并返回 401，实际 %d：%s", rec.Code, rec.Body.String())
 			}
@@ -256,7 +256,7 @@ func TestFileSyncDataPlaneRequiresConfirmedIdentity(t *testing.T) {
 		t.Run(tc.name+"/缺少身份头", func(t *testing.T) {
 			f := newFileSyncIdentityFixture(t)
 			f.auth.err = apperr.ErrUnauthorized
-			rec := f.do(t, tc.request(f, t))
+			rec := f.do(t, tc.request(t, f))
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("缺少已确认身份时必须返回 401，实际 %d：%s", rec.Code, rec.Body.String())
 			}
