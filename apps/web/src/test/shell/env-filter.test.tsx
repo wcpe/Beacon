@@ -120,4 +120,26 @@ describe('页眉观测范围选择器', () => {
       }
     }
   })
+  it('移动端合并菜单里每个单选组内只有一项被选中', async () => {
+    setLocale('zh-CN')
+    renderFilter()
+
+    // 移动端菜单是第三个触发器（sm 以下可见），桌面两个下拉在 jsdom 里同样渲染。
+    const triggers = await screen.findAllByRole('button', { name: /环境|命名空间|全部/ })
+    const mobileTrigger = triggers[triggers.length - 1]
+    await userEvent.click(mobileTrigger)
+
+    // 合并菜单把「环境」与「命名空间」两组平铺，必须各自成组：
+    // 若不加分组，同一 menu 内会出现两个 menuitemradio 同时 aria-checked=true。
+    const groups = await screen.findAllByRole('group')
+    expect(groups.length).toBeGreaterThanOrEqual(2)
+
+    for (const group of groups) {
+      const checked = within(group)
+        .getAllByRole('menuitemradio')
+        .filter((item) => item.getAttribute('aria-checked') === 'true')
+      expect(checked).toHaveLength(1)
+    }
+  })
+
 })
