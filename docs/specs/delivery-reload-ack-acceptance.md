@@ -11,21 +11,68 @@
 
 | 编号 | 场景 | 结果 | 证据来源 |
 |---|---|---|---|
-| A1 | 全部成功 → `activated` | ✅ | 真机 |
-| A2 | 一票否决 → `failed`，无 `activated` | ✅ | 真机 |
-| A3 | 单插件超时 | ✅ | 单测（真机未覆盖，见 §5） |
-| A4 | 抛 `Error` 被兜住、线程存活 | ✅ | 单测 |
-| A5 | 缺结果按失败 | ✅ | 单测 |
-| A6 | 隔离：一个失败不影响其余 | ✅ | 真机（`okCount=1` 且另一插件 ok） |
-| A7 | 回滚路径同样产出报告 | ✅ | 真机（正推+回滚相位通过） |
-| A8 | 老 agent 无 `reload` 段兼容 | ✅ | 单测 |
-| A9 | 老插件零改动 | ✅ | 单测 + 契约加性 |
-| B1 | 产出 `publish-fail` 告警 | ✅ | 真机 |
-| B2 | 不收敛（`occurrence_count=1`） | ✅ | 真机 + 单测锁死 |
+| A1 | 全部成功 → `activated` | ✅ | 真机（单#1/#5/#7） |
+| A2 | 一票否决 → `failed`，无 `activated` | ✅ | 真机（单#2） |
+| A3 | 单插件超时 | ✅ | **真机（单#3）**：`reason=重载超时（3000ms）`、`timeout=true` |
+| A4 | 抛 `Error` 被兜住、线程存活 | ✅ | **真机（单#4）**：`NoClassDefFoundError` 被捕获；随后正常单仍成功 |
+| A5 | 缺结果按失败 | ✅ | **真机（单#6）**：`监听器未返回重载结果（null）` |
+| A6 | 隔离：一个失败不影响其余 | ✅ | 真机（各失败单均 `ok=3/failed=1`，其余 3 个监听器照常成功） |
+| A7 | 回滚路径同样产出报告 | ✅ | 真机（单#1 正推+回滚） |
+| A8 | 老 agent 无 `reload` 段兼容 | ✅ | 单测（真机无法产出旧 agent 构建，见 §5） |
+| A9 | 老插件零改动 | ✅ | **真机**：`LEGACY_DONE` 观测 1 次，void 回调被正常派发 |
+| B1 | 产出 `publish-fail` 告警 | ✅ | 真机：4 条 `publish-fail` / `warning` |
+| B2 | 不收敛 | ✅ | 真机：4 次失败 → **4 行独立记录**，`occurrence_count` 全为 1 |
 | B3 | 健康告警不受影响 | ✅ | 单测 |
 | B4 | 告警页可按类型筛选 | ✅ | 前端既有能力（`TYPES` 已含 `publish-fail`） |
 
+> **A3/A4/A5/A9 已按用户要求上真机**。A8 需旧版 agent 二进制，E2E 无法产出，改由单测
+> `TestDeliveryResultDetailOmitsReloadForOldAgent` 覆盖（控制面在缺 `reload` 段时保持既有形状）。
+
 ## 2. 真机取证（实际数据）
+
+**环境**：Windows + Java 21 + Paper 1.20.4 + 真控制面（隔离 SQLite）+ 真 BeaconAgent
++ 真业务插件探针（Kotlin 上报式 + Java null 式 + 遗留 void 式三条监听），
+**TabooLib `6.3.0-wcpe.5`**。总耗时 **110.9s**（`--- PASS`）。
+
+### 2.1 七张单的实际结果
+
+| 单 | 用例 | 单状态 | 目标 | reload 报告 |
+|---|---|---|---|---|
+| #1 | A1+A7 正推与回滚 | `rolled_back` | `activated` | `total=4 ok=4 failed=0` |
+| #2 | A2 一票否决 | `completed` | **`failed`** | `total=4 ok=3 failed=1` |
+| #3 | **A3 超时** | `completed` | **`failed`** | `failed=1`，`reason=重载超时（3000ms）`、`timeout=true` |
+| #4 | **A4 抛 Error** | `completed` | **`failed`** | `failed=1`，`reason=NoClassDefFoundError: …AcceptanceProbeAbsent` |
+| #5 | A4 线程存活复验 | `completed` | `activated` | `ok=4`（证明执行器未被前次 Error 打死） |
+| #6 | **A5 缺结果** | `completed` | **`failed`** | `failed=1`，`listener=NullResultReloadProbe`、`reason=监听器未返回重载结果（null）` |
+| #7 | **A9 老插件** | （收尾中） | `activated` | `ok=4`，且探针日志有 `LEGACY_DONE` |
+
+### 2.2 A6 隔离的实证
+
+每个失败单的 `okCount` 都是 3、`failedCount` 都是 1 —— **同一台服上的另外 3 条监听器照常成功**。
+改造前是裸 `for` 循环，先抛者会让后续监听器全部收不到通知。
+
+### 2.3 B1/B2 告警实证
+
+```
+alert_event:
+  #1 publish-fail warning occurrence_count=1
+  #2 publish-fail warning occurrence_count=1
+  #3 publish-fail warning occurrence_count=1
+  #4 publish-fail warning occurrence_count=1
+```
+
+4 次交付失败 → **4 行独立记录**。若被 FR-232 收敛合并，会是 1 行且 `occurrence_count=4`；
+实际每条都是 1，证明 `convergesOnRecord` 确实不收录 `publish-fail`。
+
+### 2.4 探针模式触发计数
+
+| 标记 | 次数 | 说明 |
+|---|---|---|
+| `REPORTING_FAILED` | 1 | A2 返回 failed |
+| `REPORTING_ERROR` | 1 | A4 抛 `NoClassDefFoundError` |
+| `REPORTING_HANG` | 1 | A3 睡眠触发超时 |
+| `LEGACY_DONE` | 1 | A9 老式 void 回调执行完毕 |
+| `REPORTING_THROW` / `REPORTING_NULL` | 0 | 预期为 0：前者抛异常时日志写入被中断，后者由 Java 探针承担（见单#6 证据） |
 
 **目标 #1（全部成功）** → `status=activated`：
 
