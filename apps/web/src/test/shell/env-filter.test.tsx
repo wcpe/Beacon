@@ -9,9 +9,15 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { MemoryRouter } from 'react-router-dom'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import EnvFilter from '../../shell/env-filter'
+import {
+  ALL_OBSERVATION_ENV,
+  getObservationScopeSelection,
+  selectObservationEnv,
+  setObservationScope,
+} from '../../features/env/observation-scope'
 import { setLocale } from '../../state/locale'
 import '../../i18n'
 
@@ -36,6 +42,10 @@ const server = setupServer(
 
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' })
+})
+// 观测范围是模块级单例：用例间不复位会串味（前一个用例选过的命名空间会带进下一个）。
+beforeEach(() => {
+  setObservationScope(selectObservationEnv(getObservationScopeSelection(), ALL_OBSERVATION_ENV))
 })
 afterEach(() => {
   server.resetHandlers()
@@ -140,6 +150,30 @@ describe('页眉观测范围选择器', () => {
         .filter((item) => item.getAttribute('aria-checked') === 'true')
       expect(checked).toHaveLength(1)
     }
+  })
+
+  it('命名空间下拉：选中具体命名空间后与「全部命名空间」互斥', async () => {
+    setLocale('zh-CN')
+    renderFilter()
+
+    // 命名空间下拉是第二个触发器。
+    const triggers = await screen.findAllByRole('button', { name: /环境|命名空间|全部/ })
+    await userEvent.click(triggers[1])
+
+    const menu = await screen.findByRole('menu')
+    // 默认态「全部命名空间」为选中。
+    expect(within(menu).getByRole('menuitemradio', { name: /全部命名空间/ })).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(within(menu).getByRole('menuitemradio', { name: /^prod-2/ }))
+
+    // 选具体命名空间后：范围落到该命名空间。
+    expect(getObservationScopeSelection()).toMatchObject({ namespaceId: 2 })
+
+    await userEvent.click((await screen.findAllByRole('button', { name: /环境|命名空间|全部/ }))[1])
+    const reopened = await screen.findByRole('menu')
+    // 互斥：具体项选中时，「全部命名空间」必须变为未选中。
+    expect(within(reopened).getByRole('menuitemradio', { name: /^prod-2/ })).toHaveAttribute('aria-checked', 'true')
+    expect(within(reopened).getByRole('menuitemradio', { name: /全部命名空间/ })).toHaveAttribute('aria-checked', 'false')
   })
 
 })
