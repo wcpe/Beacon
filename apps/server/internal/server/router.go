@@ -88,7 +88,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		v2Auth = h.V2
 	}
 
-	// agent 侧：内网信任，以共享 token（或 v2 已确认身份）鉴权。
+	// agent 侧：注册与机器注册通道以共享 token 判定「受信内部调用方」；
+	// 其余 v1 数据面端点要求 namespace token + 已确认身份，并把请求自报的
+	// namespace / serverId 与 DB 权威身份比对（共享 token 已不是数据面的信任来源）。
 	// 机器注册通道（FR-222）的判定依据也在此：命中共享 token 的请求被注入「受信内部调用方」标记，
 	// 供 v1 注册 handler 决定是否直落 active（开关 mcp.allow-machine-register 另由部署配置注入）。
 	r.Route("/beacon/v1/agent", func(r chi.Router) {
