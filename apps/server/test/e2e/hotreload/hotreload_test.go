@@ -79,6 +79,35 @@ type targetView struct {
 	BackupPresent  bool    `json:"backupPresent"`
 	Error          *string `json:"error"`
 	RollbackStatus *string `json:"rollbackStatus"`
+	// ReloadReport 是逐插件重载结果（FR-273）。老 agent 不上报时为 null。
+	ReloadReport *reloadReportView `json:"reloadReport"`
+}
+
+// reloadReportView 对齐 service.DeliveryReloadReport 的对外形状（FR-273）。
+type reloadReportView struct {
+	Total       int                  `json:"total"`
+	OKCount     int                  `json:"okCount"`
+	FailedCount int                  `json:"failedCount"`
+	TimeoutMs   int64                `json:"timeoutMs"`
+	Plugins     []reloadPluginResult `json:"plugins"`
+}
+
+// reloadPluginResult 是单个插件的重载结果。
+type reloadPluginResult struct {
+	Listener       string `json:"listener"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	Timeout        bool   `json:"timeout"`
+	AppliedVersion string `json:"appliedVersion"`
+	AppliedCount   *int   `json:"appliedCount"`
+}
+
+// derefOr 取指针值，nil 时返回兜底串（断言消息里避免 nil 解引用）。
+func derefOr(p *string, fallback string) string {
+	if p == nil {
+		return fallback
+	}
+	return *p
 }
 
 type observation struct {
@@ -323,6 +352,30 @@ func runFailure(t *testing.T, env *testEnv) {
 	if target.Error == nil || !strings.Contains(*target.Error, "配置变更通知失败") {
 		t.Fatalf("失败目标应携带业务回调失败摘要，实际=%v", target.Error)
 	}
+	// FR-273 一票否决 + 明细可见：失败报告必须落库并带出逐插件结果，
+	// 否则前端与告警都拿不到「哪个插件、什么原因」。
+	if target.ReloadReport == nil {
+		t.Fatal("失败目标必须携带 reloadReport（逐插件重载结果），否则重载失败不可见")
+	}
+	if target.ReloadReport.FailedCount < 1 {
+		t.Fatalf("reloadReport 应至少 1 个插件失败，实际=%+v", target.ReloadReport)
+	}
+	failed := false
+	for _, p := range target.ReloadReport.Plugins {
+		if p.Status == "failed" && p.Reason != "" {
+			failed = true
+		}
+	}
+	if !failed {
+		t.Fatalf("reloadReport 中应存在带可读原因的失败项，实际=%+v", target.ReloadReport.Plugins)
+	}
+	// 失败原因必须携带插件标识（listener 类名），供运维直接定位。
+	if !strings.Contains(strings.ToLower(derefOr(target.Error, "")), "deliveryhotreloade2eprobe") &&
+		!strings.Contains(derefOr(target.Error, ""), "插件重载失败") {
+		t.Fatalf("失败摘要应含逐插件明细（插件标识或「插件重载失败」），实际=%v", derefOr(target.Error, ""))
+	}
+	// FR-274：目标落 failed 必须产出 publish-fail 告警，且带 orderId 与逐插件明细。
+	assertPublishFailAlert(t, env, orderID)
 	failedIndex, err := waitObservation(env.probeLog(), phaseWait, env.paper, func(o observation) bool {
 		return o.source == "CALLBACK_FAILED" && o.path == failurePath
 	})
@@ -354,6 +407,45 @@ func assertPaperAliveAfter(t *testing.T, env *testEnv, failedIndex int) {
 	_ = conn.Close()
 	if err := harness.WaitInstanceOnline(beaconURL, env.adminToken, namespace, serverID, 15*time.Second, env.paper); err != nil {
 		t.Fatalf("回调失败后 Agent 不再 online：%v", err)
+	}
+}
+
+// assertPublishFailAlert 验证交付失败产出 publish-fail 告警（FR-274）。
+//
+// 关键点：类型必须是 publish-fail（不是 health-transition）、detail 含 orderId 与逐插件明细；
+// 并断言**未被收敛**（该单的告警行数与失败次数一致，行内 occurrence_count 恒为 1）——
+// 交付失败要逐条可见，收敛会掩盖「同一台服反复失败」。
+func assertPublishFailAlert(t *testing.T, env *testEnv, orderID uint) {
+	t.Helper()
+	var rows []model.AlertEvent
+	if err := waitUntil(phaseWait, env.paper, func(context.Context) bool {
+		rows = rows[:0]
+		if err := env.db.Where("type = ? AND server_id = ?", model.AlertEventTypePublishFail, serverID).
+			Order("id asc").Find(&rows).Error; err != nil {
+			return false
+		}
+		return len(rows) > 0
+	}); err != nil {
+		t.Fatalf("未产出 publish-fail 告警（FR-274）：%v", err)
+	}
+	if rows[0].Level != model.AlertLevelWarning {
+		t.Fatalf("publish-fail 告警级别应为 warning，实际=%q", rows[0].Level)
+	}
+	if rows[0].ToStatus != "" {
+		t.Fatalf("非健康类型不得写 to_status，实际=%q", rows[0].ToStatus)
+	}
+	if !strings.Contains(rows[0].Detail, strconv.FormatUint(uint64(orderID), 10)) {
+		t.Fatalf("告警 detail 应含 orderId=%d，实际=%s", orderID, rows[0].Detail)
+	}
+	if !strings.Contains(rows[0].Detail, "reloadReport") {
+		t.Fatalf("告警 detail 应含逐插件重载明细，否则运维需翻交付单才知道哪个插件失败：%s", rows[0].Detail)
+	}
+	// 不收敛：每条 publish-fail 必须独立成行、occurrence_count 保持 1。
+	for _, r := range rows {
+		if r.OccurrenceCount != 1 {
+			t.Fatalf("publish-fail 不得被收敛合并（occurrence_count 应恒为 1），实际=%d detail=%s",
+				r.OccurrenceCount, r.Detail)
+		}
 	}
 }
 

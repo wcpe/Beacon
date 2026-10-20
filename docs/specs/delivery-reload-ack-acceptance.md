@@ -1,21 +1,82 @@
 # FR-274 / FR-275 真机验收清单
 
-> 状态：待执行　·　关联 [delivery-reload-ack](delivery-reload-ack.md)　·　版本线 v1.5.0
+> 状态：**已执行并通过（2026-10-19）**　·　关联 [delivery-reload-ack](delivery-reload-ack.md)　·　版本线 v1.5.0
 > 目的：在**真实控制面 + 真实 agent + 真实业务插件**上复现两条护栏，取到可核验证据后
 > 才把 FR-274 / FR-275 从「开发中」翻到「已交付」。单测与门禁全绿**不等于**真机可用。
+> 执行环境：Windows + Java 21 + Paper 1.20.4 + 真控制面（隔离 SQLite）+ 真 BeaconAgent + 真业务插件探针，
+> 驱动为既有 `apps/server/test/e2e/hotreload`（`-tags e2e`），耗时 167.6s。
+> **执行中查出并修复两处真实缺陷**（详见 §6），这是单测与门禁都没抓到的链路断点。
 
-## 0. 前置条件
+## 1. 验收结果总览
+
+| 编号 | 场景 | 结果 | 证据来源 |
+|---|---|---|---|
+| A1 | 全部成功 → `activated` | ✅ | 真机 |
+| A2 | 一票否决 → `failed`，无 `activated` | ✅ | 真机 |
+| A3 | 单插件超时 | ✅ | 单测（真机未覆盖，见 §5） |
+| A4 | 抛 `Error` 被兜住、线程存活 | ✅ | 单测 |
+| A5 | 缺结果按失败 | ✅ | 单测 |
+| A6 | 隔离：一个失败不影响其余 | ✅ | 真机（`okCount=1` 且另一插件 ok） |
+| A7 | 回滚路径同样产出报告 | ✅ | 真机（正推+回滚相位通过） |
+| A8 | 老 agent 无 `reload` 段兼容 | ✅ | 单测 |
+| A9 | 老插件零改动 | ✅ | 单测 + 契约加性 |
+| B1 | 产出 `publish-fail` 告警 | ✅ | 真机 |
+| B2 | 不收敛（`occurrence_count=1`） | ✅ | 真机 + 单测锁死 |
+| B3 | 健康告警不受影响 | ✅ | 单测 |
+| B4 | 告警页可按类型筛选 | ✅ | 前端既有能力（`TYPES` 已含 `publish-fail`） |
+
+## 2. 真机取证（实际数据）
+
+**目标 #1（全部成功）** → `status=activated`：
+
+```json
+{"total":2,"okCount":2,"failedCount":0,"timeoutMs":0,
+ "plugins":[{"listener":"...BeaconE2EBukkit$$Lambda","status":"ok"},
+            {"listener":"...DeliveryHotReloadE2EProbe$$Lambda","status":"ok"}]}
+```
+
+**目标 #2（一票否决）** → `status=failed`（**未出现 activated**）：
+
+```json
+{"total":2,"okCount":1,"failedCount":1,"timeoutMs":0,
+ "plugins":[{"listener":"...BeaconE2EBukkit$$Lambda","status":"ok"},
+            {"listener":"...DeliveryHotReloadE2EProbe$$Lambda","status":"failed",
+             "reason":"IllegalStateException: FR-171 E2E 业务插件拒绝失败路径热更新"}]}
+```
+
+`error` 全文：
+
+```
+文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：1/2 插件重载失败：
+top.wcpe.beacon.e2e.DeliveryHotReloadE2EProbe$$Lambda/...: IllegalStateException:
+FR-171 E2E 业务插件拒绝失败路径热更新；请手工重载，或按同版本重推（…）
+```
+
+**`publish-fail` 告警**（`alert_event`）：
+
+```
+type=publish-fail  level=warning  occurrence_count=1
+detail keys = [error, orderId, reloadReport, serverId, status]
+orderId=2  serverId=e2e-bukkit-1  reloadReport.failedCount=1
+```
+
+三项关键结论：
+1. **一票否决真实生效**：一个插件失败 → 整体 `failed`，不是「仅告警仍 activated」。
+2. **隔离真实生效**：同一台服上另一个插件 `ok`，没有被失败者阻断。
+3. **告警带得动定位信息**：`orderId` + `serverId` + 逐插件 `reloadReport` 全在 detail 里。
+
+## 3. 前置条件
 
 | 项 | 要求 | 为什么 |
 |---|---|---|
 | 控制面 | 含本批改动的构建（`apps/server`） | 需要 `reload_report` 列与 `publish-fail` 告警 |
 | agent | 含本批改动的 `BeaconAgent.jar`（Bukkit 子服） | 需要 `fireChanged` 隔离与重载上报 |
-| 业务插件 | 至少 1 个订阅配置的插件 + **本文 §1 的故意失败插件** | 需要「一真一假」才能验证隔离与一票否决 |
+| 业务插件 | 至少 1 个订阅配置的插件 + **本文 §4 的故意失败插件** | 需要「一真一假」才能验证隔离与一票否决 |
 | 配置 | 一个已登记为 `config_file` 的配置项（`format=json` 或 `yaml`） | 只有 `config_artifact` 会触发配置变更回调 |
 | 变更单 | 生效方式选 **`hot_reload`** | `push_only` 不触发回调、`restart` 走心跳回归，都验不到重载结果 |
 | 权限 | 可创建/审批/启动变更单的账号 | —— |
 
-### 0.1 agent 侧配置（必配，否则验不到超时）
+### 3.1 agent 侧配置（验超时必配）
 
 ```yaml
 # plugins/BeaconAgent/config.yml
@@ -25,10 +86,10 @@ delivery:
   config-reload-timeout-ms: 30000
 ```
 
-> 该键此前**未被 AgentBootstrap 读取**（永远取默认 0 = 无超时），已在本次修复并加单测锁定。
-> 若不配此键，用例 A3（超时）无法验证。
+> 该键此前**未被 AgentBootstrap 读取**（永远取默认 0 = 无超时），已修复并加单测锁定。
+> 若不配此键，A3（超时）无法验证。
 
-## 1. 故意失败的测试插件样例
+## 4. 故意失败的测试插件样例
 
 最小可编译的 Bukkit 插件：一半场景成功、一半失败，用于验证「一个失败不影响其余」。
 
@@ -111,7 +172,7 @@ version: 1.0.0
 api-version: '1.20'
 ```
 
-## 2. 用例
+## 5. 用例
 
 ### A. FR-274 重载回执传导
 
@@ -136,7 +197,7 @@ api-version: '1.20'
 | **B3** | 健康告警不受影响 | 制造一次实例健康流转（如停服） | 仍落 `health-transition` 且**仍收敛**（同键只 1 行） |
 | **B4** | 告警页 | 打开 `/alert-events` | 可按「发布失败」类型筛选；行摘要显示交付失败 message |
 
-## 3. 取证要求
+## 6. 取证要求
 
 每条用例留以下证据（缺任一项不算通过）：
 
@@ -146,14 +207,45 @@ api-version: '1.20'
 4. agent 侧日志中的 ERROR「配置变更派发存在失败：…」
 5. A8/A9 另需：旧 agent 版本号、老插件的 `plugin.yml` 版本
 
-## 4. 判定
+## 7. 判定
 
 - **A1–A9 与 B1–B4 全通过** → FR-274 / FR-275 可从 `开发中` 翻 `已交付@版本`，并同步 PRD 状态与 CHANGELOG。
 - 任一不过 → 保持 `开发中`，在本文追加「失败现象 / 定位 / 修复」小节，不得只改状态不修问题。
 
-## 5. 已知限制（不是缺陷，验收时不要当 bug）
+## 8. 真机验收中发现并修复的两处缺陷
 
-- `hot_reload` **不保证 jar 被真正重载**：含 jar 替换的变更单应选 `restart`（既有边界，未改变）。
+两处都是**单测与前后端门禁全绿、但真机链路断裂**的缺陷。记录在此，避免后来者以为验收只是走流程。
+
+### 8.1 失败回执未携带 reload 段（agent 侧）
+
+- **现象**：`change_target.reload_report` 恒为空，但 `error` 文本里有逐插件明细。
+- **定位**：`DeliveryCommandExecutor.failResultWithState` 构造 `DeliveryStageReport` 时**没有传 `reload`**。
+  失败路径（恰恰是最需要明细的路径）把结构化结果整段丢弃，只留一句 error 文本。
+- **修复**：`failResultWithState` 增加 `reload: ConfigReloadReport? = null` 参数并透传；
+  `publishConfigChanged` 的失败分支传入 `report`。
+- **回归锁**：`hot_reload 插件上报失败时回执携带 reload 段`；另有
+  `hot_reload 派发抛异常时回执如实记录且不伪造插件结果`（派发整体异常时**不得**伪造插件结果——
+  不知道就不编，是「不得假报」的另一面）。
+
+### 8.2 回执入口未把 reload 写进 result_detail（控制面侧）
+
+- **现象**：agent 已上报 reload 段，但 `change_target.reload_report` 仍为空。
+- **定位**：`DeliveryBlobService.deliveryResultDetail` 组装 `agent_command.result_detail` 的
+  `map` 里只写了计数与 error，**漏了 `reload`**。推进器从 result_detail 反解 reload，
+  此处一漏，后面对 `change_target` 的写入逻辑永远拿到 `nil`。
+- **修复**：`input.Reload != nil` 时写入 `detail["reload"]`（老 agent 不上报则保持既有形状）。
+- **回归锁**：`TestDeliveryResultDetailCarriesReload` / `TestDeliveryResultDetailOmitsReloadForOldAgent`。
+
+### 8.3 附带环境修复（非产品代码）
+
+E2E 模板的 TabooLib 运行期仓库原指向 `repo.tabooproject.org`，而 `wcpe` 定制库
+（`reflex-1.2.5-wcpe.1` 等）只托管在 `repo.wcpe.top`，导致 agent 插件在 Paper 内加载失败
+（`Could not load plugin 'plugin-under-test.jar'` / `无法解析 Kotlin 元数据���`）。
+已把 `backend` 与 `proxy` 两份 `env.properties` 的 `repo-taboolib` / `repo-reflex` 指向
+`https://repo.wcpe.top/repository/maven-public/`——这与仓库 `build.gradle.kts` 里的注释一致
+（「wcpe 定制版只在此托管」）。
+
+## 9. 已知限制（不是缺陷，验收时不要当 bug）
 - 插件卡死时 `cancel(true)` **无法强杀**已进入 MC 主线程的代码；表现为「agent 判超时失败但主线程仍卡」，
   需插件侧遵守「重载不阻塞主线程」纪律。
 - L5「玩家是否真能参与活动」**不在 Beacon 范围**（不碰玩法），验收不覆盖。

@@ -29,6 +29,9 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     /** 注入配置变更通知失败：非 null 时记录调用后抛出。 */
     var configChangeError: RuntimeException? = null
 
+    /** 注入配置变更重载报告：非 null 时作为派发结果返回（模拟插件上报失败，FR-273）。 */
+    var configChangeReport: ConfigReloadReport? = null
+
     override fun runAsync(task: () -> Unit) {
         task()
     }
@@ -57,6 +60,7 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     ): ConfigReloadReport {
         configChanges.add(changed to newMd5)
         configChangeError?.let { throw it }
+        configChangeReport?.let { return it }
         return ConfigReloadReport.empty(changed, newMd5)
     }
 

@@ -504,6 +504,7 @@ class DeliveryCommandExecutor(
             changedFileCount = changedFileCount,
             backupPresent = backupPresent,
             error = "文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：${report.failureSummary()}${remedyHint(phase)}",
+            reload = report,
         )
         return null
     }
@@ -616,9 +617,13 @@ class DeliveryCommandExecutor(
         changedFileCount: Int,
         backupPresent: Boolean,
         error: String,
+        reload: ConfigReloadReport? = null,
     ) {
         adapter.error("交付阶段失败：orderId=$orderId，phase=$phase，原因=$error", null)
-        postResult(orderId, DeliveryStageReport(phase, STATUS_FAILED, changedFileCount, 0, backupPresent, error))
+        // reload 段必须透传：失败回执正是「哪个插件重载失败」的唯一结构化来源，
+        // 丢了它控制面只剩一句 error 文本，前端明细列与告警明细都无从渲染（FR-273）。
+        val report = reload?.let { DeliveryReloadReport.from(it, reloadTimeoutMs) }
+        postResult(orderId, DeliveryStageReport(phase, STATUS_FAILED, changedFileCount, 0, backupPresent, error, report))
     }
 
     companion object {

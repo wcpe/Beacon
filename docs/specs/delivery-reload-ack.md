@@ -1,8 +1,8 @@
 # 功能规格：交付重载回执（Delivery Reload ACK）
 
-> 状态：开发中（FR-274 / FR-275 已实现，待真机验收）　·　关联 PRD：**FR-274**（主体）、**FR-275**（§3.5 告警段）　·　分支：待建
-> **真机验收清单**：[delivery-reload-ack-acceptance](delivery-reload-ack-acceptance.md)（含故意失败的测试插件样例，
-> 用例 A1–A9 / B1–B4 全通过后才可翻交付）
+> 状态：**已实现并通过真机验收（2026-10-19）**　·　关联 PRD：**FR-274**（主体）、**FR-275**（§3.5 告警段）　·　分支：待建
+> **真机验收清单与结果**：[delivery-reload-ack-acceptance](delivery-reload-ack-acceptance.md)
+> （A1–A9 / B1–B4 已执行；验收中发现并修复两处链路断点，见该文 §8）
 >
 > **同时归真 FR-16**：本规格 §1.2 的 `fireChanged` 监听器隔离缺陷落在 Legacy FR-16
 > 「下游 SDK 接入包」已交付的配置订阅桥能力内，该 FR 已退回 `开发中`，修复后随本 FR 一并重新交付。

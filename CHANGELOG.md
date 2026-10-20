@@ -116,6 +116,13 @@
   - **测试**：新增 `EffectiveConfigViewFireChangedTest` 6 例（抛异常不阻断其余、抛 `Error` 也被兜住、全成功无失败、无监听器空报告、注销后不派发、失败摘要含计数与插件标识）；`agent-core` 全量 737 例通过，`agent-bukkit` / `agent-bungee` 编译通过。
   - **后续**：重载结果传导为交付 ACK 见 FR-274，交付失败告警见 FR-275。
 
+- **真机验收发现的两处链路断点（FR-274）**：单测与前后端门禁全绿，但真实 Paper + 真控制面的链路上 reload 明细始终落不到库——两处断点各自都能让 `change_target.reload_report` 恒为空，而 `error` 文本看起来「一切正常」，属最危险的一类静默丢数据。
+  - **失败回执未携带 reload 段（agent 侧）**：`DeliveryCommandExecutor.failResultWithState` 构造回执时没有传 `reload`，失败路径（恰恰最需要明细的路径）把结构化结果整段丢弃。改为增加 `reload` 参数并由 `publishConfigChanged` 失败分支传入。
+  - **回执入口未写入 result_detail（控制面侧）**：`deliveryResultDetail` 组装 `agent_command.result_detail` 时只写计数与 error、漏了 `reload`，推进器从 result_detail 反解时恒拿到 `nil`。改为 `input.Reload != nil` 时写入。
+  - **回归锁**：新增 `hot_reload 插件上报失败时回执携带 reload 段`（并含「派发整体异常时**不得**伪造插件结果」——不知道就不编，是「不得假报」的另一面）、`TestDeliveryResultDetailCarriesReload`、`TestDeliveryResultDetailOmitsReloadForOldAgent`。
+  - **顺带修 E2E 环境**：`agent-e2e` 两份模板的 TabooLib 运行期仓库原指向 `repo.tabooproject.org`，而 `wcpe` 定制库只托管在 `repo.wcpe.top`，导致 agent 插件在 Paper 内加载失败；已改指向后者（与 `build.gradle.kts` 注释一致）。
+  - **真机验收结论**：`apps/server/test/e2e/hotreload` 通过（167.6s，真控制面 + Paper 1.20.4 + 真 BeaconAgent + 真业务插件），取证见 [delivery-reload-ack-acceptance](docs/specs/delivery-reload-ack-acceptance.md) §2。
+
 ## 1.5.0（2026-10-12）
 ### 新增
 

@@ -486,6 +486,12 @@ func deliveryResultDetail(orderID uint, input DeliveryResultInput) string {
 	if input.Status == DeliveryResultFailed {
 		detail["error"] = sanitizeFileSyncError(input.Error)
 	}
+	// 逐插件重载结果（FR-273）：推进器从 result_detail 反解 reload，再落 change_target.reload_report。
+	// 不写这里等于把结构化明细丢在回执入口——error 只剩一句文本，前端明细列与告警明细都无从渲染。
+	// 老 agent 不上报时为 nil，保持既有形状不变。
+	if input.Reload != nil {
+		detail["reload"] = input.Reload
+	}
 	raw, _ := json.Marshal(detail)
 	return string(raw)
 }
