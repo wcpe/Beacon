@@ -1213,10 +1213,108 @@ export const delivery = {
       status: '状态',
       createdAt: '创建时间',
     },
+    // 筛选控件：键名 = 字段名（aria-label 用），Placeholder 后缀 = 占位符，All 后缀 = 「不筛选」哨兵选项
     filters: {
       advanced: '高级筛选',
+      status: '审批状态',
+      statusAll: '全部状态',
+      keyword: '审批关键字',
+      keywordPlaceholder: '搜索申请编号 / 摘要',
+      operation: 'operation / 领域',
+      operationPlaceholder: '领域，如 config.publish',
+      risk: '风险级别',
+      riskAll: '全部风险',
+      requesterType: '申请主体类型',
+      requesterTypeAll: '全部主体',
+      requester: '申请人',
+      requesterPlaceholder: '申请人',
+      createdFrom: '创建时间起',
+      createdTo: '创建时间止',
+      expiresFrom: '过期时间起',
+      expiresTo: '过期时间止',
       groups: {
       },
+    },
+    // 列表区：计数、加载 / 错误态、空态与命名空间提示
+    list: {
+      total: '共 {{count}} 条',
+      loading: '加载中…',
+      loadFailed: '审批列表加载失败',
+      retry: '重试',
+      emptyAll: '全局暂无待审批',
+      emptyFiltered: '当前筛选无结果',
+      clearFilters: '清除筛选',
+      namespaceGlobal: '全局',
+      namespaceRef: 'namespace {{id}}',
+    },
+    // 申请状态（筛选选项、状态徽标、时间线条目类型回退共用）
+    status: {
+      pending: '待审批',
+      executing: '执行中',
+      succeeded: '已完成',
+      failed: '执行失败',
+      rejected: '已拒绝',
+      withdrawn: '已撤回',
+      expired: '已过期',
+    },
+    // 时间线条目类型：以上两个不是申请状态，需要单独文案
+    timeline: {
+      requested: '已提交',
+      approved: '已批准',
+    },
+    risk: {
+      low: '低',
+      medium: '中',
+      high: '高',
+      critical: '严重',
+    },
+    // 风险徽标：{{risk}} 取自 risk.*
+    riskBadge: '{{risk}}风险',
+    principal: {
+      human: '人类',
+      api_key: 'API 密钥',
+      mcp: 'MCP',
+      system: '系统',
+    },
+    // 详情主从视图
+    detail: {
+      title: '审批详情',
+      close: '关闭详情',
+      loadFailed: '审批详情加载失败',
+      retry: '重试',
+      sections: {
+        riskImpact: '风险与影响',
+        snapshot: '申请快照',
+        currentFacts: '当前事实',
+        diff: '快照 / 当前差异',
+        timeline: '时间线',
+      },
+      resultLink: '查看领域结果与审计',
+      noActions: '当前主体没有可执行的审批操作。',
+      // 批准被阻断的原因（与按钮禁用同源判定）
+      blocked: {
+        drift: '当前事实已漂移，需按当前事实重新申请',
+        evidence: '快照或当前证据不可用/已过期',
+        expired: '申请已过期',
+      },
+    },
+    // 审批动作（按钮与二次确认弹窗共用）
+    actions: {
+      approve: '批准并执行',
+      reject: '拒绝',
+      withdraw: '撤回',
+    },
+    confirm: {
+      approveTitle: '确认批准并执行',
+      rejectTitle: '确认拒绝审批',
+      withdrawTitle: '确认撤回申请',
+      approveDesc: '批准只调用统一审批 API，服务端将自动创建执行任务。',
+      rejectDesc: '拒绝后申请进入终态，必须填写原因。',
+      withdrawDesc: '撤回后申请进入终态，原因可选。',
+    },
+    // 前端内部错误（缺申请编号时会在确认弹窗内回显）
+    errors: {
+      missingRequestId: '缺少审批申请编号',
     },
   },
 } as const

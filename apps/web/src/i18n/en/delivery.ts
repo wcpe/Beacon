@@ -1217,10 +1217,109 @@ export const delivery = {
       status: 'Status',
       createdAt: 'Created at',
     },
+    // Filters: key = field name (used as aria-label), Placeholder suffix = placeholder, All suffix = the "no filter" sentinel option
     filters: {
       advanced: 'Advanced filters',
+      status: 'Approval status',
+      statusAll: 'All statuses',
+      keyword: 'Approval keyword',
+      keywordPlaceholder: 'Search request ID / summary',
+      operation: 'Operation / domain',
+      operationPlaceholder: 'Domain, e.g. config.publish',
+      risk: 'Risk level',
+      riskAll: 'All risk levels',
+      requesterType: 'Requester type',
+      requesterTypeAll: 'All requesters',
+      requester: 'Requester',
+      requesterPlaceholder: 'Requester',
+      createdFrom: 'Created from',
+      createdTo: 'Created before',
+      expiresFrom: 'Expires from',
+      expiresTo: 'Expires before',
       groups: {
       },
+    },
+    // List area: count, loading / error states, empty states and namespace hints
+    list: {
+      total: '{{count}} total',
+      loading: 'Loading…',
+      loadFailed: 'Failed to load the approval list',
+      retry: 'Retry',
+      emptyAll: 'No pending approvals',
+      emptyFiltered: 'No results for the current filters',
+      clearFilters: 'Clear filters',
+      namespaceGlobal: 'Global',
+      namespaceRef: 'namespace {{id}}',
+    },
+    // Request status (shared by filter options, status badges and timeline fallback)
+    status: {
+      pending: 'Pending',
+      executing: 'Running',
+      succeeded: 'Completed',
+      failed: 'Failed',
+      rejected: 'Rejected',
+      withdrawn: 'Withdrawn',
+      expired: 'Expired',
+    },
+    // Timeline entry types: the two below are not request statuses and need their own copy
+    timeline: {
+      requested: 'Submitted',
+      approved: 'Approved',
+    },
+    risk: {
+      low: 'Low',
+      medium: 'Medium',
+      high: 'High',
+      critical: 'Critical',
+    },
+    // Risk badge: {{risk}} comes from risk.*
+    riskBadge: '{{risk}} risk',
+    principal: {
+      human: 'Human',
+      api_key: 'API key',
+      mcp: 'MCP',
+      system: 'System',
+    },
+    // Master-detail view
+    detail: {
+      title: 'Approval detail',
+      close: 'Close detail',
+      loadFailed: 'Failed to load the approval detail',
+      retry: 'Retry',
+      sections: {
+        riskImpact: 'Risk and impact',
+        snapshot: 'Request snapshot',
+        currentFacts: 'Current facts',
+        diff: 'Snapshot vs current',
+        timeline: 'Timeline',
+      },
+      resultLink: 'View domain result and audit trail',
+      noActions: 'Your principal cannot act on this request.',
+      // Why approval is blocked (same source as the disabled button)
+      blocked: {
+        drift: 'The underlying facts have drifted; file a new request based on the current facts',
+        evidence: 'The snapshot or current evidence is unavailable or expired',
+        expired: 'This request has expired',
+      },
+    },
+    // Approval actions (shared by the buttons and the confirmation dialog)
+    actions: {
+      approve: 'Approve and run',
+      reject: 'Reject',
+      withdraw: 'Withdraw',
+    },
+    confirm: {
+      approveTitle: 'Confirm approve and run',
+      rejectTitle: 'Confirm rejection',
+      withdrawTitle: 'Confirm withdrawal',
+      approveDesc:
+        'Approving only calls the unified approval API; the server creates the execution task for you.',
+      rejectDesc: 'Rejecting ends this request, and a reason is required.',
+      withdrawDesc: 'Withdrawing ends this request; a reason is optional.',
+    },
+    // Front-end error (missing request ID) shown inline in the confirmation dialog
+    errors: {
+      missingRequestId: 'Missing approval request ID',
     },
   },
 } as const
