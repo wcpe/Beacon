@@ -229,6 +229,19 @@ fun publishConfigChanged(changed: Set<String>, newMd5: String): ConfigReloadRepo
 （`delivery_orchestrator_advance.go` 的 `activating → failed`），随后由既有
 失败率 / 健康恶化熔断停推后续批次。**不做自动回滚**。
 
+**版本核对（后续补入，已实现）**：生效回执 `success` 时控制面并不直接判成功，而是用
+`delivery_config_artifact` 重算「配置工件整体摘要」并与插件自报 `appliedMd5` 比对，
+不一致即判 `failed` 并落可读原因「回执成功但版本不符：插件 X 自报 md5=… ≠ 期望 …」。
+
+- 重算入口 `DeliveryBlobService.ExpectedConfigArtifactMD5`，算法与 agent
+  `DeliveryCommandExecutor.configArtifactMd5` **逐字一致**（按 path 升序拼接 `path "\n" sha256 "\n"` 后取小写 md5）。
+- **刻意不比 `EffectiveService` 的有效配置 md5**：那是**周期同步**通道交给插件的值
+  （`ConfigApplier` 传 `result.md5`）；交付通道交给插件的是工件摘要（`configArtifactMd5`）。
+  两者语义不同，用错一侧会把按契约回显 `newMd5` 的合规插件**系统性判成不符**。
+- 三条不叠加/放行边界：插件已报 `failed`（原因归插件）、插件未自报 `appliedMd5`（无从核对）、
+  期望值不可得（无工件 / 查库失败 / 未装配）——一律不判不符，后者记 WARN 降级放行。
+- 比对实现见 `reconcileActivatingByAck` 的 `done` 分支与 `reloadMD5MismatchReason`。
+
 **告警**：复用已预留枚举 `model.AlertEventTypePublishFail = "publish-fail"`（`enums.go:780`，
 注释「预留枚举，当前无触发点」）。改动：
 
@@ -315,5 +328,10 @@ fun publishConfigChanged(changed: Set<String>, newMd5: String): ConfigReloadRepo
    但主线程仍卡——需要在插件侧遵守「重载不阻塞主线程」的纪律，agent 侧只能尽力而为。
 5. **`appliedVersion` 校验是否本期落地**：`ConfigReloadResult` 预留了字段，但「回执成功但版本不符」
    的判定建议放到后续（需控制面知道每个 config_file 的期望版本语义），本期只透传展示。
+   > **后续进展**：`appliedMd5` 一路已落地（见 §3.5「版本核对」），取的是**交付工件摘要**口径；
+   > `appliedVersion` 仍是纯透传——「每个 config_file 的期望版本语义」尚未定义，语义未定前不做判定。
 6. **多插件同 `dataId` 交叉影响**：两个插件订阅同一配置项时，一个 reload 成功、另一个失败的组合
    仍按一票否决处理；运维需从明细里分别判断，不提供自动区分。
+7. **`appliedMd5` 语义边界（v2 核对引入）**：核对只认「回显 agent 交给插件的 `newMd5`」这一种语义。
+   插件若自报别的 md5（如自算加载内容哈希），会被判不符而目标失败——这是刻意把契约显式化；
+   `appliedMd5` 属新增可选上报、生产插件尚未使用，故误判面可控。

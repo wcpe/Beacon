@@ -125,7 +125,20 @@ type DeliveryOrchestrator struct {
 	// alerter 交付失败告警扇出器（FR-275）。未装配（nil）即不产告警——告警是旁路，
 	// 装配缺失不得阻断交付编排本身。经 SetAlerter 注入（与既有 SetNotifier 同惯例）。
 	alerter deliveryFailAlerter
+	// expectedMD5 是「本单本目标下发给插件的内容摘要」期望值来源（FR-273 回执核对用）。
+	// 默认取交付数据面 DeliveryBlobService（构造时注入）；未装配即跳过核对（放行），
+	// 核对本身故障一律降级放行——绝不因核对不可用而阻断正常交付。
+	expectedMD5 deliveryExpectedMD5Source
 }
+
+// deliveryExpectedMD5Source 是编排器对「期望工件摘要」的最小依赖（窄接口，避免把数据面细节拉进推进器）。
+type deliveryExpectedMD5Source interface {
+	// ExpectedConfigArtifactMD5 返回某单某目标的配置工件整体摘要（算法见其实现处的说明）。
+	ExpectedConfigArtifactMD5(orderID uint, serverID string) (string, error)
+}
+
+// SetExpectedMD5Source 替换期望摘要来源（主要供测试注入故障 / 固定值；生产由构造函数注入数据面）。
+func (s *DeliveryOrchestrator) SetExpectedMD5Source(src deliveryExpectedMD5Source) { s.expectedMD5 = src }
 
 // deliveryFailAlerter 是编排器对告警域的最小依赖（窄接口，避免 service→runtime/alert 的宽耦合）。
 type deliveryFailAlerter interface {
@@ -205,7 +218,7 @@ func (s *DeliveryOrchestrator) SetCapabilityGuard(versions *repository.AgentIden
 func NewDeliveryOrchestrator(db *gorm.DB, repo *repository.ChangeOrderRepository, blobs *DeliveryBlobService,
 	cmdRepo *repository.AgentCommandRepository, audit *repository.AuditLogRepository,
 	health *healthview.Store, metrics *metricwindow.Store, notifier CommandNotifier) *DeliveryOrchestrator {
-	return &DeliveryOrchestrator{
+	s := &DeliveryOrchestrator{
 		db: db, repo: repo, blobs: blobs, cmdRepo: cmdRepo, audit: audit,
 		health: health, metrics: metrics, notifier: notifier,
 		events:         newDeliveryEventHub(),
@@ -217,6 +230,12 @@ func NewDeliveryOrchestrator(db *gorm.DB, repo *repository.ChangeOrderRepository
 		stallMu:        &sync.Mutex{},
 		stallByOrder:   map[uint]*deliveryStallState{},
 	}
+	// 期望摘要来源默认指向数据面（配置冻结工件口径）；blobs 为 nil 的测试装配下保持未装配，
+	// 核对逻辑据此降级放行（见 expectedMD5 字段说明）。
+	if blobs != nil {
+		s.expectedMD5 = blobs
+	}
+	return s
 }
 
 // Run 启动推进循环，直到 ctx 取消（随关停信号优雅退出）。
@@ -549,6 +568,10 @@ type deliveryReloadPlugin struct {
 	AppliedCount   *int   `json:"appliedCount"`
 	DetailJson     string `json:"detailJson"`
 }
+
+// deliveryReloadStatusOK 是插件重载成功的状态取值（与 agent 侧 DeliveryReloadPluginOutcome.STATUS_OK 同值）：
+// 版本核对只认此状态的插件，已报失败者不叠加版本结论（原因归插件）。
+const deliveryReloadStatusOK = "ok"
 
 // parseDeliveryCmdResult 解析命令结果摘要（损坏 / 空则返回零值，不阻断推进）。
 func parseDeliveryCmdResult(raw string) deliveryCmdResult {

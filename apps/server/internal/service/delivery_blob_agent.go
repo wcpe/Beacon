@@ -2,9 +2,12 @@ package service
 
 import (
 	"encoding/json"
+	"sort"
+	"strings"
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/merge"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
@@ -328,6 +331,62 @@ func preferConfigArtifacts(files []DeliveryManifestFileView) []DeliveryManifestF
 		merged = append(merged, files[i])
 	}
 	return merged
+}
+
+// ExpectedConfigArtifactMD5 重算某单某目标「配置工件整体摘要」，即交付生效阶段 agent 交给插件的 newMd5
+// 的对照值（agent 侧算法见 `DeliveryCommandExecutor.configArtifactMd5`），供控制面核对插件自报 appliedMd5
+// （FR-273「回执成功但版本不符」判定）。
+//
+// 口径逐字对齐 agent：按 **path 升序、同 path 取 sha 序首个** 取该目标全部配置冻结工件，拼接
+// `path "\n" sha256 "\n"`，整体取小写 md5。
+//
+// **不要改用 EffectiveService 的有效配置 md5**：那是「周期同步」通道交给插件的值（`ConfigApplier`
+// 传 `result.md5`）；交付通道交给插件的是本函数重算的工件摘要，两者语义不同——用错一侧会让
+// 按契约回显 newMd5 的合规插件被系统性判成「版本不符」，等于把核对本身变成批量误判失败。
+//
+// 无工件（纯文件交付单）返回空串与 nil：调用方据此判「期望值不可得」并放行（降级），不误判失败。
+func (s *DeliveryBlobService) ExpectedConfigArtifactMD5(orderID uint, serverID string) (string, error) {
+	if s.artifacts == nil {
+		// 正规装配（NewDeliveryBlobService）必定有该仓库；裸结构体仅在测试里出现。
+		// 返回「期望值不可得」而非 panic：本函数被推进器 goroutine 调用，panic 会打死整个推进循环。
+		return "", nil
+	}
+	arts, err := s.artifacts.ListByOrderServer(orderID, serverID)
+	if err != nil {
+		return "", err
+	}
+	return configArtifactMD5(arts), nil
+}
+
+// configArtifactMD5 对工件集合求整体摘要（纯函数，便于与 agent 侧算法对拍）。
+//
+// 显式按 (path, sha) 用 Go 字符串序排序并去重同 path 项：DB `ORDER BY path` 受排序规则影响
+// （大小写不敏感等），不足以充当跨端对拍依据；去重对齐 agent 的 `distinctBy { path }`。
+func configArtifactMD5(arts []model.DeliveryConfigArtifact) string {
+	if len(arts) == 0 {
+		return ""
+	}
+	sorted := make([]model.DeliveryConfigArtifact, len(arts))
+	copy(sorted, arts)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Path != sorted[j].Path {
+			return sorted[i].Path < sorted[j].Path
+		}
+		return sorted[i].SHA256 < sorted[j].SHA256
+	})
+	var b strings.Builder
+	lastPath := ""
+	for i := range sorted {
+		if i > 0 && sorted[i].Path == lastPath {
+			continue // 同 path 重复项按首个计（工件表以 (单, 目标, path) 唯一，此处仅防御历史脏数据）
+		}
+		lastPath = sorted[i].Path
+		b.WriteString(sorted[i].Path)
+		b.WriteByte('\n')
+		b.WriteString(sorted[i].SHA256)
+		b.WriteByte('\n')
+	}
+	return merge.MD5Hex(b.String())
 }
 
 // 交付阶段回执 phase 取值（spec §5.2）。

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -176,14 +178,25 @@ func (s *DeliveryOrchestrator) reconcileActivatingByAck(rt *orderRuntime, t *mod
 	case model.CommandStatusDone:
 		// 成功也要落 reload_report（FR-274）：控制面需据此核对「回执成功但版本不符」
 		// （插件自报 appliedMd5/appliedVersion 与期望不一致时必须显式可见，护栏：不得假报成功）。
+		res := parseDeliveryCmdResult(cmd.ResultDetail)
 		updates := map[string]any{"activated_at": s.now()}
-		if res := parseDeliveryCmdResult(cmd.ResultDetail); res.Reload != nil {
+		if res.Reload != nil {
 			if raw, err := json.Marshal(res.Reload); err == nil {
 				updates["reload_report"] = string(raw)
 			}
 		}
+		// 回执成功不等于版本相符：插件自报的 appliedMd5 与期望工件摘要不一致时判 failed（不得留 activated），
+		// 原因显式落到目标行 error（不写成笼统「失败」），reload_report 仍一并保留供展开。
+		if reason, mismatch := s.reloadVersionMismatch(rt, t, res.Reload); mismatch {
+			delete(updates, "activated_at") // 不符即未生效：一并撤掉生效时间锚点，避免「failed 却像生效过」
+			updates["error"] = reason
+			s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusFailed, updates)
+			return
+		}
 		s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusActivated, updates)
 	case model.CommandStatusFailed:
+		// 插件重载失败（一票否决，FR-272）只按 agent 给的 reason 落 failed：不再叠加「版本不符」，
+		// 否则真实失败原因会被核对结论掩盖（见 reloadVersionMismatch 只认 status=ok 的插件）。
 		res := parseDeliveryCmdResult(cmd.ResultDetail)
 		s.failTargetWithResult(rt, t, model.ChangeTargetStatusActivating, targetErrorOr(res.Error, "生效失败"), res)
 	case model.CommandStatusExpired:
@@ -191,6 +204,90 @@ func (s *DeliveryOrchestrator) reconcileActivatingByAck(rt *orderRuntime, t *mod
 	default:
 		s.failOnTimeout(rt, t, cmd, model.ChangeTargetStatusActivating, "生效超时（agent 未在 activateTimeoutSec 内回执）")
 	}
+}
+
+// reloadVersionMismatch 判定「回执成功但版本不符」（FR-273 收尾）：核对插件自报 appliedMd5 与期望工件摘要。
+//
+// 三条**只做加法、不做减法**的边界（每条都对应一类误判）：
+//   - 只看 `status=ok` 的插件：已报 failed 的插件不再叠加版本结论，避免真实失败原因被核对结论掩盖。
+//   - 只认**自报**了 appliedMd5 的插件：空串 = 未自报（老插件 / 不关心 md5 的实现），无从核对，放行。
+//   - 期望值不可得即放行：无工件（纯文件单）、未装配来源、查库 / 解析失败一律降级——核对是护栏，
+//     不是闸门，自身故障绝不能把正常交付判成失败。
+//
+// 命中时返回可直接落 `change_target.error` 的可读原因（点明哪个插件、自报值、期望值）。
+//
+// **自报值的语义约定（刻意取舍）**：插件应回显 agent 交给它的 `newMd5`，或干脆不自报；自报**别的**
+// md5 语义（如自算「加载到的文件内容 md5」）会被判不符。宁可让契约在这里显式化，也不放过
+// 「加载了旧内容却回执成功」——后者正是本核对要堵的假成功。`appliedMd5` 是本次新增的可选上报，
+// 生产插件尚未使用，误判面因此可控；契约已写在 `ReportingConfigChangeListener` 的注释里。
+func (s *DeliveryOrchestrator) reloadVersionMismatch(rt *orderRuntime, t *model.ChangeTarget,
+	report *deliveryReloadReport) (string, bool) {
+	if report == nil || len(report.Plugins) == 0 || s.expectedMD5 == nil {
+		return "", false
+	}
+	expected, err := s.expectedMD5.ExpectedConfigArtifactMD5(rt.order.ID, t.ServerID)
+	if err != nil {
+		slog.Warn("交付编排核对重载版本失败，按放行处理（核对不可用不阻断交付）",
+			"orderId", rt.order.ID, "serverId", t.ServerID, "错误", err)
+		return "", false
+	}
+	if expected == "" {
+		slog.Warn("交付编排缺少可核对的期望工件摘要，按放行处理（核对不可用不阻断交付）",
+			"orderId", rt.order.ID, "serverId", t.ServerID)
+		return "", false
+	}
+	return reloadMD5MismatchReason(report.Plugins, expected)
+}
+
+// reloadMD5MismatchReason 逐插件比对自报 md5 与期望值，返回「回执成功但版本不符」原因（纯函数，便于穷举单测）。
+//
+// 只比对 `status=ok` 且自报了 appliedMd5 的插件；任一不一致即整目标判不符（与「插件失败一票否决」同口径）。
+// 原因里保留两个 md5 的可辨识前缀，运维据此一眼看出「插件加载的是别的版本」而不是笼统失败。
+func reloadMD5MismatchReason(plugins []deliveryReloadPlugin, expected string) (string, bool) {
+	const maxReported = 5 // 原因串上限：插件数异常多时不把 error 列撑爆，超出部分只计数量
+	var sb strings.Builder
+	shown, total := 0, 0
+	for i := range plugins {
+		p := &plugins[i]
+		if p.Status != deliveryReloadStatusOK {
+			continue // 已报失败：原因归插件，不叠加版本结论
+		}
+		applied := strings.TrimSpace(p.AppliedMd5)
+		if applied == "" || strings.EqualFold(applied, expected) {
+			continue // 未自报（无从核对）或相符
+		}
+		total++
+		if shown == maxReported {
+			continue
+		}
+		if shown > 0 {
+			sb.WriteString("；")
+		}
+		shown++
+		sb.WriteString("插件 ")
+		sb.WriteString(p.Listener)
+		sb.WriteString(" 自报 md5=")
+		sb.WriteString(shortMd5(applied))
+		sb.WriteString(" ≠ 期望 ")
+		sb.WriteString(shortMd5(expected))
+	}
+	if total == 0 {
+		return "", false
+	}
+	reason := "回执成功但版本不符：" + sb.String()
+	if total > shown {
+		reason += "；另有 " + strconv.Itoa(total-shown) + " 个插件同样不符"
+	}
+	return reason, true
+}
+
+// shortMd5 截取 md5 前 12 位作可读标识（md5 全量 32 位，前缀足以区分且不把原因串撑长）。
+func shortMd5(md5 string) string {
+	const keep = 12
+	if len(md5) <= keep {
+		return md5
+	}
+	return md5[:keep] + "…"
 }
 
 // heartbeatReturned 判目标 identity 心跳是否已回归（restart 生效判据，spec §4.6.1）：
