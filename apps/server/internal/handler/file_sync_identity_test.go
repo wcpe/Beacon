@@ -468,3 +468,29 @@ func TestFileSyncDataPlaneAcceptsOwningAgents(t *testing.T) {
 		t.Fatalf("目标回传成功后状态应为 succeeded，实际 %s", target.Status)
 	}
 }
+
+// TestFileSyncBlobDownloadRejectsSameServerIDInOtherNamespace 验证同名实例跨命名空间不得读他人 blob。
+//
+// 动机：serverId 只在命名空间内唯一（Server 的唯一键是 (namespace_id, server_id)），
+// 而目标表没有 namespace 列。只比对 serverId 的话，另一环境同名的实例可以凭可枚举的
+// taskId 加上已知的 sha256 拉到本环境的文件正文。
+func TestFileSyncBlobDownloadRejectsSameServerIDInOtherNamespace(t *testing.T) {
+	f := newFileSyncIdentityFixture(t)
+	hash := testFileSyncHash("config.yml")
+	if rec := f.do(t, f.uploadRequest(f.task.ID, hash, []byte("config.yml"))); rec.Code != http.StatusNoContent {
+		t.Fatalf("源 agent 预置 blob 应成功，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+
+	// 与目标同名、但属于另一个命名空间的身份。
+	f.auth.identity = agentauth.Identity{
+		Namespace: "staging", ServerID: fileSyncTargetIdentity().ServerID,
+		Kind: model.ServerKindBackend, IdentityID: "identity-staging-target",
+	}
+	rec := f.do(t, f.downloadRequest(f.task.ID, hash))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("跨命名空间同名实例下载必须返回 404，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "config.yml") {
+		t.Fatalf("被拒绝的下载不得回吐文件内容，实际：%s", rec.Body.String())
+	}
+}

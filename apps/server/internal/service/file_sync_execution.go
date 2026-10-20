@@ -78,19 +78,31 @@ func fileSyncTaskOwnedBySource(task *model.FileSyncTask, identity agentauth.Iden
 	if task == nil || identity.Namespace == "" || identity.ServerID == "" {
 		return false
 	}
+	if task.NamespaceCode != identity.Namespace {
+		return false
+	}
 	return task.NamespaceCode == identity.Namespace && task.SourceServerID == identity.ServerID
 }
 
 // isFileSyncTarget 判定身份是否在该任务的计划目标内（blob 下载方）。
 // 用带索引的存在性计数而不是拉全部目标：下载是按文件粒度的热路径，
 // 拉全表会把 O(1) 放大成 O(目标数)。
-func (s *FileSyncService) isFileSyncTarget(taskID uint, identity agentauth.Identity) bool {
-	if identity.Namespace == "" || identity.ServerID == "" {
+//
+// 必须同时比对 namespace：serverId 只在命名空间内唯一（Server 的唯一键是
+// (namespace_id, server_id)），目标表又没有 namespace 列，只比 serverId 会让
+// 另一环境同名的实例通过本任务的校验、用可枚举的 taskId 拉走本环境的文件正文。
+func (s *FileSyncService) isFileSyncTarget(task *model.FileSyncTask, identity agentauth.Identity) bool {
+	if task == nil || identity.Namespace == "" || identity.ServerID == "" {
+		return false
+	}
+	// 必须同时比对 namespace：serverId 只在命名空间内唯一，目标表又没有 namespace 列，
+	// 只比 serverId 会让另一环境同名实例通过本任务校验、拉走本环境的文件正文。
+	if task.NamespaceCode != identity.Namespace {
 		return false
 	}
 	var count int64
 	if err := s.db.Model(&model.FileSyncTarget{}).
-		Where("task_id = ? AND server_id = ?", taskID, identity.ServerID).
+		Where("task_id = ? AND server_id = ?", task.ID, identity.ServerID).
 		Count(&count).Error; err != nil {
 		return false
 	}
@@ -195,7 +207,7 @@ func (s *FileSyncService) OpenBlob(identity agentauth.Identity, taskID uint, has
 	if err != nil {
 		return nil, 0, err
 	}
-	if !s.isFileSyncTarget(task.ID, identity) {
+	if !s.isFileSyncTarget(task, identity) {
 		return nil, 0, apperr.ErrFileSyncTaskNotFound
 	}
 	if !isSHA256Hex(hash) {
