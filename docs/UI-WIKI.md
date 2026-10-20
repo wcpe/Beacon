@@ -10,7 +10,7 @@
 | 路径 | `apps/ui-wiki` |
 | 消费包 | `@beacon/ui`（`packages/ui`） |
 | 数据 | 仅本地静态示例，**不请求** Beacon 后端 / 不依赖 auth / 环境 / React Query 业务查询 |
-| 门禁 | `pnpm check:ui-wiki`（`scripts/check-ui-wiki-coverage.mjs`），`apps/ui-wiki` 的 `build` 会先跑覆盖率校验 |
+| 门禁 | `pnpm check:ui-wiki`（`scripts/check-ui-wiki-coverage.mjs`，当前 129 个导出），`apps/ui-wiki` 的 `build` 会先跑覆盖率校验 |
 
 每个 `@beacon/ui` **公开导出**必须在博物馆有展示或在覆盖清单中有登记；新增导出而未补展示会让 CI / `pnpm check:ui-wiki` 失败。
 
