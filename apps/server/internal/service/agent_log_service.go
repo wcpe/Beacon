@@ -18,9 +18,10 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
-// agentLogContentTTL 是日志正文在库内的保留时长，与浏览正文（browseResultTTL）同口径 5 分钟。
-// 两者都是「agent 回传的受控瞬态」，共用一套到期语义，避免同类内容两套保留期。
-const agentLogContentTTL = browseResultTTL
+// agentLogContentTTL 是日志正文在库内的保留时长，数值与浏览正文（browseResultTTL）一样是 5 分钟。
+// 刻意写成独立常量而不是引用 browseResultTTL：两者语义不同、独立演进，
+// 引用会让「为浏览 UX 调整 browseResultTTL」静默改掉日志保留期。
+const agentLogContentTTL = 5 * time.Minute
 
 // AgentLogLine 是 agent 回传的一行日志（级别 + 已脱敏文本，FR-88，见 ADR-0040）。
 // 脱敏在 agent 侧落环形缓冲那一刻完成，控制面只忠实转存 / 透传，不再处理原文。
