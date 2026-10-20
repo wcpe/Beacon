@@ -14,7 +14,7 @@
   - 登录端点：操作者凭据（用户名/口令）→ 令牌；凭据来源走 env/配置，禁硬编码。
   - 令牌校验中间件挂在 `/admin/v1/*`（登录端点自身豁免）；无/错令牌 → 401。
   - 写操作（发布/回滚/改派/下线/新建/软删等）授权校验；操作者身份从认证态取，纳入既有 `audit_log`，后端以认证身份为准（忽略请求里手填的 operator）。
-  - agent 侧 `/beacon/v1/agent/*` 的共享 token 维持不变（仅防误连，不动其语义）。
+  - agent 侧 `/beacon/v1/agent/*` 的注册通道维持共享 token（判定受信内部调用方）；数据面要求 namespace access token 加 DB 权威已确认身份，见 [ADR-0094](../adr/0094-v1-agent-data-plane-authoritative-identity.md)。
 - 不做（范围外）：
   - 角色/权限矩阵（RBAC）、多操作者账户体系。
   - 配置加密（FR-20）。

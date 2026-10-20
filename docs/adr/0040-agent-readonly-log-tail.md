@@ -1,6 +1,6 @@
 # ADR-0040：agent 只读日志回传——自身日志内存环形缓冲 + 命令-回传 + 落缓冲脱敏
 
-**状态**：已接受
+**状态**：已接受（决策 4 中「回传端点与既有 agent 端点同属 agentToken 防误连信任面」的相应表述已被 [ADR-0094](0094-v1-agent-data-plane-authoritative-identity.md) 取代）
 
 ## 背景
 

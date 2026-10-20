@@ -89,11 +89,13 @@ serverId=onb-game-a dir=/srv/mc/onb-game-a role=backend target=zone:onb-zone1 de
 ## 2. 升级与发布
 - **升级前先备份数据库（SQLite 文件/持久卷或外置 MySQL）与 Agent 本地状态**（见 §4）。
 - 控制面：拉取已核验的 GA 产品资产，再重启服务；数据库迁移只允许 expand / 可重入回填，回滚不依赖 down migration。
-- **升级到 v1 数据面要求身份确认的版本前，必须逐项确认以下前提**（否则该 agent 的数据面会全部失败且只静默重试，不会自动重注册）：
+- **升级到 v1 数据面要求身份确认的版本前，必须逐项确认以下前提**（否则该 agent 的数据面会全部失败；401 / 403 / 409 只按心跳周期静默重试，归属不符的 404 则会触发重新注册）：
   1. 每个 agent 的 `beacon.bootstrap-token` 必须是**其所属命名空间的 access token**，不能是历史全局共享 `agent-token`；
   2. 该 agent 的身份在管理台须为 `active`（`pending` / `disabled` / `conflict` 均不放行），且已绑定 serverId；
-  3. 建议先把 agent 升到会发送 `X-Beacon-Identity` / `X-Beacon-Boot` 的版本，再升控制面。
-  失败表现为数据面 401 / 403 / 409，而注册端点不受影响。
+  3. 同批替换 agent 与控制面：先按本节 1、2 项确认 token 类型与身份状态，再统一升级（下方「控制面与 agent 的产品版本必须一致」同样适用，不要让两侧版本错开）。
+  失败表现为数据面 401 / 403 / 409 / **404**：404 属归属不符（含陈旧 boot），agent 侧把心跳 404 识别为「未注册需重新注册」，日志表现为**反复 register**，看到该现象应先怀疑 token 类型或身份状态，而不是网络连通性。
+  注册端点自身的归属不符返回 **409 `IDENTITY_BINDING_MISMATCH`**（自报 namespace/serverId 与身份绑定不一致），属配置错误，按本节 1、2 项核对即可。
+  规则见 [ADR-0094](adr/0094-v1-agent-data-plane-authoritative-identity.md)。
 - agent：按批替换 Bukkit/Bungee JAR 并重启节点，保留 `plugins/Beacon/` 本地身份、配置快照、流位置与幂等账本。控制面与 agent 的产品版本必须一致。
 - 产品资产发布前使用 `SHA256SUMS.txt` 校验；平台是否发布由本次 RC 的实际资产决定，不额外引入阶段专属平台准入。
 

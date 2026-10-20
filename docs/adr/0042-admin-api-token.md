@@ -1,6 +1,6 @@
 # ADR-0042：脚本化 admin API token 复用 FR-42 运行时 API 密钥，仅补「复制为 curl」自动化辅助（扩展 ADR-0026）
 
-**状态**：已接受
+**状态**：已接受（其中「agent 共享 `X-Beacon-Token` 非安全边界」的相应表述已被 [ADR-0094](0094-v1-agent-data-plane-authoritative-identity.md) 取代）
 
 ## 背景
 

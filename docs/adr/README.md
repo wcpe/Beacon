@@ -43,9 +43,9 @@
 | [0037](0037-reverse-fetch-managed-task.md) | 反向抓取受管任务 + 状态机 + 两段式 scan/submit（取代 ADR-0027 决策5、扩展决策1） | 已接受 |
 | [0038](0038-ops-settings-store-hot-reload.md) | 运维设置 store + 热生效：热改项真源由 config.yml 移到 DB | 已接受 |
 | [0039](0039-agent-self-reported-version.md) | agent 注册时自报构建版本（壳层经 TabooLib pluginVersion 注入），控制面只读暴露 InstanceView、管理台展示 + 集群版本不一致黄标 | 已接受 |
-| [0040](0040-agent-readonly-log-tail.md) | agent 只读日志回传：自身日志内存环形缓冲 + 命令-回传 + 落缓冲脱敏（不读任意文件、行数有界、限速、agentToken 信任面） | 已接受 |
+| [0040](0040-agent-readonly-log-tail.md) | agent 只读日志回传：自身日志内存环形缓冲 + 命令-回传 + 落缓冲脱敏（不读任意文件、行数有界、限速、agentToken 信任面） | 已接受（决策 4 的「同属 agentToken 防误连信任面」表述被 [0094](0094-v1-agent-data-plane-authoritative-identity.md) 取代） |
 | [0041](0041-alert-event-persistence.md) | 告警事件持久化实体 alert_event（留痕 + UI 信息流，作 PersistAlerter 通道接入扇出，取代 ADR-0019「告警不落库」结论） | 已接受 |
-| [0042](0042-admin-api-token.md) | 脚本化 admin API token 复用 FR-42 运行时 API 密钥，仅补「复制为 curl」自动化辅助（扩展 ADR-0026，不新增并行凭据） | 已接受 |
+| [0042](0042-admin-api-token.md) | 脚本化 admin API token 复用 FR-42 运行时 API 密钥，仅补「复制为 curl」自动化辅助（扩展 ADR-0026，不新增并行凭据） | 已接受（其中「agent 共享 `X-Beacon-Token` 非安全边界」的表述被 [0094](0094-v1-agent-data-plane-authoritative-identity.md) 取代） |
 | [0043](0043-admin-nav-grouping-and-settings-aggregation.md) | 管理台导航分组 + 设置区聚合 IA：侧栏 5 组可折叠手风琴 + 设置三块顶层 tab/子 tab + 嵌套子路由 search param 深链 + 旧路由前端重定向 | 部分被 [0048](0048-flatten-system-nav-pages.md) 取代（聚合/折叠/二级子 tab 部分；5 组手风琴 + NAV 单一真源仍有效） |
 | [0044](0044-control-plane-online-self-update.md) | 控制面在线自更新核心：按渠道查 wcpe/Beacon Release → 下载本平台资产（超时/上限/失败清理）→ SHA256 校验 → 原子落位 pending → 以退出码 70 交还 launcher → 任何阶段失败保留旧版不退；进度内存态不建表、审计落库（渠道语义引 ADR-0046） | 已接受（决策 5/6/7 的 launcher 交接部分被 [0053](0053-single-binary-self-replace.md) 取代） |
 | [0045](0045-builtin-launcher-supervisor.md) | 内置 launcher 监督进程：独立第二二进制 + 退出码协议（0/1/70）+ 跨平台换二进制（Win rename 让位 / Unix rename 覆盖）+ 端口先退后起 + 裸跑兜底，本期 launcher 不自更新 | 已被 [0053](0053-single-binary-self-replace.md) 取代 |
@@ -97,7 +97,7 @@
 | [0091](0091-control-plane-self-health-metrics.md) | 控制面自身健康进抓取端点（DB 查询留在后台，抓取只读缓存） | 已接受；扩展 [0090](0090-metrics-endpoint-dedicated-listener.md) 的端点，不取代任何 ADR |
 | [0092](0092-runtime-version-carries-candidate-suffix.md) | 运行时版本号携带候选后缀（`VERSION` 文件仍为 `X.Y.Z`，两侧解析强度不对称） | 已接受；**部分取代 [0073](0073-standard-rc-ga-release-lifecycle.md) 第 4 条**（「运行时版本报告 `X.Y.Z`」收窄为「`VERSION` 文件与资产名报告 `X.Y.Z`」；JAR/POM、文件名与 OCI payload 口径不变） |
 | [0093](0093-direct-sensitive-content-reads.md) | 指定敏感内容读取改为直执并强审计 | 已接受；部分取代 [0079](0079-principal-capability-and-dangerous-operation-approval.md) 与 FR-209 的读取审批边界 |
-| [0094](0094-v1-agent-data-plane-authoritative-identity.md) | v1 agent 数据面以 DB 权威身份替代共享 token 信任 | 已接受；取代 [0009](0009-control-plane-auth-pulled-forward.md) 中「agent 侧共享 token 不升级为安全边界」的条款 |
+| [0094](0094-v1-agent-data-plane-authoritative-identity.md) | v1 agent 数据面以 DB 权威身份替代共享 token 信任 | 已接受；取代 [0009](0009-control-plane-auth-pulled-forward.md) 中「agent 侧共享 token 不升级为安全边界」的条款，并取代 [0040](0040-agent-readonly-log-tail.md) 决策 4、[0042](0042-admin-api-token.md) 中关于共享 token 非安全边界的表述 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 
