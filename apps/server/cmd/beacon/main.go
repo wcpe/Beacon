@@ -519,6 +519,8 @@ func run() error {
 	// 多级灰度文件同步中心（FR-129/FR-131）：当前切片只装配任务真源、目标规划、控制动作与管理台 SSE。
 	fileSyncService := service.NewFileSyncService(db, repository.NewFileSyncRepository(db), instanceService, auditRepo, service.NewFileSyncEventHub())
 	fileSyncHandler := handler.NewFileSyncHandler(fileSyncService)
+	// v1 数据面四条 file-sync 端点同样要求权威身份：共享 token 下不校验即可用他人 taskId 写清单/灌 blob/改任务状态。
+	fileSyncHandler.SetReportAuthenticator(v2ControlPlaneService)
 
 	// 取 agent 日志（FR-88，见 ADR-0040）：编排取自身脱敏日志的命令-回传周期（触发 + 单活跃限速 + 回传转存瞬态 + 查询）。
 	// 复用同一 agent_command 通路（tail-logs 类型），命令提交后经 notifier 唤醒目标 agent。

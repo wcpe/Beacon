@@ -15,6 +15,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
@@ -60,10 +61,50 @@ func (s *FileSyncService) createSourceScanCommand(tx *gorm.DB, task *model.FileS
 }
 
 // ReceiveSourceManifest 接收源 agent 扫描结果，写入源清单并标记缓存可用。
-func (s *FileSyncService) ReceiveSourceManifest(commandID uint, files []FileSyncManifestFile, _ string) error {
+// fileSyncCommandOwnedBy 判定命令归属与回传身份是否一致。
+//
+// 为什么必须判：commandId 自增可枚举，v1 数据面共用一把 token，
+// 只按 id 处理等于允许任一 agent 推进别人的同步任务。
+// 零值身份显式判 false，避免「没解析出身份」与「命令归属为空」互相匹配而放行。
+func fileSyncCommandOwnedBy(cmd *model.AgentCommand, identity agentauth.Identity) bool {
+	if cmd == nil || identity.Namespace == "" || identity.ServerID == "" {
+		return false
+	}
+	return cmd.NamespaceCode == identity.Namespace && cmd.ServerID == identity.ServerID
+}
+
+// fileSyncTaskOwnedBySource 判定身份是否为该任务的源实例（blob 上传方）。
+func fileSyncTaskOwnedBySource(task *model.FileSyncTask, identity agentauth.Identity) bool {
+	if task == nil || identity.Namespace == "" || identity.ServerID == "" {
+		return false
+	}
+	return task.NamespaceCode == identity.Namespace && task.SourceServerID == identity.ServerID
+}
+
+// isFileSyncTarget 判定身份是否在该任务的计划目标内（blob 下载方）。
+// 用带索引的存在性计数而不是拉全部目标：下载是按文件粒度的热路径，
+// 拉全表会把 O(1) 放大成 O(目标数)。
+func (s *FileSyncService) isFileSyncTarget(taskID uint, identity agentauth.Identity) bool {
+	if identity.Namespace == "" || identity.ServerID == "" {
+		return false
+	}
+	var count int64
+	if err := s.db.Model(&model.FileSyncTarget{}).
+		Where("task_id = ? AND server_id = ?", taskID, identity.ServerID).
+		Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
+func (s *FileSyncService) ReceiveSourceManifest(identity agentauth.Identity, taskID, commandID uint, files []FileSyncManifestFile, _ string) error {
 	cmd, payload, err := s.requireFileSyncCommand(commandID, model.CommandTypeFileSyncSource)
 	if err != nil {
 		return err
+	}
+	// 归属与 taskId 一致性都必须早于任何写操作：用他人 taskId 提交自己的命令会造成错配写入。
+	if !fileSyncCommandOwnedBy(cmd, identity) || payload.TaskID != taskID {
+		return apperr.ErrCommandNotFound
 	}
 	task, err := s.requireTask(payload.TaskID)
 	if err != nil {
@@ -126,9 +167,16 @@ func (s *FileSyncService) ListSourceManifest(taskID uint) ([]FileSyncManifestFil
 }
 
 // StoreBlob 流式写入源 blob，并校验 sha256。
-func (s *FileSyncService) StoreBlob(taskID uint, hash string, reader io.Reader) error {
-	if _, err := s.requireTask(taskID); err != nil {
+// StoreBlob 接收源 agent 上传的 blob。
+// 只有任务的源实例可以写：blob 目录按 taskId 分片，落盘后会被该任务的目标原样下发，
+// 不校验来源等于允许任一 agent 往别人的交付里塞内容。
+func (s *FileSyncService) StoreBlob(identity agentauth.Identity, taskID uint, hash string, reader io.Reader) error {
+	task, err := s.requireTask(taskID)
+	if err != nil {
 		return err
+	}
+	if !fileSyncTaskOwnedBySource(task, identity) {
+		return apperr.ErrFileSyncTaskNotFound
 	}
 	if !isSHA256Hex(hash) {
 		return apperr.ErrInvalidParam
@@ -141,9 +189,14 @@ func (s *FileSyncService) StoreBlob(taskID uint, hash string, reader io.Reader) 
 }
 
 // OpenBlob 打开已缓存 blob；调用方负责关闭文件。
-func (s *FileSyncService) OpenBlob(taskID uint, hash string) (*os.File, int64, error) {
-	if _, err := s.requireTask(taskID); err != nil {
+// 只有该任务计划内的目标实例可以下载：源本身即内容持有者，放开等于允许源自行扩权读缓存。
+func (s *FileSyncService) OpenBlob(identity agentauth.Identity, taskID uint, hash string) (*os.File, int64, error) {
+	task, err := s.requireTask(taskID)
+	if err != nil {
 		return nil, 0, err
+	}
+	if !s.isFileSyncTarget(task.ID, identity) {
+		return nil, 0, apperr.ErrFileSyncTaskNotFound
 	}
 	if !isSHA256Hex(hash) {
 		return nil, 0, apperr.ErrInvalidParam
@@ -382,10 +435,14 @@ func (s *FileSyncService) createTargetCommand(tx *gorm.DB, task *model.FileSyncT
 }
 
 // ReceiveTargetResult 接收目标 agent 应用结果并推进批次 / 任务状态。
-func (s *FileSyncService) ReceiveTargetResult(commandID uint, result FileSyncTargetResult) error {
+func (s *FileSyncService) ReceiveTargetResult(identity agentauth.Identity, taskID, commandID uint, result FileSyncTargetResult) error {
 	cmd, payload, err := s.requireFileSyncCommand(commandID, model.CommandTypeFileSyncApply)
 	if err != nil {
 		return err
+	}
+	// 归属与 taskId 一致性早于状态推进：否则可用他人 taskId 把别人的任务标成完成或失败。
+	if !fileSyncCommandOwnedBy(cmd, identity) || payload.TaskID != taskID {
+		return apperr.ErrCommandNotFound
 	}
 	task, target, err := s.requireTargetResultScope(cmd, payload)
 	if err != nil {

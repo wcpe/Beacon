@@ -15,6 +15,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -62,16 +64,16 @@ func TestFileSyncBlobUploadDownloadStreamsBytes(t *testing.T) {
 	content := []byte("binary\x00content\nwith-stream")
 	hash := sha256.Sum256(content)
 	hashText := hex.EncodeToString(hash[:])
-	upload := httptest.NewRequest(http.MethodPut,
-		fmt.Sprintf("/file-sync/%d/blobs/%s", taskID, hashText), bytes.NewReader(content))
+	upload := fileSyncAgentRequest(http.MethodPut,
+		fmt.Sprintf("/file-sync/%d/blobs/%s", taskID, hashText), "source", bytes.NewReader(content))
 	uploadResp := httptest.NewRecorder()
 	r.ServeHTTP(uploadResp, upload)
 	if uploadResp.Code != http.StatusNoContent {
 		t.Fatalf("上传 blob 应返回 204，实际 %d：%s", uploadResp.Code, uploadResp.Body.String())
 	}
 
-	download := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/file-sync/%d/blobs/%s", taskID, hashText), nil)
+	download := fileSyncAgentRequest(http.MethodGet,
+		fmt.Sprintf("/file-sync/%d/blobs/%s", taskID, hashText), "target", nil)
 	downloadResp := httptest.NewRecorder()
 	r.ServeHTTP(downloadResp, download)
 	got, err := io.ReadAll(downloadResp.Result().Body)
@@ -95,7 +97,7 @@ func newFileSyncBlobTestHandler(t *testing.T) (*FileSyncHandler, uint) {
 	if err != nil {
 		t.Fatalf("打开 sqlite 失败：%v", err)
 	}
-	if err := db.AutoMigrate(&model.FileSyncTask{}); err != nil {
+	if err := db.AutoMigrate(&model.FileSyncTask{}, &model.FileSyncTarget{}); err != nil {
 		t.Fatalf("迁移测试表失败：%v", err)
 	}
 	task := &model.FileSyncTask{
@@ -106,7 +108,40 @@ func newFileSyncBlobTestHandler(t *testing.T) (*FileSyncHandler, uint) {
 	if err := db.Create(task).Error; err != nil {
 		t.Fatalf("创建测试任务失败：%v", err)
 	}
+	// 下载侧要求身份在该任务的计划目标内，因此补一条目标行。
+	target := &model.FileSyncTarget{TaskID: task.ID, BatchNo: 1, ServerID: "target-1", Status: model.FileSyncTargetStatusPending}
+	if err := db.Create(target).Error; err != nil {
+		t.Fatalf("创建测试目标失败：%v", err)
+	}
 	svc := service.NewFileSyncService(db, repository.NewFileSyncRepository(db), nil, nil, service.NewFileSyncEventHub())
 	svc.SetBlobRoot(t.TempDir())
-	return NewFileSyncHandler(svc), task.ID
+	h := NewFileSyncHandler(svc)
+	// 数据面要求权威身份：这里注入一个固定校验器，测试用 source-1 身份上传、target-1 身份下载。
+	h.SetReportAuthenticator(stubFileSyncReportAuth{})
+	return h, task.ID
+}
+
+// stubFileSyncReportAuth 按请求头里的身份 ID 返回预置身份，供 handler 级测试使用。
+type stubFileSyncReportAuth struct{}
+
+func (stubFileSyncReportAuth) AuthenticateAgentReport(_, identityID, _, _ string) (agentauth.Identity, error) {
+	switch identityID {
+	case "":
+		return agentauth.Identity{}, apperr.ErrUnauthorized
+	case "source":
+		return agentauth.Identity{Namespace: "prod", ServerID: "source-1", IdentityID: "source"}, nil
+	case "target":
+		return agentauth.Identity{Namespace: "prod", ServerID: "target-1", IdentityID: "target"}, nil
+	default:
+		return agentauth.Identity{}, apperr.ErrUnauthorized
+	}
+}
+
+// fileSyncAgentRequest 构造带身份头的请求。
+func fileSyncAgentRequest(method, target, identityID string, body io.Reader) *http.Request {
+	req := httptest.NewRequest(method, target, body)
+	req.Header.Set("X-Beacon-Token", "test-token")
+	req.Header.Set("X-Beacon-Identity", identityID)
+	req.Header.Set("X-Beacon-Boot", "boot-1")
+	return req
 }
