@@ -44,6 +44,28 @@ func authenticateAgentReport(w http.ResponseWriter, r *http.Request, authn agent
 	return identity, true
 }
 
+// resolveAgentIdentity 是 authenticateAgentReport 的不写响应版本，供「身份可选」的引导端点自行决定拒绝方式。
+//
+// 只用于注册端点：该端点在**共享 token 的机器注册通道**下可能确实尚无身份（引导阶段），
+// 不能像数据面端点那样无条件要求身份；但经 v2 身份分支到达的请求身份是可校验的（见 Register 注释），
+// 此时必须比对归属，否则同一把 namespace token 仍可把拓扑注册进任意环境。
+// 校验器未注入时返回 ok=false，由调用方按 fail-closed 处理。
+func resolveAgentIdentity(r *http.Request, authn agentReportAuthenticator) (agentauth.Identity, bool) {
+	if authn == nil {
+		return agentauth.Identity{}, false
+	}
+	identity, err := authn.AuthenticateAgentReport(
+		r.Header.Get("X-Beacon-Token"),
+		r.Header.Get("X-Beacon-Identity"),
+		r.Header.Get("X-Beacon-Boot"),
+		r.RemoteAddr,
+	)
+	if err != nil {
+		return agentauth.Identity{}, false
+	}
+	return identity, true
+}
+
 // bindAgentTarget 校验请求自报的 namespace / serverId 与权威身份一致，并回传后续应当使用的归属值。
 //
 // 只做**比对**、不做回填：缺参的失败口径仍由各端点原有校验负责（INVALID_PARAM / IDENTITY_REQUIRED 等），

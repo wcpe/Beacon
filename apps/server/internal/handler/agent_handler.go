@@ -85,6 +85,30 @@ func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	trustedInternal := agentauth.IsTrustedInternal(r.Context())
+	// 归属校验：注册同时是数据面挂载入口，若不校验归属，任一持 namespace token 的实例都能把
+	// 自己注册进**任意环境**的实例列表与拓扑，并自定 address / role / capacity / weight / backends，
+	// 污染 /discovery 与落位建议；按 < TTL 周期重注册他人 serverId 还会让真 agent 永久注册失败。
+	//
+	// 为什么可以在这里校验（ADR-0094 决策 5）：共享 token 的机器注册通道是引导入口，此时可能尚无
+	// 可校验身份，保持原样放行；而其余请求是经 agentTokenMiddleware 的 v2 身份分支进来的——
+	// 该分支的 AuthenticateAgentV2 已要求身份 active、serverId 已绑定、boot 与 DB 一致，
+	// 所以调用者必然持有完整权威身份，自报归属必须与之一致。
+	if !trustedInternal {
+		identity, ok := resolveAgentIdentity(r, h.reportAuth)
+		if !ok {
+			// 校验器缺失或身份不可解析：fail-closed，不能退回信任自报归属。
+			render.WriteError(w, r, apperr.ErrUnauthorized)
+			return
+		}
+		if req.Namespace != identity.Namespace || req.ServerID != identity.ServerID {
+			// 复用 ErrIdentityBindingMismatch（409）：语义就是「身份绑定与自报 namespace / serverId 不一致」，
+			// 与 v2 侧同码同文案，运维一眼能看出是部署参数填错而非权限问题。
+			// 不用 404：这里比的是调用方**对自己**的声明，不涉及他人资源存在性，不构成枚举面。
+			render.WriteError(w, r, apperr.ErrIdentityBindingMismatch)
+			return
+		}
+	}
 	res, err := h.svc.Register(service.RegisterParams{
 		Namespace: req.Namespace, ServerID: req.ServerID, Role: req.Role, GroupHint: req.GroupHint,
 		Address: req.Address, Version: req.Version, AgentVersion: req.AgentVersion,
@@ -92,7 +116,7 @@ func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Backends: req.Backends, ClientIP: clientIP(r),
 		// 机器注册分支依据（FR-222，spec §3.3）：调用方类型取自 agentTokenMiddleware 注入的 context 标记
 		// （仅命中 X-Beacon-Token 共享 token 的请求带），**不来自请求体**，调用方无法伪造。
-		TrustedInternal: agentauth.IsTrustedInternal(r.Context()),
+		TrustedInternal: trustedInternal,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
