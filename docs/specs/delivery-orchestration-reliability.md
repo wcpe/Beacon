@@ -1,6 +1,6 @@
 # 功能规格：交付编排可靠性（提审事务化 · 终止目标收口 · 推进器停滞自愈 · 观察窗内存与预热口径）
 
-> 状态：已交付@v1.5.0（实现与单测落地；编排可靠性组真机验收 B1–B7 全通过）　·　关联 PRD：FR-259、FR-260、FR-262、FR-265　·　分支：feature/fr-259-orchestration
+> 状态：已交付@v1.5.0-rc.1（实现与单测落地；编排可靠性组真机验收 B1–B7 全通过）　·　关联 PRD：FR-259、FR-260、FR-262、FR-265　·　分支：feature/fr-259-orchestration
 > 承接：[v2-delivery-orchestration](v2-delivery-orchestration.md)（状态机 §4.1 / 熔断 §4.4.4 / 推进门 §4.4.5 / 观察窗 §4.6.3 / 回滚 §4.7）、[delivery-rollback-resilience](delivery-rollback-resilience.md)（回滚模型，本组不动）
 > 决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)（危险操作统一审批）、[ADR-0057](../adr/0057-surface-desensitized-errors.md)（错误脱敏）
 
