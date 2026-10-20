@@ -97,6 +97,7 @@
 | [0091](0091-control-plane-self-health-metrics.md) | 控制面自身健康进抓取端点（DB 查询留在后台，抓取只读缓存） | 已接受；扩展 [0090](0090-metrics-endpoint-dedicated-listener.md) 的端点，不取代任何 ADR |
 | [0092](0092-runtime-version-carries-candidate-suffix.md) | 运行时版本号携带候选后缀（`VERSION` 文件仍为 `X.Y.Z`，两侧解析强度不对称） | 已接受；**部分取代 [0073](0073-standard-rc-ga-release-lifecycle.md) 第 4 条**（「运行时版本报告 `X.Y.Z`」收窄为「`VERSION` 文件与资产名报告 `X.Y.Z`」；JAR/POM、文件名与 OCI payload 口径不变） |
 | [0093](0093-direct-sensitive-content-reads.md) | 指定敏感内容读取改为直执并强审计 | 已接受；部分取代 [0079](0079-principal-capability-and-dangerous-operation-approval.md) 与 FR-209 的读取审批边界 |
+| [0094](0094-v1-agent-data-plane-authoritative-identity.md) | v1 agent 数据面以 DB 权威身份替代共享 token 信任 | 已接受；取代 [0009](0009-control-plane-auth-pulled-forward.md) 中「agent 侧共享 token 不升级为安全边界」的条款 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

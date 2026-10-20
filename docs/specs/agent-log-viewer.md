@@ -35,10 +35,10 @@
   - `RequestTailLogs(ns, serverId, operator, clientIP)`：每实例单活跃限速（已有非终态 tail-logs 命令则拒 409）→ 事务建 pending tail-logs 命令 + 审计（instance.tail-logs，detail 仅 commandId/serverId，无内容）→ 唤醒 agent。
   - `ReceiveLogs(commandID, lines, clientIP)`：命令须 fetched 且 type=tail-logs → 把 lines 序列化存 LogContent（瞬态）→ CAS done。
   - `GetLogs(ns, serverId)`：取该实例最近一条 tail-logs 命令视图（状态 + 若 done 则解出 lines）。
-- agent 回传 handler：`POST /beacon/v1/agent/logs`（agentToken 信任面）。
+- agent 回传 handler：`POST /beacon/v1/agent/logs`（要求 `X-Beacon-Token` 为所属命名空间 access token + `X-Beacon-Identity` / `X-Beacon-Boot`；服务端把命令归属与权威身份比对，不符一律 `404`）。
 - admin handler：`POST /admin/v1/instances/{serverId}/logs?namespace=`（触发，202 返回命令视图，写、readonly 403）；`GET /admin/v1/instances/{serverId}/logs?namespace=`（取最近一条命令的状态 + 日志行，读）。
 - FetchPending 复用既有 AgentCommandService（已按 type 透传 payload）；tail-logs 命令也经 `/commands` 拉取——确认 FetchPending 不限定 type（现状不限）。
-- 过期清理：ExpireStale 已覆盖 pending/fetched 超时；扩展为转 expired 时清空 LogContent 瞬态（与命令过期同批）。
+- 过期清理：**`done` 是终态，`ExpireStale`（只覆盖 pending/fetched/ready）够不到它**，故日志正文用独立到期时间 `log_content_expires_at`：回传成功时写入「回传时刻 + 5 分钟」（与浏览正文 `browse_result_expires_at` 同口径）。读取路径（最近一条 / 指定命令 / 旧授权单消费）各自兜底判断该期限，过期即不返回正文（状态仍如实为 `done`）；清扫器 `ClearExpiredLogContents` 在每轮清理中回收过期正文，`NULL` 视为历史行、由同一轮一并回收。
 
 ### 3.3 前端（React/TS）
 - `api/types.ts`：`AgentLogLine { level; text }`、`AgentLogView { commandId; status; lines? }`。
