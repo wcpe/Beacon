@@ -278,28 +278,6 @@ func logContentReadable(cmd *model.AgentCommand, now time.Time) bool {
 	return cmd.LogContentExpiresAt == nil || cmd.LogContentExpiresAt.After(now)
 }
 
-// GetLatest 取某实例最近一条 tail-logs 命令的状态 + 日志（FR-88，供 admin 查询）。
-// 无任何取日志命令返回 (nil, nil)；done 则解出脱敏日志行，其余状态 lines 为空（前端据 status 显示进行中 / 失败）。
-// 只读不清：done 命令的瞬态日志在保留期内可重复读，不在读时抹除；未终结命令的瞬态由清理器超时过期时清空，
-// done 的正文由 ClearExpiredLogContents 按独立到期时间清空。
-func (s *AgentLogService) GetLatest(ns, serverID string) (*AgentLogResult, error) {
-	if ns == "" || serverID == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	cmd, err := s.repo.FindLatestByType(ns, serverID, model.CommandTypeTailLogs)
-	if err != nil {
-		return nil, err
-	}
-	if cmd == nil {
-		return nil, nil
-	}
-	res, _, err := buildAgentLogResult(cmd, time.Now().UTC())
-	if err != nil {
-		return nil, apperr.ErrInternal
-	}
-	return res, nil
-}
-
 // buildAgentLogResult 由命令行组装查询结果，并回报「正文是否真的返回」。
 //
 // 第二个返回值专供读审计判断：正文因过期 / 已清空而没返回时，本次读取并未交出内容，
@@ -340,7 +318,9 @@ func (s *AgentLogService) ReadLatest(ns, serverID, operator, clientIP string) (*
 	}
 	result, served, err := buildAgentLogResult(cmd, time.Now().UTC())
 	if err != nil {
-		return nil, err
+		// 与 GetLatest 的既有口径对齐：正文损坏属服务端内部问题，不把 json 语法错误原文
+		// 透给调用方（其它读路径同样归一到稳定的错误码）。
+		return nil, apperr.ErrInternal
 	}
 	// 未终结命令（pending/fetched/failed）仍记审计：这时的读取是「查状态」，前端据此显示进行中 / 失败。
 	// 只有 done 且正文不可返回才跳过——那种情况没有正文流出，不该留「读过正文」的痕迹。
