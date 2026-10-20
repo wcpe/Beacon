@@ -3,6 +3,10 @@
 // 筛选初值消费 URL 查询参数（targetRef/action/operator/targetType/result），承接 /commands、/alert-events、
 // 连接消息查询面等页的互跳链接（FR-157，含 action=message.payload.view 定位 payload 查看审计）；
 // 页内变更筛选不回写 URL（最简策略）。
+//
+// 动作筛选（issue #152）：候选清单不再手写，改用 scripts/gen-audit-actions.mjs 从后端
+// model.Action* 枚举生成的 AUDIT_ACTIONS（157 项），避免清单滞后于后端导致选不到动作。
+// 因候选量级远超其他筛选器，控件由下拉换成可键入过滤的 Combobox（同域动作已按前缀相邻）。
 
 import { useCallback, useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
@@ -14,13 +18,18 @@ import {
   Badge,
   Button,
   Checkbox,
+  Combobox,
   Input,
   TableSkeleton,
+  type ComboboxOption,
   type DataTableColumn,
 } from '@beacon/ui'
 import PageDataTable from '../../features/shared/page-data-table'
 import PageAsyncSection from '../../features/shared/page-async-section'
 import type { AuditItem } from '@beacon/contracts'
+// 动作候选真源：由 scripts/gen-audit-actions.mjs 从后端 model.Action* 枚举生成（157 项），
+// 同源性由 test/observability/audit-actions-source.test.ts 守护，勿在此手写清单。
+import { AUDIT_ACTIONS } from './audit-actions.generated'
 
 import { ApiClientError } from '../../api/cluster'
 import { exportAudits, fetchAudits } from '../../api/observability'
@@ -45,45 +54,8 @@ const AUDIT_WINDOW_MS: Record<string, number> = {
   '30d': 2_592_000_000,
 }
 const OPERATORS = ['admin', 'ops-chen', 'ops-wang', 'system'] as const
-// 与 devmock AUDIT_ACTIONS 对齐（动作 / 目标类型枚举）
-const ACTIONS = [
-  'auth.login',
-  'auth.logout',
-  'identity.approved',
-  'identity.rejected',
-  'identity.unbound',
-  'identity.disabled',
-  'identity.enabled',
-  'bc_cluster.create',
-  'bc_cluster.delete',
-  'region.create',
-  'region.delete',
-  'zone.create',
-  'zone.delete',
-  'server.assign',
-  'server.unassign',
-  'zone.rezone.initiated',
-  'zone.rezone.completed',
-  'server.set-draining',
-  'zone.set-default-entry',
-  'zone.clear-default-entry',
-  'config.file.trash',
-  'delivery.order.start',
-  'delivery.order.batch_confirm',
-  'cross_namespace.schedule',
-  'message.payload.view',
-  'asset.preview',
-  'settings.update',
-  'namespace_trust.grant',
-  'alert-event.acknowledge',
-  'alert-event.resolve',
-  'archive.job-create',
-  'archive.job-complete',
-  'system.update-check',
-  'instance.register',
-  'instance.offline',
-  'instance.online',
-] as const
+// 目标类型候选：仍是手写清单（后端 enums.go 另有 TargetType* 枚举，尚未纳入本次同源化范围），
+// 后端新增目标类型时需在此手动追加。
 const TARGET_TYPES = [
   'auth',
   'agent-identity',
@@ -155,6 +127,15 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
   const [exportError, setExportError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const cursor = useCursorStack()
+  // 动作候选：首项「全部」+ 生成物全量动作（同域动作按前缀相邻），
+  // URL 带入的未知 action 经 withCurrent 置顶并入，保证触发器能回显当前筛选值。
+  const actionOptions = useMemo<ComboboxOption[]>(
+    () => [
+      { value: 'all', label: t('observability.common.all') },
+      ...withCurrent(AUDIT_ACTIONS, action).map((value) => ({ value, label: actionLabel(value) })),
+    ],
+    [t, action, actionLabel],
+  )
 
   // 切换过滤 / 时间窗 / 冷查询开关时回到首页（热重置页码、冷重置游标栈）
   const resetPaging = () => {
@@ -353,17 +334,20 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
             resetPaging()
           }}
         />
-        <FilterSelect
-          label={t('observability.audits.filterAction')}
+        {/* 动作候选达 157 项，用可键入过滤的 Combobox（键入按中文标签或英文枚举子串命中）；
+            宽度比其他筛选器宽，容纳最长的动作标签（如「重同步命名空间 BC 目录」） */}
+        <Combobox
+          className="w-56"
+          aria-label={t('observability.audits.filterAction')}
           value={action}
-          options={withCurrent(ACTIONS, action).map((v) => ({
-            value: v,
-            label: actionLabel(v),
-          }))}
+          options={actionOptions}
           onChange={(value) => {
             setAction(value)
             resetPaging()
           }}
+          // 严格选：键入只用于过滤候选，不把半截输入当作筛选值上报
+          allowCustom={false}
+          emptyText={t('common.combobox.noMatch')}
         />
         <FilterSelect
           label={t('observability.audits.filterTargetType')}

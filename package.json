@@ -4,6 +4,8 @@
   "packageManager": "pnpm@10.32.1",
   "scripts": {
     "check:ui-wiki": "node scripts/check-ui-wiki-coverage.mjs",
+    "gen:audit-actions": "node scripts/gen-audit-actions.mjs",
+    "check:audit-actions": "node scripts/gen-audit-actions.mjs --check",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",
