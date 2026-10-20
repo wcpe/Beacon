@@ -96,14 +96,17 @@ export default function EnvFilter() {
           {/* 移动端把两组平铺进同一个 menu：必须各自成组，否则同组内会有两个 menuitemradio 同时选中，
               读屏会播报两次「已选中」，正好把这个修复要解决的困惑又制造出来。 */}
           <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-4">{t('common.envFilter.environmentGroup')}</p>
-          <DropdownMenuRadioGroup value={String(scope.kind === 'env' ? scope.envId : ALL_OBSERVATION_ENV)}>
+          <DropdownMenuRadioGroup
+            aria-label={t('common.envFilter.environmentGroup')}
+            value={String(scope.kind === 'env' ? scope.envId : ALL_OBSERVATION_ENV)}
+          >
             <ScopeItem active={scope.kind === 'all' && scope.namespaceId === ALL_OBSERVATION_NAMESPACE} label={t('common.envFilter.all')} onSelect={() => { update(selectObservationEnv(selection, ALL_OBSERVATION_ENV)) }} />
             {envs.map((env) => (
               <ScopeItem key={env.id} active={scope.kind === 'env' && scope.envId === env.id} label={env.name} meta={t('common.envFilter.nsCount', { count: env.namespaces.length })} onSelect={() => { update(selectObservationEnv(selection, env.id)) }} />
             ))}
           </DropdownMenuRadioGroup>
           <p className="mt-1 border-t border-border px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-4">{t('common.envFilter.namespaceGroup')}</p>
-          <DropdownMenuRadioGroup value={String(scope.namespaceId)}>
+          <DropdownMenuRadioGroup aria-label={t('common.envFilter.namespaceGroup')} value={String(scope.namespaceId)}>
             <ScopeItem active={scope.namespaceId === ALL_OBSERVATION_NAMESPACE} label={scope.kind === 'env' ? t('common.envFilter.envAllNamespaces') : t('common.envFilter.allNamespaces')} onSelect={() => { selectNamespace(ALL_OBSERVATION_NAMESPACE) }} />
             {namespaces.map((namespace) => (
               <ScopeItem key={namespace.id} active={scope.namespaceId === namespace.id} label={namespace.name} meta={`#${String(namespace.id)}`} onSelect={() => { selectNamespace(namespace.id) }} />

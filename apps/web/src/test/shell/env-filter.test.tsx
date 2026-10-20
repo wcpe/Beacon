@@ -143,6 +143,9 @@ describe('页眉观测范围选择器', () => {
     // 若不加分组，同一 menu 内会出现两个 menuitemradio 同时 aria-checked=true。
     const groups = await screen.findAllByRole('group')
     expect(groups.length).toBeGreaterThanOrEqual(2)
+    // 两组必须各有可访问名称，否则读屏只会连念两次无名「分组」。
+    expect(screen.getByRole('group', { name: '环境' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: '命名空间' })).toBeInTheDocument()
 
     for (const group of groups) {
       const checked = within(group)
