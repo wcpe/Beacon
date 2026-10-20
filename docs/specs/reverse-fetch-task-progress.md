@@ -1,6 +1,6 @@
 # 功能规格：反向抓取受管任务进度 + 错误回传（FR-87）
 
-> 状态：开发中　·　关联 PRD：FR-87（增强 FR-58/FR-60）　·　ADR：[ADR-0037](../adr/0037-reverse-fetch-managed-task.md)（spec 级扩展、无新 ADR）　·　分支：feature/fr-87-task-error
+> 状态：已交付@v0.13.0　·　关联 PRD：FR-87（增强 FR-58/FR-60）　·　ADR：[ADR-0037](../adr/0037-reverse-fetch-managed-task.md)（spec 级扩展、无新 ADR）　·　分支：feature/fr-87-task-error
 
 ## 1. 背景与目标
 

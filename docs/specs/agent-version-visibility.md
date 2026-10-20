@@ -1,6 +1,6 @@
 # 功能规格：agent 版本/构建可见性
 
-> 状态：开发中　·　关联 PRD：FR-86（增强 FR-34/FR-52）　·　ADR：[ADR-0039](../adr/0039-agent-self-reported-version.md)　·　分支：feature/fr-86-agent-version
+> 状态：已交付@v0.13.0　·　关联 PRD：FR-86（增强 FR-34/FR-52）　·　ADR：[ADR-0039](../adr/0039-agent-self-reported-version.md)　·　分支：feature/fr-86-agent-version
 
 ## 1. 背景与目标
 运维盲区：一台服可能装了**过期的 agent jar**，但管理台对此完全不可见。既有 `version` 是运维手填的**业务版本**（发现过滤标签 FR-29），不是「这台跑哪个 Beacon agent 构建」。结果是升级 agent 漏装一台、或回滚后忘换 jar，运维只能上机看 jar 名。

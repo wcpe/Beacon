@@ -1,6 +1,6 @@
 # 功能规格：流量调度（落位均衡 / drain）
 
-> 状态：开发中　·　关联 PRD：FR-10　·　分支：feature/fr-10-traffic
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-10　·　分支：feature/fr-10-traffic
 
 ## 1. 背景与目标
 

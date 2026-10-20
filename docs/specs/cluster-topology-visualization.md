@@ -1,6 +1,6 @@
 # 功能规格：集群拓扑可视化
 
-> 状态：开发中　·　关联 PRD：FR-37　·　分支：feature/fr-37-topology
+> 状态：已交付@v0.6.0　·　关联 PRD：FR-37　·　分支：feature/fr-37-topology
 
 ## 1. 背景与目标
 

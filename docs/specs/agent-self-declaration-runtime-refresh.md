@@ -1,6 +1,6 @@
 # 功能规格：节点自声明的运行期刷新与读回
 
-> 状态：开发中（代码已实现并通过验证门；待合并与真机验收；**§2.2「不进入调度决策」一条已被 FR-244 / ADR-0087 重新裁定**）　·　关联 PRD：FR-243 · FR-244（准入作用域读用本声明的标签）　·　分支：feature/agent-self-declaration　·　依赖：ADR-0086（决策，其中决策 4 一条被 [ADR-0087](../adr/0087-scheduling-admission-scope-over-self-declared-labels.md) 取代）/ FR-227（标签约束）/ FR-228（容量口径）　·　纯后端（无 UX 段）
+> 状态：已交付@v1.4.0　·　关联 PRD：FR-243 · FR-244（准入作用域读用本声明的标签）　·　分支：feature/agent-self-declaration　·　依赖：ADR-0086（决策，其中决策 4 一条被 [ADR-0087](../adr/0087-scheduling-admission-scope-over-self-declared-labels.md) 取代）/ FR-227（标签约束）/ FR-228（容量口径）　·　纯后端（无 UX 段）
 
 ## 1. 背景与目标
 

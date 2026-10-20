@@ -1,6 +1,6 @@
 # 功能规格：入口服作为 LobbyCluster 成员与多入口选择
 
-> 状态：已落地（并入 A1/A2/A4，无独立开发轨道；ADR-0083 已接受）　·　关联 PRD：FR-225（增强 FR-200 / **ADR-0075** / **ADR-0083**）　·　分支：feature/entry-server-as-lobby-member
+> 状态：已交付@v1.2.0　·　关联 PRD：FR-225（增强 FR-200 / **ADR-0075** / **ADR-0083**）　·　分支：feature/entry-server-as-lobby-member
 
 ## 1. 背景与目标
 

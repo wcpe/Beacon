@@ -1,6 +1,6 @@
 # 功能规格：卡片降级 + 全站页眉接入收尾
 
-> 状态：开发中　·　关联 PRD：FR-107　·　分支：feature/fr-107-card-downgrade
+> 状态：已交付@v0.16.0　·　关联 PRD：FR-107　·　分支：feature/fr-107-card-downgrade
 
 ## 1. 背景与目标
 

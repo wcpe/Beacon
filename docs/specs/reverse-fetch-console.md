@@ -1,6 +1,6 @@
 # 功能规格：反向抓取审核台 + 任务台 + 冲突 diff（前端，FR-60）
 
-> 状态：开发中　·　关联 PRD：FR-60（增强 FR-46，依赖 FR-58/FR-59）　·　沿用 [ADR-0037](../adr/0037-reverse-fetch-managed-task.md) + 复用 FR-46 拓印审核台范式，无新 ADR。纯前端（消费 FR-58/59 后端端点）。
+> 状态：已交付@v0.10.0　·　关联 PRD：FR-60（增强 FR-46，依赖 FR-58/FR-59）　·　沿用 [ADR-0037](../adr/0037-reverse-fetch-managed-task.md) + 复用 FR-46 拓印审核台范式，无新 ADR。纯前端（消费 FR-58/59 后端端点）。
 
 ## 1. 背景与目标
 

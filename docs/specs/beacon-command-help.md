@@ -1,6 +1,6 @@
 # 功能规格：beacon 主命令帮助完善（FR-54，增强 FR-17）
 
-> 状态：开发中　·　关联 PRD：FR-54　·　分支：feature/fr-54-beacon-command-help
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-54　·　分支：feature/fr-54-beacon-command-help
 
 ## 1. 背景与目标
 

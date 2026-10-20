@@ -1,6 +1,6 @@
 # 功能规格：控制面文件浏览端点（FR-110）
 
-> 状态：开发中　·　关联 PRD：FR-110（依赖 FR-109）　·　分支：master（feat 直接进 master）
+> 状态：已交付@v0.16.0　·　关联 PRD：FR-110（依赖 FR-109）　·　分支：master（feat 直接进 master）
 >
 > **§3.1–§3.3 的审批与一次性授权口径已被 [ADR-0093](../adr/0093-direct-sensitive-content-reads.md) 取代**：浏览正文改为 `content.read` + `management.read` 直读并强制专项审计，`POST` 直接创建命令、旧 `GET` 改为按 `commandId` 读结果。下述正文已按现状改写，历史设计（pending grant → 激活 → 原申请主体一次消费）仅作为演进记录保留在 §6。
 

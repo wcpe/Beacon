@@ -1,6 +1,6 @@
 # 功能规格：admin API token 管理（复用 FR-42 + 复制为 curl）
 
-> 状态：开发中　·　关联 PRD：FR-90　·　分支：feature/fr-90-admin-token
+> 状态：已交付@v0.13.0　·　关联 PRD：FR-90　·　分支：feature/fr-90-admin-token
 
 ## 1. 背景与目标
 

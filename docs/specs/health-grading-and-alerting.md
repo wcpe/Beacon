@@ -1,6 +1,6 @@
 # 功能规格：健康分级 + 失联告警（FR-28）
 
-> 状态：开发中　·　关联 PRD：FR-28（增强 FR-5）　·　分支：feature/fr-28-health-alert
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-28（增强 FR-5）　·　分支：feature/fr-28-health-alert
 
 ## 1. 背景与目标
 FR-5 的健康状态机只有 `online → lost → offline`，对"心跳开始变慢但还没失联"的亚健康阶段无感知，且实例失联/状态异常时控制面**不主动告警**——运维只能靠轮询管理台发现问题（见 `docs/OPERATIONS.md` §3 提到的失联告警诉求）。

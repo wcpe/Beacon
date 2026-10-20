@@ -1,6 +1,6 @@
 # 功能规格：agent-api 玩家位置名册只读查询
 
-> 状态：**已实现（v2 方案）**　·　关联 PRD：FR-31　·　决策：[ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 决策 4（取代 ADR-0022 与 ADR-0016 的 Redis 名册方案）
+> 状态：已交付@v0.5.0（随后被 ADR-0063 决策 4 取代的部分见该 ADR）　·　关联 PRD：FR-31　·　决策：[ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 决策 4（取代 ADR-0022 与 ADR-0016 的 Redis 名册方案）
 >
 > **v2 实现（本规格的有效设计，取代下文第 2、3 节的 Redis 路径）**：名册权威在**控制面**（依连接明细在内存维护玩家位置快照），agent 侧改为经 HTTP 读取：
 >

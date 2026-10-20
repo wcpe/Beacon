@@ -1,6 +1,6 @@
 # 功能规格：服务器键值标签
 
-> 状态：已实现（单测通过；真机验收待做）　·　关联 PRD：FR-227（与 FR-29 发现过滤对齐）　·　分支：feature/server-key-value-tags
+> 状态：已交付@v1.2.0　·　关联 PRD：FR-227（与 FR-29 发现过滤对齐）　·　分支：feature/server-key-value-tags
 
 ## 1. 背景与目标
 

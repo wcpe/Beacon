@@ -1,6 +1,6 @@
 # 功能规格：健康流转原因展示
 
-> 状态：开发中　·　关联 PRD：FR-81　·　分支：feature/fr-81-health-reason
+> 状态：已交付@v0.12.0　·　关联 PRD：FR-81　·　分支：feature/fr-81-health-reason
 
 ## 1. 背景与目标
 实例健康状态机按心跳陈旧度推进 online→degraded→lost→offline（FR-28）。运维在管理台只看到一个状态徽标（如 lost），但**不知道为什么**——心跳多久没来了？是超过了哪一档阈值？要回答得手动算「当前时间 − lastHeartbeat」再对照设置里的阈值，体验差、易错。

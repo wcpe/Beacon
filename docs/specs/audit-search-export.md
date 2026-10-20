@@ -1,6 +1,6 @@
 # 功能规格：审计全文检索 + 导出
 
-> 状态：开发完成（待真机浏览器验）　·　关联 PRD：FR-84（增强 FR-7）　·　分支：feature/fr-84-audit-search-export
+> 状态：已交付@v0.12.0　·　关联 PRD：FR-84（增强 FR-7）　·　分支：feature/fr-84-audit-search-export
 
 ## 1. 背景与目标
 审计页（FR-7 / FR-30 / FR-73）当前只能按 namespace / operator / action / targetType / targetRef / 时间范围过滤。

@@ -2,7 +2,7 @@
 
 > ⚠️ 本章（FR-96 launcher 方案）已被 **FR-119 / [ADR-0053](../adr/0053-single-binary-self-replace.md)** 取代为**单进程自替换 + 自动回滚**：去掉独立第二二进制 `beacon-launcher`，改由主进程在自身进程内 `rename` 让位自我替换、并新增「新版起不来自动回退」。下述 launcher / 退出码 `70` / `beacon-launcher` 设计**仅存档**，实际实现见 [docs/specs/single-binary-self-replace.md](single-binary-self-replace.md)。
 
-> 状态：已被取代（存档）　·　关联 PRD：FR-96（本批）/ FR-97 / FR-99 / FR-101 / FR-102（后续补）　·　分支：feature/fr-96-launcher
+> 状态：已交付@v0.15.0　·　关联 PRD：FR-96（本批）/ FR-97 / FR-99 / FR-101 / FR-102（后续补）　·　分支：feature/fr-96-launcher
 
 > 本规格覆盖「控制面在线更新」整体能力，**本批（FR-96）只写 launcher 监督进程部分**；更新核心（查 Release / 下载 / 校验 / 落位 pending，FR-97）、更新 API（FR-99）、出站代理（FR-98）、前端提示（FR-100）、设置（FR-101）、产物适配（FR-102）后续在本文追加对应小节。
 

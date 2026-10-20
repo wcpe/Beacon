@@ -1,6 +1,6 @@
 # 功能规格：配置操作级撤回子系统
 
-> 状态：开发中　·　关联 PRD：FR-116　·　分支：feature/fr-116-undo-subsystem　·　决策见 [ADR-0051](../adr/0051-config-operation-undo.md)
+> 状态：已交付@v0.16.0　·　关联 PRD：FR-116　·　分支：feature/fr-116-undo-subsystem　·　决策见 [ADR-0051](../adr/0051-config-operation-undo.md)
 
 ## 1. 背景与目标
 

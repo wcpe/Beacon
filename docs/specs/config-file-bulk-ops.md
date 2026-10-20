@@ -1,6 +1,6 @@
 # 功能规格：配置 / 文件批量操作
 
-> 状态：开发中　·　关联 PRD：FR-74　·　分支：feature/fr-74-bulk-ops
+> 状态：已交付@v0.11.0　·　关联 PRD：FR-74　·　分支：feature/fr-74-bulk-ops
 
 ## 1. 背景与目标
 

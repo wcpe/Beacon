@@ -1,6 +1,6 @@
 # 功能规格：配置发布前 schema/类型校验
 
-> 状态：开发中　·　关联 PRD：FR-27　·　分支：feature/fr-27-config-validate
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-27　·　分支：feature/fr-27-config-validate
 
 ## 1. 背景与目标
 

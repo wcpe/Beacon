@@ -1,6 +1,6 @@
 # 功能规格：控制面可观测看板（指标 + 历史趋势图）
 
-> 状态：草拟　·　关联 PRD：FR-32　·　分支：feature/control-plane-observability-dashboard
+> 状态：已交付@v0.5.0　·　关联 PRD：FR-32　·　分支：feature/control-plane-observability-dashboard
 
 ## 1. 背景与目标
 

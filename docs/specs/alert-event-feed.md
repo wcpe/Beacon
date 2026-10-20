@@ -1,6 +1,6 @@
 # 功能规格：告警历史 / 事件信息流（alert_event）
 
-> 状态：开发中　·　关联 PRD：FR-89　·　分支：feature/fr-89-alert-events
+> 状态：已交付@v0.13.0　·　关联 PRD：FR-89　·　分支：feature/fr-89-alert-events
 
 ## 1. 背景与目标
 

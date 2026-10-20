@@ -1,6 +1,6 @@
 # 功能规格：控制面首启脚手架 + .env 环境变量加载
 
-> 状态：开发中　·　关联 PRD：FR-25　·　分支：feature/control-plane-bootstrap-scaffold
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-25　·　分支：feature/control-plane-bootstrap-scaffold
 
 ## 1. 背景与目标
 

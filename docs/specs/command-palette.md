@@ -1,6 +1,6 @@
 # 功能规格：全局搜索 + 命令面板（Cmd-K）
 
-> 状态：开发中　·　关联 PRD：FR-83　·　分支：feature/fr-83-command-palette
+> 状态：已交付@v0.12.0　·　关联 PRD：FR-83　·　分支：feature/fr-83-command-palette
 
 ## 1. 背景与目标
 

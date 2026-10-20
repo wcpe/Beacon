@@ -1,6 +1,6 @@
 # 功能规格：服务端权威观测范围契约
 
-> 状态：开发中　·　关联 PRD：FR-213　·　依赖：FR-178 env→namespace 映射、[v2-zone-authority.md](v2-zone-authority.md)
+> 状态：已交付@v1.1.0　·　关联 PRD：FR-213　·　依赖：FR-178 env→namespace 映射、[v2-zone-authority.md](v2-zone-authority.md)
 
 ## 1. 背景与目标
 

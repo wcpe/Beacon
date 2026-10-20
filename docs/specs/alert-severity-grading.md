@@ -1,6 +1,6 @@
 # 功能规格：告警分级与人工升降
 
-> 状态：已实现（单测通过；真机验收待做）　·　关联 PRD：FR-231（增强 FR-157 / FR-89）　·　分支：feature/alert-severity-grading
+> 状态：已交付@v1.2.0　·　关联 PRD：FR-231（增强 FR-157 / FR-89）　·　分支：feature/alert-severity-grading
 
 ## 1. 背景与目标
 

@@ -1,6 +1,6 @@
 # 规格：通用危险操作审批内核（FR-207）
 
-> 状态：草拟 · 关联 PRD：FR-207 · 决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md) · 本文件是全仓唯一审批真源
+> 状态：已交付@v1.1.0 · 关联 PRD：FR-207 · 决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md) · 本文件是全仓唯一审批真源
 
 ## 1. 背景与目标
 

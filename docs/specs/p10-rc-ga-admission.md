@@ -1,6 +1,6 @@
 # 历史规格：P10 RC/GA 发布收口
 
-> 状态：历史背景，非执行真源；本文不改变 PRD 中任何 FR 状态
+> 状态：历史背景（非功能规格，不改变 PRD 中任何 FR 状态）
 >
 > **当前执行真源**：[ADR-0074](../adr/0074-simple-rc-ga-release-flow.md)。[ADR-0072](../adr/0072-immutable-rc-ga-promotion-and-n-minus-one.md) 与 [ADR-0073](../adr/0073-standard-rc-ga-release-lifecycle.md) 仅保留为历史背景，不再作为当前 RC/GA 流程依据。
 >

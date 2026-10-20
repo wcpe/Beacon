@@ -1,6 +1,6 @@
 # 功能规格：服务器资产页交互冻结与真实操作闭环
 
-> 状态：已实现待真实集群联调　·　关联 PRD：FR-137（复用 FR-10 / FR-49 / FR-80 / FR-88 / FR-91 / FR-110）　·　分支：codex/file-sync-wizard
+> 状态：已交付@v0.19.0　·　关联 PRD：FR-137（复用 FR-10 / FR-49 / FR-80 / FR-88 / FR-91 / FR-110）　·　分支：codex/file-sync-wizard
 
 ## 1. 背景与目标
 

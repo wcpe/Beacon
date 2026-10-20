@@ -1,6 +1,6 @@
 # 功能规格：可观测性（Prometheus 指标 + 审计查询增强）
 
-> 状态：开发中　·　关联 PRD：FR-30（增强 FR-7）　·　分支：feature/fr-30-observability
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-30（增强 FR-7）　·　分支：feature/fr-30-observability
 
 ## 1. 背景与目标
 

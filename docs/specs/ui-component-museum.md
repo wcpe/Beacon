@@ -1,6 +1,6 @@
 # 功能规格：UI 控件博物馆 wiki 子项目
 
-> 状态：已交付 · 关联 PRD：FR-175 · 使用说明见 [docs/UI-WIKI.md](../UI-WIKI.md)
+> 状态：已交付@v0.21.0 · 关联 PRD：FR-175 · 使用说明见 [docs/UI-WIKI.md](../UI-WIKI.md)
 
 ## 1. 背景与目标
 

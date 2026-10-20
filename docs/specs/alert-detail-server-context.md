@@ -1,6 +1,6 @@
 # 功能规格：告警详情关联服务器近期状态与时间线
 
-> 状态：已实现（单测通过；真机验收待做）　·　关联 PRD：FR-230（增强 FR-157 / FR-89）　·　分支：feature/alert-detail-server-context
+> 状态：已交付@v1.2.0　·　关联 PRD：FR-230（增强 FR-157 / FR-89）　·　分支：feature/alert-detail-server-context
 
 ## 1. 背景与目标
 

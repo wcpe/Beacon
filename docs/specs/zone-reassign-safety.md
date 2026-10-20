@@ -1,6 +1,6 @@
 # 功能规格：区分配改派安全化
 
-> 状态：开发中　·　关联 PRD：FR-71（增强 FR-8/FR-35）　·　ADR：[ADR-0036](../adr/0036-zone-reassign-safety-drain-gate.md)（扩展 [ADR-0004](../adr/0004-zone-authority-control-plane.md)）
+> 状态：已交付@v0.10.0　·　关联 PRD：FR-71（增强 FR-8/FR-35）　·　ADR：[ADR-0036](../adr/0036-zone-reassign-safety-drain-gate.md)（扩展 [ADR-0004](../adr/0004-zone-authority-control-plane.md)）
 
 ## 1. 背景与目标
 

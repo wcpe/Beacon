@@ -1,6 +1,6 @@
 # 功能规格：配置/文件发布影响面预览
 
-> 状态：开发中　·　关联 PRD：FR-79　·　分支：feature/fr-79-publish-impact
+> 状态：已交付@v0.12.0　·　关联 PRD：FR-79　·　分支：feature/fr-79-publish-impact
 
 ## 1. 背景与目标
 配置中心按 scope 覆盖链（global / group / zone / server）发布；运维点「保存/发布」时，**看不到这次改动会落到哪些正在线上跑的子服**——要心算「这条 config 在哪层、覆盖谁、谁此刻在线」，体验差、易误发到比预期更大的范围。

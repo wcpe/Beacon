@@ -1,6 +1,6 @@
 # 功能规格：反向抓取审核——忽略规则 + 冲突 diff 确认（FR-59）
 
-> 状态：开发中　·　关联 PRD：FR-59（增强 FR-39，依赖 FR-58）　·　ADR：沿用 [ADR-0037](../adr/0037-reverse-fetch-managed-task.md)（受管任务两段式）+ 复用 FR-46 拓印 diff/自审范式，无新 ADR（conflict-review 为 ADR-0037 状态机的 spec 级扩展，经用户确认）
+> 状态：已交付@v0.10.0　·　关联 PRD：FR-59（增强 FR-39，依赖 FR-58）　·　ADR：沿用 [ADR-0037](../adr/0037-reverse-fetch-managed-task.md)（受管任务两段式）+ 复用 FR-46 拓印 diff/自审范式，无新 ADR（conflict-review 为 ADR-0037 状态机的 spec 级扩展，经用户确认）
 
 ## 1. 背景与目标
 

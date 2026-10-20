@@ -1,6 +1,6 @@
 # 功能规格：CI 推 master 自动发滚动 prerelease + in-app 两渠道按版本号判新
 
-> 状态：已被 [ADR-0073](../adr/0073-standard-rc-ga-release-lifecycle.md) / [FR-182](fr-182-development-build-and-release-preparation.md) 取代（历史实现规格）　·　原关联 PRD：FR-117
+> 状态：已交付@v0.17.0（历史实现规格，相关流程已被 ADR-0073 与 FR-182 取代）　·　原关联 PRD：FR-117
 >
 > **当前不再创建或维护 `dev` tag、开发 GitHub Release / prerelease，也不再把普通 prerelease 作为在线更新主流程。** 开发验证改用成功 `master` run 保留 7 天的 Actions Artifact；下文关于滚动 tag、双渠道、开发版本和 selector 的描述仅用于历史追溯，不表示当前行为。通用 RC/GA 与 GA-only 在线更新分别由 FR-183/FR-184、FR-185 落地。
 

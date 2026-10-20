@@ -1,6 +1,6 @@
 # 功能规格：管理台前端增强 L1
 
-> 状态：开发中　·　关联 PRD：FR-18　·　分支：feature/fr-18-admin-ui
+> 状态：已交付@v0.2.0　·　关联 PRD：FR-18　·　分支：feature/fr-18-admin-ui
 
 ## 1. 背景与目标
 

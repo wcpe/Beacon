@@ -1,6 +1,6 @@
 # 功能规格：运维设置页恢复默认 + 批量保存
 
-> 状态：开发中　·　关联 PRD：FR-77（增强 FR-62）　·　分支：feature/fr-77-settings-defaults
+> 状态：已交付@v0.11.0　·　关联 PRD：FR-77（增强 FR-62）　·　分支：feature/fr-77-settings-defaults
 
 ## 1. 背景与目标
 
