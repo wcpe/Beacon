@@ -106,6 +106,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: 校验 UI 控件博物馆覆盖率
         run: pnpm run check:ui-wiki
+      # 审计动作生成物由 enums.go 派生；vitest 守护的是「清单与真源同源」，字节级落后只能靠这一步拦下。
+      - name: 校验审计动作生成物是否落后
+        run: pnpm run check:audit-actions
       - name: 运行根工作区静态检查、测试与构建
         run: |
           pnpm run lint

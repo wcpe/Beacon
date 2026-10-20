@@ -47,10 +47,15 @@ function locateEnumsGo(): string {
 /** enums.go 的绝对路径（模块加载期即定位，路径失配立刻失败而非静默跳过） */
 export const ENUMS_GO_PATH = locateEnumsGo()
 
-/** 后端全部审计动作字面值（真源：model.Action* = "..."，保持声明顺序） */
+/**
+ * 后端全部审计动作字面值（真源：model.Action* = "..."，保持声明顺序）。
+ * 正则与 scripts/gen-audit-actions.mjs 逐字一致：可选地容忍一个显式类型标注
+ * （`ActionFoo ActionKind = "x"` 是 Go 合法且常见的写法），否则该写法会让生成与校验
+ * 同时静默漏项，红灯不亮。
+ */
 export function readBackendActions(): string[] {
   const source = readFileSync(ENUMS_GO_PATH, 'utf-8')
-  const matches = source.matchAll(/^\s*Action[A-Za-z0-9_]*\s*=\s*"([^"]+)"/gm)
+  const matches = source.matchAll(/^\s*Action[A-Za-z0-9_]*\s+(?:[A-Za-z0-9_.[\]]+\s+)?=\s*"([^"]+)"/gm)
   return [...matches].map((m) => m[1])
 }
 

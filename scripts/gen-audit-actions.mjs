@@ -20,8 +20,10 @@ const repoRoot = resolve(here, '..')
 const enumsPath = resolve(repoRoot, 'apps/server/internal/model/enums.go')
 const outPath = resolve(repoRoot, 'apps/web/src/pages/audits/audit-actions.generated.ts')
 
-// 与 apps/web/src/test/observability 的守护测试同一正则：行首（允许缩进）的 Action* = "字面值"
-const ACTION_PATTERN = /^\s*Action[A-Za-z0-9_]*\s*=\s*"([^"]+)"/gm
+// 与 apps/web/src/test/observability 的守护测试同一正则：行首（允许缩进）的 Action* = "字面值"。
+// 显式类型标注（如 `ActionFoo ActionKind = "x"`）是 Go 合法且常见的写法，故可选地容忍一个类型名；
+// 两边正则必须逐字一致，否则生成与校验口径不同会让漂移静默通过。
+const ACTION_PATTERN = /^\s*Action[A-Za-z0-9_]*\s+(?:[A-Za-z0-9_.[\]]+\s+)?=\s*"([^"]+)"/gm
 
 /** 从 enums.go 提取全部审计动作字面值（去重，保持声明顺序） */
 function readBackendActions() {
