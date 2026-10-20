@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +120,57 @@ func TestFileSyncSourceManifestAndStartDispatchTargetCommand(t *testing.T) {
 	targets, _ := repository.NewFileSyncRepository(db).ListTargets(task.ID)
 	if len(targets) != 1 || targets[0].Status != model.FileSyncTargetStatusManifesting || targets[0].CommandID != targetCmd.ID {
 		t.Fatalf("目标应进入 manifesting 并记录命令 id，实际：%+v", targets)
+	}
+}
+
+// TestFileSyncStoreBlobRejectsTerminalTask 覆盖终态任务不再接受源 agent 上传 blob。
+//
+// 为什么必须拒：blob 目录按 taskId 分片且没有任务级清理路径，终态任务继续落盘只会留下
+// 无人回收的垃圾；同时用非终态用例反向确认拦截条件没有过宽。
+func TestFileSyncStoreBlobRejectsTerminalTask(t *testing.T) {
+	const content = "config.yml"
+	// 用真实 sha256：非终态用例会真的走完落盘并按内容校验，占位哈希会被判为非法参数。
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	identity := agentauth.Identity{Namespace: "prod", ServerID: "source-1", IdentityID: "test-source-1"}
+
+	cases := []struct {
+		name    string
+		status  string
+		wantErr error
+	}{
+		{name: "已完成任务拒写", status: model.FileSyncTaskStatusSucceeded, wantErr: apperr.ErrFileSyncTaskState},
+		{name: "已失败任务拒写", status: model.FileSyncTaskStatusFailed, wantErr: apperr.ErrFileSyncTaskState},
+		{name: "已终止任务拒写", status: model.FileSyncTaskStatusTerminated, wantErr: apperr.ErrFileSyncTaskState},
+		{name: "熔断任务拒写", status: model.FileSyncTaskStatusCircuitBroken, wantErr: apperr.ErrFileSyncTaskState},
+		{name: "非终态任务仍可写入", status: model.FileSyncTaskStatusCached},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, db, reg := newFileSyncTestService(t)
+			registerFileSyncInstance(t, reg, "prod", "source-1", "bukkit")
+			task := mustCreateFileSyncTask(t, svc)
+			if err := db.Model(&model.FileSyncTask{}).Where("id = ?", task.ID).
+				Update("status", tc.status).Error; err != nil {
+				t.Fatalf("把任务置为 %s 失败：%v", tc.status, err)
+			}
+
+			err := svc.StoreBlob(identity, task.ID, hash, strings.NewReader(content))
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("任务状态 %s 时应允许写入 blob，实际错误：%v", tc.status, err)
+				}
+				if _, statErr := os.Stat(svc.blobPath(task.ID, hash)); statErr != nil {
+					t.Fatalf("任务状态 %s 时应已落盘 blob，实际 stat 失败：%v", tc.status, statErr)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("任务状态 %s 时应返回 %v，实际：%v", tc.status, tc.wantErr, err)
+			}
+			if _, statErr := os.Stat(svc.blobPath(task.ID, hash)); !os.IsNotExist(statErr) {
+				t.Fatalf("任务状态 %s 时不应落盘 blob，实际 stat 结果：%v", tc.status, statErr)
+			}
+		})
 	}
 }
 

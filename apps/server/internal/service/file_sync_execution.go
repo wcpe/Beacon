@@ -81,7 +81,7 @@ func fileSyncTaskOwnedBySource(task *model.FileSyncTask, identity agentauth.Iden
 	if task.NamespaceCode != identity.Namespace {
 		return false
 	}
-	return task.NamespaceCode == identity.Namespace && task.SourceServerID == identity.ServerID
+	return task.SourceServerID == identity.ServerID
 }
 
 // isFileSyncTarget 判定身份是否在该任务的计划目标内（blob 下载方）。
@@ -95,8 +95,6 @@ func (s *FileSyncService) isFileSyncTarget(task *model.FileSyncTask, identity ag
 	if task == nil || identity.Namespace == "" || identity.ServerID == "" {
 		return false
 	}
-	// 必须同时比对 namespace：serverId 只在命名空间内唯一，目标表又没有 namespace 列，
-	// 只比 serverId 会让另一环境同名实例通过本任务校验、拉走本环境的文件正文。
 	if task.NamespaceCode != identity.Namespace {
 		return false
 	}
@@ -178,10 +176,11 @@ func (s *FileSyncService) ListSourceManifest(taskID uint) ([]FileSyncManifestFil
 	return out, nil
 }
 
-// StoreBlob 流式写入源 blob，并校验 sha256。
-// StoreBlob 接收源 agent 上传的 blob。
+// StoreBlob 接收源 agent 上传的 blob，流式写入并按 sha256 校验。
 // 只有任务的源实例可以写：blob 目录按 taskId 分片，落盘后会被该任务的目标原样下发，
 // 不校验来源等于允许任一 agent 往别人的交付里塞内容。
+// 终态任务同样拒绝写入：目录按 taskId 分片且没有任务级清理路径，
+// 放行会让已完成 / 已终止任务持续落盘，形成无人回收的垃圾。
 func (s *FileSyncService) StoreBlob(identity agentauth.Identity, taskID uint, hash string, reader io.Reader) error {
 	task, err := s.requireTask(taskID)
 	if err != nil {
@@ -189,6 +188,9 @@ func (s *FileSyncService) StoreBlob(identity agentauth.Identity, taskID uint, ha
 	}
 	if !fileSyncTaskOwnedBySource(task, identity) {
 		return apperr.ErrFileSyncTaskNotFound
+	}
+	if model.IsFileSyncTaskTerminal(task.Status) {
+		return apperr.ErrFileSyncTaskState
 	}
 	if !isSHA256Hex(hash) {
 		return apperr.ErrInvalidParam
