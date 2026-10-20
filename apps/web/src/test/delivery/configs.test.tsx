@@ -235,7 +235,7 @@ describe('/configs 配置中心页', () => {
     expect(await screen.findByText('请先在页眉左侧选择命名空间')).toBeInTheDocument()
 
     await user.click(scopeTrigger)
-    await user.click(await screen.findByRole('menuitem', { name: /prod/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /prod/ }))
     expect(await screen.findByText('plugins/Essentials/config.yml')).toBeInTheDocument()
     expect(getObservationScopeSelection()).toMatchObject({ namespaceId: 1 })
   })

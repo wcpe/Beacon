@@ -4,6 +4,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { useState } from 'react'
 
 import TargetStatusWall from '../../features/delivery/target-status-wall'
 import { RollbackRecordsSection } from '../../features/delivery/order-rollback'
@@ -377,4 +378,62 @@ describe('全选判定基数（可回滚口径）', () => {
     fireEvent.click(screen.getByRole('button', { name: /^回滚选中目标$/ }))
     expect(await screen.findByText(/本次不回退配置版本/)).toBeInTheDocument()
   })
+  it('切单后重新提交必须换用新的幂等键（旧键复用会被后端判为复用而静默吞掉）', async () => {
+    useScenario('normal')
+    const keys: (string | null)[] = []
+    const requestedOrderIds: string[] = []
+    // 两次提交都返回 500：幂等键不被成功路径清空，这正是旧键会被复用的路径。
+    server.use(
+      http.get('*/admin/v2/change-orders/:id/targets', ({ params }) => {
+        requestedOrderIds.push(String(params.id))
+        return HttpResponse.json({ items: [target('t-1', 1, true)], total: 1 })
+      }),
+      http.post('*/admin/v2/change-orders/:id/rollback/targets', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'))
+        return HttpResponse.json({ code: 'INTERNAL', message: '模拟失败' }, { status: 500 })
+      }),
+    )
+
+    const submitOnce = async () => {
+      fireEvent.click(await screen.findByRole('checkbox', { name: 't-1', hidden: true }))
+      fireEvent.click(screen.getByRole('button', { name: /回滚选中目标/ }))
+      const confirmInput = await screen.findByLabelText(/请输入「回滚」以确认/)
+      fireEvent.change(confirmInput, { target: { value: '回滚' } })
+      const reasonInput = screen.getByLabelText('回滚原因')
+      fireEvent.change(reasonInput, { target: { value: '切单前后各提交一次' } })
+      const confirmButton = screen.getByRole('button', { name: '确认回滚选中目标' })
+      fireEvent.click(confirmButton)
+    }
+
+    // 同一个组件实例内切换 orderId：状态墙不重新挂载，等价于真实「切单」。
+    let switchOrder: (id: number) => void = () => {
+      // 渲染后由 Harness 覆盖为真实 setter
+    }
+    function Harness() {
+      const [orderId, setOrderId] = useState(9001)
+      switchOrder = setOrderId
+      return <TargetStatusWall orderId={orderId} orderStatus="completed" />
+    }
+    renderPage(<Harness />)
+    await submitOnce()
+    await waitFor(() => {
+      expect(keys).toHaveLength(1)
+    })
+
+    switchOrder(9002)
+    // 切到无缓存的新单会先展示首屏骨架；等骨架收起后再交互。
+    await waitFor(() => {
+      expect(requestedOrderIds).toContain('9002')
+    })
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="page-skeleton"]')).toBeNull()
+    })
+    await submitOnce()
+    await waitFor(() => {
+      expect(keys).toHaveLength(2)
+    })
+
+    expect(keys[1]).not.toBe(keys[0])
+  })
+
 })

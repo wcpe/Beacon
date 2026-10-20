@@ -130,5 +130,18 @@ function ScopeMenu({ label, icon, value, badge, invalid = false, disabled = fals
 }
 
 function ScopeItem({ active, label, meta, onSelect }: { active: boolean; label: string; meta?: string; onSelect: () => void }) {
-  return <DropdownMenuItem className={active ? 'cursor-pointer gap-2 rounded-lg bg-brand-50 px-2 py-2 text-ink-1 focus:bg-brand-50' : 'cursor-pointer gap-2 rounded-lg px-2 py-2'} onSelect={onSelect}><span className="min-w-0 flex-1 truncate text-[13px] font-medium">{label}</span>{meta ? <span className="shrink-0 text-[11px] text-ink-4">{meta}</span> : null}{active ? <Check className="size-3.5 shrink-0 text-brand" aria-hidden /> : null}</DropdownMenuItem>
+  // 用 menuitemradio + aria-checked 表达选中态：仅靠背景色与勾图标时，读屏只会念「菜单项」，
+  // 用户无法得知当前选中的是哪个环境/命名空间。视觉仍沿用原有类名与勾图标。
+  return (
+    <DropdownMenuItem
+      role="menuitemradio"
+      aria-checked={active}
+      className={active ? 'cursor-pointer gap-2 rounded-lg bg-brand-50 px-2 py-2 text-ink-1 focus:bg-brand-50' : 'cursor-pointer gap-2 rounded-lg px-2 py-2'}
+      onSelect={onSelect}
+    >
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{label}</span>
+      {meta ? <span className="shrink-0 text-[11px] text-ink-4">{meta}</span> : null}
+      {active ? <Check className="size-3.5 shrink-0 text-brand" aria-hidden /> : null}
+    </DropdownMenuItem>
+  )
 }
