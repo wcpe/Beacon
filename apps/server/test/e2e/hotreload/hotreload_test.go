@@ -73,6 +73,10 @@ type testEnv struct {
 	db          *gorm.DB
 	cp          *harness.ControlPlane
 	paper       *harness.GradleProc
+	// nsToken / identityID 是 agent 数据面凭据：A8 需要以 agent 身份直接回执（模拟旧版 agent 报文）。
+	// identityID 必须是真实 UUID（服务端按 UUID 校验），不能用 serverId。
+	nsToken    string
+	identityID string
 }
 
 type orderDetail struct {
@@ -146,6 +150,61 @@ func TestDeliveryHotReloadE2E(t *testing.T) {
 	runNullResult(t, env)
 	settleOrder(t, env, "FR-273 A5 收尾")
 	runLegacyPlugin(t, env)
+	// A8 老 agent 兼容：旧版 agent 的回执里没有 reload 段，控制面必须照常解析（不得 400）。
+	runOldAgentReceipt(t, env)
+}
+
+// runOldAgentReceipt 验证 A8：**不带 reload 段**的旧式回执必须被控制面正常解析。
+//
+// 为什么这样做而不是「换个旧 agent 二进制」：A8 的风险点完全在控制面解码侧——
+// 新增字段若被写成必填、或反序列化对未知/缺失形状敏感，旧 agent 的报文会被 400 拒掉，
+// 整条交付线在灰度期直接瘫。用一个与旧版 agent **逐字节同形**的回执打真实端点，
+// 就能精确验证这一点；构造旧 jar 反而是间接证据且有版本耦合。
+//
+// 断言口径：响应必须是「命令不存在」(404)——它证明**解码已通过**、只是这条回执没有挂靠的在途命令。
+// 若返回 400(INVALID_PARAM) 则说明缺 reload 段被当成非法报文，A8 不通过。
+func runOldAgentReceipt(t *testing.T, env *testEnv) {
+	t.Helper()
+	// 旧版 agent（本批改动之前）上报的正是这几个键，没有 reload。
+	legacyBody := map[string]any{
+		"phase": "activate", "status": "success",
+		"changedFileCount": 1, "skippedFileCount": 0,
+		"backupPresent": true, "error": "",
+	}
+	// 用一个不可能存在的 orderId：解码通过后必然落到「命令不存在」。
+	path := "/beacon/v2/agent/delivery/orders/999999/result"
+	status, raw := postAsAgent(t, env, path, legacyBody)
+
+	if status == http.StatusBadRequest {
+		t.Fatalf("旧式回执（无 reload 段）被判非法报文（400），A8 不通过：%s", raw)
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("旧式回执应解析通过后因「命令不存在」返回 404，实际 status=%d body=%s", status, raw)
+	}
+}
+
+// postAsAgent 以 agent 身份（namespace token + identity）向真实控制面发请求并返回状态码与响应体。
+func postAsAgent(t *testing.T, env *testEnv, path string, body any) (int, string) {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("编码请求体失败：%v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(beaconURL, "/")+path, bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("构造请求失败：%v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Beacon-Token", env.nsToken)
+	req.Header.Set("X-Beacon-Identity", env.identityID)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("请求控制面失败：%v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(respBody)
 }
 
 // settleOrder 等上一单彻底离场：交付编排对同一 namespace 的推进是串行的，
@@ -264,6 +323,7 @@ func provisionPaper(t *testing.T, env *testEnv) (uint, *harness.GradleProc) {
 	if err != nil {
 		t.Fatalf("创建 namespace 失败：%v", err)
 	}
+	env.nsToken = accessToken
 	args := []string{"-Pe2eMcPort=" + mcPort}
 	paperEnv := harness.AgentGradleEnv(beaconURL, accessToken, namespace, serverID, "127.0.0.1:"+mcPort)
 	// FR-273 A3（超时）：注入单插件重载超时，必须 < 变更单的 activateTimeoutSec（60s），
@@ -295,6 +355,10 @@ func approveAndWaitAgent(t *testing.T, env *testEnv) {
 	if err := harness.WaitInstanceOnline(beaconURL, env.adminToken, namespace, serverID, onlineWait, env.paper); err != nil {
 		t.Fatalf("等待 Agent online 超时：%v", err)
 	}
+	if identityID == "" {
+		t.Fatalf("未能取得 agent identityId")
+	}
+	env.identityID = identityID
 }
 
 // setupZoneAndAssign 建立最小区服权威结构，并通过管理 API 把目标 backend 分配到小区。
