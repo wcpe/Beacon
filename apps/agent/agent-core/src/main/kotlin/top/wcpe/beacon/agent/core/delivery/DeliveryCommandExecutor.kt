@@ -483,30 +483,24 @@ class DeliveryCommandExecutor(
     ): ConfigReloadReport? {
         if (configFiles.isEmpty()) return null
         val changed = configFiles.mapTo(linkedSetOf()) { it.path }
-        val report =
-            try {
-                adapter.publishConfigChanged(changed, configArtifactMd5(configFiles))
-            } catch (e: Exception) {
-                // 兜底：平台壳按契约不抛异常（改用返回报告表达失败），此处只防实现走偏。
-                failResultWithState(
-                    orderId = orderId,
-                    phase = phase,
-                    changedFileCount = changedFileCount,
-                    backupPresent = backupPresent,
-                    error = "文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：${reasonOf(e)}${remedyHint(phase)}",
-                )
-                return null
-            }
-        if (!report.hasFailures) return report
-        failResultWithState(
-            orderId = orderId,
-            phase = phase,
-            changedFileCount = changedFileCount,
-            backupPresent = backupPresent,
-            error = "文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：${report.failureSummary()}${remedyHint(phase)}",
-            reload = report,
-        )
-        return null
+        // 平台壳按契约不抛异常（改用返回报告表达失败），runCatching 只防实现走偏：
+        // 一旦抛了也必须让目标失败，不得当作「通知已发出」继续判成功。
+        val attempt = runCatching { adapter.publishConfigChanged(changed, configArtifactMd5(configFiles)) }
+        val report = attempt.getOrNull()
+        // 两类失败共用同一出口：派发抛异常（report 为 null）与插件逐个重载失败（hasFailures）。
+        val failure = attempt.exceptionOrNull()?.let(::reasonOf) ?: report?.takeIf { it.hasFailures }?.failureSummary()
+        if (failure != null) {
+            failResultWithState(
+                orderId = orderId,
+                phase = phase,
+                changedFileCount = changedFileCount,
+                backupPresent = backupPresent,
+                error = "文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：$failure${remedyHint(phase)}",
+                reload = report,
+            )
+        }
+        // 回执已发出则返回 null，调用方据此不再发成功回执（一票否决）。
+        return report?.takeIf { !it.hasFailures }
     }
 
     /**
@@ -673,5 +667,10 @@ private class DeliveryPushException(
     val backupPresent: Boolean = false,
 ) : Exception(message)
 
-/** 异常摘要（类名 + 消息，无凭据；上层再经控制面脱敏兜底）。 */
-private fun reasonOf(e: Exception): String = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}"
+/**
+ * 异常摘要（类名 + 消息，无凭据；上层再经控制面脱敏兜底）。
+ *
+ * 收 `Throwable` 而非 `Exception`：插件侧 `NoClassDefFoundError` / `LinkageError` 同样必须
+ * 变成一句可读的原因，不能让 `Error` 逃逸掉整个阶段的回执。
+ */
+private fun reasonOf(e: Throwable): String = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}"

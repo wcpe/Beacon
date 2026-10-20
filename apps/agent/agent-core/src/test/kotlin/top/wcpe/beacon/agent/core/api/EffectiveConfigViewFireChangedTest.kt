@@ -44,7 +44,7 @@ class EffectiveConfigViewFireChangedTest {
                     changedDataIds: Set<String>,
                     newMd5: String,
                 ) {
-                    throw IllegalStateException("插件 A 解析失败")
+                    error("插件 A 解析失败")
                 }
             },
         )
