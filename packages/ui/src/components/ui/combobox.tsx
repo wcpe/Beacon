@@ -68,6 +68,10 @@ export function Combobox({
   const anchorRef = React.useRef<HTMLDivElement>(null)
   // 键入草稿：严格模式下与 value 解耦（键入仅过滤，不立即上报）
   const [query, setQuery] = React.useState('')
+  // 键盘高亮项索引：-1 表示未高亮。鼠标悬停与方向键共用同一份状态，
+  // 否则键盘用户按方向键看不到任何视觉反馈，也就无法判断回车会选中哪一项。
+  const [activeIndex, setActiveIndex] = React.useState(-1)
+  const listboxId = React.useId()
 
   // 候选归一化（兼容 string[] 与 {value,label}[]）
   const normalized = React.useMemo(() => options.map(normalizeOption), [options])
@@ -110,6 +114,58 @@ export function Combobox({
     onChange(opt.value)
     setQuery('')
     setOpen(false)
+    setActiveIndex(-1)
+  }
+
+  // 候选变化（过滤结果缩短）时把高亮复位，避免索引越界后回车选到错项。
+  React.useEffect(() => {
+    setActiveIndex(-1)
+  }, [filterText, open])
+
+  // 键盘交互（WAI-ARIA APG combobox 模式）：方向键移动高亮、Enter 选中、Esc 关闭。
+  // 没有这段时，纯选择场景对键盘用户完全不可用——候选是 div，Tab 也到不了。
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (!open) {
+        setOpen(true)
+        return
+      }
+      if (filtered.length === 0) return
+      const step = e.key === 'ArrowDown' ? 1 : -1
+      setActiveIndex((prev) => {
+        // 从两端环绕，与原生 select 一致
+        const next = prev + step
+        if (next < 0) return filtered.length - 1
+        if (next >= filtered.length) return 0
+        return next
+      })
+      return
+    }
+    if (e.key === 'Enter') {
+      // 可编辑模式下只有高亮了候选才拦截回车，否则应让上层表单正常提交自定义值。
+      if (open && activeIndex >= 0 && activeIndex < filtered.length) {
+        e.preventDefault()
+        handlePick(filtered[activeIndex])
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      if (open) {
+        e.preventDefault()
+        setOpen(false)
+      }
+      return
+    }
+    if (e.key === 'Home' && open && filtered.length > 0) {
+      e.preventDefault()
+      setActiveIndex(0)
+      return
+    }
+    if (e.key === 'End' && open && filtered.length > 0) {
+      e.preventDefault()
+      setActiveIndex(filtered.length - 1)
+    }
   }
 
   function handleClear(e: React.MouseEvent) {
@@ -132,11 +188,23 @@ export function Combobox({
         <Input
           id={id}
           aria-label={ariaLabel}
+          // 键盘与读屏语义：保留 input 的隐式 textbox 角色（既有调用方都按 textbox 定位），
+          // 只用 aria-expanded / aria-controls / aria-activedescendant 表达「可展开候选列表 +
+          // 当前高亮项」。若改成显式 role="combobox"，会影响全仓 17 处按 textbox 的查询。
+          aria-expanded={open}
+          aria-controls={listboxId}
+          aria-autocomplete="list"
+          aria-activedescendant={
+            open && activeIndex >= 0 && activeIndex < filtered.length
+              ? `${listboxId}-option-${String(activeIndex)}`
+              : undefined
+          }
           disabled={disabled}
           placeholder={placeholder}
           value={inputValue}
           onChange={(e) => { handleInput(e.target.value); }}
           onClick={() => { setOpen(true); }}
+          onKeyDown={handleKeyDown}
           autoComplete="off"
           className={showClear ? 'pr-14' : 'pr-8'}
         />
@@ -167,19 +235,22 @@ export function Combobox({
             'z-50 max-h-60 w-(--radix-popover-trigger-width) min-w-36 overflow-y-auto scrollbar-hide rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-[var(--sh-pop)] ring-1 ring-border/60',
           )}
         >
-          <div role="listbox">
+          <div role="listbox" id={listboxId}>
             {filtered.length === 0 ? (
               <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyText}</div>
             ) : (
-              filtered.map((opt) => (
+              filtered.map((opt, index) => (
                 <div
                   key={opt.value}
+                  id={`${listboxId}-option-${String(index)}`}
                   role="option"
                   aria-selected={opt.value === value}
                   className={cn(
                     'cursor-pointer rounded-md px-2 py-1.5 text-sm outline-none transition-colors duration-100 select-none hover:bg-accent hover:text-accent-foreground',
-                    opt.value === value && 'bg-accent text-accent-foreground',
+                    // 高亮项与已选项用同一视觉，键盘与鼠标的反馈保持一致
+                    (index === activeIndex || opt.value === value) && 'bg-accent text-accent-foreground',
                   )}
+                  onMouseEnter={() => { setActiveIndex(index); }}
                   onClick={() => { handlePick(opt); }}
                 >
                   {opt.label}

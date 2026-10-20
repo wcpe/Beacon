@@ -120,4 +120,31 @@ describe('/audits 动作筛选与后端枚举同源', () => {
     })
     expect(await screen.findByText('当前筛选条件下无审计记录')).toBeInTheDocument()
   }, 20_000)
+  it('键盘可用：方向键移动高亮、回车选中候选', async () => {
+    useScenario('normal')
+    const seen = captureAuditListRequests()
+    const user = userEvent.setup()
+    renderPage(<AuditsPage />)
+
+    const actionInput = await screen.findByRole('textbox', { name: '动作' })
+    await screen.findByText('审计总数')
+
+    // 该筛选器候选量级大（后端全部动作），原先只能鼠标点选；
+    // 这里锁住「键盘可打开、可移动高亮、可回车选中」这条路径。
+    await user.click(actionInput)
+    await user.type(actionInput, 'tail-logs')
+    await screen.findByRole('option', { name: '拉取实例日志' })
+
+    await user.keyboard('{ArrowDown}')
+    // 高亮项通过 aria-activedescendant 暴露给读屏
+    await waitFor(() => {
+      expect(actionInput).toHaveAttribute('aria-activedescendant')
+    })
+
+    await user.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(seen.some((url) => url.searchParams.get('action') === 'instance.tail-logs')).toBe(true)
+    })
+  }, 20_000)
+
 })
