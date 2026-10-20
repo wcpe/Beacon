@@ -23,6 +23,12 @@ class OkHttpStreamingHttpTransportTest {
     private val executor = Executors.newSingleThreadExecutor()
     private val transport = OkHttpStreamingHttpTransport(connectTimeoutMs = 1000)
 
+    // 读超时留足余量：本组用例打的是本机 com.sun.net.httpserver，正常情况下是毫秒级，
+    // 但 Windows runner 上冷启动与 GC 停顿会让 2s 预算偶然耗尽（2026-10-20 发版 CI 即因
+    // SocketTimeoutException 偶发失败、重跑即过）。超时只用于让卡死快速失败而非校验性能，
+    // 放宽到 10s 不削弱任何断言的鉴别力。
+    private val testReadTimeoutMs = 10_000L
+
     init {
         server.executor = executor
         server.start()
@@ -49,7 +55,7 @@ class OkHttpStreamingHttpTransportTest {
                     url = url("/upload"),
                     headers = mapOf("X-Beacon-Token" to "tk"),
                     contentLength = 12,
-                    readTimeoutMs = 2000,
+                    readTimeoutMs = testReadTimeoutMs,
                     body = { ByteArrayInputStream("hello-stream".toByteArray(StandardCharsets.UTF_8)) },
                 ),
             )
@@ -70,7 +76,7 @@ class OkHttpStreamingHttpTransportTest {
                     StreamingDownloadRequest(
                         url = url("/download"),
                         headers = mapOf("X-Beacon-Token" to "tk"),
-                        readTimeoutMs = 2000,
+                        readTimeoutMs = testReadTimeoutMs,
                     ),
                 ) { input ->
                     target.outputStream().use { output -> input.copyTo(output) }
