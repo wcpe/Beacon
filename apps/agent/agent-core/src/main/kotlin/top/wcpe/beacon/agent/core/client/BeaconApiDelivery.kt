@@ -79,6 +79,9 @@ fun BeaconApiClient.postDeliveryResult(
             put("skippedFileCount", report.skippedFileCount)
             put("backupPresent", report.backupPresent)
             put("error", report.error)
+            // FR-274 加性扩展：仅在实际派发过配置变更时携带。老控制面忽略未知字段，
+            // 老 agent 不带该字段也不影响新控制面（按「无重载信息」处理）。
+            report.reload?.let { put("reload", it.toWireMap()) }
         }
     val resp =
         exec(

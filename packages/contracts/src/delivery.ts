@@ -66,6 +66,30 @@ export interface DeliveredVersion {
   activatedAt: string
 }
 
+/** 单个业务插件的重载结果（FR-272，见 docs/specs/delivery-reload-ack.md §3.4） */
+export interface ChangeReloadPluginOutcome {
+  /** 监听器实现类全名（失败定位用） */
+  listener: string
+  status: 'ok' | 'failed'
+  reason: string
+  /** 是否因超过单监听器重载超时而失败 */
+  timeout: boolean
+  appliedMd5: string
+  appliedVersion: string
+  /** 插件自报加载的条目/活动数；未自报为 undefined（0 是合法值） */
+  appliedCount?: number
+  detailJson?: string
+}
+
+/** 逐插件重载结果回执（FR-272）；老 agent 未上报时整个字段为 null */
+export interface ChangeReloadReport {
+  total: number
+  okCount: number
+  failedCount: number
+  timeoutMs: number
+  plugins: ChangeReloadPluginOutcome[]
+}
+
 /** 目标服 */
 export interface ChangeTarget {
   serverId: string
@@ -81,6 +105,8 @@ export interface ChangeTarget {
   rollbackError: string | null
   /** 该服当前交付版本（FR-271）；无交付记录为 null */
   deliveredVersion: DeliveredVersion | null
+  /** 逐插件重载结果（FR-272）；老 agent 未上报时为 null（前端显示「无重载信息」而非空白） */
+  reloadReport: ChangeReloadReport | null
 }
 
 /** 交付版本批量查询响应（FR-271）：无交付记录的服不回行 */

@@ -366,6 +366,31 @@ type DeliveryResultInput struct {
 	BackupPresent bool
 	// 失败原因（脱敏后落库展示，ADR-0057）
 	Error string
+	// 逐插件重载结果（FR-274）：agent 上报时非 nil，落 change_target.reload_report；
+	// 老 agent 不上报时为 nil，保持该列为 NULL（前端据此显示「无重载信息」）。
+	Reload *DeliveryReloadReport
+}
+
+// DeliveryReloadReport 是逐插件重载结果的回执形状（FR-274，见 docs/specs/delivery-reload-ack.md §3.4）。
+type DeliveryReloadReport struct {
+	Total       int                     `json:"total"`
+	OKCount     int                     `json:"okCount"`
+	FailedCount int                     `json:"failedCount"`
+	TimeoutMs   int64                   `json:"timeoutMs"`
+	Plugins     []DeliveryReloadPlugin  `json:"plugins"`
+}
+
+// DeliveryReloadPlugin 是单个插件的重载结果（FR-274）。
+// AppliedCount 用指针区分「加载了 0 条」与「未自报」。
+type DeliveryReloadPlugin struct {
+	Listener       string `json:"listener"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	Timeout        bool   `json:"timeout"`
+	AppliedMd5     string `json:"appliedMd5"`
+	AppliedVersion string `json:"appliedVersion"`
+	AppliedCount   *int   `json:"appliedCount,omitempty"`
+	DetailJson     string `json:"detailJson,omitempty"`
 }
 
 // deliveryCommandPayload 是交付命令 payload 的最小解析形状（M2 只消费 orderId 做归属匹配；

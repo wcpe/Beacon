@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.adapters.testutil
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.io.File
 
@@ -26,8 +27,9 @@ class RecordingPlatformAdapter(
     override fun publishConfigChanged(
         changed: Set<String>,
         newMd5: String,
-    ) {
+    ): ConfigReloadReport {
         published.add(changed to newMd5)
+        return ConfigReloadReport.empty(changed, newMd5)
     }
 
     override fun info(msg: String) {}

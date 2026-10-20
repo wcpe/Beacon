@@ -169,6 +169,9 @@ type ChangeTargetView struct {
 	RollbackError    *string    `json:"rollbackError"`
 	// 该服当前交付版本（FR-271）：该服最近一条 activated 且未被回滚的交付记录；无记录为 null
 	DeliveredVersion *DeliveredVersionView `json:"deliveredVersion"`
+	// 逐插件重载结果（FR-274）：agent 上报的 reload 段原文；老 agent 未上报时为 null，
+	// 前端据此显示「无重载信息（agent 版本较旧）」而不是空白。原文透传，形状见规格 §3.4。
+	ReloadReport json.RawMessage `json:"reloadReport"`
 }
 
 // DeliveredVersionView 是某服「当前交付版本」投影（FR-271）：单号 / 单标题 / 生效时间。
@@ -402,6 +405,9 @@ func changeTargetViews(targets []model.ChangeTarget, batchNoByID map[uint]int,
 			ChangedFileCount: t.ChangedFileCount, SkippedFileCount: t.SkippedFileCount,
 			BackupPresent: t.BackupPresent, Error: nilIfEmpty(t.Error),
 			RollbackStatus: nilIfEmpty(t.RollbackStatus), RollbackError: nilIfEmpty(t.RollbackError),
+			// reload 段原文透传（FR-274）：库内已是合法 JSON（由 failureFacts/CAS 写入时序列化），
+			// 非 JSON 时给 null 而非让整个响应序列化失败。
+			ReloadReport: rawJSONOrNil(t.ReloadReport),
 		}
 		if version, ok := deliveredVersions[t.ServerID]; ok {
 			view.DeliveredVersion = &DeliveredVersionView{
@@ -412,6 +418,18 @@ func changeTargetViews(targets []model.ChangeTarget, batchNoByID map[uint]int,
 		views = append(views, view)
 	}
 	return views
+}
+
+// rawJSONOrNil 把库内存的 JSON 文本转成 RawMessage；空串或非法 JSON 一律返回 nil。
+//
+// 为什么不能直接透传字符串：handler 侧 `json.RawMessage` 会被原样嵌入响应，
+// 若库里存了历史脏数据（非 JSON），直接透传会让**整个列表响应**序列化失败——
+// 一个目标的脏数据不该拖垮整页。
+func rawJSONOrNil(raw string) json.RawMessage {
+	if raw == "" || !json.Valid([]byte(raw)) {
+		return nil
+	}
+	return json.RawMessage(raw)
 }
 
 // deliveredVersionIndex 把「当前交付版本」列表按 serverId 建索引（视图映射用）。

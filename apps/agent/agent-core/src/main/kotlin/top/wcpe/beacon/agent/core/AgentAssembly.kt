@@ -429,7 +429,15 @@ object AgentAssembly {
                     tempRoot = File(ctx.adapter.dataFolder(), DELIVERY_TMP_DIR),
                 )
             // 启动期清扫上轮进程遗留的交付临时目录（FR-268）：装配在插件启用期于主线程执行，删盘转异步。
-            DeliveryCommandExecutor(ctx.identity, ctx.apiClient, ctx.adapter, pipeline).also {
+            // reloadTimeoutMs 只用于在交付回执里告知控制面超时判定口径（FR-274）；
+            // 真正的超时执行在 EffectiveConfigView 内，两处共用同一配置源避免口径漂移。
+            DeliveryCommandExecutor(
+                ctx.identity,
+                ctx.apiClient,
+                ctx.adapter,
+                pipeline,
+                ctx.settings.configReloadTimeoutMs,
+            ).also {
                 ctx.adapter.runAsync { it.sweepStaleTemp() }
             }
         } else {

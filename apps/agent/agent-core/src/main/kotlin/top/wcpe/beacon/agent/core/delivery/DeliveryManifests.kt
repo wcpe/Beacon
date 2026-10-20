@@ -1,5 +1,8 @@
 package top.wcpe.beacon.agent.core.delivery
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
+import top.wcpe.beacon.agent.core.api.PluginReloadOutcome
+
 /*
  * 交付数据面清单与操作模型（FR-165，见 ADR-0069 / spec §5.2）。
  *
@@ -122,6 +125,8 @@ data class DeliveryFileOp(
  * @param skippedFileCount 本地同 hash 跳过文件数（push 回执）
  * @param backupPresent    是否已生成本地备份（push 回执，回滚预检依据）
  * @param error            失败原因（脱敏；成功为空串）
+ * @param reload           逐插件重载结果（FR-274）；仅 activate / rollback 阶段且实际派发过配置变更时非空，
+ *                         其余阶段为 null。老控制面会忽略该字段，故为加性扩展。
  */
 data class DeliveryStageReport(
     val phase: String,
@@ -130,4 +135,92 @@ data class DeliveryStageReport(
     val skippedFileCount: Int,
     val backupPresent: Boolean,
     val error: String,
+    val reload: DeliveryReloadReport? = null,
 )
+
+/**
+ * 逐插件重载结果的回执形状（FR-274）。
+ *
+ * 只带控制面需要落库与展示的最小信息：谁、成功与否、为什么失败、实际加载了什么。
+ * [plugins] 的顺序按监听器类名排序，保证同一批变更的重推产生可比对的稳定回执。
+ */
+data class DeliveryReloadReport(
+    val total: Int,
+    val okCount: Int,
+    val failedCount: Int,
+    val timeoutMs: Long,
+    val plugins: List<DeliveryReloadPluginOutcome>,
+) {
+    /**
+     * 回执 JSON 形状（FR-274 §3.4）。字段名与 `docs/specs/delivery-reload-ack.md` 保持一致，
+     * 控制面按 camelCase 解码；未知字段由 Go 侧忽略，故该段可安全加性演进。
+     */
+    fun toWireMap(): Map<String, Any?> =
+        linkedMapOf(
+            "total" to total,
+            "okCount" to okCount,
+            "failedCount" to failedCount,
+            "timeoutMs" to timeoutMs,
+            "plugins" to plugins.map { it.toWireMap() },
+        )
+
+    companion object {
+        /** 由聚合报告构造；无监听器时也产出（total=0），以便控制面区分「无插件」与「旧版 agent 未上报」。 */
+        fun from(
+            report: ConfigReloadReport,
+            timeoutMs: Long,
+        ): DeliveryReloadReport {
+            val outcomes = report.outcomes.sortedBy { it.listener }
+            return DeliveryReloadReport(
+                total = outcomes.size,
+                okCount = outcomes.count { it.ok },
+                failedCount = outcomes.count { !it.ok },
+                timeoutMs = timeoutMs,
+                plugins = outcomes.map { DeliveryReloadPluginOutcome.from(it) },
+            )
+        }
+    }
+}
+
+/** 单个插件的重载结果回执项（FR-274）。字段全为基本类型，控制面可直接落库与展示。 */
+data class DeliveryReloadPluginOutcome(
+    val listener: String,
+    val status: String,
+    val reason: String,
+    val timeout: Boolean,
+    val appliedMd5: String,
+    val appliedVersion: String,
+    val appliedCount: Int?,
+    val detailJson: String,
+) {
+    /** 回执 JSON 形状（FR-274 §3.4）；[appliedCount] 未知时不写该键，避免与「加载了 0 条」混淆。 */
+    fun toWireMap(): Map<String, Any?> =
+        linkedMapOf<String, Any?>(
+            "listener" to listener,
+            "status" to status,
+            "reason" to reason,
+            "timeout" to timeout,
+            "appliedMd5" to appliedMd5,
+            "appliedVersion" to appliedVersion,
+        ).apply {
+            appliedCount?.let { put("appliedCount", it) }
+            if (detailJson.isNotEmpty()) put("detailJson", detailJson)
+        }
+
+    companion object {
+        const val STATUS_OK = "ok"
+        const val STATUS_FAILED = "failed"
+
+        fun from(outcome: PluginReloadOutcome): DeliveryReloadPluginOutcome =
+            DeliveryReloadPluginOutcome(
+                listener = outcome.listener,
+                status = if (outcome.ok) STATUS_OK else STATUS_FAILED,
+                reason = outcome.reason,
+                timeout = outcome.timeout,
+                appliedMd5 = outcome.appliedMd5,
+                appliedVersion = outcome.appliedVersion,
+                appliedCount = outcome.appliedCount,
+                detailJson = outcome.detailJson,
+            )
+    }
+}

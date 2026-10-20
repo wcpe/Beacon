@@ -60,6 +60,10 @@ object AgentBootstrap {
                     // 本地清单缓存文件名（落 agent 数据目录）。
                     manifestFileName = reader.string("assets.manifest-file-name", "asset-manifest.json"),
                 ),
+            // 单业务插件的配置重载超时（毫秒，FR-274）。默认 0 = 不设超时（就地内联执行，兼容既有行为）。
+            // 运维须显式配置且**小于控制面的 activateTimeoutSec**，否则控制面先判整体超时，
+            // 回执里就看不出是哪个插件卡住（见 docs/specs/delivery-reload-ack.md §7 风险 1）。
+            configReloadTimeoutMs = reader.long("delivery.config-reload-timeout-ms", 0),
         )
     }
 

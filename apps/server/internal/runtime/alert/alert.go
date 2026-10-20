@@ -9,14 +9,41 @@ import (
 	"time"
 )
 
-// Alert 是一条健康告警事件（实例状态从 PrevStatus 异常转移到 Status）。
+// 告警事件类型（与 model.AlertEventType* 对齐；本包不 import model 以避免 runtime→model 之外的耦合，
+// 由调用方按需传入）。健康流转是唯一有真实触发点的历史类型，交付失败（FR-274）为本轮新增触发点。
+const (
+	// TypeHealthTransition 实例健康状态异常转移（degraded / lost / offline）。
+	TypeHealthTransition = "health-transition"
+	// TypePublishFail 交付失败（配置/文件发布失败，FR-274 起有真实触发点）。
+	TypePublishFail = "publish-fail"
+)
+
+// Alert 是一条告警事件。
+//
+// 历史上本结构是**健康专用**（只承载 PrevStatus→Status 的状态转移）。FR-274 起需要承载交付失败，
+// 故加性扩展 [Type] 与 [Detail]：健康路径的既有字段与消费方式完全不变（PersistAlerter 显式写
+// health-transition），新增类型只需填 Type / Detail / Message 语义。
 type Alert struct {
+	// Type 事件类型（见本包 Type* 常量）；空串按健康流转处理，保持老调用方零改动。
+	Type       string    `json:"type,omitempty"`
 	Namespace  string    `json:"namespace"`
 	ServerID   string    `json:"serverId"`
 	Address    string    `json:"address"`
 	PrevStatus string    `json:"prevStatus"`
 	Status     string    `json:"status"`
 	At         time.Time `json:"at"`
+	// Message 人读摘要；为空时由各通道按类型自行拼装（健康路径沿用「serverId prev → status」）。
+	Message string `json:"message,omitempty"`
+	// Detail 结构化上下文（如交付失败的 orderId 与逐插件失败清单）；健康路径不看该字段。
+	Detail map[string]any `json:"detail,omitempty"`
+}
+
+// EventType 返回实际事件类型（空串归一为健康流转，兼容既有调用方）。
+func (a Alert) EventType() string {
+	if a.Type == "" {
+		return TypeHealthTransition
+	}
+	return a.Type
 }
 
 // Alerter 是一个告警通道：把一条告警投递出去（单一职责）。新增通道只实现本接口。

@@ -20,6 +20,7 @@ import top.wcpe.beacon.agent.core.messaging.MessagingSettings
  * @param messaging          跨服消息中间件（FR-26）本地行为参数（Redis 连接由控制面下发，不在此）
  * @param proxy              BC 代理本地路由参数（FR-48 home-zone）；bukkit 不用，默认空
  * @param assets             文件资产索引（FR-163）本地参数（周期扫描间隔来自本地 config.yml）
+ * @param configReloadTimeoutMs 单个业务插件的配置重载超时（毫秒，FR-274）；0=不设超时
  */
 data class AgentSettings(
     val endpoints: List<String>,
@@ -49,6 +50,9 @@ data class AgentSettings(
             scanIntervalSec = 1800,
             manifestFileName = "asset-manifest.json",
         ),
+    // 单个业务插件的配置重载超时（毫秒，FR-274）：0=不设超时（就地内联执行，兼容既有行为）。
+    // 必须**小于控制面的 activate_timeout_sec**——否则控制面先判整体超时，回执里就看不出是哪个插件卡住。
+    val configReloadTimeoutMs: Long = 0,
 ) {
     /** 当前选用的控制面基址（MVP：首个 endpoint）。 */
     fun primaryEndpoint(): String = endpoints.first().trimEnd('/')

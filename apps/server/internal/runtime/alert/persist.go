@@ -32,10 +32,24 @@ func NewPersistAlerter(sink EventSink) *PersistAlerter {
 // Name 返回通道名。
 func (p *PersistAlerter) Name() string { return "persist" }
 
-// Notify 把一条健康告警映射为 alert_event 落库。
+// Notify 把一条告警映射为 alert_event 落库。
 // created_at 不在此设，交由 GORM 全局 NowFunc 统一填 UTC（保与全表一致）。
-// 级别按 FR-231 判定矩阵（健康级别 × 角色）计算；角色经 sink 查控制面权威事实（查不到按 backend 规则降级）。
+//
+// 健康流转沿用既有口径：级别按 FR-231 判定矩阵（健康级别 × 角色）计算，角色经 sink 查控制面权威事实。
+// 非健康类型（如 publish-fail，FR-274）按 Type 分派：不带 PrevStatus→Status 语义、不参与健康分级矩阵，
+// 固定 warning 级（交付失败必须逐条可见，且不收敛——见 convergesOnRecord）。
 func (p *PersistAlerter) Notify(_ context.Context, a Alert) error {
+	typ := a.EventType()
+	if typ != TypeHealthTransition {
+		return p.sink.Record(&model.AlertEvent{
+			Type:      typ,
+			Level:     model.AlertLevelWarning,
+			ServerID:  a.ServerID,
+			Namespace: a.Namespace,
+			Message:   a.Message,
+			Detail:    jsonDetail(a.Detail),
+		})
+	}
 	role := ""
 	if p.sink != nil {
 		role = p.sink.ResolveAlertRole(a.Namespace, a.ServerID)
@@ -49,6 +63,18 @@ func (p *PersistAlerter) Notify(_ context.Context, a Alert) error {
 		Message:   a.ServerID + " " + a.PrevStatus + " → " + a.Status,
 		Detail:    healthAlertDetail(a),
 	})
+}
+
+// jsonDetail 把结构化上下文序列化为 JSON 文本；nil 或序列化失败回退空串（不阻断留痕）。
+func jsonDetail(detail map[string]any) string {
+	if len(detail) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(detail)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // healthAlertDetail 把告警上下文序列化为 json 文本（落 detail TEXT 列）；序列化失败回退空串（不阻断留痕）。

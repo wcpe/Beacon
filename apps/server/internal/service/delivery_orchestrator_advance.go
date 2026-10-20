@@ -1,12 +1,15 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 )
 
 // advanceRolling 推进一个 rolling 单：payload 未就绪先做准备；否则回执驱动在途目标 + 推进当前活动批。
@@ -171,8 +174,15 @@ func (s *DeliveryOrchestrator) reconcileActivatingByAck(rt *orderRuntime, t *mod
 	}
 	switch cmd.Status {
 	case model.CommandStatusDone:
-		s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusActivated,
-			map[string]any{"activated_at": s.now()})
+		// 成功也要落 reload_report（FR-274）：控制面需据此核对「回执成功但版本不符」
+		// （插件自报 appliedMd5/appliedVersion 与期望不一致时必须显式可见，护栏：不得假报成功）。
+		updates := map[string]any{"activated_at": s.now()}
+		if res := parseDeliveryCmdResult(cmd.ResultDetail); res.Reload != nil {
+			if raw, err := json.Marshal(res.Reload); err == nil {
+				updates["reload_report"] = string(raw)
+			}
+		}
+		s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusActivated, updates)
 	case model.CommandStatusFailed:
 		res := parseDeliveryCmdResult(cmd.ResultDetail)
 		s.failTargetWithResult(rt, t, model.ChangeTargetStatusActivating, targetErrorOr(res.Error, "生效失败"), res)
@@ -678,7 +688,50 @@ func (s *DeliveryOrchestrator) casTarget(rt *orderRuntime, t *model.ChangeTarget
 		}
 	}
 	s.emitTargetEvent(rt, t)
+	// 交付失败告警（FR-275）：只认「迁到 failed」这一个条件，且只在 CAS 真正命中后发
+	// （未命中说明前态不符、状态没变，发告警就是误报）。放在 emitTargetEvent 之后、
+	// 事务与锁之外——告警是旁路，落库失败只由 Dispatcher 记 WARN，绝不回滚状态迁移。
+	if to == model.ChangeTargetStatusFailed {
+		s.emitDeliveryFailAlert(rt, t, updates)
+	}
 	return true
+}
+
+// emitDeliveryFailAlert 扇出交付失败告警（FR-275）。
+//
+// 刻意**不收敛**（alert_event 侧 convergesOnRecord 不收录 publish-fail）：交付失败必须逐条可见、
+// 逐条处置，合并会掩盖「同一台服反复交付失败」这条关键信号。
+//
+// 装配缺失（未 SetAlerter）时静默跳过：告警是旁路，不得因它未接线而阻断交付编排。
+func (s *DeliveryOrchestrator) emitDeliveryFailAlert(rt *orderRuntime, t *model.ChangeTarget, updates map[string]any) {
+	if s.alerter == nil {
+		return
+	}
+	reason, _ := updates["error"].(string)
+	detail := map[string]any{
+		"orderId":  rt.order.ID,
+		"serverId": t.ServerID,
+		"status":   t.Status,
+	}
+	if reason != "" {
+		detail["error"] = reason
+	}
+	// 逐插件重载明细（FR-274 落库的同一份事实）：告警里带上失败项，运维无需再翻交付单才知道是哪个插件。
+	if raw, ok := updates["reload_report"].(string); ok && raw != "" {
+		detail["reloadReport"] = json.RawMessage(raw)
+	}
+	message := "交付失败：" + reason
+	if message == "交付失败：" {
+		message = "交付失败（未提供原因）"
+	}
+	s.alerter.Dispatch(context.Background(), alert.Alert{
+		Type:      alert.TypePublishFail,
+		Namespace: rt.nsCode,
+		ServerID:  t.ServerID,
+		At:        s.now(),
+		Message:   message,
+		Detail:    detail,
+	})
 }
 
 // failTarget 把目标从 from 迁 failed 并落脱敏原因（ADR-0057），返回是否命中。
@@ -731,6 +784,13 @@ func (s *DeliveryOrchestrator) failureFacts(reason string, res deliveryCmdResult
 	}
 	if markPushed {
 		updates["pushed_at"] = s.now()
+	}
+	// 逐插件重载结果原文（FR-274）：只在 agent 上报时写入，供交付单详情展开
+	// 「哪个插件、什么原因、实际加载了什么」。老 agent 不上报则保持 NULL。
+	if res.Reload != nil {
+		if raw, err := json.Marshal(res.Reload); err == nil {
+			updates["reload_report"] = string(raw)
+		}
 	}
 	return updates
 }

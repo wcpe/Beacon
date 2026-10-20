@@ -152,7 +152,7 @@ object BeaconAgentBukkit : Plugin() {
 
             // 装配：先建 store + view，再用 view 构 adapter（adapter 在变更时回调 view 派发 API 监听器）。
             val store = EffectiveConfigStore()
-            val view = EffectiveConfigView(store)
+            val view = EffectiveConfigView(store, settings.configReloadTimeoutMs)
             val adapter = BukkitPlatformAdapter(view)
             val codec = KotlinxJsonCodec()
             val bindingSnapshot = IdentityBindingSnapshotStore(File(getDataFolder(), "identity-binding.snapshot.json"), codec)

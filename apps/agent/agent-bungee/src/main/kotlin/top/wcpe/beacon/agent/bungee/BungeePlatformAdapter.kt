@@ -4,6 +4,7 @@ import net.md_5.bungee.api.ProxyServer
 import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.submit
 import taboolib.common.platform.function.submitAsync
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.browse.DirListing
@@ -102,9 +103,16 @@ class BungeePlatformAdapter(
     override fun publishConfigChanged(
         changed: Set<String>,
         newMd5: String,
-    ) {
+    ): ConfigReloadReport {
         // MVP：经 API 监听器派发（业务插件通过 EffectiveConfig.onChange 订阅）。
-        effectiveConfigView.fireChanged(changed, newMd5)
+        // 逐监听器隔离在 fireChanged 内完成；此处只负责把失败暴露到日志并**返回报告**，
+        // 由调用方决定降级：交付路径一票否决回执 failed，周期同步路径仅记日志不中断
+        // （见 docs/specs/delivery-reload-ack.md §3.3）。
+        val report = effectiveConfigView.fireChanged(changed, newMd5)
+        if (report.hasFailures) {
+            error("配置变更派发存在失败：${report.failureSummary()}", null)
+        }
+        return report
     }
 
     override fun dispatchConsoleCommand(command: String) {

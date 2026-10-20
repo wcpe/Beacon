@@ -804,6 +804,7 @@ export const delivery = {
           delivered: 'Delivered version',
           error: 'Failure reason',
           rollbackError: 'Rollback failure reason',
+          reload: 'Plugin reload',
           backup: 'Backup',
         },
         rollbackStatus: {
@@ -811,6 +812,25 @@ export const delivery = {
           running: 'Rolling back',
           rolled_back: 'Rolled back',
           failed: 'Rollback failed',
+        },
+        // Per-plugin reload outcome (FR-272)
+        reload: {
+          title: 'Plugin reload',
+          summary: '{{ok}}/{{total}} succeeded, {{failed}} failed',
+          summaryAllOk: 'All {{total}} plugins reloaded successfully',
+          noReload: 'No reload info',
+          noReloadHint: 'This receipt carried no plugin reload result (older agent version)',
+          expand: 'Show details',
+          collapse: 'Collapse',
+          pluginOk: 'OK',
+          pluginFailed: 'Failed',
+          pluginTimeout: 'Timed out',
+          timeoutHint: 'Plugin reload exceeded {{ms}}ms',
+          reason: 'Reason: {{reason}}',
+          appliedVersion: 'Loaded version',
+          appliedMd5: 'Content md5',
+          appliedCount: 'Loaded entries',
+          appliedCountUnknown: 'Not reported',
         },
       },
       // 回滚动作记录（FR-270 / FR-271）：谁 / 何时 / 为何 / 台数 / 是否回退配置 / 逐台结果

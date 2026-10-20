@@ -14,6 +14,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/pkg/lockguard"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
 )
@@ -121,7 +122,21 @@ type DeliveryOrchestrator struct {
 	// lockGuard 是 AttachLockDBGuard 挂上的观测句柄（未装配时为 nil）。
 	// 它不参与任何业务判定，只让「观测是否真的生效」可被核验（见该方法与 LockGuard 的说明）。
 	lockGuard *lockguard.Watcher
+	// alerter 交付失败告警扇出器（FR-275）。未装配（nil）即不产告警——告警是旁路，
+	// 装配缺失不得阻断交付编排本身。经 SetAlerter 注入（与既有 SetNotifier 同惯例）。
+	alerter deliveryFailAlerter
 }
+
+// deliveryFailAlerter 是编排器对告警域的最小依赖（窄接口，避免 service→runtime/alert 的宽耦合）。
+type deliveryFailAlerter interface {
+	Dispatch(ctx context.Context, a alert.Alert)
+}
+
+// SetAlerter 注入交付失败告警扇出器（FR-275，启动时装配）。
+//
+// 刻意用 setter 而非扩展 NewDeliveryOrchestrator 的构造参数：该构造函数已有 8 个参数、
+// 被多处调用（含测试），加参会让所有调用点跟着改；告警又是纯旁路依赖，setter 更贴合既有惯例。
+func (s *DeliveryOrchestrator) SetAlerter(a deliveryFailAlerter) { s.alerter = a }
 
 func (s *DeliveryOrchestrator) SetApprovalService(approval *ApprovalService) { s.approval = approval }
 
@@ -510,6 +525,29 @@ type deliveryCmdResult struct {
 	SkippedFileCount int    `json:"skippedFileCount"`
 	BackupPresent    bool   `json:"backupPresent"`
 	Error            string `json:"error"`
+	// Reload 是逐插件重载结果（FR-274）；老 agent 不上报时为 nil。
+	Reload *deliveryReloadReport `json:"reload"`
+}
+
+// deliveryReloadReport 是逐插件重载结果的回执形状（FR-274，见 docs/specs/delivery-reload-ack.md §3.4）。
+type deliveryReloadReport struct {
+	Total       int                      `json:"total"`
+	OKCount     int                      `json:"okCount"`
+	FailedCount int                      `json:"failedCount"`
+	TimeoutMs   int64                    `json:"timeoutMs"`
+	Plugins     []deliveryReloadPlugin   `json:"plugins"`
+}
+
+// deliveryReloadPlugin 是单个插件的重载结果（FR-274）。
+type deliveryReloadPlugin struct {
+	Listener       string `json:"listener"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	Timeout        bool   `json:"timeout"`
+	AppliedMd5     string `json:"appliedMd5"`
+	AppliedVersion string `json:"appliedVersion"`
+	AppliedCount   *int   `json:"appliedCount"`
+	DetailJson     string `json:"detailJson"`
 }
 
 // parseDeliveryCmdResult 解析命令结果摘要（损坏 / 空则返回零值，不阻断推进）。

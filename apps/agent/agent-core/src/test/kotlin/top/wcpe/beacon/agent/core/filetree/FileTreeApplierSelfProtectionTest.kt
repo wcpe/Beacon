@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.filetree
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File
@@ -131,7 +132,7 @@ class FileTreeApplierSelfProtectionTest {
         override fun publishConfigChanged(
             changed: Set<String>,
             newMd5: String,
-        ) {}
+        ): ConfigReloadReport = ConfigReloadReport.empty(changed, newMd5)
 
         override fun info(msg: String) {}
 
