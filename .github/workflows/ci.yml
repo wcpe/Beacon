@@ -101,7 +101,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
-            web/pnpm-lock.yaml
       - name: 安装根工作区依赖
         run: pnpm install --frozen-lockfile
       - name: 校验 UI 控件博物馆覆盖率
@@ -114,26 +113,8 @@ jobs:
           pnpm run lint
           pnpm run test
           pnpm run build
-      - name: 安装旧版前端依赖
-        working-directory: web
-        run: pnpm install --frozen-lockfile
-      - name: 运行旧版前端静态检查
-        working-directory: web
-        run: pnpm lint
-      - name: 校验旧版前端格式
-        working-directory: web
-        run: pnpm format:check
-      - name: 运行旧版前端测试与覆盖率门禁
-        working-directory: web
-        run: pnpm test:coverage
       - name: 构建内嵌前端
         run: make web
-      - name: 安装 Playwright 浏览器
-        working-directory: web
-        run: pnpm exec playwright install --with-deps chromium
-      - name: 运行假后端前端 E2E
-        working-directory: web
-        run: pnpm test:e2e
 
   # Agent 格式、静态检查与单测保持为独立必需质量任务。
   agent:

@@ -26,15 +26,15 @@
 
 演示模式截图（数据为示例数据）：
 
-| 运维总览 | 集群拓扑 |
+| 集群拓扑 | 服务器资产 |
 |---|---|
-| ![运维总览](docs/images/dashboard.png) | ![集群拓扑](docs/images/topology.png) |
-| 健康 KPI、服务器状态墙、连接流与调度概览 | BC → 小区放射链路与异常边 |
+| ![集群拓扑](docs/images/topology.png) | ![服务器资产](docs/images/servers.png) |
+| BC → 小区放射链路、失败率与异常边下钻 | 19 台服务器的健康分、标签、TPS / CPU 与在线数 |
 
-| 交付变更单 | 服务器资产 |
+| 变更单 | 审计追溯 |
 |---|---|
-| ![交付变更单](docs/images/delivery.png) | ![服务器资产](docs/images/servers.png) |
-| 变更单分批灰度、目标级回滚与交付历史 | 注册待确认、身份 / 健康与资产运维 |
+| ![交付变更单](docs/images/delivery.png) | ![审计追溯](docs/images/audits.png) |
+| 分批灰度策略、逐单状态与目标级回滚 | 操作人 / 动作 / 目标 / 结果的完整审计链路 |
 
 想自己点一遍管理台（免部署、免登录、mock 数据）：
 

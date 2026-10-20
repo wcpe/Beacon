@@ -15,5 +15,6 @@
 | [comments.md](comments.md) | 注释中文 |
 | [config-files.md](config-files.md) | YAML 配置规范 |
 | [git-commit.md](git-commit.md) | 提交规范与文档入库边界 |
+| [release-process.md](release-process.md) | **发布漂移**：发布 tag 由流水线创建、编号连续不跳号、破坏性发布操作须授权 |
 
 > 完整演进与维护流程见 [../../docs/CONTRIBUTING.md](../../docs/CONTRIBUTING.md)。

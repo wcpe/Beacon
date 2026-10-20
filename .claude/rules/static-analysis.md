@@ -5,13 +5,13 @@
 ## 1. 各组件工具链
 
 - **控制面（Go）**：`gofmt` / `goimports` 格式化 + `golangci-lint`（配置见仓库根 `.golangci.yml`，以 `default: all` 为基线，禁用项集中声明并注明原因）。
-- **前端（React / TS）**：Legacy 使用 `web/` 工程内的 `eslint` + `prettier`；第二版根工作区使用 `packages/eslint-config` 的 strict-type-checked + stylistic-type-checked ESLint，并叠加 `packages/typescript-config` 的严格 TypeScript 检查。
+- **前端（React / TS）**：根工作区使用 `packages/eslint-config` 的 strict-type-checked + stylistic-type-checked ESLint，并叠加 `packages/typescript-config` 的严格 TypeScript 检查。
 - **agent（Kotlin）**：`ktlint` + `detekt`（配置在 `apps/agent/` Gradle 工程内）。
 
 ## 2. 强制要求
 
 - **CI 门禁**：lint 与格式检查未过 → 不允许合并（与测试同级，见 `testing-and-quality.md`）。
-- **本地（强制，提交前必跑）**：**每次 `git commit` 前必须本地跑对应组件的 format + lint，绿了才提交**，绝不把格式 / 静态问题留给 CI。改了 Go → 跑 `make lint`（一键跑齐 golangci-lint + gofmt + goimports，CRLF 安全，见 §2.1；Windows 需 PowerShell 7 + make）；改了前端 → Legacy 跑 `cd web && pnpm lint` / build，第二版工作区跑根级 `pnpm run lint` / `pnpm run build`（Turborepo 编排）；改了 agent → `cd apps/agent && ./gradlew ktlintCheck detekt`。"测试绿"不代表"格式 / lint 绿"——`go test` 不含 gofmt，必须单独跑。
+- **本地（强制，提交前必跑）**：**每次 `git commit` 前必须本地跑对应组件的 format + lint，绿了才提交**，绝不把格式 / 静态问题留给 CI。改了 Go → 跑 `make lint`（一键跑齐 golangci-lint + gofmt + goimports，CRLF 安全，见 §2.1；Windows 需 PowerShell 7 + make）；改了前端 → 跑根级 `pnpm run lint` / `pnpm run build`（Turborepo 编排，覆盖 `apps/web`）；改了 agent → `cd apps/agent && ./gradlew ktlintCheck detekt`。"测试绿"不代表"格式 / lint 绿"——`go test` 不含 gofmt，必须单独跑。
 - **依赖漏洞**：Go 侧用 `govulncheck` 作漏洞发现入口（零成本，纳入 CI）；升级流程见 `sdd-bump-dependencies`。
 - 工具与规则版本固定（写进配置 / 构建），避免不同机器结果不一致。
 

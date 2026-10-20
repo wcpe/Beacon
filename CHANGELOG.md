@@ -4,6 +4,14 @@
 
 ## 未发布
 
+### 变更
+
+- **退役第一版前端目录（FR-273）**：根级 `web/` 是第一版管理台，自 P1 起因「第二版二进制只嵌 `apps/web`」而整体冻结（FR-138），此后不再演进。它与生产链路已无任何耦合——二进制只 `go:embed apps/web/dist`、根 workspace 为 `apps/*` 与 `packages/*`、`Makefile` 与 `turbo` 均不引用——但 CI 仍为它跑依赖安装、lint、格式与覆盖率四项检查，E2E 还保留一个只测它的 Playwright job，等于长期为空壳付门禁成本。
+  - **删除该目录**（255 个源文件、独立 workspace 与 lockfile），历史实现由 `git log -- web/` 追溯
+  - **CI 移除四项旧版检查**与对应的 lockfile 缓存路径；`make web` 与 `make build` 链路不变（只构建 `apps/web`）
+  - **E2E 移除「前端真后端」job**（`web-e2e-real`）；新版前端的假后端 E2E 仍在 `ci.yml` 作为 PR 必跑门禁
+  - **文档补齐退役边界**：ARCHITECTURE 的 Legacy 边界与物理现状、ROADMAP 的冻结条目同步为「已退役」；并记入新版前端的待办功能缺口——旧版独有的覆盖集管理、反向抓取任务化、整树生效预览、可逆操作撤回、服务器实时文件树浏览，后台端点均在线但无前端入口
+
 ## 1.5.0（2026-10-12）
 ### 新增
 

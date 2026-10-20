@@ -2,7 +2,9 @@
 
 > 本文是**第二版（0.20.x 起）架构真源**：面向 MC 集群的调度中间件控制面「怎么建」的总览与导航，与 [PRD.md](PRD.md)（要什么）、[ROADMAP.md](ROADMAP.md)（何时建）、[UX.md](UX.md)（前端交互）、[API.md](API.md)（REST 契约）、[specs/](specs/)（各域权威规格）、[adr/](adr/)（决策）配套。细节一律引用规格 / ADR，不在此复制表结构、端点表与状态机正文。
 >
-> **Legacy 边界**：`v0.1.0` – `v0.19.x` 为第一版探索期，实现冻结在仓库中（`web/` 与现有 Go 代码在 P1 迁移 / 冻结前仍是物理现状）；其第一版架构描述以 git 历史与 Legacy ADR 追溯，本文不再维护第一版细节。
+> **Legacy 边界**：`v0.1.0` – `v0.19.x` 为第一版探索期；其第一版架构描述以 git 历史与 Legacy ADR 追溯，本文不再维护第一版细节。
+>
+> **Legacy 前端已退役（FR-138）**：根级 `web/` 目录是第一版管理台，自 P1 起因「第二版二进制只嵌 `apps/web`」而冻结，此后不再演进；现已删除。其历史实现与 E2E 用例由 git 历史（`git log -- web/`）追溯，CI 与 E2E 不再为其保留门禁。旧版独有的交互中尚有若干后端端点无前端入口（覆盖集、反向抓取任务化、整树生效预览、可逆操作撤回、服务器实时文件树浏览），属**新版前端的待办功能缺口**，与本次退役无关。
 
 ## 1. 定位与边界
 
@@ -32,7 +34,7 @@ pnpm workspace + Turborepo，`turbo run lint / test / build` 全仓一键：
 apps/
   server/      Go 控制面（cmd/ + internal/ 已迁入；go:embed、Makefile、CI、脚本同步适配）
   agent/       Kotlin/TabooLib agent
-  web/         第二版管理台（新建，栈见 §6；发布二进制只嵌它）
+  web/         第二版管理台（栈见 §6；发布二进制只嵌它。注意是 apps/web，与已退役的根级 web/ 无关）
   ui-wiki/     UI 控件博物馆（每个 @beacon/ui 导出控件必有展示页，覆盖率进 CI 门禁，FR-175）
 packages/
   ui/          @beacon/ui 通用控件包（新管理台组件一律取自此，禁止页面私建通用控件）
@@ -41,7 +43,7 @@ packages/
   eslint-config/ typescript-config/   共享工程配置（静态检查最严档三线，FR-176）
 ```
 
-当前物理现状：Go 控制面在 `apps/server/`，agent 在 `apps/agent/`，UI 包与控件博物馆已提升到 `packages/ui` 与 `apps/ui-wiki`；Legacy 前端仍在 `web/`（P1 起整体冻结不演进，FR-138）。布局与栈的决策见 [ADR-0060](adr/0060-monorepo-layout-and-v2-frontend-stack.md)（monorepo 与第二版前端栈）、[ADR-0061](adr/0061-strictest-static-analysis-three-lines.md)（静态检查最严档三线）。
+当前物理现状：Go 控制面在 `apps/server/`，agent 在 `apps/agent/`，管理台在 `apps/web/`，UI 包与控件博物馆已提升到 `packages/ui` 与 `apps/ui-wiki`；第一版前端（根级 `web/`）已退役删除（FR-138）。布局与栈的决策见 [ADR-0060](adr/0060-monorepo-layout-and-v2-frontend-stack.md)（monorepo 与第二版前端栈）、[ADR-0061](adr/0061-strictest-static-analysis-three-lines.md)（静态检查最严档三线）。
 
 ### 2.2 控制面（Go）分层原则（沿用）
 
