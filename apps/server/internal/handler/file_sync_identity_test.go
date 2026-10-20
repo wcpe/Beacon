@@ -230,6 +230,7 @@ func TestFileSyncDataPlaneRequiresConfirmedIdentity(t *testing.T) {
 		request func(t *testing.T, f *fileSyncIdentityFixture) *http.Request
 	}{
 		{name: "manifest", request: func(t *testing.T, f *fileSyncIdentityFixture) *http.Request {
+			t.Helper()
 			return f.manifestRequest(t, f.task.ID, f.sourceCmd.ID)
 		}},
 		{name: "upload-blob", request: func(_ *testing.T, f *fileSyncIdentityFixture) *http.Request {
@@ -239,6 +240,7 @@ func TestFileSyncDataPlaneRequiresConfirmedIdentity(t *testing.T) {
 			return f.downloadRequest(f.task.ID, testFileSyncHash("config.yml"))
 		}},
 		{name: "target-result", request: func(t *testing.T, f *fileSyncIdentityFixture) *http.Request {
+			t.Helper()
 			return f.targetResultRequest(t, f.task.ID, f.targetCmd.ID)
 		}},
 	}
