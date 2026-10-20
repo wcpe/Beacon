@@ -95,7 +95,7 @@ serverId=onb-game-a dir=/srv/mc/onb-game-a role=backend target=zone:onb-zone1 de
   3. 同批替换 agent 与控制面：先按本节 1、2 项确认 token 类型与身份状态，再统一升级（下方「控制面与 agent 的产品版本必须一致」同样适用，不要让两侧版本错开）。
   失败表现为数据面 401 / 403 / 409 / **404**：404 属归属不符（含陈旧 boot），agent 侧把心跳 404 识别为「未注册需重新注册」，日志表现为**反复 register**，看到该现象应先怀疑 token 类型或身份状态，而不是网络连通性。
   注册端点自身的归属不符返回 **409 `IDENTITY_BINDING_MISMATCH`**（自报 namespace/serverId 与身份绑定不一致），属配置错误，按本节 1、2 项核对即可。
-  规则见 `docs/adr/0094-v1-agent-data-plane-authoritative-identity.md`（ADR 属内部文档，不收录进文档站）。
+  决策依据见仓库内部的 v1 数据面身份鉴权决策记录（不收录进文档站）。
 - agent：按批替换 Bukkit/Bungee JAR 并重启节点，保留 `plugins/Beacon/` 本地身份、配置快照、流位置与幂等账本。控制面与 agent 的产品版本必须一致。
 - 产品资产发布前使用 `SHA256SUMS.txt` 校验；平台是否发布由本次 RC 的实际资产决定，不额外引入阶段专属平台准入。
 
