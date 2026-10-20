@@ -58,143 +58,145 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 
 > 状态流转：`计划` → `开发中` → `已交付@vX.Y.Z`。第二版新增 FR 从 `FR-138` 开始，不复用 Legacy 历史编号。带页面的 FR 其页面骨架统一在 P2 以 mock 拍板（FR-172），FR 所在阶段负责接真与真机验收。
 >
-| 编号 | 能力概览 | 交付版本 | 规格 / 验收要点 |
+> 本表是**索引级**：每个 FR 只记「一句话需求 + 期 + 状态」，详细规格与验收口径在 `docs/specs/`，演进与修复历史在 `CHANGELOG.md`。标 `已交付` 有门——只有该 FR 的规格验收标准全部满足、对应测试与真机验收通过、且随正式版本发布后才标；**预发布（`-rc.N`）不算正式交付**，这类 FR 标为 `已交付@vX.Y.Z-rc.N` 以标明实际落在哪个候选版本，正式版发布后再改为 `已交付@vX.Y.Z`。
+
+| 编号 | 需求 | 期 | 状态 |
 |---|---|---|---|
-| FR-138 | Legacy 前端整体冻结，第二版二进制仅内嵌新管理台 | v0.21.0 | 发布产物只嵌新管理台，冻结边界写入架构文档 |
-| FR-139 | Agent 首启生成并持久化唯一身份标识 | v0.21.0 | 规格见 [v2-agent-identity](specs/v2-agent-identity.md) |
-| FR-140 | Agent 首次接入需人工确认身份与归属绑定 | v0.21.0 | 规格见 [v2-agent-identity](specs/v2-agent-identity.md) |
-| FR-141 | 身份冲突、解绑、换区、禁用与重新绑定流程 | v0.21.0 | 规格见 [v2-agent-identity](specs/v2-agent-identity.md) |
-| FR-142 | 区服层级权威模型奠定 namespace 强隔离 | v0.21.0 | 规格见 [v2-namespace-isolation](specs/v2-namespace-isolation.md) |
-| FR-143 | 未分配 Agent 后台分配到大区、小区与默认入口 | v0.21.0 | 规格见 [v2-zone-authority](specs/v2-zone-authority.md) |
-| FR-144 | Agent 秒级采样，Beacon 批量入库基础指标 | v0.24.1 | 规格见 [v2-metrics-health-scheduling](specs/v2-metrics-health-scheduling.md) |
-| FR-145 | 每连接明细采集、存储与查询 | v0.25.2 | 规格见 [v2-connection-message-storage](specs/v2-connection-message-storage.md) |
-| FR-146 | 调度决策全过程留痕，可解释为何选中或排除 | v0.24.2 | 规格见 [v2-metrics-health-scheduling](specs/v2-metrics-health-scheduling.md) |
-| FR-147 | 健康值模型综合 TPS、CPU、连接、告警、容量与延迟评分 | v0.24.2 | 规格见 [v2-metrics-health-scheduling](specs/v2-metrics-health-scheduling.md) |
-| FR-148 | 本机 agent-api 调度接口，业务插件禁止直连 Beacon | v0.24.3 | 规格见 [v2-metrics-health-scheduling](specs/v2-metrics-health-scheduling.md) |
-| FR-149 | 跨服消息追踪元数据：来源、目标、耗时、状态与链路 | v0.25.2 | 规格见 [v2-connection-message-storage](specs/v2-connection-message-storage.md) |
-| FR-150 | 跨服消息 payload 按日期存储，查看须填原因并入审计 | v0.25.2 | 规格见 [v2-connection-message-storage](specs/v2-connection-message-storage.md) |
-| FR-151 | 热冷数据生命周期划分与归档库 | v0.26.1 | 规格见 [v2-hot-cold-archive](specs/v2-hot-cold-archive.md) |
-| FR-152 | 冷查询路由：默认热库，显式勾选归档后跨库查询 | v0.26.1 | 规格见 [v2-hot-cold-archive](specs/v2-hot-cold-archive.md) |
-| FR-153 | 归档清理页面提供预览、dry-run、归档校验与审计 | v0.26.1 | 规格见 [v2-hot-cold-archive](specs/v2-hot-cold-archive.md) |
-| FR-154 | 运维总览一屏呈现健康、玩家流、连接流、告警与调度 | v0.24.4 | 规格见 [v2-metrics-health-scheduling](specs/v2-metrics-health-scheduling.md) |
-| FR-155 | 集群管理页承载注册确认、身份绑定与区服分配 | v0.23.0 | 千级子服可搜索筛选批量操作，分配结果实时可见 |
-| FR-156 | 集群拓扑呈现 BC 到子服链路、消息流与异常链路 | v0.25.2 | 规格见 [v2-connection-message-storage](specs/v2-connection-message-storage.md) |
-| FR-157 | 服务分析、命令观测、审计与告警事件贯通排查 | v0.25.2 | 规格见 [alert-read-and-handle](specs/alert-read-and-handle.md) |
-| FR-158 | 系统设置统管采样、保留期、归档、健康权重与信任关系 | v0.26.1 | 规格见 [v2-hot-cold-archive](specs/v2-hot-cold-archive.md) |
-| FR-159 | 演示模式内置 mock 数据，无需后端即可展示核心链路 | v0.22.0 | demo 构建无需后端即可演示核心运维链路 |
-| FR-160 | 配置作用域与继承关系对齐区服权威模型 | v0.27.1 | 规格见 [v2-config-center](specs/v2-config-center.md) |
-| FR-161 | 配置中心 V2 支持编辑、校验、差异、版本与回滚 | v0.27.1 | 规格见 [v2-config-center](specs/v2-config-center.md) |
-| FR-162 | 文件差异与配置变更合为一张变更单，含影响预览与审批 | v0.29.0 | 规格见 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) |
-| FR-163 | 文件资产 V2 提供目录清单、文件哈希、大小与搜索 | v0.28.0 | 规格见 [v2-file-assets](specs/v2-file-assets.md) |
-| FR-164 | 文件文本预览与二进制识别、敏感内容保护边界 | v0.28.0 | 规格见 [v2-file-assets](specs/v2-file-assets.md) |
-| FR-165 | 交付数据面：流式传输、源清单扫描、哈希增量与本地备份 | v0.29.1 | 规格见 [delivery-data-plane-and-idempotency](specs/delivery-data-plane-and-idempotency.md) |
-| FR-166 | 载荷无关的灰度编排引擎，支持批次推进、暂停与熔断 | v0.29.1 | 规格见 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) |
-| FR-167 | 记录任务、批次与单服状态并支持一键整单回滚 | v0.29.2 | 规格见 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) |
-| FR-168 | 交付相关高风险操作统一权限分级与审计串联 | v0.29.2 | 规格见 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) |
-| FR-169 | RC 与 GA 发布收口：不可变 RC，同 commit 原样复制资产并核验 | v1.1.0 | 规格见 [p10-rc-ga-admission](specs/p10-rc-ga-admission.md) |
-| FR-170 | 「交付」导航大域聚合文件资产、配置中心与变更单 | v0.22.0 | 侧栏出现交付大分类，各页面有明确挂载位 |
-| FR-171 | 生效编排触发子服重启或配置热重载，并采集观察窗健康数据 | v0.30.0 | 规格见 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) |
-| FR-172 | Mock 管理台：UX 文档全部页面以演示数据实现并逐页评审拍板 | v0.22.0 | UX 文档全部页面可点击演示，逐页评审拍板留档 |
-| FR-173 | monorepo 工程化：pnpm workspace 加 Turborepo，前后端与共享包统一目录 | v0.21.0 | 前后端与共享包统一目录，lint/test/build 一键全仓执行 |
-| FR-174 | 第二版管理台前端脚手架：路由、布局、主题、i18n 与 MSW 双端 mock | v0.21.0 | 骨架可跑，MSW 双端共享 handlers，状态归属边界成文 |
-| FR-175 | UI 组件博物馆：组件库与展示站独立成包，控件展示覆盖率纳入 CI 门禁 | v0.21.0 | 规格见 [ui-component-museum](specs/ui-component-museum.md) |
-| FR-176 | 静态检查最严档：TypeScript、Go、Kotlin 三线全规则启用并进 CI 门禁 | v0.21.0 | TS、Go、Kotlin 三线新代码零违例并纳入 CI 门禁 |
-| FR-177 | 并发身份冲突可视化闭环：交替 bootId 检测，保留实例或解绑处置 | v0.28.0 | 交替 bootId 在冲突窗口检出，落败方持续 409 并指引 |
-| FR-178 | 环境管理：env 增删改与 env→namespace 映射维护，页眉 env 过滤走服务端权威范围 | v1.1.0 | env 增删改与映射替换落审计，失效 scope 不回退全量 |
-| FR-179 | 管理台登录鉴权：登录页、令牌注入与持久化、401 处理、登出 | v0.24.0 | 登录换令牌存本地，全站带 Bearer，401 清令牌跳登录 |
-| FR-180 | 跨服消息广播寻址：namespace 与 zone 级 fan-out，业务插件接口零改动复活 | v0.25.3 | 跨 namespace 广播拒绝，离线不补，追踪行不含 payload |
-| FR-181 | 连接明细与消息链路查询页：游标分页、冷热归档查询与逐跳链路详情 | v0.26.3 | 精确 ID 或限定时间范围查询，payload 受控查看 |
-| FR-182 | 开发构建与发布准备标准化：PR 只跑质量门，master 全绿出临时产物 | v1.1.0 | 规格见 [fr-182-development-build-and-release-preparation](specs/fr-182-development-build-and-release-preparation.md) |
-| FR-183 | 通用不可变 RC：所有版本先发 prerelease 候选，标签与资产不得移动 | v1.1.0 | 规格见 [rolling-prerelease](specs/rolling-prerelease.md) |
-| FR-184 | GA 原样复制：从最终 RC 复制产品资产并创建正式 tag | v1.1.0 | 规格见 [rc-ga-maven-sdk-publication](specs/rc-ga-maven-sdk-publication.md) |
-| FR-185 | 在线更新收敛到稳定 GA，兼容迁移旧 prerelease 设置并修复检查与进度缺口 | v1.1.0 | 规格见 [rolling-prerelease](specs/rolling-prerelease.md) |
-| FR-186 | 管理台侧栏折叠为图标轨并带宽度动画，去掉底部重复身份块 | v1.1.0 | 规格见 [admin-shell-redesign-0.31](specs/admin-shell-redesign-0.31.md) |
-| FR-187 | 管理台双段页眉与身份收敛：指标槽加工具条，身份只在页眉 | v1.1.0 | 规格见 [admin-shell-redesign-0.31](specs/admin-shell-redesign-0.31.md) |
-| FR-188 | 全局运维指标条接真数据：五项控制面指标固定展示并低频轮询 | v1.1.0 | 规格见 [admin-shell-redesign-0.31](specs/admin-shell-redesign-0.31.md) |
-| FR-189 | 小屏抽屉侧栏：窄视口隐藏侧栏，汉堡按钮打开抽屉导航 | v1.1.0 | 规格见 [admin-shell-redesign-0.31](specs/admin-shell-redesign-0.31.md) |
-| FR-190 | 站内开源许可页：从侧栏底栏进入独立许可页展示 MIT 全文 | v1.1.0 | 底栏进入许可页展示 MIT 全文，不进主导航 |
-| FR-191 | 第二段页眉与内容区视觉一体：去横线与半透明底色 | v1.1.0 | 段 2 无下边框与异色底，与内容区同底 |
-| FR-192 | 环境选择改为截图式下拉：无底触发器、淡入淡出与类型徽标 | v1.1.0 | 替换原选择器，切换 env 语义不变并带淡入淡出 |
-| FR-193 | 页眉全局搜索命令面板：快捷键唤起并支持键盘导航跳转 | v1.1.0 | 规格见 [header-command-palette-mvp](specs/header-command-palette-mvp.md) |
-| FR-194 | 页眉语言切换骨架：中英双语可选并本地持久 | v1.1.0 | 中英可切换并刷新保持，缺键回退不白屏 |
-| FR-195 | 页眉通知入口：未处理告警角标、下拉摘要与一键处理 | v1.1.0 | 有未处理告警显角标，下拉可一键确认并跳转全部 |
-| FR-196 | 页眉刷新当前页：仅失效当前路由相关查询，不整页重载 | v1.1.0 | 按当前页 queryKey 重拉，保留筛选且不整页 reload |
-| FR-197 | 管理台视觉打磨：列表健康列收敛、焦点环克制、字体加载稳定与多处细节统一 | v1.1.0 | 健康列主信号不超 2 个，焦点环克制，字体加载正常 |
-| FR-198 | 管理台交互与超大量性能：抽屉点外关闭、区服树与选服列表限量渲染 | v1.1.0 | 抽屉点外关闭，区服树叶子限 40，选服列表限 80 |
-| FR-199 | 大厅集群权威模型：每个 namespace 唯一大厅集群与独立管理台 | v1.1.0 | 规格见 [lobby-cluster-authority](specs/lobby-cluster-authority.md) |
-| FR-200 | BC 全 namespace 受管目录与玩家首次进服大厅落脚调度 | v1.1.0 | 规格见 [bc-namespace-directory-and-lobby-entry](specs/bc-namespace-directory-and-lobby-entry.md) |
-| FR-201 | BC 受管目录立即重同步：namespace 全量与单 BC 重试 | v1.1.0 | 规格见 [bc-managed-directory-resync](specs/bc-managed-directory-resync.md) |
-| FR-202 | BC 受管服务器查询命令：分页列表与单服详情 | v1.1.0 | 规格见 [bc-managed-server-query-command](specs/bc-managed-server-query-command.md) |
-| FR-203 | Agent 极简身份接入：本地只填地址与 token，旧绑定自动迁移 | v1.1.0 | 规格见 [agent-minimal-bootstrap-and-identity-migration](specs/agent-minimal-bootstrap-and-identity-migration.md) |
-| FR-204 | Agent 地址探测与 BC 多 listener 上报，管理台逐 listener 覆盖 | v1.1.0 | 规格见 [agent-address-detection-and-proxy-listeners](specs/agent-address-detection-and-proxy-listeners.md) |
-| FR-205 | 稳定业务标识与可变显示名称：不可改 code 配可重复 displayName | v1.1.0 | 规格见 [stable-business-identifiers-and-display-names](specs/stable-business-identifiers-and-display-names.md) |
-| FR-206 | 人类与机器主体及语义能力授权 | v1.1.0 | 规格见 [human-and-machine-principals-and-capability-authorization](specs/human-and-machine-principals-and-capability-authorization.md) |
-| FR-207 | 危险操作统一审批核心 | v1.1.0 | 规格见 [dangerous-operation-approval-core](specs/dangerous-operation-approval-core.md) |
-| FR-208 | 身份、凭据、信任与拓扑危险操作适配 | v1.1.0 | 规格见 [identity-credential-trust-and-topology-dangerous-operations](specs/identity-credential-trust-and-topology-dangerous-operations.md) |
-| FR-209 | Agent 命令与敏感内容访问授权 | v1.1.0 | 规格见 [agent-command-and-sensitive-content-approval](specs/agent-command-and-sensitive-content-approval.md) |
-| FR-210 | 控制面升级、回滚与系统设置审批 | v1.1.0 | 规格见 [control-plane-upgrade-rollback-and-settings-approval](specs/control-plane-upgrade-rollback-and-settings-approval.md) |
-| FR-211 | 配置、文件、覆盖集与交付审批适配 | v1.1.0 | 规格见 [config-file-override-set-and-delivery-approval](specs/config-file-override-set-and-delivery-approval.md) |
-| FR-212 | 全局审批中心 | v1.1.0 | 规格见 [approval-center](specs/approval-center.md) |
-| FR-213 | 权威观测范围契约 | v1.1.0 | 规格见 [authoritative-observation-scope-contract](specs/authoritative-observation-scope-contract.md) |
-| FR-214 | 页眉 env→namespace 级联筛选 | v1.1.0 | 规格见 [header-env-namespace-cascade-filter](specs/header-env-namespace-cascade-filter.md) |
-| FR-215 | 服务器归档与恢复 | v1.1.0 | 规格见 [server-archive-and-restore](specs/server-archive-and-restore.md) |
-| FR-216 | namespace 归档与恢复 | v1.1.0 | 规格见 [namespace-archive-and-restore](specs/namespace-archive-and-restore.md) |
-| FR-217 | 服务器永久删除与墓碑 | v1.1.0 | 规格见 [server-permanent-deletion-and-tombstone](specs/server-permanent-deletion-and-tombstone.md) |
-| FR-218 | namespace 永久删除与子树墓碑 | v1.1.0 | 规格见 [namespace-permanent-deletion-and-tombstone](specs/namespace-permanent-deletion-and-tombstone.md) |
-| FR-219 | 内置 /admin/v2/mcp 端点与 OAuth 客户端凭据 | v1.1.0 | 规格见 [built-in-admin-v2-mcp-and-oauth](specs/built-in-admin-v2-mcp-and-oauth.md) |
-| FR-220 | MCP 显式领域工具与审批交接 | v1.1.0 | 规格见 [mcp-domain-tools-and-approval-handoff](specs/mcp-domain-tools-and-approval-handoff.md) |
-| FR-221 | 拓扑建树的 MCP 工具（BC 集群、大区、小区增改删） | v1.2.0 | 规格见 [topology-authoring-mcp-tools](specs/topology-authoring-mcp-tools.md) |
-| FR-222 | 内部信任通道：共享 token 机器注册直落 active | v1.2.0 | 规格见 [internal-trust-channel](specs/internal-trust-channel.md) |
-| FR-223 | 审批决定工具与自动化闭环（默认关闭，分权不破） | v1.2.0 | 开关关闭时 automation 调用审批工具被拒；observer 永不可见 |
-| FR-224 | MCP 客户端管理台：清单、能力说明、创建/轮换/启用/吊销与配置只读查看 | v1.2.0 | 清单可见且四动作闭环；配置未启用时展示指引而非报错 |
-| FR-225 | 入口服作为大厅集群成员纳入统一调度 | v1.2.0 | 规格见 [entry-server-as-lobby-member](specs/entry-server-as-lobby-member.md) |
-| FR-226 | Agent 上报服务器工作目录 | v1.2.0 | 规格见 [agent-server-workdir-report](specs/agent-server-workdir-report.md) |
-| FR-227 | 服务器 key=value 键值标签 | v1.2.0 | 规格见 [server-key-value-tags](specs/server-key-value-tags.md) |
-| FR-228 | Agent 上报容量与在线人数参与健康打分 | v1.2.0 | 规格见 [agent-capacity-and-playercount-report](specs/agent-capacity-and-playercount-report.md) |
-| FR-229 | 告警批量处理：已读/已处理两态与按筛选批量 | v1.2.0 | 规格见 [alert-read-and-handle](specs/alert-read-and-handle.md) |
-| FR-230 | 告警详情关联服务器近期状态与时间线 | v1.2.0 | 规格见 [alert-detail-server-context](specs/alert-detail-server-context.md) |
-| FR-231 | 告警按角色自动定级与人工升降级 | v1.2.0 | 规格见 [alert-severity-grading](specs/alert-severity-grading.md) |
-| FR-232 | 告警收敛与防堆积：同实例同类型只留一行，恢复或消失自动消解 | v1.2.0 | 规格见 [alert-dedup-and-auto-resolve](specs/alert-dedup-and-auto-resolve.md) |
-| FR-233 | 区分 v1 数据面挂载与 v2 身份注册的端点职责 | v1.3.0 | 规格见 [agent-registration-endpoint-disambiguation](specs/agent-registration-endpoint-disambiguation.md) |
-| FR-234 | 发布说明自动生成与四生态依赖周更 | v1.2.0 | RC/GA 正文自动含 PR 清单、GA 起点为上一 GA；依赖按周经质量门合入 |
-| FR-235 | 控制面预置身份在审批时自动让位 | v1.3.0 | 规格见 [preplaced-identity-auto-yield](specs/preplaced-identity-auto-yield.md) |
-| FR-236 | MCP 工具风险分级真源 | v1.3.0 | 规格见 [mcp-tool-risk-grading](specs/mcp-tool-risk-grading.md) |
-| FR-237 | MCP 生产模式工具门禁 | v1.3.0 | 规格见 [mcp-production-mode-gate](specs/mcp-production-mode-gate.md) |
-| FR-238 | namespace 接入 token 轮换 | v1.4.0 | 规格见 [v2-namespace-isolation](specs/v2-namespace-isolation.md) |
-| FR-239 | namespace 显示名编辑 | v1.4.0 | displayName/description 可编辑；code 只读、改动被拒 |
-| FR-240 | MCP 工具调用流水全量落库与分页查询，参数仅存脱敏摘要 | v1.4.0 | 规格见 [mcp-invocation-audit](specs/mcp-invocation-audit.md) |
-| FR-241 | 管理台 MCP 流水页，支持筛选分页与危险操作视图 | v1.4.0 | 规格见 [mcp-invocation-audit](specs/mcp-invocation-audit.md) |
-| FR-242 | 生产模式在服务执行面拒执 critical 工具，与发现面共用同一开关 | v1.4.0 | 规格见 [mcp-invocation-audit](specs/mcp-invocation-audit.md) |
-| FR-243 | 节点运行期刷新自身容量与自定义标签声明，幂等且为只读事实 | v1.4.0 | 规格见 [agent-self-declaration-runtime-refresh](specs/agent-self-declaration-runtime-refresh.md) |
-| FR-244 | 调度准入按候选自声明的键值标签收窄候选集 | v1.4.0 | 规格见 [sched-admission-scope](specs/sched-admission-scope.md) |
-| FR-245 | MCP 交付只读工具集，可查变更单、目标、影响、观察窗与事件 | v1.5.0-rc.1 | 规格见 [delivery-mcp-tools](specs/delivery-mcp-tools.md) |
-| FR-246 | MCP 交付组单工具，支持建单、编辑与差异扫描 | v1.5.0-rc.1 | 规格见 [delivery-mcp-tools](specs/delivery-mcp-tools.md) |
-| FR-247 | MCP 交付止损工具，可暂停或终止进行中的变更单 | v1.5.0-rc.1 | 规格见 [delivery-mcp-tools](specs/delivery-mcp-tools.md) |
-| FR-248 | 交付系 MCP 工具被拒时返回可区分的中文原因 | v1.5.0-rc.1 | 规格见 [delivery-mcp-tools](specs/delivery-mcp-tools.md) |
-| FR-249 | 交付审批票据与 MCP 审批视图补齐变更单关联与影响摘要 | v1.5.0-rc.1 | 规格见 [delivery-mcp-tools](specs/delivery-mcp-tools.md) |
-| FR-250 | 交付 MCP 工具入参校验与审计口径统一 | v1.5.0-rc.1 | 规格见 [delivery-mcp-tools](specs/delivery-mcp-tools.md) |
-| FR-251 | 管理台提审入口补齐必填原因与幂等键 | v1.5.0-rc.1 | 详情页与向导提审均携带原因与幂等键，同次重试复用同键 |
-| FR-252 | 变更单六类申请动作改按 202 票据消费并补幂等键 | v1.5.0-rc.1 | 规格见 [delivery-mcp-tools](specs/delivery-mcp-tools.md) |
-| FR-253 | 变更单审批入口收口至审批中心，文件预览给出需审批引导 | v1.5.0-rc.1 | 详情页不再有通过驳回入口；撤回与预览均引导至审批中心 |
-| FR-254 | 变更单详情单服级状态墙，逐台展示状态与失败原因 | v1.5.0-rc.1 | 执行中可逐台查看状态、失败原因与备份标记 |
-| FR-255 | 变更单详情展示关联审批申请的状态、审批人与驳回理由 | v1.5.0-rc.1 | 提审后详情页可见审批状态、审批人与驳回理由 |
-| FR-256 | 变更单进度事件 SSE 实时推送，断线回退轮询 | v1.5.0-rc.1 | 事件实时进时间线；断线回退 5s 轮询；按序号去重合并 |
-| FR-257 | 演示模式对齐真机交付契约：票据、废弃入口与需审批 | v1.5.0-rc.1 | 演示模式与真机同形：202 票据、废弃入口 403、预览 409 |
-| FR-258 | 交付编排 V2 规格回归真机，收敛 PRD 阶段与状态矛盾 | v1.5.0-rc.1 | 规格删除陈旧契约并补齐既成事实；PRD 全表零矛盾行 |
-| FR-259 | 提审两步收敛为同一事务，失败即回滚并可重提自愈 | v1.5.0-rc.1 | 规格见 [delivery-orchestration-reliability](specs/delivery-orchestration-reliability.md) |
-| FR-260 | 变更单终止时把在途目标收口为失败，不再残留中间态 | v1.5.0-rc.1 | 规格见 [delivery-orchestration-reliability](specs/delivery-orchestration-reliability.md) |
-| FR-261 | 交付 blob 引用保护与孤儿清理一致性 | v1.5.0-rc.1 | 规格见 [delivery-data-plane-and-idempotency](specs/delivery-data-plane-and-idempotency.md) |
-| FR-262 | 回滚失败可在生产路径重试，卡死单自动收口 | v1.5.0-rc.1 | 规格见 [delivery-orchestration-reliability](specs/delivery-orchestration-reliability.md) |
-| FR-263 | 交付链路幂等语义：重发命令与重复回执零二次副作用 | v1.5.0-rc.1 | 规格见 [delivery-data-plane-and-idempotency](specs/delivery-data-plane-and-idempotency.md) |
-| FR-264 | 交付 agent 能力版本守卫，旧 agent 目标被显式拒绝 | v1.5.0-rc.1 | 规格见 [delivery-data-plane-and-idempotency](specs/delivery-data-plane-and-idempotency.md) |
-| FR-265 | 自动收单释放观察窗内存，并拒绝短观察窗高危组合 | v1.5.0-rc.1 | 规格见 [delivery-orchestration-reliability](specs/delivery-orchestration-reliability.md) |
-| FR-266 | restart 关服能力探测与单次回执，部分成功保留变更计数 | v1.5.0-rc.1 | 规格见 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) |
-| FR-267 | 备份增量合并与还原前校验，保护唯一回滚点 | v1.5.0-rc.1 | 规格见 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) |
-| FR-268 | 交付临时目录在成功与失败路径均清理，启动清扫遗留 | v1.5.0-rc.1 | 规格见 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) |
-| FR-269 | 交付链路网络韧性：退避重试与失败原因透传 | v1.5.0-rc.1 | 规格见 [v2-delivery-orchestration](specs/v2-delivery-orchestration.md) |
-| FR-270 | 目标级子集回滚，仅还原选中目标文件且配置不回退 | v1.5.0-rc.1 | 规格见 [delivery-rollback-resilience](specs/delivery-rollback-resilience.md) |
-| FR-271 | 展示每台服当前交付版本，回滚动作全程留可查记录 | v1.5.0-rc.1 | 规格见 [delivery-rollback-resilience](specs/delivery-rollback-resilience.md) |
-| FR-272 | 页眉展示控制面进程 CPU 与 Go 堆内存占用，独立低频轮询 | 未发布 | 规格见 [control-plane-resource-header](specs/control-plane-resource-header.md) |
+| FR-138 | Legacy 前端整体冻结，第二版二进制仅内嵌新管理台 | P1 | 已交付@v0.21.0 |
+| FR-139 | Agent 首启生成并持久化唯一身份标识 | P1 | 已交付@v0.21.0 |
+| FR-140 | Agent 首次接入需人工确认身份与归属绑定 | P1 | 已交付@v0.21.0 |
+| FR-141 | 身份冲突、解绑、换区、禁用与重新绑定流程 | P1 | 已交付@v0.21.0 |
+| FR-142 | 区服层级权威模型奠定 namespace 强隔离 | P1 | 已交付@v0.21.0 |
+| FR-143 | 未分配 Agent 后台分配到大区、小区与默认入口 | P1 | 已交付@v0.21.0 |
+| FR-144 | Agent 秒级采样，Beacon 批量入库基础指标 | P4 | 已交付@v0.24.1 |
+| FR-145 | 每连接明细采集、存储与查询 | P5 | 已交付@v0.25.2 |
+| FR-146 | 调度决策全过程留痕，可解释为何选中或排除 | P4 | 已交付@v0.24.2 |
+| FR-147 | 健康值模型综合 TPS、CPU、连接、告警、容量与延迟评分 | P4 | 已交付@v0.24.2 |
+| FR-148 | 本机 agent-api 调度接口，业务插件禁止直连 Beacon | P4 | 已交付@v0.24.3 |
+| FR-149 | 跨服消息追踪元数据：来源、目标、耗时、状态与链路 | P5 | 已交付@v0.25.2 |
+| FR-150 | 跨服消息 payload 按日期存储，查看须填原因并入审计 | P5 | 已交付@v0.25.2 |
+| FR-151 | 热冷数据生命周期划分与归档库 | P6 | 已交付@v0.26.1 |
+| FR-152 | 冷查询路由：默认热库，显式勾选归档后跨库查询 | P6 | 已交付@v0.26.1 |
+| FR-153 | 归档清理页面提供预览、dry-run、归档校验与审计 | P6 | 已交付@v0.26.1 |
+| FR-154 | 运维总览一屏呈现健康、玩家流、连接流、告警与调度 | P4 | 已交付@v0.24.4 |
+| FR-155 | 集群管理页承载注册确认、身份绑定与区服分配 | P3 | 已交付@v0.23.0 |
+| FR-156 | 集群拓扑呈现 BC 到子服链路、消息流与异常链路 | P5 | 已交付@v0.25.2 |
+| FR-157 | 服务分析、命令观测、审计与告警事件贯通排查 | P5 | 已交付@v0.25.2 |
+| FR-158 | 系统设置统管采样、保留期、归档、健康权重与信任关系 | P6 | 已交付@v0.26.1 |
+| FR-159 | 演示模式内置 mock 数据，无需后端即可展示核心链路 | P2 | 已交付@v0.22.0 |
+| FR-160 | 配置作用域与继承关系对齐区服权威模型 | P7 | 已交付@v0.27.1 |
+| FR-161 | 配置中心 V2 支持编辑、校验、差异、版本与回滚 | P7 | 已交付@v0.27.1 |
+| FR-162 | 文件差异与配置变更合为一张变更单，含影响预览与审批 | P9 | 已交付@v0.29.0 |
+| FR-163 | 文件资产 V2 提供目录清单、文件哈希、大小与搜索 | P8 | 已交付@v0.28.0 |
+| FR-164 | 文件文本预览与二进制识别、敏感内容保护边界 | P8 | 已交付@v0.28.0 |
+| FR-165 | 交付数据面：流式传输、源清单扫描、哈希增量与本地备份 | P9 | 已交付@v0.29.1 |
+| FR-166 | 载荷无关的灰度编排引擎，支持批次推进、暂停与熔断 | P9 | 已交付@v0.29.1 |
+| FR-167 | 记录任务、批次与单服状态并支持一键整单回滚 | P9 | 已交付@v0.29.2 |
+| FR-168 | 交付相关高风险操作统一权限分级与审计串联 | P9 | 已交付@v0.29.2 |
+| FR-169 | RC 与 GA 发布收口：不可变 RC，同 commit 原样复制资产并核验 | P10 RC | 已交付@v1.1.0 |
+| FR-170 | 「交付」导航大域聚合文件资产、配置中心与变更单 | P2 | 已交付@v0.22.0 |
+| FR-171 | 生效编排触发子服重启或配置热重载，并采集观察窗健康数据 | P9 | 已交付@v0.30.0 |
+| FR-172 | Mock 管理台：UX 文档全部页面以演示数据实现并逐页评审拍板 | P2 | 已交付@v0.22.0 |
+| FR-173 | monorepo 工程化：pnpm workspace 加 Turborepo，前后端与共享包统一目录 | P1 | 已交付@v0.21.0 |
+| FR-174 | 第二版管理台前端脚手架：路由、布局、主题、i18n 与 MSW 双端 mock | P1 | 已交付@v0.21.0 |
+| FR-175 | UI 组件博物馆：组件库与展示站独立成包，控件展示覆盖率纳入 CI 门禁 | P1 | 已交付@v0.21.0 |
+| FR-176 | 静态检查最严档：TypeScript、Go、Kotlin 三线全规则启用并进 CI 门禁 | P1 | 已交付@v0.21.0 |
+| FR-177 | 并发身份冲突可视化闭环：交替 bootId 检测，保留实例或解绑处置 | P8 | 已交付@v0.28.0 |
+| FR-178 | 环境管理：env 增删改与 env→namespace 映射维护，页眉 env 过滤走服务端权威范围 | P8 | 已交付@v1.1.0 |
+| FR-179 | 管理台登录鉴权：登录页、令牌注入与持久化、401 处理、登出 | P4 | 已交付@v0.24.0 |
+| FR-180 | 跨服消息广播寻址：namespace 与 zone 级 fan-out，业务插件接口零改动复活 | P5 | 已交付@v0.25.3 |
+| FR-181 | 连接明细与消息链路查询页：游标分页、冷热归档查询与逐跳链路详情 | P6 | 已交付@v0.26.3 |
+| FR-182 | 开发构建与发布准备标准化：PR 只跑质量门，master 全绿出临时产物 | P10 RC | 已交付@v1.1.0 |
+| FR-183 | 通用不可变 RC：所有版本先发 prerelease 候选，标签与资产不得移动 | P10 RC | 已交付@v1.1.0 |
+| FR-184 | GA 原样复制：从最终 RC 复制产品资产并创建正式 tag | P10 RC | 已交付@v1.1.0 |
+| FR-185 | 在线更新收敛到稳定 GA，兼容迁移旧 prerelease 设置并修复检查与进度缺口 | P10 RC | 已交付@v1.1.0 |
+| FR-186 | 管理台侧栏折叠为图标轨并带宽度动画，去掉底部重复身份块 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-187 | 管理台双段页眉与身份收敛：指标槽加工具条，身份只在页眉 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-188 | 全局运维指标条接真数据：五项控制面指标固定展示并低频轮询 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-189 | 小屏抽屉侧栏：窄视口隐藏侧栏，汉堡按钮打开抽屉导航 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-190 | 站内开源许可页：从侧栏底栏进入独立许可页展示 MIT 全文 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-191 | 第二段页眉与内容区视觉一体：去横线与半透明底色 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-192 | 环境选择改为截图式下拉：无底触发器、淡入淡出与类型徽标 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-193 | 页眉全局搜索命令面板：快捷键唤起并支持键盘导航跳转 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-194 | 页眉语言切换骨架：中英双语可选并本地持久 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-195 | 页眉通知入口：未处理告警角标、下拉摘要与一键处理 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-196 | 页眉刷新当前页：仅失效当前路由相关查询，不整页重载 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-197 | 管理台视觉打磨：列表健康列收敛、焦点环克制、字体加载稳定与多处细节统一 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-198 | 管理台交互与超大量性能：抽屉点外关闭、区服树与选服列表限量渲染 | 0.31 对齐中间版 | 已交付@v1.1.0 |
+| FR-199 | 大厅集群权威模型：每个 namespace 唯一大厅集群与独立管理台 | P10 RC | 已交付@v1.1.0 |
+| FR-200 | BC 全 namespace 受管目录与玩家首次进服大厅落脚调度 | P10 RC | 已交付@v1.1.0 |
+| FR-201 | BC 受管目录立即重同步：namespace 全量与单 BC 重试 | P10 RC | 已交付@v1.1.0 |
+| FR-202 | BC 受管服务器查询命令：分页列表与单服详情 | P10 RC | 已交付@v1.1.0 |
+| FR-203 | Agent 极简身份接入：本地只填地址与 token，旧绑定自动迁移 | P10 RC | 已交付@v1.1.0 |
+| FR-204 | Agent 地址探测与 BC 多 listener 上报，管理台逐 listener 覆盖 | P10 RC | 已交付@v1.1.0 |
+| FR-205 | 稳定业务标识与可变显示名称：不可改 code 配可重复 displayName | P10 RC | 已交付@v1.1.0 |
+| FR-206 | 人类与机器主体及语义能力授权 | P10 RC | 已交付@v1.1.0 |
+| FR-207 | 危险操作统一审批核心 | P10 RC | 已交付@v1.1.0 |
+| FR-208 | 身份、凭据、信任与拓扑危险操作适配 | P10 RC | 已交付@v1.1.0 |
+| FR-209 | Agent 命令与敏感内容访问授权 | P10 RC | 已交付@v1.1.0 |
+| FR-210 | 控制面升级、回滚与系统设置审批 | P10 RC | 已交付@v1.1.0 |
+| FR-211 | 配置、文件、覆盖集与交付审批适配 | P10 RC | 已交付@v1.1.0 |
+| FR-212 | 全局审批中心 | P10 RC | 已交付@v1.1.0 |
+| FR-213 | 权威观测范围契约 | P10 RC | 已交付@v1.1.0 |
+| FR-214 | 页眉 env→namespace 级联筛选 | P10 RC | 已交付@v1.1.0 |
+| FR-215 | 服务器归档与恢复 | P10 RC | 已交付@v1.1.0 |
+| FR-216 | namespace 归档与恢复 | P10 RC | 已交付@v1.1.0 |
+| FR-217 | 服务器永久删除与墓碑 | P10 RC | 已交付@v1.1.0 |
+| FR-218 | namespace 永久删除与子树墓碑 | P10 RC | 已交付@v1.1.0 |
+| FR-219 | 内置 /admin/v2/mcp 端点与 OAuth 客户端凭据 | P10 RC | 已交付@v1.1.0 |
+| FR-220 | MCP 显式领域工具与审批交接 | P10 RC | 已交付@v1.1.0 |
+| FR-221 | 拓扑建树的 MCP 工具（BC 集群、大区、小区增改删） | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-222 | 内部信任通道：共享 token 机器注册直落 active | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-223 | 审批决定工具与自动化闭环（默认关闭，分权不破） | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-224 | MCP 客户端管理台：清单、能力说明、创建/轮换/启用/吊销与配置只读查看 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-225 | 入口服作为大厅集群成员纳入统一调度 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-226 | Agent 上报服务器工作目录 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-227 | 服务器 key=value 键值标签 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-228 | Agent 上报容量与在线人数参与健康打分 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-229 | 告警批量处理：已读/已处理两态与按筛选批量 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-230 | 告警详情关联服务器近期状态与时间线 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-231 | 告警按角色自动定级与人工升降级 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-232 | 告警收敛与防堆积：同实例同类型只留一行，恢复或消失自动消解 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-233 | 区分 v1 数据面挂载与 v2 身份注册的端点职责 | GA 后迭代批 | 已交付@v1.3.0 |
+| FR-234 | 发布说明自动生成与四生态依赖周更 | GA 后迭代批 | 已交付@v1.2.0 |
+| FR-235 | 控制面预置身份在审批时自动让位 | GA 后迭代批 | 已交付@v1.3.0 |
+| FR-236 | MCP 工具风险分级真源 | GA 后迭代批 | 已交付@v1.3.0 |
+| FR-237 | MCP 生产模式工具门禁 | GA 后迭代批 | 已交付@v1.3.0 |
+| FR-238 | namespace 接入 token 轮换 | GA 后迭代批 | 已交付@v1.4.0 |
+| FR-239 | namespace 显示名编辑 | GA 后迭代批 | 已交付@v1.4.0 |
+| FR-240 | MCP 工具调用流水全量落库与分页查询，参数仅存脱敏摘要 | GA 后迭代批 | 已交付@v1.4.0 |
+| FR-241 | 管理台 MCP 流水页，支持筛选分页与危险操作视图 | GA 后迭代批 | 已交付@v1.4.0 |
+| FR-242 | 生产模式在服务执行面拒执 critical 工具，与发现面共用同一开关 | GA 后迭代批 | 已交付@v1.4.0 |
+| FR-243 | 节点运行期刷新自身容量与自定义标签声明，幂等且为只读事实 | GA 后迭代批 | 已交付@v1.4.0 |
+| FR-244 | 调度准入按候选自声明的键值标签收窄候选集 | GA 后迭代批 | 已交付@v1.4.0 |
+| FR-245 | MCP 交付只读工具集，可查变更单、目标、影响、观察窗与事件 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-246 | MCP 交付组单工具，支持建单、编辑与差异扫描 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-247 | MCP 交付止损工具，可暂停或终止进行中的变更单 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-248 | 交付系 MCP 工具被拒时返回可区分的中文原因 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-249 | 交付审批票据与 MCP 审批视图补齐变更单关联与影响摘要 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-250 | 交付 MCP 工具入参校验与审计口径统一 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-251 | 管理台提审入口补齐必填原因与幂等键 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-252 | 变更单六类申请动作改按 202 票据消费并补幂等键 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-253 | 变更单审批入口收口至审批中心，文件预览给出需审批引导 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-254 | 变更单详情单服级状态墙，逐台展示状态与失败原因 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-255 | 变更单详情展示关联审批申请的状态、审批人与驳回理由 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-256 | 变更单进度事件 SSE 实时推送，断线回退轮询 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-257 | 演示模式对齐真机交付契约：票据、废弃入口与需审批 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-258 | 交付编排 V2 规格回归真机，收敛 PRD 阶段与状态矛盾 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-259 | 提审两步收敛为同一事务，失败即回滚并可重提自愈 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-260 | 变更单终止时把在途目标收口为失败，不再残留中间态 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-261 | 交付 blob 引用保护与孤儿清理一致性 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-262 | 回滚失败可在生产路径重试，卡死单自动收口 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-263 | 交付链路幂等语义：重发命令与重复回执零二次副作用 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-264 | 交付 agent 能力版本守卫，旧 agent 目标被显式拒绝 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-265 | 自动收单释放观察窗内存，并拒绝短观察窗高危组合 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-266 | restart 关服能力探测与单次回执，部分成功保留变更计数 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-267 | 备份增量合并与还原前校验，保护唯一回滚点 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-268 | 交付临时目录在成功与失败路径均清理，启动清扫遗留 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-269 | 交付链路网络韧性：退避重试与失败原因透传 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-270 | 目标级子集回滚，仅还原选中目标文件且配置不回退 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-271 | 展示每台服当前交付版本，回滚动作全程留可查记录 | v1.5.0 交付批 | 已交付@v1.5.0-rc.1 |
+| FR-272 | 页眉展示控制面进程 CPU 与 Go 堆内存占用，独立低频轮询 | 未发布批 | 开发中 |
 
 ## 5. 非功能需求（NFR）
 
