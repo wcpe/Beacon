@@ -45,7 +45,6 @@ var beaconURL = harness.BeaconURL()
 const (
 	adminUser    = "admin"
 	serverID     = "e2e-bukkit-1"
-	mcPort       = "25566"
 	namespace    = "e2e-metrics"
 	bootstrap    = "beacon-bootstrap-2026"
 	onlineWait   = 12 * time.Minute // 首跑含下载 Paper + 构建 jar，给足时间
@@ -56,6 +55,10 @@ const (
 	// 采样间隔（秒）：调小到 2s，让趋势在测试窗口内快速积累多个样本（默认 30s 太慢）。
 	sampleIntervalSec = "2"
 )
+
+// mcPort 可经 E2E_MC_PORT 覆盖：本机若已有别的 MC 服务端占着 25566，
+// Paper 会 bind 失败并以"Gradle 任务意外早退、退出码 0"的形式暴露，真实原因埋在 backend.log。
+var mcPort = harness.MCPort()
 
 // 触发上报用的最小配置（global 层，使用独立 E2E namespace → 覆盖到该环境全部在线实例，含 e2e-bukkit-1）。
 const (

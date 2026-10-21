@@ -27,10 +27,13 @@ import (
 	"github.com/wcpe/Beacon/apps/server/test/e2e/harness"
 )
 
+// mcPort 可经 E2E_MC_PORT 覆盖：本机若已有别的 MC 服务端占着 25566，Paper 会 bind 失败，
+// 而 harness 侧只看到"Gradle 任务意外早退、退出码 0"，真实原因埋在 backend.log。
+var mcPort = harness.MCPort()
+
 const (
 	adminUser      = "admin"
 	serverID       = "e2e-bukkit-1"
-	mcPort         = "25566"
 	bootstrapToken = "beacon-bootstrap-2026"
 	initialContent = "marker: original\n"
 	clusterName    = "hotreload-bc"

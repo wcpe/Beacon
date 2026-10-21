@@ -32,7 +32,7 @@ taboolib {
         }
     }
     // 与现有 E2E 探针保持一致的 TabooLib 版本。
-    version { taboolib = "6.3.0-wcpe.3" }
+    version { taboolib = "6.3.0-wcpe.5" }
     env {
         // Bukkit 平台即可：本插件只读 API + 写文件，不依赖配置 / 数据库等其它模块。
         install("platform-bukkit")

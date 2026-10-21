@@ -60,11 +60,15 @@ var beaconURL = harness.BeaconURL()
 // namespace 每个测试进程生成一次唯一值，进程内所有控制面与数据层操作稳定复用。
 var namespace = fmt.Sprintf("e2e-override-%d", time.Now().UnixNano())
 
+// mcPort 可经 E2E_MC_PORT 覆盖：本机若已有别的 MC 服务端占着 25566，Paper 会 bind 失败，
+// 而 harness 侧只看到"Gradle 任务意外早退、退出码 0"，真实原因埋在 backend.log。
+var mcPort = harness.MCPort()
+
 // 服务端编排相关常量（与 servePaper 任务的约定一致）。
+// mcPort 见下方变量声明：可经 E2E_MC_PORT 覆盖以避开本机已占用的 25566。
 const (
 	adminUser           = "admin"
 	serverID            = "e2e-bukkit-1"
-	mcPort              = "25566"
 	bootstrap           = "beacon-bootstrap-2026"
 	onlineWait          = 12 * time.Minute // 首跑含下载 Paper + 构建 jar，给足时间
 	logPrefixCP         = "beacon-override"

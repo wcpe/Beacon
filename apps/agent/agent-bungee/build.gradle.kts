@@ -54,7 +54,7 @@ taboolib {
         }
     }
     // 锁定 TabooLib 版本（与 bukkit 壳统一，消除两端版本漂移）。
-    version { taboolib = "6.3.0-wcpe.3" }
+    version { taboolib = "6.3.0-wcpe.5" }
     env {
         // BungeeCord 平台 + 基础配置模块（读取 config.yml），枚举风格与 CoreLib / bukkit 壳一致。
         install(Basic)
