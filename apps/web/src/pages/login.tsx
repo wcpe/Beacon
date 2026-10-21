@@ -45,7 +45,8 @@ export default function LoginPage() {
   })
 
   // 真实登录提交：前端仅校验非空，凭据校验交由后端（凭据错回 401，展示脱敏 message）。
-  function handleSubmit(event: React.FormEvent) {
+  // 用 SubmitEvent 而非 FormEvent：前者专表 form 提交，target 已收窄为 HTMLFormElement。
+  function handleSubmit(event: React.SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     if (username.trim() === '' || password === '') {
       setError(t('auth.login.missingCredentials'))
