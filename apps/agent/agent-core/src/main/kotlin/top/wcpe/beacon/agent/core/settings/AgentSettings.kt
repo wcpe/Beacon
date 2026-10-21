@@ -21,6 +21,7 @@ import top.wcpe.beacon.agent.core.messaging.MessagingSettings
  * @param proxy              BC 代理本地路由参数（FR-48 home-zone）；bukkit 不用，默认空
  * @param assets             文件资产索引（FR-163）本地参数（周期扫描间隔来自本地 config.yml）
  * @param configReloadTimeoutMs 单个业务插件的配置重载超时（毫秒，FR-274）；0=不设超时
+ * @param configReloadPoolSize  并发重载的插件数上限（FR-280）；须覆盖单服插件规模
  */
 data class AgentSettings(
     val endpoints: List<String>,
@@ -50,9 +51,14 @@ data class AgentSettings(
             scanIntervalSec = 1800,
             manifestFileName = "asset-manifest.json",
         ),
-    // 单个业务插件的配置重载超时（毫秒，FR-274）：0=不设超时（就地内联执行，兼容既有行为）。
-    // 必须**小于控制面的 activate_timeout_sec**——否则控制面先判整体超时，回执里就看不出是哪个插件卡住。
-    val configReloadTimeoutMs: Long = 0,
+    // 单个业务插件的配置重载超时（毫秒，FR-274）。
+    // **默认 30000**：默认 0 意味着开箱即用时没有任何超时保护——一个卡死插件会永久卡住
+    // 交付命令链，只能等控制面 activate_timeout_sec 整体超时，而回执里看不出是哪个插件。
+    // 必须**小于控制面的 activate_timeout_sec**，否则控制面先判整体超时。
+    val configReloadTimeoutMs: Long = 30_000,
+    // 并发重载的插件数上限（FR-280）。默认 64：单服装 60+ 插件是常见形态（大厅服），
+    // 并发位小于插件数时多出来的会排队，总耗时退化成「批次 × 最慢插件」。
+    val configReloadPoolSize: Int = 64,
 ) {
     /** 当前选用的控制面基址（MVP：首个 endpoint）。 */
     fun primaryEndpoint(): String = endpoints.first().trimEnd('/')

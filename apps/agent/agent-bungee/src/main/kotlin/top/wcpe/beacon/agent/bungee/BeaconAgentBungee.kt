@@ -7,9 +7,11 @@ import taboolib.common.env.RuntimeDependency
 import taboolib.common.platform.Awake
 import taboolib.common.platform.Plugin
 import taboolib.common.platform.function.getDataFolder
+import taboolib.common.platform.function.info
 import taboolib.common.platform.function.pluginVersion
 import taboolib.common.platform.function.severe
 import taboolib.common.platform.function.submitAsync
+import taboolib.common.platform.function.warning
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
 import top.wcpe.beacon.agent.adapters.HttpRosterDirectory
@@ -34,6 +36,7 @@ import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.connection.ConnectionEventBuffer
 import top.wcpe.beacon.agent.core.connection.ConnectionReportCoordinator
 import top.wcpe.beacon.agent.core.connection.ProxyConnectionTracker
+import top.wcpe.beacon.agent.core.identity.AgentCredentialsStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.identity.EndpointReport
@@ -48,7 +51,9 @@ import top.wcpe.beacon.agent.core.proxy.InitialLobbyRouter
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.AgentSettings
+import top.wcpe.beacon.agent.core.settings.EffectiveSettingsResolver
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
+import top.wcpe.beacon.agent.core.settings.PushedConfigStore
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -97,7 +102,31 @@ object BeaconAgentBungee : Plugin() {
     @Config("config.yml")
     lateinit var config: Configuration
 
-    /** 当前生命周期；null 表示因身份缺失未启动。 */
+    /** JSON 编解码（无状态，凭据与下发缓存共用）。 */
+    private val jsonCodec = KotlinxJsonCodec()
+
+    /** 身份凭据存储（FR-276）：join 命令与启动流程共用同一实例。 */
+    private var credentials: AgentCredentialsStore? = null
+
+    /** 合并凭据后的生效设置。 */
+    private var effectiveSettings: AgentSettings? = null
+
+    /**
+     * 生效设置解析器（三层优先级 + 凭据合并）。
+     *
+     * 惰性创建：`config` 在 ENABLE 阶段才注入，构造期取不到。
+     */
+    private val settingsResolver: EffectiveSettingsResolver by lazy {
+        EffectiveSettingsResolver(
+            localReader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv),
+            pushedStore = PushedConfigStore(getDataFolder().toPath(), jsonCodec),
+            credentialsStore = AgentCredentialsStore(getDataFolder().toPath(), jsonCodec).also { credentials = it },
+            warn = ::warning,
+            info = ::info,
+        )
+    }
+
+    /** 当前生命周期；null 表示尚未接入或已停止。 */
     private var lifecycle: AgentLifecycle? = null
 
     /** pending 阶段唯一运行的最小身份引导器。 */
@@ -128,11 +157,18 @@ object BeaconAgentBungee : Plugin() {
     @Volatile
     private var legacyProxyWarningLogged = false
 
-    @Awake(LifeCycle.ENABLE)
-    fun enable() {
-        // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
-        val reader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
-        val settings = AgentBootstrap.readSettings(reader)
+    /**
+     * 可重入的装配动作（join 成功后需再执行一次）。
+     *
+     * 用 lambda 字段而不是私有函数：本对象已贴 detekt 的 TooManyFunctions 阈值，
+     * 再加一个函数就超限；而这段逻辑只需要「能被 enable 与 join 各触发一次」。
+     */
+    private val doAssemble: () -> Unit = {
+        bootstrapRuntime?.shutdown()
+        bootstrapRuntime = null
+        // 每次重入都重读配置：join 刚写过凭据，必须拿到最新的地址与令牌。
+        val activeSettings = settingsResolver.resolve()
+        effectiveSettings = activeSettings
         val endpointReport =
             EndpointReport(
                 proxyListeners =
@@ -160,8 +196,8 @@ object BeaconAgentBungee : Plugin() {
                 severe("身份文件损坏：${storedIdentity.error}，Beacon agent 不接入控制面")
                 canConnect = false
             }
-            if (canConnect && (settings.endpoints.isEmpty() || settings.bootstrapToken.isBlank())) {
-                severe("配置缺失：beacon.endpoints 与 beacon.bootstrap-token 必填，Beacon agent 不接入控制面")
+            // 未接入 ≠ 配置错误（FR-276）：未 join 时静静等待，不刷 ERROR。
+            if (canConnect && !settingsResolver.hasConnectionConfig(activeSettings)) {
                 canConnect = false
             }
             if (!canConnect) {
@@ -170,19 +206,35 @@ object BeaconAgentBungee : Plugin() {
 
             // 装配：先建 store + view，再用 view 构 adapter（adapter 在变更时回调 view 派发 API 监听器）。
             val store = EffectiveConfigStore()
-            val view = EffectiveConfigView(store, settings.configReloadTimeoutMs)
+            val view =
+                EffectiveConfigView(store, activeSettings.configReloadTimeoutMs, reloadPoolSize = activeSettings.configReloadPoolSize)
             val adapter = BungeePlatformAdapter(view)
-            warnLegacyProxySettings(adapter, settings)
+            warnLegacyProxySettings(adapter, activeSettings)
             val codec = KotlinxJsonCodec()
             val bindingSnapshot = IdentityBindingSnapshotStore(File(getDataFolder(), "identity-binding.snapshot.json"), codec)
             if (confirmedBinding == null) {
-                startBootstrap(identity, settings, adapter, codec, bindingSnapshot)
+                startBootstrap(identity, activeSettings, adapter, codec, bindingSnapshot)
                 return@submitAsync
             }
             // 装配一次稳定依赖组，供 active 阶段各私有方法复用，避免长参数列表。
-            val deps = BungeeRuntimeDeps(settings, adapter, codec, store, view, bindingSnapshot)
+            val deps = BungeeRuntimeDeps(activeSettings, adapter, codec, store, view, bindingSnapshot)
             startActiveRuntime(identity, deps)
         }
+    }
+
+    @Awake(LifeCycle.ENABLE)
+    fun enable() {
+        // 身份凭据存储（FR-276）：地址 + 令牌，与 config.yml 分文件保存。
+        // 这里只建实例不读值——真正的读取在 startBootstrap() 里，因为 join 之后要重读。
+        val credentialsStore = AgentCredentialsStore(getDataFolder().toPath(), jsonCodec)
+        credentials = credentialsStore
+        // 命令注册提到接入之前（FR-276）：/beacon join 是接入入口，等接入成功才注册就永远执行不到。
+        BeaconJoinCommand.register(
+            credentials = credentialsStore,
+            onJoined = { doAssemble() },
+            logger = BeaconJoinCommand.JoinLogger(info = ::info, warning = ::warning),
+        )
+        doAssemble()
     }
 
     /** pending 阶段：身份已就绪但尚未获控制面确认绑定时，仅启最小引导器，绝不提前创建数据面组件。 */

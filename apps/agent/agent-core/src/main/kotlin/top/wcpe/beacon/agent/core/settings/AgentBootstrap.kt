@@ -60,10 +60,13 @@ object AgentBootstrap {
                     // 本地清单缓存文件名（落 agent 数据目录）。
                     manifestFileName = reader.string("assets.manifest-file-name", "asset-manifest.json"),
                 ),
-            // 单业务插件的配置重载超时（毫秒，FR-274）。默认 0 = 不设超时（就地内联执行，兼容既有行为）。
-            // 运维须显式配置且**小于控制面的 activateTimeoutSec**，否则控制面先判整体超时，
-            // 回执里就看不出是哪个插件卡住（见 docs/specs/delivery-reload-ack.md §7 风险 1）。
-            configReloadTimeoutMs = reader.long("delivery.config-reload-timeout-ms", 0),
+            // 单业务插件的配置重载超时（毫秒，FR-274）。默认 30000：
+            // 默认不设超时（0）会让「插件卡死」退化成「永远等不到结论」——正是本功能要消灭的形态。
+            // 须**小于控制面的 activateTimeoutSec**，否则控制面先判整体超时，回执里看不出是哪个插件。
+            configReloadTimeoutMs = reader.long("delivery.config-reload-timeout-ms", 30_000),
+            // 并发重载的插件数上限（FR-280）。收口到 [1, 256]：
+            // 0/负数会让池无法工作，过大则放大了卡死线程的泄漏面（线程无法强杀）。
+            configReloadPoolSize = reader.int("delivery.reload-pool-size", 64).coerceIn(1, 256),
         )
     }
 

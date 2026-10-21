@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicLong
 internal class ReloadDispatcher(
     reloadTimeoutMs: Long = 0,
     executor: ExecutorService? = null,
+    /** 并发位数量（FR-280）：由 AgentSettings.configReloadPoolSize 注入，收口到 [1, 256]。 */
+    private val poolSize: Int = DEFAULT_POOL_SIZE,
 ) {
     /**
      * 超时预算：**可变**，因为控制面可在运行期下发新值（FR-278 热重载）。
@@ -78,7 +80,7 @@ internal class ReloadDispatcher(
             return null
         }
         return selfBuiltPool ?: synchronized(this) {
-            if (closed) null else selfBuiltPool ?: newDaemonPool().also { selfBuiltPool = it }
+            if (closed) null else selfBuiltPool ?: newDaemonPool(poolSize).also { selfBuiltPool = it }
         }
     }
 
@@ -245,17 +247,7 @@ internal class ReloadDispatcher(
          * 仍然有界（不是无界/不设限）：卡死不响应中断的插件会永久占住线程（无法强杀），
          * 无界会让「泄漏」无声累积；有界 + [REJECT_POLICY] 才能把饱和如实报出来。
          */
-        const val POOL_SIZE = 64
-
-        /**
-         * 等待队列容量。
-         *
-         * **必须有界**。无界队列会让超出并发位的插件一直排队，而它的超时计时与其它项共用预算——
-         * 于是它一次都没被执行过，却可能被报成「超时」。有界队列 + [REJECT_POLICY] 才能如实说「未执行」。
-         *
-         * 与 [POOL_SIZE] 同量级：正常场景一次变更的插件数不会远超单服插件总量。
-         */
-        const val QUEUE_CAPACITY = 64
+        const val DEFAULT_POOL_SIZE = 64
 
         /**
          * 饱和策略：拒绝而非排队。
@@ -285,17 +277,18 @@ internal class ReloadDispatcher(
          * 队列必须有界（见 [QUEUE_CAPACITY] 与 [REJECT_POLICY] 的说明）：无界队列会把
          * 「没轮到执行」伪装成「执行超时」。
          */
-        fun newDaemonPool(): ExecutorService = newPool(ArrayBlockingQueue(QUEUE_CAPACITY), defaultThreadFactory(), REJECT_POLICY)
+        fun newDaemonPool(size: Int): ExecutorService = newPool(size, ArrayBlockingQueue(size), defaultThreadFactory(), REJECT_POLICY)
 
         /** 统一构造形态：守护线程 + 允许核心线程超时回收（不给 agent reload 留常驻线程）。 */
         fun newPool(
+            size: Int,
             queue: BlockingQueue<Runnable>,
             factory: ThreadFactory,
             handler: RejectedExecutionHandler,
         ): ThreadPoolExecutor =
             ThreadPoolExecutor(
-                POOL_SIZE,
-                POOL_SIZE,
+                size,
+                size,
                 60L,
                 TimeUnit.SECONDS,
                 queue,

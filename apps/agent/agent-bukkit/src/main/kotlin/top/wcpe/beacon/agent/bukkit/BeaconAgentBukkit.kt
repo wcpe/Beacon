@@ -28,7 +28,6 @@ import top.wcpe.beacon.agent.core.client.ActiveBinding
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.register
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
-import top.wcpe.beacon.agent.core.identity.AgentCredentials
 import top.wcpe.beacon.agent.core.identity.AgentCredentialsStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.identity.EndpointReport
@@ -39,9 +38,8 @@ import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
 import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.AgentSettings
-import top.wcpe.beacon.agent.core.settings.CascadingConfigReader
+import top.wcpe.beacon.agent.core.settings.EffectiveSettingsResolver
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
-import top.wcpe.beacon.agent.core.settings.PushedConfigPolicy
 import top.wcpe.beacon.agent.core.settings.PushedConfigStore
 import java.io.File
 import java.util.UUID
@@ -160,34 +158,15 @@ object BeaconAgentBukkit : Plugin() {
         return false
     }
 
-    /**
-     * 读取生效设置：三层优先级 + 凭据合并。
-     *
-     * 独立成函数有两个理由：`startBootstrap` 因此不超长（detekt LongMethod），
-     * 且「配置从哪来」这件事有了唯一入口——排查「生效值是谁给的」时只看这里。
-     */
-    private fun readEffectiveSettings(): AgentSettings {
-        val pushed = PushedConfigStore(getDataFolder().toPath(), jsonCodec).load()
-        val envReader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
-        // 键级防护：接入目标与身份只能来自本地（见 PushedConfigPolicy）。
-        // 即便缓存里被塞了 beacon.endpoints，也会在这里被挡掉并对运维告警——
-        // 静默丢弃会让人以为「Web 上改了却没生效」，反而更难排查。
-        val (allowedPushed, rejectedPushed) = PushedConfigPolicy.partition(pushed.values)
-        if (rejectedPushed.isNotEmpty()) {
-            warning("下发配置含禁止项已被忽略（接入目标与身份只能本地决定）：${rejectedPushed.joinToString(", ")}")
-        }
-        val reader =
-            CascadingConfigReader(
-                pushed = allowedPushed,
-                local = envReader,
-                onInvalidPushed = { key, raw, type ->
-                    warning("下发配置值非法已忽略：$key=$raw（期望 $type），回退到本地配置")
-                },
-            )
-        val base = AgentBootstrap.readSettings(reader)
-        val store = credentials ?: AgentCredentialsStore(getDataFolder().toPath(), jsonCodec).also { credentials = it }
-        return applyCredentials(base, store.load(), warning = ::warning, info = ::info)
-    }
+    /** 统一的生效设置解析器（三层优先级 + 凭据合并，规则见 EffectiveSettingsResolver）。 */
+    private fun settingsResolver(): EffectiveSettingsResolver =
+        EffectiveSettingsResolver(
+            localReader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv),
+            pushedStore = PushedConfigStore(getDataFolder().toPath(), jsonCodec),
+            credentialsStore = credentials ?: AgentCredentialsStore(getDataFolder().toPath(), jsonCodec).also { credentials = it },
+            warn = ::warning,
+            info = ::info,
+        )
 
     /**
      * 组装并启动接入（**可重入**：join 成功后再次触发）。
@@ -200,7 +179,7 @@ object BeaconAgentBukkit : Plugin() {
         bootstrapRuntime?.shutdown()
         bootstrapRuntime = null
         // 每次重入都重读配置：join 刚写过凭据，必须拿到最新的地址与令牌。
-        val activeSettings = readEffectiveSettings()
+        val activeSettings = settingsResolver().resolve()
         effectiveSettings = activeSettings
         val endpointReport = EndpointReport(backendListenPort = readListenPort())
         // 容量上限（FR-228）：主线程反射读 Paper `max-players`，取回 0（→ 控制面 capacity 因子判「不适用」）。
@@ -233,7 +212,7 @@ object BeaconAgentBukkit : Plugin() {
             // （否则会无限重试打日志，把真正的故障淹掉）。
             //
             // 只有「配了但配错」（例如配了 endpoints 却没令牌）才值得 warning。
-            if (!hasConnectionConfig(active)) {
+            if (!settingsResolver().hasConnectionConfig(active)) {
                 return@submitAsync
             }
 
@@ -244,7 +223,8 @@ object BeaconAgentBukkit : Plugin() {
 
             // 装配：先建 store + view，再用 view 构 adapter（adapter 在变更时回调 view 派发 API 监听器）。
             val store = EffectiveConfigStore()
-            val view = EffectiveConfigView(store, activeSettings.configReloadTimeoutMs)
+            val view =
+                EffectiveConfigView(store, activeSettings.configReloadTimeoutMs, reloadPoolSize = activeSettings.configReloadPoolSize)
             val adapter = BukkitPlatformAdapter(view)
             val codec = KotlinxJsonCodec()
             val bindingSnapshot = IdentityBindingSnapshotStore(File(getDataFolder(), "identity-binding.snapshot.json"), codec)
@@ -359,44 +339,6 @@ object BeaconAgentBukkit : Plugin() {
         bootstrapRuntime?.shutdown()
         bootstrapRuntime = null
         BeaconAgentProvider.unregister()
-    }
-
-    /**
-     * 把凭据文件里的地址/令牌合并进设置。
-     *
-     * ## 优先级（FR-276）
-     *
-     * `config.yml` **显式配了**就以它为准（运维手写意图优先，也是旧部署路径的兼容保证）；
-     * 它没配才用凭据文件。这样两种接入方式可以共存：老部署不受影响，新部署只需 join。
-     *
-     * @param settings 从 config.yml + 下发缓存读出的设置
-     * @param credentials 凭据文件内容（可能为 null，表示尚未 join）
-     */
-    private fun applyCredentials(
-        settings: AgentSettings,
-        credentials: AgentCredentials?,
-        warning: (String) -> Unit,
-        info: (String) -> Unit,
-    ): AgentSettings {
-        if (credentials == null) {
-            return settings
-        }
-        // config.yml 已显式配置 → 不动，保持旧行为。
-        if (settings.endpoints.isNotEmpty() && settings.bootstrapToken.isNotBlank()) {
-            return settings
-        }
-        if (!credentials.canConnect) {
-            // 凭据在但没填全（例如只做了身份迁移）：如实说明，不静默。
-            info("身份凭据存在但缺少地址或令牌，等待 /beacon join <地址> <令牌>")
-            return settings
-        }
-        if (settings.endpoints.isNotEmpty() && settings.bootstrapToken.isBlank()) {
-            warning("config.yml 配了 endpoints 但没配 token，将以身份凭据中的令牌为准")
-        }
-        return settings.copy(
-            endpoints = listOf(credentials.endpoint),
-            bootstrapToken = credentials.token,
-        )
     }
 
     /** 本壳不硬链 Bukkit API，读取导出静态 API 的唯一实际监听端口。 */

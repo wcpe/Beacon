@@ -155,9 +155,10 @@ internal class ReloadOutcomeCollector(
         val saturated = e is RejectedExecutionException
         val reason =
             if (saturated) {
-                "重载执行器饱和（${ReloadDispatcher.POOL_SIZE} 个并发位与 " +
-                    "${ReloadDispatcher.QUEUE_CAPACITY} 个排队位已满，本次未执行）：" +
-                    "请排查已卡死未响应中断的插件，或调大执行器容量"
+                // 不写具体数字：容量由 delivery.reload-pool-size 决定且可下发调整，
+                // 把数字硬编码进文案会在调参后变成误导信息。
+                "重载执行器饱和（并发位与排队位已满，本次未执行）：" +
+                    "请排查已卡死未响应中断的插件，或调大 delivery.reload-pool-size"
             } else {
                 // 非拒绝类异常（如池已 shutdown）同样不是「执行失败」，如实说明未执行。
                 "重载未能提交（执行器不可用，本次未执行）：${e.javaClass.simpleName}: ${e.message ?: ""}"

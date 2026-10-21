@@ -28,11 +28,13 @@ class EffectiveConfigView(
     private val store: EffectiveConfigStore,
     reloadTimeoutMs: Long = 0,
     reloadExecutor: ExecutorService? = null,
+    /** 并发重载的插件数上限（FR-280），默认 64。 */
+    reloadPoolSize: Int = 64,
 ) : EffectiveConfig {
     // 监听器表：以句柄对象自身为键，便于注销。值里带前缀，注销时只认键。
     private val listeners = ConcurrentHashMap<Any, Registration>()
 
-    private val dispatcher = ReloadDispatcher(reloadTimeoutMs, reloadExecutor)
+    private val dispatcher = ReloadDispatcher(reloadTimeoutMs, reloadExecutor, reloadPoolSize)
 
     /**
      * 释放派发器自建的线程池（幂等）。

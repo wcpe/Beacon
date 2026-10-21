@@ -117,7 +117,8 @@ class ReloadDispatcherCapacityTest {
         val release = CountDownLatch(1)
         val pool =
             ReloadDispatcher.newPool(
-                java.util.concurrent.ArrayBlockingQueue(ReloadDispatcher.QUEUE_CAPACITY),
+                ReloadDispatcher.DEFAULT_POOL_SIZE,
+                java.util.concurrent.ArrayBlockingQueue(ReloadDispatcher.DEFAULT_POOL_SIZE),
                 ReloadDispatcher.defaultThreadFactory(),
                 java.util.concurrent.ThreadPoolExecutor.AbortPolicy(),
             )
