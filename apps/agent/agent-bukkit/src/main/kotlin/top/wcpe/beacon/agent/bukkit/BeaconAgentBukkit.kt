@@ -41,6 +41,7 @@ import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.CascadingConfigReader
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
+import top.wcpe.beacon.agent.core.settings.PushedConfigPolicy
 import top.wcpe.beacon.agent.core.settings.PushedConfigStore
 import java.io.File
 import java.util.UUID
@@ -168,9 +169,16 @@ object BeaconAgentBukkit : Plugin() {
     private fun readEffectiveSettings(): AgentSettings {
         val pushed = PushedConfigStore(getDataFolder().toPath(), jsonCodec).load()
         val envReader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
+        // 键级防护：接入目标与身份只能来自本地（见 PushedConfigPolicy）。
+        // 即便缓存里被塞了 beacon.endpoints，也会在这里被挡掉并对运维告警——
+        // 静默丢弃会让人以为「Web 上改了却没生效」，反而更难排查。
+        val (allowedPushed, rejectedPushed) = PushedConfigPolicy.partition(pushed.values)
+        if (rejectedPushed.isNotEmpty()) {
+            warning("下发配置含禁止项已被忽略（接入目标与身份只能本地决定）：${rejectedPushed.joinToString(", ")}")
+        }
         val reader =
             CascadingConfigReader(
-                pushed = pushed.values,
+                pushed = allowedPushed,
                 local = envReader,
                 onInvalidPushed = { key, raw, type ->
                     warning("下发配置值非法已忽略：$key=$raw（期望 $type），回退到本地配置")

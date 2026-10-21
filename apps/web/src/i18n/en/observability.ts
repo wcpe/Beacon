@@ -349,6 +349,9 @@ export const observability = {
       'delivery.order.rollback_finish': 'Finish change order rollback',
       'delivery.order.circuit_break': 'Change order circuit break',
       'delivery.order.blob_cleanup': 'Change order payload cleanup',
+      // Agent runtime config push (FR-277)
+      'agent-settings.update': 'Push agent runtime config',
+      'agent-settings.rejected': 'Reject forbidden agent config key',
       // Auth / API keys / settings / updates
       'auth.login': 'Log in',
       'auth.logout': 'Log out',

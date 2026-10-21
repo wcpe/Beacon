@@ -5,6 +5,7 @@ import type { ComponentType } from 'react'
 import {
   Activity,
   BellRing,
+  Bot,
   Boxes,
   Cable,
   ChartLine,
@@ -33,6 +34,7 @@ import {
 
 import ConflictNavBadge from './shell/conflict-nav-badge'
 import AlertEventsPage from './pages/alert-events'
+import AgentSettingsPage from './pages/agent-settings'
 import ApprovalNavBadge from './shell/approval-nav-badge'
 import ApprovalsPage from './pages/approvals'
 import ApiKeysPage from './pages/api-keys'
@@ -164,6 +166,13 @@ export const NAV_GROUPS: NavGroup[] = [
         titleKey: 'nav.mcpInvocations',
         icon: Activity,
         Component: McpInvocationsPage,
+      },
+      // Agent 接入与配置（FR-279）：紧邻 MCP 两页，同属「外部 Agent 接入」主题
+      {
+        path: '/agent-settings',
+        titleKey: 'nav.agentSettings',
+        icon: Bot,
+        Component: AgentSettingsPage,
       },
       { path: '/namespaces', titleKey: 'nav.namespaces', icon: Globe, Component: NamespacesPage },
       { path: '/envs', titleKey: 'nav.envs', icon: Layers, Component: EnvsPage },

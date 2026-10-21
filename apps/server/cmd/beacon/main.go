@@ -214,6 +214,13 @@ func run() error {
 	// 环境服务（含改名 / 删除守卫，FR-53）依赖注册表 / zone 指派 / 配置仓库查在用数据，
 	// 故其构造延后到 registry、assignRepo、configRepo 就绪之后（见下方）。
 
+	// agent 运行配置下发（FR-277）：两级作用域（namespace 默认 + server 覆盖）的读写 + 审计，
+	// 挂 /admin/v2/agent-settings（管理面）与 /beacon/v2/agent/settings（数据面拉取）。
+	// 与 setting 表分开：那张是控制面自身热改项，语义与安全边界都不同（见 model.AgentSetting 注释）。
+	agentSettingsService := service.NewAgentSettingsService(db, repository.NewAgentSettingRepository(db), auditRepo, nsRepo)
+	v2AgentSettingsHandler := handler.NewV2AgentSettingsHandler(agentSettingsService)
+	agentSettingsHandler := handler.NewAgentSettingsHandler(agentSettingsService)
+
 	// 配置加密密钥由数据目录同级 secrets 持久文件统一管理；目录或文件异常时拒绝启动。
 	keyDirectory, err := keyDirectoryForDatabase(cfg.Database)
 	if err != nil {
@@ -867,7 +874,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2Roster: v2RosterHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2Roster: v2RosterHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, V2AgentSettings: v2AgentSettingsHandler, AgentSettings: agentSettingsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, MCPInvocation: mcpInvocationHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, HTTPMetrics: metricsSet, Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)

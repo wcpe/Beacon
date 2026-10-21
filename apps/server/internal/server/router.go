@@ -25,6 +25,8 @@ type Handlers struct {
 	V2Archive         *handler.V2ArchiveHandler
 	V2ConfigCenter    *handler.V2ConfigCenterHandler
 	V2Assets          *handler.V2AssetsHandler
+	V2AgentSettings   *handler.V2AgentSettingsHandler
+	AgentSettings     *handler.AgentSettingsHandler
 	Delivery          *handler.DeliveryAdminHandler
 	DeliveryStream    *handler.DeliveryStreamHandler
 	DeliveryAgent     *handler.DeliveryAgentHandler
@@ -196,6 +198,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.With(agentV2ReportMiddleware(h.V2)).Post("/assets/content", h.Asset.ReceiveContent)
 			// P9 M2 挂载点：交付数据面 agent 面清单拉取 / 阶段回执（FR-165，spec §5.2）：同挂鉴权中间件。
 			registerV2DeliveryAgentRoutes(r, h)
+			// agent 运行配置拉取（FR-277）：与指标 / 调度面同挂 token↔namespace + identity 鉴权中间件
+			// （未确认 403）。返回本机作用域的生效值（server 覆盖 namespace 级），服务端在此再挡
+			// 一次禁止键（接入目标 / 接入凭据 / identity.*）并记审计——与 agent 侧 PushedConfigPolicy 双保险。
+			r.With(agentV2ReportMiddleware(h.V2)).Get("/settings", h.AgentSettings.Settings)
 		})
 
 		// P9 M2：交付流式数据面（FR-165，spec §5.3），抽函数注册以免累加 v2 agent 组嵌套复杂度。
@@ -398,6 +404,12 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// M3+ 的 start / pause / resume / cancel / batches confirm / rollback 端点本切片不建路由。
 			// 抽成函数注册（内部 nil 守卫），避免本组内联累加触发 nestif。
 			registerV2DeliveryAdminRoutes(r, h)
+
+			// agent 运行配置下发（FR-277）：读某作用域生效值（含来源）+ 批量写入 / 撤销。
+			// 写端点由 AgentSettingsService 在事务内逐键自记 agent-settings.update 专项审计，
+			// 已登记 coveredWriteRoutes 使兜底跳过、避免双记；二次确认串由 service 校验。
+			r.Get("/agent-settings", h.V2AgentSettings.List)
+			r.Put("/agent-settings", h.V2AgentSettings.Put)
 		})
 	}
 	if h.V2 != nil {

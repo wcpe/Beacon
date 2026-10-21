@@ -348,6 +348,9 @@ export const observability = {
       'delivery.order.rollback_finish': '变更单结束回滚',
       'delivery.order.circuit_break': '变更单自动熔断',
       'delivery.order.blob_cleanup': '变更单载荷清理',
+      // Agent 运行配置下发（FR-277）
+      'agent-settings.update': 'Agent 运行配置下发',
+      'agent-settings.rejected': 'Agent 配置下发被拒（禁止键）',
       // 鉴权 / 密钥 / 设置 / 更新
       'auth.login': '登录',
       'auth.logout': '登出',

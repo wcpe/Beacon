@@ -626,6 +626,93 @@ export const system = {
       errorSummary: 'Error / rejection summary',
     },
   },
+  // Agent access & config (FR-279): runtime parameters pushed by scope after /beacon join
+  agentSettings: {
+    mission:
+      'Agents onboarded with /beacon join <address> <token> get their runtime parameters pushed from here by scope; changes hot-reload within ~30 seconds, and a disconnected agent keeps using the last cached push.',
+    scope: {
+      namespace: 'Namespace',
+      namespacePlaceholder: 'Select a namespace',
+      namespaceLoading: 'Loading namespaces…',
+      namespaceEmpty: 'No namespace available',
+      server: 'Server (optional)',
+      serverPlaceholder: 'Empty = the whole namespace',
+      serverLoading: 'Loading server candidates…',
+      serverEmpty: 'No server in this namespace',
+      serverClear: 'Clear server selection',
+      hintNamespace: 'Current scope: namespace defaults, applied to servers without their own override',
+      hintServer: 'Current scope: server override, takes precedence over namespace defaults',
+      updatedAt: 'Last push: {{time}}',
+      neverUpdated: 'Nothing has been pushed to this scope yet',
+    },
+    listTitle: 'Pushable settings',
+    listHint: '{{count}} items',
+    empty: 'No pushable settings',
+    loadFail: 'Failed to load agent settings',
+    scopeRequired: 'Select a namespace first',
+    retry: 'Retry',
+    table: {
+      key: 'Setting',
+      value: 'Effective value',
+      source: 'Source',
+      actions: 'Actions',
+      edit: 'Edit',
+      cancel: 'Cancel',
+      pending: 'Pending push',
+      unset: '—',
+    },
+    // Source markers: three states mirroring the three-layer priority
+    source: {
+      server: 'Server override',
+      namespace: 'Namespace default',
+      default: 'Not set',
+    },
+    // High-risk warning (ADR-0011: the whitelist is the only gate that can execute commands)
+    highRisk: {
+      badge: 'High risk',
+      title: 'High-risk setting: command whitelist',
+      body: 'override.command-whitelist decides which console commands the agent may execute — the only path from control plane to a real action on the managed end (ADR-0011). Empty means no reload command runs; confirm the command has been reviewed on the plugin side before widening it, and note every change is audited with its author and reason.',
+      jsonHint: 'A JSON string array, e.g. ["reload"]; empty = command dispatch disabled',
+      invalidJson: 'Must be a JSON string array, e.g. ["reload"]',
+    },
+    // Local-authority keys: the control plane may never push these
+    localOnly: {
+      title: 'Local configuration only',
+      badge: 'Read-only',
+      note: 'Local configuration only',
+      body: 'These keys are authoritative on the agent host (config.yml, or the credential file written by /beacon join) and the control plane may not push them — otherwise a compromised control plane would mean a compromised managed end. Edit the local configuration on that machine and restart the agent instead.',
+      descs: {
+        'beacon.endpoints': 'Access endpoints: changing them points the agent at another control plane (target hijack)',
+        'beacon.bootstrap-token': 'Bootstrap token: changing it swaps identity or locks the agent out (identity hijack)',
+        'identity.server-id': 'Server this host belongs to: authoritative value comes from the registration / approval flow',
+        'identity.identity-id': 'Host identity: only ever generated and migrated locally',
+      },
+    },
+    save: {
+      reason: 'Reason',
+      reasonPlaceholder: 'Why this push is being made (recorded by approval and audit)',
+      reasonRequired: 'A reason is required',
+      pendingCount: '{{count}} change(s) pending push',
+      noChange: 'No pending changes',
+      submit: 'Save {{count}} change(s)',
+      submitting: 'Pushing…',
+      saved: 'Pushed; the agent will hot-reload within about 30 seconds',
+      submitted: 'Submitted for approval (ticket {{id}}); it reaches the agent only after approval',
+      viewApproval: 'View approval',
+      failed: 'Push failed: {{message}}',
+    },
+    // Setting descriptions (dotted key -> copy; unknown keys fall back to the backend desc)
+    descs: {
+      'override.command-whitelist': 'Console commands allowed to run (JSON string array); empty = none',
+      'delivery.config-reload-timeout-ms': 'Config reload timeout (ms): a reload exceeding it is abandoned and reported',
+      'timing.poll-timeout-ms': 'Long-poll hold ceiling (ms); effective value is min(server ceiling, this)',
+      'timing.request-timeout-ms': 'Single HTTP request timeout (ms)',
+      'messaging.enabled': 'Whether the cross-server message channel is enabled',
+      'messaging.rpc-timeout-ms': 'Message RPC timeout (ms)',
+      'assets.enabled': 'Whether file-tree scan reporting is enabled',
+      'assets.scan-interval-sec': 'File-tree scan interval (seconds), minimum 300',
+    },
+  },
   namespaces: {
     title: 'Namespaces',
     isolationHint:

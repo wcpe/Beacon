@@ -136,6 +136,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		// 配置灰度冻结渲染工件（FR-171，见 ADR-0071）：config_change 项 per-(项, 目标) 渲染 sha 无法落
 		// change_order_item，单独冻结持久化，供 manifest / 下载授权 / 清理护栏读取，不再重渲染
 		&model.DeliveryConfigArtifact{},
+		// agent 运行配置下发（FR-277）：Web 下发层真源，两级作用域（namespace 默认 + server 覆盖）。
+		// 低频小表、控制面事实，不分日表、不进归档——agent 断连时用本地缓存，不依赖历史行。
+		&model.AgentSetting{},
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}

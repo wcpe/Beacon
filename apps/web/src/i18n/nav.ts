@@ -31,6 +31,7 @@ export const nav = {
   apiKeys: '密钥',
   mcpClients: 'MCP 客户端',
   mcpInvocations: 'MCP 调用流水',
+  agentSettings: 'Agent 接入与配置',
   namespaces: '命名空间',
   envs: '环境',
 } as const

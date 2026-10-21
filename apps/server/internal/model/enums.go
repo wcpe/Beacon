@@ -696,6 +696,13 @@ const (
 	ActionDeliveryOrderCircuitBreak = "delivery.order.circuit_break"
 	// blob 清理（系统动作，actor=system，含清理数量与释放字节）
 	ActionDeliveryOrderBlobCleanup = "delivery.order.blob_cleanup"
+	// agent 运行配置下发（FR-277）：控制面按作用域写 / 撤销 agent 运行参数，逐键一条，
+	// detail 记作用域 + 键 + 新值 + 操作类型（upsert / delete）。
+	ActionAgentSettingsUpdate = "agent-settings.update"
+	// agent 拉取端点拒发禁止键（FR-277，系统动作，actor=agent:<identityId>）：
+	// 库里出现了按 agent 侧 PushedConfigPolicy 不得下发的键（接入目标 / 接入凭据 / 身份），
+	// 服务端挡在返回之前并留证——这是「控制面被误用或被攻破」的信号，必须可追溯。
+	ActionAgentSettingsRejected = "agent-settings.rejected"
 )
 
 // Server 生命周期状态。
@@ -765,6 +772,8 @@ const (
 	TargetTypeChangeOrder = "change-order"
 	// 交付数据面中转 blob（FR-165）的审计对象类型（清理器系统审计用，TargetRef=sweep）
 	TargetTypeDeliveryBlob = "delivery-blob"
+	// agent 运行配置（FR-277）的审计对象类型（TargetRef=作用域 + 键，如 prod/lobby-1/delivery.config-reload-timeout-ms）
+	TargetTypeAgentSetting = "agent-setting"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，
