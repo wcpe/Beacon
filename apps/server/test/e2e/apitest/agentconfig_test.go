@@ -17,6 +17,7 @@
 // 但由于超时值本身不对外暴露，这里改用**间接证据 + 直接证据**两条：
 //  1. 直接：`GET /admin/v2/agent-settings` 写入后能读回（控制面侧闭环）；
 //  2. 间接：agent 侧 `pushed-config.json` 出现该值且时间戳更新（拉取闭环）。
+//
 // 真正的「运行时生效」由 agent 侧单测（ReloadDispatcher 热更新）覆盖。
 package apitest_e2e
 
@@ -114,9 +115,9 @@ func writeAgentSetting(
 ) {
 	t.Helper()
 	body := map[string]any{
-		"namespaceId":       nsID,
-		"values":            map[string]string{key: value},
-		"reason":            "e2e 下发配置验收",
+		"namespaceId": nsID,
+		"values":      map[string]string{key: value},
+		"reason":      "e2e 下发配置验收",
 		// 二次确认须与作用域标识**逐字一致**（服务端据此防止「改错环境」）。
 		// namespace 级的 scopeLabel 就是 namespace 编码本身。
 		"confirmationScope": namespace,
