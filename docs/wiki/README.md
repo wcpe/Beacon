@@ -13,13 +13,14 @@
 | 主题 | 阅读文档 | 覆盖能力 |
 | --- | --- | --- |
 | 配置、文件与交付 | [配置、文件与交付](configuration-and-delivery.md) | 有效配置、受管文件、配置版本、变更单、Agent 拉取与回退。 |
+| 回滚与版本追溯 | [回滚与交付版本](delivery-rollback.md) | 交付历史查单、整单/子集回滚、回滚重试、紧急终止与回滚动作记录。 |
 | 审批、生命周期与自动化 | [审批、生命周期与 MCP](approval-lifecycle-and-mcp.md) | 审批中心、归档/恢复/墓碑、敏感正文直读与仍保留的一次性授权、MCP OAuth 客户端。 |
 | Agent 本地可选项 | [Bukkit/Paper 全量配置](bukkit-agent-full-config.md) / [BC/Bungee 全量配置](bc-agent-full-config.md) | 最小引导外的本地运行参数、默认值与安全边界。 |
 | 拓扑与玩家首连 | [全局大厅与 BC 接入操作手册](global-lobby-operations.md) | namespace、BCCluster、Region、Zone、LobbyCluster、多 listener 与首连落点。 |
-| 健康、命令与审计 | [可观测与日常运维](observability-and-operations.md) | 健康状态、告警、BC 查询/目录命令、重同步、审计与调度判断。 |
+| 健康、命令与审计 | [可观测与日常运维](observability-and-operations.md) | 总览下钻、服务分析、健康状态、告警收口、控制面健康页、BC 查询/目录命令、审计与调度判断。 |
 | 业务插件接入 | [业务插件 SDK](business-plugin-sdk.md) | Bukkit/Bungee 本地 SDK、配置读取、命令、HTTP 中转消息与 fail-static。 |
-| 权限、备份与升级 | [安全与维护](security-and-maintenance.md) | 身份审批、token、最小权限、SQLite/外置 MySQL 备份、升级和回滚。 |
-| 问题定位 | [故障排查](troubleshooting.md) | 注册、审批、配置、地址、全局大厅、消息链路、DB 等待超时与控制面挂起取证。 |
+| 权限、备份与升级 | [安全与维护](security-and-maintenance.md) | 身份审批、token、API 密钥创建/重置/吊销、最小权限、SQLite/外置 MySQL 备份、升级和回滚。 |
+| 问题定位 | [故障排查](troubleshooting.md) | 注册、身份冲突处置、审批、配置、地址、全局大厅、消息链路、DB 等待超时与控制面挂起取证。 |
 
 ## 适用边界
 
