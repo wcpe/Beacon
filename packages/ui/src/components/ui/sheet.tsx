@@ -24,7 +24,7 @@ function SheetPortal({ ...props }: React.ComponentProps<typeof SheetPrimitive.Po
 }
 
 const SheetOverlay = React.forwardRef<
-  React.ElementRef<typeof SheetPrimitive.Overlay>,
+  React.ComponentRef<typeof SheetPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof SheetPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
   <SheetPrimitive.Overlay
