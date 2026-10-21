@@ -449,7 +449,7 @@ type DeliveryReloadPlugin struct {
 	AppliedMd5     string `json:"appliedMd5"`
 	AppliedVersion string `json:"appliedVersion"`
 	AppliedCount   *int   `json:"appliedCount,omitempty"`
-	DetailJson     string `json:"detailJson,omitempty"`
+	DetailJSON     string `json:"detailJson,omitempty"`
 }
 
 // deliveryCommandPayload 是交付命令 payload 的最小解析形状（M2 只消费 orderId 做归属匹配；

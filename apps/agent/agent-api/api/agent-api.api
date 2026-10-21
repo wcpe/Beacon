@@ -1,0 +1,205 @@
+class top.wcpe.beacon.agent.api.AdmissionScope
+  method admits(java.util.Map):boolean
+  method alternatives():java.util.List
+  method anyOf([Ltop.wcpe.beacon.agent.api.AdmissionScope;):top.wcpe.beacon.agent.api.AdmissionScope [static]
+  method anyOf(java.util.List):top.wcpe.beacon.agent.api.AdmissionScope [static]
+  method empty():top.wcpe.beacon.agent.api.AdmissionScope [static]
+  method equals(java.lang.Object):boolean
+  method hashCode():int
+  method isEmpty():boolean
+  method of(java.lang.String,java.lang.String):top.wcpe.beacon.agent.api.AdmissionScope [static]
+  method of(java.util.Map):top.wcpe.beacon.agent.api.AdmissionScope [static]
+  method toString():java.lang.String
+class top.wcpe.beacon.agent.api.AgentIdentity
+  ctor AgentIdentity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)
+  method group():java.util.Optional
+  method namespace():java.lang.String
+  method role():java.lang.String
+  method serverId():java.lang.String
+  method zone():java.util.Optional
+class top.wcpe.beacon.agent.api.AgentUnavailableException
+  ctor AgentUnavailableException(java.lang.String)
+class top.wcpe.beacon.agent.api.BeaconAgent (interface)
+  method awaitRegistered(long):boolean [abstract]
+  method config():top.wcpe.beacon.agent.api.EffectiveConfig [abstract]
+  method connected():boolean [abstract]
+  method declaration():top.wcpe.beacon.agent.api.SelfDeclaration [abstract]
+  method discovery():top.wcpe.beacon.agent.api.Discovery [abstract]
+  method effectiveMd5():java.util.Optional [abstract]
+  method identity():top.wcpe.beacon.agent.api.AgentIdentity [abstract]
+  method messaging():top.wcpe.beacon.agent.api.Messaging [abstract]
+  method scheduling():top.wcpe.beacon.agent.api.BeaconScheduling [abstract]
+class top.wcpe.beacon.agent.api.BeaconAgentProvider
+  method get():top.wcpe.beacon.agent.api.BeaconAgent [static]
+  method isAvailable():boolean [static]
+  method register(top.wcpe.beacon.agent.api.BeaconAgent):void [static]
+  method unregister():void [static]
+class top.wcpe.beacon.agent.api.BeaconScheduling (interface)
+  method acquireCandidate(java.lang.String):java.util.concurrent.CompletableFuture [abstract]
+  method acquireCandidate(java.lang.String,java.lang.String):java.util.concurrent.CompletableFuture [abstract]
+  method acquireCandidate(java.lang.String,java.lang.String,top.wcpe.beacon.agent.api.AdmissionScope):java.util.concurrent.CompletableFuture [default]
+  method candidatesInZone(java.lang.String):java.util.List [abstract]
+  method candidatesInZone(java.lang.String,top.wcpe.beacon.agent.api.AdmissionScope):java.util.List [default]
+  method dataSource():top.wcpe.beacon.agent.api.DataSourceState [abstract]
+  method healthOf(java.lang.String):top.wcpe.beacon.agent.api.HealthView [abstract]
+  method selfHealth():top.wcpe.beacon.agent.api.HealthView [abstract]
+class top.wcpe.beacon.agent.api.CandidateView
+  ctor CandidateView(java.lang.String,java.lang.String,int,top.wcpe.beacon.agent.api.HealthLevel,int,int)
+  ctor CandidateView(java.lang.String,java.lang.String,int,top.wcpe.beacon.agent.api.HealthLevel,int,int,java.util.Map)
+  method labels():java.util.Map
+  method level():top.wcpe.beacon.agent.api.HealthLevel
+  method maxOnline():int
+  method onlineCount():int
+  method score():int
+  method serverId():java.lang.String
+  method zone():java.lang.String
+class top.wcpe.beacon.agent.api.ConfigChangeListener (interface)
+  method onConfigChanged(java.util.Set,java.lang.String):void [abstract]
+class top.wcpe.beacon.agent.api.ConfigReloadResult
+  method appliedCount():java.util.OptionalInt
+  method appliedMd5():java.util.Optional
+  method appliedVersion():java.util.Optional
+  method detailJson():java.lang.String
+  method failed(java.lang.String):top.wcpe.beacon.agent.api.ConfigReloadResult [static]
+  method failed(java.lang.String,java.lang.String):top.wcpe.beacon.agent.api.ConfigReloadResult [static]
+  method isOk():boolean
+  method ok():top.wcpe.beacon.agent.api.ConfigReloadResult [static]
+  method ok(java.lang.String):top.wcpe.beacon.agent.api.ConfigReloadResult [static]
+  method reason():java.lang.String
+  method toString():java.lang.String
+  method withAppliedCount(int):top.wcpe.beacon.agent.api.ConfigReloadResult
+  method withAppliedMd5(java.lang.String):top.wcpe.beacon.agent.api.ConfigReloadResult
+  method withAppliedVersion(java.lang.String):top.wcpe.beacon.agent.api.ConfigReloadResult
+class top.wcpe.beacon.agent.api.DataIdPrefix
+  method filter(java.lang.String,java.util.Collection):java.util.Set [static]
+  method isFiltering(java.lang.String):boolean [static]
+class top.wcpe.beacon.agent.api.DataSource
+  method valueOf(java.lang.String):top.wcpe.beacon.agent.api.DataSource [static]
+  method values():[Ltop.wcpe.beacon.agent.api.DataSource; [static]
+  field CONTROL_PLANE:top.wcpe.beacon.agent.api.DataSource [static ]
+  field LOCAL_SNAPSHOT:top.wcpe.beacon.agent.api.DataSource [static ]
+class top.wcpe.beacon.agent.api.DataSourceState
+  ctor DataSourceState(top.wcpe.beacon.agent.api.DataSource,boolean,long)
+  method fresh():boolean
+  method snapshotAgeMs():long
+  method source():top.wcpe.beacon.agent.api.DataSource
+class top.wcpe.beacon.agent.api.DecisionSource
+  method valueOf(java.lang.String):top.wcpe.beacon.agent.api.DecisionSource [static]
+  method values():[Ltop.wcpe.beacon.agent.api.DecisionSource; [static]
+  field CONTROL_PLANE:top.wcpe.beacon.agent.api.DecisionSource [static ]
+  field LOCAL_FALLBACK:top.wcpe.beacon.agent.api.DecisionSource [static ]
+class top.wcpe.beacon.agent.api.DeclarationApplied
+  ctor DeclarationApplied(java.lang.Integer,java.util.Map)
+  method capacity():java.util.Optional
+  method labels():java.util.Map
+class top.wcpe.beacon.agent.api.DeclarationOutcome
+  method applied():java.util.Optional
+  method applied(top.wcpe.beacon.agent.api.DeclarationApplied):top.wcpe.beacon.agent.api.DeclarationOutcome [static]
+  method rejectReason():java.util.Optional
+  method rejected(java.lang.String):top.wcpe.beacon.agent.api.DeclarationOutcome [static]
+  method status():top.wcpe.beacon.agent.api.DeclarationOutcome$Status
+  method unavailable():top.wcpe.beacon.agent.api.DeclarationOutcome [static]
+class top.wcpe.beacon.agent.api.Discovery (interface)
+  method instancesInGroup(java.lang.String):java.util.List [abstract]
+  method instancesInZone(java.lang.String,java.lang.String):java.util.List [abstract]
+  method query(top.wcpe.beacon.agent.api.DiscoveryQuery):java.util.List [abstract]
+  method roster():java.util.Map [abstract]
+  method rosterInZone(java.lang.String,java.lang.String):java.util.Map [abstract]
+  method watch(top.wcpe.beacon.agent.api.TopologyListener):top.wcpe.beacon.agent.api.ListenerHandle [abstract]
+class top.wcpe.beacon.agent.api.DiscoveryQuery
+  method builder():top.wcpe.beacon.agent.api.DiscoveryQuery$Builder [static]
+  method group():java.util.Optional
+  method namespace():java.util.Optional
+  method role():java.util.Optional
+  method tags():java.util.Map
+  method zone():java.util.Optional
+class top.wcpe.beacon.agent.api.EffectiveConfig (interface)
+  method dataIds():java.util.List [abstract]
+  method format(java.lang.String):java.util.Optional [abstract]
+  method md5(java.lang.String):java.util.Optional [abstract]
+  method onChange(java.lang.String,top.wcpe.beacon.agent.api.ConfigChangeListener):top.wcpe.beacon.agent.api.ListenerHandle [default]
+  method onChange(top.wcpe.beacon.agent.api.ConfigChangeListener):top.wcpe.beacon.agent.api.ListenerHandle [abstract]
+  method raw(java.lang.String):java.util.Optional [abstract]
+class top.wcpe.beacon.agent.api.HealthLevel
+  method valueOf(java.lang.String):top.wcpe.beacon.agent.api.HealthLevel [static]
+  method values():[Ltop.wcpe.beacon.agent.api.HealthLevel; [static]
+  field DEGRADED:top.wcpe.beacon.agent.api.HealthLevel [static ]
+  field HEALTHY:top.wcpe.beacon.agent.api.HealthLevel [static ]
+  field UNHEALTHY:top.wcpe.beacon.agent.api.HealthLevel [static ]
+class top.wcpe.beacon.agent.api.HealthView
+  ctor HealthView(java.lang.String,int,top.wcpe.beacon.agent.api.HealthLevel,boolean,java.util.List,long)
+  method level():top.wcpe.beacon.agent.api.HealthLevel
+  method reasons():java.util.List
+  method sampledAtMs():long
+  method schedulable():boolean
+  method score():int
+  method serverId():java.lang.String
+class top.wcpe.beacon.agent.api.IncomingMessage (interface)
+  method isRequest():boolean [abstract]
+  method payload():java.lang.Object [abstract]
+  method reply(java.lang.Object):void [abstract]
+  method source():java.lang.String [abstract]
+  method type():java.lang.String [abstract]
+class top.wcpe.beacon.agent.api.ListenerHandle (interface)
+  method remove():void [abstract]
+class top.wcpe.beacon.agent.api.MessageHandler (interface)
+  method handle(top.wcpe.beacon.agent.api.IncomingMessage):void [abstract]
+class top.wcpe.beacon.agent.api.Messaging (interface)
+  method call(java.lang.String,java.lang.String,java.lang.Object):java.util.concurrent.CompletableFuture [abstract]
+  method isAvailable():boolean [abstract]
+  method on(java.lang.String,top.wcpe.beacon.agent.api.MessageHandler):top.wcpe.beacon.agent.api.ListenerHandle [abstract]
+  method publish(java.lang.String,java.lang.Object):void [abstract]
+  method publish(java.lang.String,java.lang.Object,java.lang.String):void [default]
+  method send(java.lang.String,java.lang.String,java.lang.Object):void [abstract]
+  method sendToPlayer(java.lang.String,java.lang.String,java.lang.Object):boolean [abstract]
+  method subscribe(java.lang.String,top.wcpe.beacon.agent.api.TopicHandler):top.wcpe.beacon.agent.api.ListenerHandle [abstract]
+class top.wcpe.beacon.agent.api.NodeDeclaration
+  method capacity():java.util.Optional
+  method hasLabels():boolean
+  method labels():java.util.Map
+  method of(int,java.util.Map):top.wcpe.beacon.agent.api.NodeDeclaration [static]
+  method ofCapacity(int):top.wcpe.beacon.agent.api.NodeDeclaration [static]
+  method ofLabels(java.util.Map):top.wcpe.beacon.agent.api.NodeDeclaration [static]
+class top.wcpe.beacon.agent.api.ReportingConfigChangeListener (interface)
+  method onConfigChanged(java.util.Set,java.lang.String):void [default]
+  method onConfigChangedReporting(java.util.Set,java.lang.String):top.wcpe.beacon.agent.api.ConfigReloadResult [abstract]
+class top.wcpe.beacon.agent.api.ScheduleResult
+  ctor ScheduleResult(top.wcpe.beacon.agent.api.CandidateView,java.lang.String,top.wcpe.beacon.agent.api.DecisionSource,java.lang.String)
+  ctor ScheduleResult(top.wcpe.beacon.agent.api.CandidateView,java.lang.String,top.wcpe.beacon.agent.api.DecisionSource,java.lang.String,top.wcpe.beacon.agent.api.ScheduleState)
+  ctor ScheduleResult(top.wcpe.beacon.agent.api.CandidateView,java.lang.String,top.wcpe.beacon.agent.api.DecisionSource,java.lang.String,top.wcpe.beacon.agent.api.ScheduleState,int)
+  method admissionExcludedCount():int
+  method chosen():top.wcpe.beacon.agent.api.CandidateView
+  method failReason():java.lang.String
+  method source():top.wcpe.beacon.agent.api.DecisionSource
+  method state():top.wcpe.beacon.agent.api.ScheduleState
+  method traceId():java.lang.String
+class top.wcpe.beacon.agent.api.ScheduleState
+  method valueOf(java.lang.String):top.wcpe.beacon.agent.api.ScheduleState [static]
+  method values():[Ltop.wcpe.beacon.agent.api.ScheduleState; [static]
+  field CHOSEN:top.wcpe.beacon.agent.api.ScheduleState [static ]
+  field NO_CANDIDATE:top.wcpe.beacon.agent.api.ScheduleState [static ]
+  field UNAVAILABLE:top.wcpe.beacon.agent.api.ScheduleState [static ]
+class top.wcpe.beacon.agent.api.SelfDeclaration (interface)
+  method declare(top.wcpe.beacon.agent.api.NodeDeclaration):top.wcpe.beacon.agent.api.DeclarationOutcome [abstract]
+class top.wcpe.beacon.agent.api.ServiceInstance
+  ctor ServiceInstance(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,int,int,int)
+  ctor ServiceInstance(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,int,int,int,boolean)
+  ctor ServiceInstance(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,int,int,int,boolean,boolean)
+  ctor ServiceInstance(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,int,int,int,boolean,boolean,java.util.Map)
+  method address():java.lang.String
+  method capacity():int
+  method group():java.lang.String
+  method lobbyClusterMember():boolean
+  method metadata():java.util.Map
+  method playerCount():int
+  method role():java.lang.String
+  method serverId():java.lang.String
+  method status():java.lang.String
+  method version():java.lang.String
+  method weight():int
+  method zone():java.lang.String
+  method zoneDefaultEntry():boolean
+class top.wcpe.beacon.agent.api.TopicHandler (interface)
+  method handle(java.lang.String,java.lang.Object):void [abstract]
+class top.wcpe.beacon.agent.api.TopologyListener (interface)
+  method onTopologyChanged():void [abstract]

@@ -194,24 +194,25 @@ func (errMD5Source) ExpectedConfigArtifactMD5(uint, string) (string, error) {
 func TestOrchestratorHotReloadMD5ExpectedUnavailableDegrades(t *testing.T) {
 	cases := []struct {
 		name   string
-		break_ func(t *testing.T, h *orchestratorHarness, orderID uint)
+		mutate func(t *testing.T, h *orchestratorHarness, orderID uint)
 	}{
-		{name: "工件缺失", break_: func(t *testing.T, h *orchestratorHarness, orderID uint) {
+		{name: "工件缺失", mutate: func(t *testing.T, h *orchestratorHarness, orderID uint) {
+			t.Helper()
 			if err := h.env.db.Where("order_id = ?", orderID).Delete(&model.DeliveryConfigArtifact{}).Error; err != nil {
 				t.Fatalf("删工件失败: %v", err)
 			}
 		}},
-		{name: "来源查询失败", break_: func(t *testing.T, h *orchestratorHarness, _ uint) {
+		{name: "来源查询失败", mutate: func(_ *testing.T, h *orchestratorHarness, _ uint) {
 			h.orch.SetExpectedMD5Source(errMD5Source{})
 		}},
-		{name: "来源未装配", break_: func(t *testing.T, h *orchestratorHarness, _ uint) {
+		{name: "来源未装配", mutate: func(_ *testing.T, h *orchestratorHarness, _ uint) {
 			h.orch.SetExpectedMD5Source(nil)
 		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, orderID, expected := prepareConfigHotReloadActivatingOrder(t)
-			tc.break_(t, h, orderID)
+			tc.mutate(t, h, orderID)
 			// 插件自报一个与期望不符的 md5：期望值不可得时不得据此判失败。
 			h.completeAllActivatesWithResult(t, orderID, model.CommandStatusDone, activateResultWithReload([][3]string{
 				{"top.wcpe.allin.bp.ReloadHook", "ok", otherMD5(expected)},
@@ -324,7 +325,10 @@ func TestConfigArtifactMD5MirrorsAgentDigest(t *testing.T) {
 	}
 
 	// 同 path 重复项按 (path, sha) 序取首个（对齐 agent 的 distinctBy { path }）。
-	dup := append(arts, model.DeliveryConfigArtifact{Path: "plugins/A/config.yml", SHA256: strings.Repeat("9", 64)})
+	// 复制一份再追加：不要在原切片上 append（可能复用底层数组，污染前面的断言数据）。
+	dup := make([]model.DeliveryConfigArtifact, 0, len(arts)+1)
+	dup = append(dup, arts...)
+	dup = append(dup, model.DeliveryConfigArtifact{Path: "plugins/A/config.yml", SHA256: strings.Repeat("9", 64)})
 	if got := configArtifactMD5(dup); got != want {
 		t.Fatalf("同 path 重复项应按首个计：期望 %s 实际 %s", want, got)
 	}

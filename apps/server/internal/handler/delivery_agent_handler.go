@@ -91,7 +91,7 @@ type deliveryReloadPluginDTO struct {
 	AppliedMd5     string `json:"appliedMd5"`
 	AppliedVersion string `json:"appliedVersion"`
 	AppliedCount   *int   `json:"appliedCount"`
-	DetailJson     string `json:"detailJson"`
+	DetailJSON     string `json:"detailJson"`
 }
 
 // toDeliveryReloadReport 把回执 DTO 映射为服务层形状（FR-274）；nil 原样返回，
@@ -116,7 +116,7 @@ func toDeliveryReloadReport(dto *deliveryReloadReportDTO) *service.DeliveryReloa
 			AppliedMd5:     p.AppliedMd5,
 			AppliedVersion: p.AppliedVersion,
 			AppliedCount:   p.AppliedCount,
-			DetailJson:     p.DetailJson,
+			DetailJSON:     p.DetailJSON,
 		})
 	}
 	return out

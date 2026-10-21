@@ -572,7 +572,7 @@ type deliveryReloadPlugin struct {
 	AppliedMd5     string `json:"appliedMd5"`
 	AppliedVersion string `json:"appliedVersion"`
 	AppliedCount   *int   `json:"appliedCount"`
-	DetailJson     string `json:"detailJson"`
+	DetailJSON     string `json:"detailJson"`
 }
 
 // deliveryReloadStatusOK 是插件重载成功的状态取值（与 agent 侧 DeliveryReloadPluginOutcome.STATUS_OK 同值）：

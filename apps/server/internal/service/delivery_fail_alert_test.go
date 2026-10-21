@@ -187,7 +187,7 @@ func (b *blockingAlerter) DispatchAsync(_ context.Context, _ alert.Alert) {
 }
 
 // TestEmitDeliveryFailAlertSkippedWhenNotWired 断言未装配告警器时静默跳过（旁路不得阻断交付）。
-func TestEmitDeliveryFailAlertSkippedWhenNotWired(t *testing.T) {
+func TestEmitDeliveryFailAlertSkippedWhenNotWired(_ *testing.T) {
 	s := &DeliveryOrchestrator{}
 	rt := &orderRuntime{nsCode: "prod", order: &model.ChangeOrder{}}
 	target := &model.ChangeTarget{ServerID: "lobby-1", Status: model.ChangeTargetStatusFailed}

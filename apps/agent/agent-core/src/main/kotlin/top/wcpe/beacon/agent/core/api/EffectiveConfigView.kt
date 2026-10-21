@@ -34,6 +34,17 @@ class EffectiveConfigView(
 
     private val dispatcher = ReloadDispatcher(reloadTimeoutMs, reloadExecutor)
 
+    /**
+     * 释放派发器自建的线程池（幂等）。
+     *
+     * 由壳层在 agent 禁用 / reload 时调用：不释放的话，每次 reload 都会留下一组空闲线程，
+     * 虽然 `allowCoreThreadTimeOut` 会在 60s 后回收，但叠加期仍会短暂增加线程数。
+     * 外部注入的池不在此关闭（生命周期归注入方）。
+     */
+    fun close() {
+        dispatcher.close()
+    }
+
     override fun dataIds(): List<String> = store.dataIds()
 
     override fun raw(dataId: String): Optional<String> = Optional.ofNullable(store.item(dataId)?.content)
