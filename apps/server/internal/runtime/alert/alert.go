@@ -66,6 +66,34 @@ func NewDispatcher(channels ...Alerter) *Dispatcher {
 
 // Dispatch 顺序扇出到各通道；任一通道返回 error 仅记 WARN 并继续，绝不 panic、不阻断健康扫描。
 func (d *Dispatcher) Dispatch(ctx context.Context, a Alert) {
+	d.dispatchSync(ctx, a)
+}
+
+// DispatchAsync 把扇出交给独立 goroutine，**立即返回**。
+//
+// 供「调用方处于单 goroutine 驱动的主循环」的场景使用（典型：交付推进器逐目标推进）。
+// 同步扇出在那种位置上会出真问题：webhook 通道默认 3000ms、可配到 60000ms，一轮 tick 里
+// 多个目标同时失败时超时会累加，整轮推进（含其余目标与全部活动单）被串行阻塞，
+// 超时判定被推迟、detectStall 也会饿着。Dispatch 的逐通道兜错只保证**不传播 error**，
+// 并不保证**不阻塞**——这是两件事。
+//
+// 用 context.WithoutCancel 保留调用方的值语义（trace id 等）但摘掉取消：调用方的 ctx 往往
+// 随本轮 tick 结束，直接沿用会让异步投递一出生就被取消掉。
+func (d *Dispatcher) DispatchAsync(ctx context.Context, a Alert) {
+	go func() {
+		defer func() {
+			// 告警是旁路：任何畸形通道实现（如 Notify 内 panic）都不得打死进程。
+			if r := recover(); r != nil {
+				slog.Error("告警异步扇出 panic（已兜住）",
+					"namespace", a.Namespace, "serverId", a.ServerID, "类型", a.Type, "panic", r)
+			}
+		}()
+		d.dispatchSync(context.WithoutCancel(ctx), a)
+	}()
+}
+
+// dispatchSync 是同步扇出本体，供 Dispatch 与 DispatchAsync 共用。
+func (d *Dispatcher) dispatchSync(ctx context.Context, a Alert) {
 	for _, ch := range d.channels {
 		if err := ch.Notify(ctx, a); err != nil {
 			slog.Warn("告警通道投递失败",

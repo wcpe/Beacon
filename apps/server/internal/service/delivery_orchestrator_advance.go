@@ -193,6 +193,16 @@ func (s *DeliveryOrchestrator) reconcileActivatingByAck(rt *orderRuntime, t *mod
 			s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusFailed, updates)
 			return
 		}
+		// 一票否决的控制面兜底：agent 侧已按 failed 回执，但控制面不能只信「status=success」这一层。
+		// reload 段自带 failedCount / 逐插件 status，若明细里已有失败而整体却报成功，说明对端实现走偏
+		// （第三方 agent、或 agent 后续重构漏改某条早退路径）——不看这段就会把失败判成 activated，
+		// 正是护栏「不得假报成功」要堵的形态。双保险：agent 保证语义，控制面保证不被漂移带跑。
+		if reason, failed := reloadPluginsFailedReason(res.Reload); failed {
+			delete(updates, "activated_at")
+			updates["error"] = reason
+			s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusFailed, updates)
+			return
+		}
 		s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusActivated, updates)
 	case model.CommandStatusFailed:
 		// 插件重载失败（一票否决，FR-272）只按 agent 给的 reason 落 failed：不再叠加「版本不符」，
@@ -277,6 +287,57 @@ func reloadMD5MismatchReason(plugins []deliveryReloadPlugin, expected string) (s
 	reason := "回执成功但版本不符：" + sb.String()
 	if total > shown {
 		reason += "；另有 " + strconv.Itoa(total-shown) + " 个插件同样不符"
+	}
+	return reason, true
+}
+
+// reloadPluginsFailedReason 检查 reload 段是否已含插件失败，返回可落 error 的原因（纯函数，便于穷举单测）。
+//
+// 这是控制面对「一票否决」的独立兜底，不与 agent 侧重复：agent 保证语义（任一插件失败就回 failed），
+// 控制面保证**不因对端实现漂移而误判成功**——第三方 agent、或 agent 后续重构漏改某条早退路径时，
+// 都可能出现「整体 status=success 但 reload 明细里有 failed」的形态，那正是「不得假报成功」要堵的。
+//
+// 判据取「failedCount > 0 或存在任一非 ok 插件」，两者取或：单看 failedCount 会漏掉对端把计数写错
+// 但插件状态如实的情况；单看插件状态会漏掉只给计数不给明细的对端。
+func reloadPluginsFailedReason(report *deliveryReloadReport) (string, bool) {
+	if report == nil {
+		return "", false
+	}
+	failed := report.FailedCount
+	names := make([]string, 0, len(report.Plugins))
+	for i := range report.Plugins {
+		p := &report.Plugins[i]
+		if p.Status == deliveryReloadStatusOK {
+			continue
+		}
+		// 非 ok 的插件：汇总其标识与原因，供运维直接定位。
+		entry := p.Listener
+		if p.Timeout {
+			entry += "（超时）"
+		} else if p.Reason != "" {
+			entry += "：" + p.Reason
+		}
+		names = append(names, entry)
+	}
+	// 计数与明细可能只有一个可信：任一指出「有失败」即成立。
+	if failed <= 0 && len(names) == 0 {
+		return "", false
+	}
+	if failed <= 0 {
+		failed = len(names)
+	}
+	reason := "回执自报成功但重载明细含失败：" + strconv.Itoa(failed) + "/" + strconv.Itoa(report.Total) + " 插件重载失败"
+	if len(names) > 0 {
+		const maxShown = 5 // 上限与 reloadMD5MismatchReason 对齐，避免把 error 列撑爆
+		shown := names
+		if len(shown) > maxShown {
+			shown = shown[:maxShown]
+		}
+		reason += "（" + strings.Join(shown, "；")
+		if len(names) > len(shown) {
+			reason += "；另有 " + strconv.Itoa(len(names)-len(shown)) + " 个"
+		}
+		reason += "）"
 	}
 	return reason, true
 }
@@ -821,14 +882,39 @@ func (s *DeliveryOrchestrator) emitDeliveryFailAlert(rt *orderRuntime, t *model.
 	if message == "交付失败：" {
 		message = "交付失败（未提供原因）"
 	}
-	s.alerter.Dispatch(context.Background(), alert.Alert{
+	// message 落 alert_event.message（size:512, not null）：超列宽在 MySQL 严格模式下会让整条告警
+	// 写入失败，而 Dispatcher 只记 WARN——告警会在最需要它的那一次静默消失。逐插件明细靠 detail
+	// （TEXT）承载，message 只需「一眼看懂是什么事」，故按字符截断并显式标注。
+	//
+	// **必须异步扇出**：本函数在推进器的单 goroutine 主循环里被逐目标调用（经 casTarget），
+	// 而 webhook 通道默认 3s、可配到 60s。同步扇出会让一轮 tick 里多个失败目标的超时累加，
+	// 把其余目标与全部活动单的推进一起拖住，超时判定被推迟。告警是旁路，不得占据主路径。
+	s.alerter.DispatchAsync(context.Background(), alert.Alert{
 		Type:      alert.TypePublishFail,
 		Namespace: rt.nsCode,
 		ServerID:  t.ServerID,
 		At:        s.now(),
-		Message:   message,
+		Message:   truncateAlertMessage(message),
 		Detail:    detail,
 	})
+}
+
+// alertMessageMaxRunes 是告警正文的字符上限：alert_event.message 为 size:512。
+//
+// 留出余量取 480：MySQL 的 size 在 utf8mb4 下按字符计，但前缀固定文案与截断标记也要占位，
+// 留 32 字符余量避免边界上恰好超限。
+const alertMessageMaxRunes = 480
+
+// truncateAlertMessage 按 rune 截断告警正文，避免把多字节字符切成非法 UTF-8。
+//
+// 明细不丢：调用方把完整 reload 报告放进 detail（TEXT 列），这里只压短「摘要句」。
+func truncateAlertMessage(message string) string {
+	const mark = "…（明细见 detail）"
+	runes := []rune(message)
+	if len(runes) <= alertMessageMaxRunes {
+		return message
+	}
+	return string(runes[:alertMessageMaxRunes-len([]rune(mark))]) + mark
 }
 
 // failTarget 把目标从 from 迁 failed 并落脱敏原因（ADR-0057），返回是否命中。

@@ -138,11 +138,17 @@ type deliveryExpectedMD5Source interface {
 }
 
 // SetExpectedMD5Source 替换期望摘要来源（主要供测试注入故障 / 固定值；生产由构造函数注入数据面）。
-func (s *DeliveryOrchestrator) SetExpectedMD5Source(src deliveryExpectedMD5Source) { s.expectedMD5 = src }
+func (s *DeliveryOrchestrator) SetExpectedMD5Source(src deliveryExpectedMD5Source) {
+	s.expectedMD5 = src
+}
 
 // deliveryFailAlerter 是编排器对告警域的最小依赖（窄接口，避免 service→runtime/alert 的宽耦合）。
+//
+// 只用 DispatchAsync：本接口的调用点全都在推进器的单 goroutine 主循环里，同步扇出会因
+// webhook 超时（默认 3s、可配 60s）串行阻塞整轮推进。窄接口刻意**不**暴露同步版本，
+// 让「在主循环里同步告警」这种写法从类型上就不可达。
 type deliveryFailAlerter interface {
-	Dispatch(ctx context.Context, a alert.Alert)
+	DispatchAsync(ctx context.Context, a alert.Alert)
 }
 
 // SetAlerter 注入交付失败告警扇出器（FR-275，启动时装配）。
@@ -550,11 +556,11 @@ type deliveryCmdResult struct {
 
 // deliveryReloadReport 是逐插件重载结果的回执形状（FR-274，见 docs/specs/delivery-reload-ack.md §3.4）。
 type deliveryReloadReport struct {
-	Total       int                      `json:"total"`
-	OKCount     int                      `json:"okCount"`
-	FailedCount int                      `json:"failedCount"`
-	TimeoutMs   int64                    `json:"timeoutMs"`
-	Plugins     []deliveryReloadPlugin   `json:"plugins"`
+	Total       int                    `json:"total"`
+	OKCount     int                    `json:"okCount"`
+	FailedCount int                    `json:"failedCount"`
+	TimeoutMs   int64                  `json:"timeoutMs"`
+	Plugins     []deliveryReloadPlugin `json:"plugins"`
 }
 
 // deliveryReloadPlugin 是单个插件的重载结果（FR-274）。

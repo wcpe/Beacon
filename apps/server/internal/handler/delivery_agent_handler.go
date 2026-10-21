@@ -74,11 +74,11 @@ type deliveryResultRequest struct {
 
 // deliveryReloadReportDTO 是逐插件重载结果的回执形状（FR-274）。
 type deliveryReloadReportDTO struct {
-	Total       int                          `json:"total"`
-	OKCount     int                          `json:"okCount"`
-	FailedCount int                          `json:"failedCount"`
-	TimeoutMs   int64                        `json:"timeoutMs"`
-	Plugins     []deliveryReloadPluginDTO    `json:"plugins"`
+	Total       int                       `json:"total"`
+	OKCount     int                       `json:"okCount"`
+	FailedCount int                       `json:"failedCount"`
+	TimeoutMs   int64                     `json:"timeoutMs"`
+	Plugins     []deliveryReloadPluginDTO `json:"plugins"`
 }
 
 // deliveryReloadPluginDTO 是单个插件的重载结果（FR-274）。

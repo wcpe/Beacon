@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.core.api
 
 import top.wcpe.beacon.agent.api.ConfigChangeListener
 import top.wcpe.beacon.agent.api.ReportingConfigChangeListener
+import top.wcpe.beacon.agent.core.log.LogRedactor
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
@@ -101,8 +102,10 @@ internal class ReloadDispatcher(
                 PluginReloadOutcome(
                     listener = name,
                     ok = result.isOk,
-                    reason = result.reason(),
-                    detailJson = result.detailJson(),
+                    // 插件自报的 reason / detailJson 是不可信输入，进回执前统一脱敏 + 限长：
+                    // 回执会落控制面 DB 并直接渲染到前端，裸奔的明文凭据等于把插件密钥抄进审计表。
+                    reason = sanitize(result.reason(), MAX_REASON_CHARS),
+                    detailJson = sanitize(result.detailJson(), MAX_DETAIL_CHARS),
                     appliedMd5 = result.appliedMd5().orElse(""),
                     appliedVersion = result.appliedVersion().orElse(""),
                     appliedCount = if (result.appliedCount().isPresent) result.appliedCount().asInt else null,
@@ -116,15 +119,52 @@ internal class ReloadDispatcher(
         }
     }
 
-    /** 原因只带异常类型与 message：避免把插件内部堆栈细节铺到回执里。 */
+    /**
+     * 异常原因只带类型与 message（不铺堆栈），并**过脱敏**：插件异常的 message 里带回显的
+     * 连接串 / token 是常见情况，而这段文本会进回执、落控制面 DB、再渲染到前端。
+     */
     private fun failed(
         name: String,
         e: Throwable,
-    ): PluginReloadOutcome = PluginReloadOutcome.failed(name, "${e.javaClass.simpleName}: ${e.message ?: ""}")
+    ): PluginReloadOutcome = PluginReloadOutcome.failed(name, sanitize("${e.javaClass.simpleName}: ${e.message ?: ""}", MAX_REASON_CHARS))
+
+    /**
+     * 把不可信文本处理成可安全进回执的形态：先脱敏再限长。
+     *
+     * 顺序不可颠倒——先截断后脱敏可能把 `token=xxxx` 截成 `token=xx`，脱敏规则匹配不到，
+     * 反而漏出半截密钥。
+     */
+    private fun sanitize(
+        text: String,
+        maxChars: Int,
+    ): String {
+        if (text.isEmpty()) {
+            return text
+        }
+        val redacted = LogRedactor.redact(text)
+        if (redacted.length <= maxChars) {
+            return redacted
+        }
+        return redacted.take(maxChars) + TRUNCATED_MARK
+    }
 
     private companion object {
         /** 并发重载的插件数上限；超出者排队（超时仍按各自独立计时，因计时从 get 开始）。 */
         const val POOL_SIZE = 4
+
+        /** 失败原因的长度上限（字符）：回执要落库并展示，不能让插件把 DB 列撑爆。 */
+        const val MAX_REASON_CHARS = 512
+
+        /**
+         * 插件自定义 JSON 明细的长度上限（字符）。
+         *
+         * 取 4K 是因为它纯粹用于「给人看的附加信息」，真正需要核对的字段（md5/版本/条数）
+         * 都在结构化字段里；明细超长说明插件在往这里塞不该塞的东西。
+         */
+        const val MAX_DETAIL_CHARS = 4096
+
+        /** 截断标记：让读者一眼看出内容被裁剪过，不会误以为原文就这么短。 */
+        const val TRUNCATED_MARK = "…（已截断）"
 
         /**
          * 自建守护线程池：卡死的插件线程不会阻止 JVM 退出；核心线程可超时回收。

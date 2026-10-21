@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -187,12 +188,41 @@ func (s *DeliveryOrchestrator) reconcileRollback(rt *orderRuntime, t *model.Chan
 	case model.CommandStatusDone:
 		s.completeRollback(rt, t)
 	case model.CommandStatusFailed:
-		s.failRollback(rt, t, targetErrorOr(parseDeliveryCmdResult(cmd.ResultDetail).Error, "回滚失败"))
+		// 回滚失败同样带逐插件明细（FR-274）：回滚阶段的 hot_reload 也会派发配置变更通知，
+		// 插件重载失败时运维需要知道是哪个插件——只回一句「回滚失败」等于把根因丢掉。
+		res := parseDeliveryCmdResult(cmd.ResultDetail)
+		s.failRollbackWithResult(rt, t, targetErrorOr(res.Error, "回滚失败"), res)
 	case model.CommandStatusExpired:
 		s.failRollback(rt, t, "回滚命令过期（agent 离线或长时间未回执）")
 	default:
 		s.rollbackOnTimeout(rt, t, cmd)
 	}
+}
+
+// failRollbackWithResult 回滚失败时一并落 reload_report 并扇出 publish-fail 告警。
+//
+// 与生效路径同口径：回滚也是在改线上文件，失败就是交付失败，必须逐条可见（护栏：不得假报成功）。
+func (s *DeliveryOrchestrator) failRollbackWithResult(
+	rt *orderRuntime,
+	t *model.ChangeTarget,
+	reason string,
+	res deliveryCmdResult,
+) bool {
+	updates := map[string]any{"rollback_error": reason}
+	if res.Reload != nil {
+		if raw, err := json.Marshal(res.Reload); err == nil {
+			updates["reload_report"] = string(raw)
+		} else {
+			slog.Warn("交付编排序列化回滚重载明细失败，明细将缺失",
+				"orderId", rt.order.ID, "serverId", t.ServerID, "错误", err)
+		}
+	}
+	ok := s.casRollback(rt, t, model.RollbackStatusFailed, updates)
+	if ok {
+		// 只在 CAS 真正命中后告警，避免并发迁移导致的重复告警。
+		s.emitDeliveryFailAlert(rt, t, updates)
+	}
+	return ok
 }
 
 // completeRollback 处理回滚命令 done（agent 已完成对应回滚动作）：

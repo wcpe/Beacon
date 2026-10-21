@@ -193,7 +193,7 @@ func (errMD5Source) ExpectedConfigArtifactMD5(uint, string) (string, error) {
 // 三种不可得来源分别覆盖：工件缺失（纯文件单 / 工件未就绪）、来源查询失败、来源未装配。
 func TestOrchestratorHotReloadMD5ExpectedUnavailableDegrades(t *testing.T) {
 	cases := []struct {
-		name  string
+		name   string
 		break_ func(t *testing.T, h *orchestratorHarness, orderID uint)
 	}{
 		{name: "工件缺失", break_: func(t *testing.T, h *orchestratorHarness, orderID uint) {
@@ -364,5 +364,113 @@ func TestExpectedConfigArtifactMD5ReadsFrozenArtifacts(t *testing.T) {
 	got, err := h.blob.ExpectedConfigArtifactMD5(orderID, "t-9")
 	if err != nil || got != "" {
 		t.Fatalf("无工件目标应返回空串与 nil，实际 %q / %v", got, err)
+	}
+}
+
+// —— 控制面对「一票否决」的独立兜底（回执自报成功但明细含失败）——
+//
+// agent 侧保证「任一插件失败就回 failed」，控制面不能只信 status=success 这一层：
+// 第三方 agent 或对端重构漏改某条早退路径时，都可能出现「整体成功但 reload 明细里有 failed」。
+// 不看这段就会把失败判成 activated——正是护栏「不得假报成功」要堵的形态。
+
+// activateResultSelfContradictory 组装一条「整体报成功、但 reload 明细里有失败插件」的回执。
+func activateResultSelfContradictory(total, okCount, failedCount int, plugins [][3]string) string {
+	entries := make([]string, 0, len(plugins))
+	for _, p := range plugins {
+		entries = append(entries, fmt.Sprintf(`{"listener":%q,"status":%q,"appliedMd5":%q}`, p[0], p[1], p[2]))
+	}
+	return fmt.Sprintf(`{"changedFileCount":1,"skippedFileCount":0,"backupPresent":true,`+
+		`"reload":{"total":%d,"okCount":%d,"failedCount":%d,"timeoutMs":30000,"plugins":[%s]}}`,
+		total, okCount, failedCount, strings.Join(entries, ","))
+}
+
+// TestOrchestratorHotReloadSelfContradictoryFailsTarget 整体报成功但明细含失败 → 控制面必须判 failed。
+//
+// 这是控制面的独立兜底，与 agent 侧一票否决互为双保险：agent 保证语义，控制面保证不被对端漂移带跑。
+func TestOrchestratorHotReloadSelfContradictoryFailsTarget(t *testing.T) {
+	h, orderID, expected := prepareConfigHotReloadActivatingOrder(t)
+	// 命令状态是 done（= agent 声称成功），但 reload 明细里 failedCount=1 且插件状态为 failed。
+	h.completeAllActivatesWithResult(t, orderID, model.CommandStatusDone,
+		activateResultSelfContradictory(2, 1, 1, [][3]string{
+			{"top.wcpe.allin.bp.ReloadHook", "failed", ""},
+			{"top.wcpe.good.Hook", "ok", expected},
+		}))
+	h.tick()
+
+	tg := targetByServer(t, h, orderID, "t-1")
+	if tg.Status != model.ChangeTargetStatusFailed {
+		t.Fatalf("回执自报成功但明细含失败时必须判 failed（不得留 activated），实际 %s", tg.Status)
+	}
+	if !strings.Contains(tg.Error, "重载明细含失败") {
+		t.Fatalf("原因须点明是明细里的失败，实际 %s", tg.Error)
+	}
+	if !strings.Contains(tg.Error, "top.wcpe.allin.bp.ReloadHook") {
+		t.Fatalf("原因须点明哪个插件失败，实际 %s", tg.Error)
+	}
+	if tg.ActivatedAt != nil {
+		t.Fatal("判 failed 的目标不得留 activated_at")
+	}
+}
+
+// TestOrchestratorHotReloadAllOkStillActivates 全部插件 ok 且 md5 相符 → 仍正常 activated（兜底不得误伤）。
+func TestOrchestratorHotReloadAllOkStillActivates(t *testing.T) {
+	h, orderID, expected := prepareConfigHotReloadActivatingOrder(t)
+	h.completeAllActivatesWithResult(t, orderID, model.CommandStatusDone,
+		activateResultWithReload([][3]string{
+			{"top.wcpe.good.Hook", "ok", expected},
+		}))
+	h.tick()
+
+	tg := targetByServer(t, h, orderID, "t-1")
+	if tg.Status != model.ChangeTargetStatusActivated {
+		t.Fatalf("全部 ok 且 md5 相符应 activated，实际 %s（error=%s）", tg.Status, tg.Error)
+	}
+}
+
+// TestReloadPluginsFailedReasonCountOnly 只给 failedCount、不给插件明细时也要判失败。
+//
+// 覆盖「对端只上报计数、不上报明细」的实现：仅看插件状态会漏掉这种情况。
+func TestReloadPluginsFailedReasonCountOnly(t *testing.T) {
+	report := &deliveryReloadReport{Total: 3, OKCount: 2, FailedCount: 1, Plugins: []deliveryReloadPlugin{
+		{Listener: "a", Status: deliveryReloadStatusOK},
+		{Listener: "b", Status: deliveryReloadStatusOK},
+	}}
+	reason, failed := reloadPluginsFailedReason(report)
+	if !failed {
+		t.Fatal("failedCount>0 时必须判失败")
+	}
+	if !strings.Contains(reason, "1/3") {
+		t.Fatalf("原因须含失败计数与总数，实际 %s", reason)
+	}
+}
+
+// TestReloadPluginsFailedReasonStatusOnly 只给插件状态、failedCount 写 0 时也要判失败。
+//
+// 覆盖「对端计数写错但插件状态如实」的实现：仅看 failedCount 会漏掉这种情况。
+func TestReloadPluginsFailedReasonStatusOnly(t *testing.T) {
+	report := &deliveryReloadReport{Total: 2, OKCount: 1, FailedCount: 0, Plugins: []deliveryReloadPlugin{
+		{Listener: "a", Status: deliveryReloadStatusOK},
+		{Listener: "b", Status: "failed", Reason: "解析失败"},
+	}}
+	reason, failed := reloadPluginsFailedReason(report)
+	if !failed {
+		t.Fatal("存在非 ok 插件时必须判失败（即使 failedCount 写 0）")
+	}
+	if !strings.Contains(reason, "解析失败") {
+		t.Fatalf("原因须带插件自报的原因，实际 %s", reason)
+	}
+}
+
+// TestReloadPluginsFailedReasonAllOK 全 ok 时不得误判。
+func TestReloadPluginsFailedReasonAllOK(t *testing.T) {
+	report := &deliveryReloadReport{Total: 1, OKCount: 1, FailedCount: 0, Plugins: []deliveryReloadPlugin{
+		{Listener: "a", Status: deliveryReloadStatusOK},
+	}}
+	if reason, failed := reloadPluginsFailedReason(report); failed {
+		t.Fatalf("全 ok 不得判失败，实际 %s", reason)
+	}
+	// nil report（老 agent 不回 reload 段）同样不得判失败。
+	if reason, failed := reloadPluginsFailedReason(nil); failed {
+		t.Fatalf("nil report 不得判失败，实际 %s", reason)
 	}
 }

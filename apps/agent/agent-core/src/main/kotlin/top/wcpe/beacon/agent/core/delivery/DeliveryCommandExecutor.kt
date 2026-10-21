@@ -79,9 +79,37 @@ class DeliveryCommandExecutor(
         }
         try {
             dispatch(command)
+        } catch (e: Throwable) {
+            // 顶层兜底：dispatch 各分支只按需 catch 具体异常（如 IOException），任何未预期的
+            // RuntimeException / Error 都会一路逃到这里。若不兜住，异常会穿出 execute → trigger 的
+            // 排空循环 → 平台异步线程池，后果是：该轮剩余命令不再被处理、控制面该目标只能等
+            // activateTimeoutSec 超时、agent 侧连一条 error 日志都没有。
+            // 这里必须兜 Throwable 而非 Exception：插件侧 LinkageError 在本工程是已知现实。
+            handleUnexpectedFailure(command, e)
         } finally {
             running.set(false)
         }
+    }
+
+    /**
+     * 未预期异常的收口：记 ERROR 并按 sentinel 语义回执 failed（有 orderId 才回，无处回执时上报告警）。
+     *
+     * 回执**不编造**具体插件结果——异常发生在派发/落盘/摘要计算任一环节，此时并不知道哪个插件失败，
+     * 只陈述可确证的事实（执行异常 + 异常摘要）。这与「不得假报成功」是同一原则的两面：不知道就不编。
+     */
+    private fun handleUnexpectedFailure(
+        command: AgentCommand,
+        e: Throwable,
+    ) {
+        adapter.error("交付命令执行抛出未预期异常（已兜住，不回执成功）：id=${command.id}，type=${command.type}", e)
+        val orderId = command.deliveryPayload?.orderId ?: 0L
+        if (orderId <= 0L) {
+            reportUnaddressable(command)
+            return
+        }
+        // reasonOf 必须能接 Throwable：Error 也要变成一句可读原因，不能吞成空串。
+        val reason = "交付命令执行异常：${reasonOf(e)}"
+        postResult(orderId, DeliveryStageReport(phaseOf(command.type), STATUS_FAILED, 0, 0, false, reason))
     }
 
     /**

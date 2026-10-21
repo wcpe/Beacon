@@ -121,9 +121,15 @@ fun fireChanged(changedDataIds: Set<String>, newMd5: String): ConfigReloadReport
 - 遍历监听器，逐个执行；每个**独立 `try/catch`**。
 - **必须 catch `Throwable` 而非 `Exception`**：插件侧 `NoClassDefFoundError` / `LinkageError`
   在 `agent-api` 版本不匹配时很常见，只兜 `Exception` 会让异常逃逸并打死调用线程。
-- 每个监听器**独立超时**（`settings.configReloadTimeoutMs`，默认 30000）：
+- 每个监听器**独立超时**（`settings.configReloadTimeoutMs`，**默认 0 = 不启用**）：
   在专用执行器提交、`Future.get(timeout)` 取结果，超时则 `cancel(true)` 并记 `timeout` 失败。
   超时线程不得是 MC 主线程（沿用 core 既有「阻塞 IO 一律 async」纪律）。
+
+  > **默认 0 是刻意的取舍，不是遗漏**：改默认值会让所有既有部署突然多出一组线程，
+  > 属于无声行为变更。代价是「开箱即用时没有超时保护」——一个卡死插件仍会卡住
+  > 交付命令线程，只能等控制面 `activate_timeout_sec` 整体超时，回执里看不出是哪个插件。
+  > **运维须显式配置 `delivery.config-reload-timeout-ms` 才能获得该保护**，
+  > 且该值必须小于控制面的 `activate_timeout_sec`，否则控制面先判整体超时。
 - 返回聚合报告：
 
 ```kotlin

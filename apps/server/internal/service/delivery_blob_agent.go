@@ -432,11 +432,11 @@ type DeliveryResultInput struct {
 
 // DeliveryReloadReport 是逐插件重载结果的回执形状（FR-274，见 docs/specs/delivery-reload-ack.md §3.4）。
 type DeliveryReloadReport struct {
-	Total       int                     `json:"total"`
-	OKCount     int                     `json:"okCount"`
-	FailedCount int                     `json:"failedCount"`
-	TimeoutMs   int64                   `json:"timeoutMs"`
-	Plugins     []DeliveryReloadPlugin  `json:"plugins"`
+	Total       int                    `json:"total"`
+	OKCount     int                    `json:"okCount"`
+	FailedCount int                    `json:"failedCount"`
+	TimeoutMs   int64                  `json:"timeoutMs"`
+	Plugins     []DeliveryReloadPlugin `json:"plugins"`
 }
 
 // DeliveryReloadPlugin 是单个插件的重载结果（FR-274）。
