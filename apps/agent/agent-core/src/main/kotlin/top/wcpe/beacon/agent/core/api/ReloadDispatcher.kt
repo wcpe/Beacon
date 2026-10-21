@@ -6,12 +6,14 @@ import top.wcpe.beacon.agent.core.log.LogRedactor
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.BlockingQueue
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.RejectedExecutionHandler
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 单个监听器的隔离执行器：把「调用插件」这件危险事收进一个可超时、可兜错的黑盒。
@@ -31,18 +33,54 @@ import java.util.concurrent.atomic.AtomicInteger
  *                        （不让卡死插件拖住 JVM 退出）。
  */
 internal class ReloadDispatcher(
-    private val reloadTimeoutMs: Long = 0,
+    reloadTimeoutMs: Long = 0,
     executor: ExecutorService? = null,
 ) {
-    /** 自建的线程池（外部注入时为 null）；[close] 只关它。 */
-    private val selfBuiltPool: ExecutorService? =
-        if (reloadTimeoutMs > 0L && executor == null) newDaemonPool() else null
+    /**
+     * 超时预算：**可变**，因为控制面可在运行期下发新值（FR-278 热重载）。
+     *
+     * 用 AtomicLong 而不是普通字段：派发线程读它、配置应用线程写它，
+     * 必须让新值对下一轮派发立即可见（普通 Long 在 JVM 上不保证可见性）。
+     */
+    private val timeoutMs = AtomicLong(reloadTimeoutMs)
 
-    /** 实际执行用的线程池；仅在启用超时时才需要，未启用超时的内联路径零线程开销。 */
-    private val executor: ExecutorService? = executor ?: selfBuiltPool
+    /** 外部注入的池（生命周期归注入方）；null 表示由本类按需自建。 */
+    private val injectedPool: ExecutorService? = executor
 
-    /** 结果收口：只它在关心超时/中断/排队的区分。 */
-    private val collector = ReloadOutcomeCollector(reloadTimeoutMs)
+    @Volatile
+    private var selfBuiltPool: ExecutorService? = null
+
+    /**
+     * 是否已关闭。
+     *
+     * 关闭后**不再自建新池**：否则 `currentExecutor()` 会热重载式地重新建一个，
+     * 让「已关闭」变成「关掉旧的、悄悄开了新的」——关闭语义必须单向，
+     * 否则停机后派发会继续执行，而调用方以为它已经停了。
+     */
+    @Volatile
+    private var closed = false
+
+    /**
+     * 当前执行用的线程池；null 表示「未启用超时 → 内联执行」。
+     *
+     * 惰性创建：初始与热重载后都走同一条路径，避免两处初始化逻辑分叉。
+     */
+    private fun currentExecutor(): ExecutorService? = injectedPool ?: selfBuiltOrNull()
+
+    /**
+     * 未注入时按需自建；未启用超时（<=0）或已关闭返回 null。
+     *
+     * 返回 null 表示「内联执行」——但注意关闭后内联执行也是不希望的，
+     * 故 [dispatchAll] 在关闭时直接报「未执行」而不是退回内联（见该函数）。
+     */
+    private fun selfBuiltOrNull(): ExecutorService? {
+        if (closed || timeoutMs.get() <= 0L) {
+            return null
+        }
+        return selfBuiltPool ?: synchronized(this) {
+            if (closed) null else selfBuiltPool ?: newDaemonPool().also { selfBuiltPool = it }
+        }
+    }
 
     /**
      * 释放本类**自建**的线程池。
@@ -55,7 +93,19 @@ internal class ReloadDispatcher(
      * 已随本次 reload 过期了，跑完只会把旧配置写进新进程。
      */
     fun close() {
+        closed = true
         selfBuiltPool?.shutdownNow()
+        selfBuiltPool = null
+    }
+
+    /**
+     * 热重载超时预算（FR-278）：下一次派发即按新值执行，无需重启。
+     *
+     * **不重建线程池**：超时值只影响 future.get 的等待时长，与池容量无关。
+     * 重建池会让在途任务被打断，属于不必要的破坏。
+     */
+    fun updateTimeoutMs(newTimeoutMs: Long) {
+        timeoutMs.set(newTimeoutMs.coerceAtLeast(0L))
     }
 
     /** 派发单个监听器（内部走批量路径，保证语义只有一处实现）。 */
@@ -80,10 +130,27 @@ internal class ReloadDispatcher(
         if (requests.isEmpty()) {
             return emptyList()
         }
+        // 已关闭时一律报「未执行」：不能退回内联执行，否则停机后派发仍在跑插件逻辑，
+        // 而调用方以为已经停了（关闭语义必须单向、可见）。
+        if (closed) {
+            val closedReason = RejectedExecutionException("执行器已关闭")
+            // 复用收口器的判定（它会区分「饱和拒绝」与「不可用」，文案不同）。
+            return ReloadOutcomeCollector(timeoutMs.get())
+                .collectAll(
+                    requests.map { req ->
+                        ReloadOutcomeCollector.Submitted(
+                            req.listener.javaClass.name,
+                            Result.failure(closedReason),
+                            AtomicBoolean(false),
+                        )
+                    },
+                )
+        }
         // 内联路径（未启用超时）没有并发载体，只能逐条执行——这是刻意保留的兼容行为。
-        val pool = executor ?: return requests.map { invoke(it.listener, it.changedDataIds, it.newMd5) }
+        val pool = currentExecutor() ?: return requests.map { invoke(it.listener, it.changedDataIds, it.newMd5) }
         // 先**全部提交**（绝不中途等待），再交给收口器统一收。
-        return collector.collectAll(requests.map { submitOne(pool, it) })
+        // collector 每轮新建：超时值可能刚被热重载改过，复用旧实例会沿用旧预算。
+        return ReloadOutcomeCollector(timeoutMs.get()).collectAll(requests.map { submitOne(pool, it) })
     }
 
     /** 提交一条请求；提交失败（池满/已关闭）不抛，留到收口阶段折算成「未执行」。 */

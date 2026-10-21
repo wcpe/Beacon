@@ -45,6 +45,16 @@ class EffectiveConfigView(
         dispatcher.close()
     }
 
+    /**
+     * 热重载单插件重载超时（FR-278）：下一次 `fireChanged` 即按新值判定。
+     *
+     * 供「控制面下发新值 → agent 应用」这条链路调用。不改线程池、不打断在途任务——
+     * 超时只影响等待时长，与并发能力无关。
+     */
+    fun updateReloadTimeout(timeoutMs: Long) {
+        dispatcher.updateTimeoutMs(timeoutMs)
+    }
+
     override fun dataIds(): List<String> = store.dataIds()
 
     override fun raw(dataId: String): Optional<String> = Optional.ofNullable(store.item(dataId)?.content)

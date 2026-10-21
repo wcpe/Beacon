@@ -52,6 +52,7 @@ import top.wcpe.beacon.agent.core.scheduling.SchedulingSnapshotStore
 import top.wcpe.beacon.agent.core.scheduling.SchedulingView
 import top.wcpe.beacon.agent.core.scheduling.SelfHealthHolder
 import top.wcpe.beacon.agent.core.settings.AgentSettings
+import top.wcpe.beacon.agent.core.settings.PushedConfigCoordinator
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
 import top.wcpe.beacon.agent.core.transport.BlobStreamTransport
 import top.wcpe.beacon.agent.core.transport.HttpTransport
@@ -333,6 +334,8 @@ object AgentAssembly {
                     ),
             )
         lifecycle.onRegistered { messaging.messagingRuntime.start() }
+        // 下发配置的周期拉取（FR-277 闭环末段）：见 attachPushedConfigPolling。
+        attachPushedConfigPolling(ctx, lifecycle, core.effectiveConfigView)
         // 派发器的自建线程池归本代 active runtime 所有：随 lifecycle 停机一并释放，
         // 否则每次 reload 都会留下一组空闲线程（虽会在 60s 后回收，但叠加期仍占资源）。
         lifecycle.shutdownListeners.add { core.effectiveConfigView.close() }
@@ -468,6 +471,23 @@ object AgentAssembly {
             SchedulingRefresher(ctx.apiClient, ctx.identity, ctx.adapter, schedulingCache, schedulingSnapshotStore, reportQueue)
         schedulingRefresherRef.set(schedulingRefresher)
         return SchedulingComponents(selfHealthHolder, schedulingCache, schedulingView, schedulingRefresher)
+    }
+
+    /**
+     * 接上下发配置的周期拉取（FR-277 闭环末段）。
+     *
+     * 注册后才拉：未注册时端点必然 401，提前拉没有意义。
+     * 调度节奏与代号管理都由协调器内部负责，这里只做「装配 + 启停接线」。
+     */
+    private fun attachPushedConfigPolling(
+        ctx: AssemblyContext,
+        lifecycle: AgentLifecycle,
+        view: EffectiveConfigView,
+    ) {
+        val coordinator =
+            PushedConfigCoordinator.forAssembly(ctx.apiClient, ctx.adapter.dataFolder(), ctx.codec, view, ctx.adapter)
+        lifecycle.onRegistered { coordinator.start(ctx.identity, ctx.adapter::runAsyncDelayed) }
+        lifecycle.shutdownListeners.add { coordinator.stop() }
     }
 
     /** 装配跨服消息组件（FR-149，HTTP 中转）：holder、bus、runtime。 */
