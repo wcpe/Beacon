@@ -48,6 +48,19 @@ func MetricsListenAddrFromEnv() string {
 	return addr
 }
 
+// MCPort 返回 Paper/BungeeCord 真机服务端应使用的端口，默认 25566。
+//
+// 与 MetricsListenAddrFromEnv 同因：25566 是本机常见占用点（开发机上常同时跑着
+// 别的 MC 服务端实例）。此时 Paper 会以 "FAILED TO BIND TO PORT" 启动失败，
+// 而 harness 看到的只是 Gradle 任务"意外早退、退出码 0"——真实原因埋在
+// backend.log 里，极难定位。允许经 E2E_MC_PORT 换端口即可绕开。
+func MCPort() string {
+	if v := os.Getenv("E2E_MC_PORT"); v != "" {
+		return v
+	}
+	return "25566"
+}
+
 // HTTPAddrFromURL 从形如 http://host:port 的地址提取 bind 用的 ":port"，
 // 用于设控制面 BEACON_HTTP_ADDR，使其 bind 端口与测试连接的 BaseURL 一致。
 // 取最后一个冒号后的部分作端口（避开 scheme 的 "://"），解析不出则回退 ":8848"。

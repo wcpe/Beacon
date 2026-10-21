@@ -166,8 +166,12 @@ func TestArchiveAdminAPIE2E(t *testing.T) {
 	if ov.Target.Mode != store.ArchiveModeSameInstance || !ov.Target.Reachable {
 		t.Fatalf("overview target 应同实例且可达，实际 %+v", ov.Target)
 	}
-	if len(ov.Domains) != 7 {
-		t.Fatalf("overview 应 7 个归档域，实际 %d", len(ov.Domains))
+	// 域数量与 service 层注册表保持一致：7 张日表 + audit + alert_event = 9。
+	// 这里刻意写死而非引用 service 包，是为了让 E2E 独立校验「真实端点返回的域集合」，
+	// 而不是复用被测代码自身的常量（否则注册表少注册时两边一起错、测试仍绿）。
+	// 新增域时需同步更新本处与 service/alert_event_archive_test.go 的 TestArchiveDomainRegistryOrderAndCount。
+	if len(ov.Domains) != 9 {
+		t.Fatalf("overview 应 9 个归档域（7 张日表 + audit + alert_event），实际 %d", len(ov.Domains))
 	}
 	if dm := findDomain(ov, archiveDomain); dm.ExpiredRows != seedRows || dm.HotRows < seedRows {
 		t.Fatalf("overview %s 到期水位应 %d、热库行 ≥%d，实际 %+v", archiveDomain, seedRows, seedRows, dm)
