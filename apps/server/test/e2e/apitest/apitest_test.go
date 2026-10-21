@@ -29,14 +29,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/wcpe/Beacon/apps/server/internal/model"
-	"github.com/wcpe/Beacon/apps/server/test/e2e/harness"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/test/e2e/harness"
 )
 
 const (
