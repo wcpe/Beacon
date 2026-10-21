@@ -86,13 +86,20 @@ class EffectiveConfigView(
         newMd5: String,
     ): ConfigReloadReport {
         val snapshot = listeners.values.toList()
-        val outcomes = ArrayList<PluginReloadOutcome>(snapshot.size)
-        // 快照迭代，避免监听器在回调内注销自身导致 ConcurrentHashMap 弱一致迭代漏派发。
-        for (registration in snapshot) {
-            // null 表示本次与它无关：直接跳过（过滤必须在调用之前，否则照样叫醒了插件）。
-            val relevant = registration.relevantSubsetOf(changedDataIds) ?: continue
-            outcomes += dispatcher.dispatch(registration.listener, relevant, newMd5)
-        }
+        // 先筛出「本次与它相关」的监听器，再**一次性并发**派发。
+        //
+        // 顺序很关键：过滤必须在提交之前完成，不相关者既不回调也不进 outcomes
+        // ——它没跑过，不该凭空多出一条成功记录，更不该因为「没跑」而被判失败。
+        val relevant =
+            snapshot.mapNotNull { registration ->
+                registration.relevantSubsetOf(changedDataIds)?.let { subset ->
+                    ReloadDispatcher.ReloadRequest(registration.listener, subset, newMd5)
+                }
+            }
+        // 批量并发：总耗时取决于最慢的那个插件，而不是各插件之和。
+        // 逐个 dispatch（提交一个等一个）会让池里永远只有 1 个任务在跑，
+        // 单服几十个插件时总耗时会被串行放大——这正是「服务器多了会卡」的来源之一。
+        val outcomes = dispatcher.dispatchAll(relevant)
         return ConfigReloadReport(changedDataIds, newMd5, outcomes)
     }
 

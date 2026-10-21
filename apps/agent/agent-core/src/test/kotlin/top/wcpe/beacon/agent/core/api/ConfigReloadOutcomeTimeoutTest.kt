@@ -101,7 +101,46 @@ class ConfigReloadOutcomeTimeoutTest {
         assertNull(view.fireChanged(setOf("liveops/schedule.json"), "md5-new").outcomes.single().appliedCount)
     }
 
-    /** 单插件卡死必须独立超时，并指明是哪个插件；其余插件结果仍被采集。 */
+    /**
+     * 单插件卡死必须被判超时并指明是哪个插件；**同时**正常插件仍照常成功。
+     *
+     * ## 并行改造后的语义变化（原测试名「独立判定」已不准确）
+     *
+     * 改造前是串行：提交一个等一个，卡住的那个耗尽超时后，后面那个才开始跑，
+     * 于是「卡住的超时、正常的成功」靠的是**先后顺序**。
+     *
+     * 改造后是真并发：两个同时开始。正常插件会先跑完，卡住的才等到超时。
+     * 所以正确断言是「恰好一个超时、恰好一个成功」——而不是靠顺序。
+     */
+    @Test
+    fun `卡死插件超时不影响其余插件成功`() {
+        val view = EffectiveConfigView(store(), reloadTimeoutMs = 300)
+        val gate = CountDownLatch(1)
+        view.onChange(
+            object : ReportingConfigChangeListener {
+                override fun onConfigChangedReporting(
+                    changedDataIds: Set<String>,
+                    newMd5: String,
+                ): ConfigReloadResult {
+                    gate.await(10, TimeUnit.SECONDS) // 远超超时值
+                    return ConfigReloadResult.ok()
+                }
+            },
+        )
+        view.onChange(reporting { ConfigReloadResult.ok() })
+
+        val report = view.fireChanged(setOf("liveops/schedule.json"), "md5-new")
+        gate.countDown()
+
+        assertEquals(2, report.outcomes.size, "超时不得影响其余监听器被派发")
+        // 恰好一个超时（卡死的那个）、恰好一个成功（秒回的那个）。
+        assertEquals(1, report.outcomes.count { it.timeout }, "应恰好一个超时；并行下两者同时开始，秒回者不该被误判")
+        assertEquals(1, report.outcomes.count { it.ok }, "正常插件必须成功，不得因为别人卡住而被判失败")
+        val timedOut = report.outcomes.single { it.timeout }
+        assertTrue(timedOut.reason.contains("重载超时"), "超时原因须点明超时，实际：${timedOut.reason}")
+        assertEquals(1, report.failures.size)
+    }
+
     @Test
     fun `单监听器超时被独立判定`() {
         val view = EffectiveConfigView(store(), reloadTimeoutMs = 150)

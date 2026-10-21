@@ -198,4 +198,96 @@ class ReloadDispatcherCapacityTest {
             "关闭后应报「未执行」，实际：${report.outcomes[0].reason}",
         )
     }
+
+    /**
+     * **并行必须真的并行**：N 个各耗时 T 的插件，总耗时应接近 T 而不是 N×T。
+     *
+     * ## 为什么用耗时来验，而不是数「同时开始」
+     *
+     * 「同时开始」难以稳定观测（线程调度会抖）。而耗时的数量级差异是**语义层面**的：
+     * 串行是 N×T，并行是 T。取 N=8、T=150ms：串行约 1200ms、并行约 150ms，
+     * 阈值取 600ms 就能干净区分，且不受机器快慢的绝对影响太大。
+     *
+     * 这条测试是「别把 dispatchAll 悄悄改回逐个 dispatch」的回归锁——
+     * 那种改动功能上完全正确，只有耗时能暴露它。
+     */
+    @Test
+    fun `多个慢插件应并行执行而非串行叠加`() {
+        val view = EffectiveConfigView(store(), reloadTimeoutMs = 10_000L)
+        val perPluginMs = 150L
+        val pluginCount = 8
+        try {
+            repeat(pluginCount) {
+                view.onChange(
+                    object : ConfigChangeListener {
+                        override fun onConfigChanged(
+                            changedDataIds: Set<String>,
+                            newMd5: String,
+                        ) {
+                            Thread.sleep(perPluginMs)
+                        }
+                    },
+                )
+            }
+            val startedAt = System.nanoTime()
+            val report = view.fireChanged(setOf("liveops/schedule.json"), "md5-new")
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+
+            assertEquals(pluginCount, report.outcomes.size)
+            assertTrue(report.outcomes.all { it.ok }, "慢但成功的插件不应被判失败")
+
+            val serialMs = perPluginMs * pluginCount
+            // 阈值：串行的一半以上就说明没有并行（并行约 150ms，串行约 1200ms）。
+            assertTrue(
+                elapsedMs < serialMs / 2,
+                "并行未生效：$pluginCount 个各 ${perPluginMs}ms 的插件耗时 ${elapsedMs}ms，" +
+                    "接近串行 ${serialMs}ms；并行应接近 ${perPluginMs}ms",
+            )
+        } finally {
+            view.close()
+        }
+    }
+
+    /**
+     * **单服 60 个插件**的真实规模验收：并发位足够时总耗时约等于单个插件耗时。
+     *
+     * 这是「服务器多了会卡」的直接对照：串行时 60×T，并行时约 T。
+     * 取 T=50ms、60 个插件：串行约 3000ms，并行约 50~200ms（含调度开销）。
+     * 阈值取 1000ms——远低于串行的 3000ms，又留足机器抖动的余量。
+     */
+    @Test
+    fun `六十个插件并发总耗时应接近单个插件耗时`() {
+        val view = EffectiveConfigView(store(), reloadTimeoutMs = 30_000L)
+        val perPluginMs = 50L
+        val pluginCount = 60
+        try {
+            repeat(pluginCount) {
+                view.onChange(
+                    object : ConfigChangeListener {
+                        override fun onConfigChanged(
+                            changedDataIds: Set<String>,
+                            newMd5: String,
+                        ) {
+                            Thread.sleep(perPluginMs)
+                        }
+                    },
+                )
+            }
+            val startedAt = System.nanoTime()
+            val report = view.fireChanged(setOf("liveops/schedule.json"), "md5-new")
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+
+            assertEquals(pluginCount, report.outcomes.size)
+            assertTrue(report.outcomes.all { it.ok }, "60 个插件都不该失败")
+            val serialMs = perPluginMs * pluginCount
+            assertTrue(
+                elapsedMs < serialMs / 3,
+                "60 个插件未真正并发：耗时 ${elapsedMs}ms，串行会是 ${serialMs}ms，" +
+                    "并行应远低于其中的 1/3",
+            )
+            println("[容量实测] $pluginCount 个插件 × ${perPluginMs}ms：实际 ${elapsedMs}ms（串行约 ${serialMs}ms）")
+        } finally {
+            view.close()
+        }
+    }
 }
