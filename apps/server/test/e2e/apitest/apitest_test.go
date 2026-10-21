@@ -209,6 +209,13 @@ func TestAgentApiRemainingSurfaceE2E(t *testing.T) {
 		assertRosterPhase(t, repoRoot, paper)
 	})
 
+	// ---- 相位：控制面下发 agent 配置（FR-277 闭环）----
+	//
+	// 放在拓扑相位之前：换区会把实例打回 pending，之后所有依赖在线身份的操作都会失效。
+	t.Run("下发配置闭环", func(t *testing.T) {
+		assertAgentConfigPush(t, repoRoot, base, adminToken, ns.ID, paper)
+	})
+
 	// ---- 相位 8：拓扑订阅 ----
 	//
 	// **必须放最后**：换区是两阶段操作，第一步会解绑该服的全部归属（ZoneID 置空）并把身份
