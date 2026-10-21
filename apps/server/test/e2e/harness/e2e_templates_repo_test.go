@@ -46,7 +46,6 @@ func TestE2ETemplatesPointToWCPERepo(t *testing.T) {
 	}
 
 	for _, node := range e2eTemplateNodes {
-		node := node
 		t.Run(node, func(t *testing.T) {
 			path := filepath.Join(
 				repoRoot, "apps", "agent", "agent-e2e", "src", "e2e-templates", node, "env.properties",
