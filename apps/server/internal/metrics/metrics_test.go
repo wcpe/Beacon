@@ -208,3 +208,39 @@ func sampleValue(body, name string) (float64, bool) {
 	}
 	return 0, false
 }
+
+// TestNewIsolatesRegistryPerInstance 验证每次 New() 都装配独立的 registry，
+// 因而同一进程内构造多个 Metrics 不会因重复注册而 panic。
+//
+// 该断言的价值在升级面：client_golang 1.24→1.25 后 MustRegister 的冲突检测行为
+// 是外部依赖的契约，而生产装配在当前结构下「每次都新建空 registry」使冲突不可达。
+// 一旦后人把 registry 改为共享（例如为了合并多处指标），重复注册会直接 panic，
+// 而既有测试都只构造单个实例，无法发现。此测试把该前提钉死。
+func TestNewIsolatesRegistryPerInstance(t *testing.T) {
+	first := New(runtime.NewRegistry())
+	second := New(runtime.NewRegistry())
+
+	// 两次构造都必须成功且各自可抓取：若 registry 或 collector 存在跨实例共享，
+	// 第二次 MustRegister 会因 duplicate metrics collector registration 直接 panic。
+	firstBody := scrape(t, first)
+	secondBody := scrape(t, second)
+	for _, name := range []string{"beacon_config_publish_total", "beacon_push_notify_total"} {
+		if !strings.Contains(firstBody, "# HELP "+name) {
+			t.Fatalf("第一个实例应暴露 %s", name)
+		}
+		if !strings.Contains(secondBody, "# HELP "+name) {
+			t.Fatalf("第二个实例应暴露 %s（独立 registry 不得互相影响）", name)
+		}
+	}
+
+	// 两个实例的计数器互相隔离：一个自增不得影响另一个。
+	first.configPublish.Inc()
+	firstBody = scrape(t, first)
+	secondBody = scrape(t, second)
+	if v, ok := sampleValue(firstBody, "beacon_config_publish_total"); !ok || v != 1 {
+		t.Fatalf("第一个实例计数应为 1，实际 %v（是否取到：%t）", v, ok)
+	}
+	if v, ok := sampleValue(secondBody, "beacon_config_publish_total"); !ok || v != 0 {
+		t.Fatalf("第二个实例计数应保持 0（registry 隔离），实际 %v（是否取到：%t）", v, ok)
+	}
+}
