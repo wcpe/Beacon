@@ -69,6 +69,8 @@ type Dispatcher struct {
 	stopOnce  sync.Once
 	stop      chan struct{}
 	closed    atomic.Bool
+	// enqueueLock 串行化「判关停 + 懒启动 + 入队」，消除与 Shutdown 的交错（见 DispatchAsync）。
+	enqueueLock sync.Mutex
 	// dropped 统计被丢弃的告警条数（队列满或已关停），用于显式暴露「丢了」而不是静默。
 	dropped atomic.Uint64
 }
@@ -120,7 +122,16 @@ func (d *Dispatcher) DispatchAsync(_ context.Context, a Alert) {
 	if d == nil {
 		return
 	}
-	// 关停后不再接收新告警：明确计数而不是让它悄悄消失。
+	// 「判关停 → 懒启动 worker → 入队」必须是一个原子段。
+	//
+	// 不加锁时存在这个交错：本线程读到 closed=false 后，Shutdown 完整跑完（此时 workers
+	// 计数为 0，Wait 立即返回并报成功），随后 worker 才被拉起且立刻看到 stop 已关而退出，
+	// 调用方紧接着入队成功 —— 那条告警落进一个**没有消费者的队列**，既投不出去也不计入
+	// dropped，正是「丢告警绝不静默」要禁止的形态。
+	//
+	// 锁只保护入队这一段（几纳秒），不涉及通道投递，不会让旁路拖慢主循环。
+	d.enqueueLock.Lock()
+	defer d.enqueueLock.Unlock()
 	if d.closed.Load() {
 		d.reportDrop(a, "分发器已关停")
 		return
@@ -208,10 +219,12 @@ func (d *Dispatcher) Shutdown(ctx context.Context) error {
 	if d == nil {
 		return nil
 	}
+	// 与入队共用同一把锁：要么「先置 closed 再无可入队」，要么「本次入队已完整完成」，
+	// 不会出现 worker 尚未启动、告警却已进队列的中间态。
+	d.enqueueLock.Lock()
 	d.closed.Store(true)
-	// stop 恒非 nil（构造期已分配），故无需判空；startOnce 保证 worker 只会启动一次，
-	// 未启动时 workers 计数为 0，下面立即返回。
 	d.stopOnce.Do(func() { close(d.stop) })
+	d.enqueueLock.Unlock()
 	done := make(chan struct{})
 	go func() {
 		d.workers.Wait()

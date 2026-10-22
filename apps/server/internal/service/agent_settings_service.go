@@ -249,7 +249,7 @@ func (s *AgentSettingsService) commitDirectWrite(p AgentSettingsWriteParams, ns 
 	var result AgentSettingsWriteResult
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		var txErr error
-		result, txErr = s.applyInTx(tx, ns, serverID, pending, p)
+		result, txErr = s.applyInTx(tx, ns, serverID, pending, p, false)
 		return txErr
 	})
 	if err != nil {
@@ -269,8 +269,15 @@ func (s *AgentSettingsService) commitDirectWrite(p AgentSettingsWriteParams, ns 
 //
 // 既有行**在事务内**重读：直写路径与审批执行路径都调它，两者必须看到同一时刻的作用域现状，
 // 否则「审批通过时按冻结基线判并发、落库时按另一份快照判未变化」会自相矛盾。
+// applyInTx 在事务内落库。
+//
+// [strictBaseline] 为 true 时启用**原子 CAS**：写入/删除都带「既有值」谓词，基线不符即整批
+// 返回 ErrApprovalTargetChanged。审批执行必须传 true —— 它此前只在事务开头比对一次基线，
+// 但那次比对与随后的写入不是同一个原子谓词，多 worker 并发下后写者会静默覆盖先写者。
+// 直写路径（运维刚在页面上看到当前值就提交）保持 false：那里没有「冻结基线」的语义，
+// 强加 CAS 会把正常的连续编辑变成莫名其妙的「目标已变」。
 func (s *AgentSettingsService) applyInTx(tx *gorm.DB, ns *model.Namespace, serverID string,
-	pending []agentSettingPending, p AgentSettingsWriteParams,
+	pending []agentSettingPending, p AgentSettingsWriteParams, strictBaseline bool,
 ) (AgentSettingsWriteResult, error) {
 	result := AgentSettingsWriteResult{Applied: []string{}, Removed: []string{}, Unchanged: []string{}}
 	repo := s.repo.WithTx(tx)
@@ -284,37 +291,19 @@ func (s *AgentSettingsService) applyInTx(tx *gorm.DB, ns *model.Namespace, serve
 	current := indexAgentSettingRowsAtScope(existing, serverID)
 	for _, item := range pending {
 		previous, had := current[item.key]
+		var err error
 		if item.value == nil {
-			if !had {
-				result.Unchanged = append(result.Unchanged, item.key)
-				continue
-			}
-			if _, delErr := repo.Delete(ns.ID, serverID, item.key); delErr != nil {
-				return result, delErr
-			}
-			if auditErr := audit.Create(agentSettingAuditEntry(ns, serverID, item.key, "", previous.Value,
-				agentSettingOperationDelete, p)); auditErr != nil {
-				return result, auditErr
-			}
-			result.Removed = append(result.Removed, item.key)
-			continue
+			result.Removed, result.Unchanged, err =
+				removeOne(repo, audit, ns, serverID, item.key, previous, had, p, strictBaseline,
+					result.Removed, result.Unchanged)
+		} else {
+			result.Applied, result.Unchanged, err =
+				upsertOne(repo, audit, ns, serverID, item.key, *item.value, previous, had, p, strictBaseline,
+					result.Applied, result.Unchanged)
 		}
-		if had && previous.Value == *item.value {
-			result.Unchanged = append(result.Unchanged, item.key)
-			continue
+		if err != nil {
+			return result, err
 		}
-		row := &model.AgentSetting{
-			NamespaceID: ns.ID, ServerID: serverID, Key: item.key,
-			Value: *item.value, UpdatedBy: p.Operator,
-		}
-		if upErr := repo.Upsert(row); upErr != nil {
-			return result, upErr
-		}
-		if auditErr := audit.Create(agentSettingAuditEntry(ns, serverID, item.key, *item.value, previous.Value,
-			agentSettingOperationUpsert, p)); auditErr != nil {
-			return result, auditErr
-		}
-		result.Applied = append(result.Applied, item.key)
 	}
 	return result, nil
 }
@@ -622,4 +611,73 @@ func agentSettingUnknownKeyError(keys []string) error {
 func agentSettingValueError(items []string) error {
 	return apperr.New(400, "AGENT_SETTING_VALUE_INVALID",
 		"以下配置值不合法："+strings.Join(items, "、"))
+}
+
+// removeOne 撤销「这一层的覆盖」：删行 + 记审计 + 归类到 removed / unchanged。
+//
+// 抽成函数只为压平 applyInTx 的嵌套：删除分支本身有「无行可删」「CAS 未命中」「审计失败」
+// 三个出口，与写入分支叠在同一个循环里会触发 nestif，且读起来像两件事挤在一处。
+func removeOne(
+	repo *repository.AgentSettingRepository, audit *repository.AuditLogRepository,
+	ns *model.Namespace, serverID, key string, previous model.AgentSetting, had bool,
+	p AgentSettingsWriteParams, strictBaseline bool, removed, unchanged []string,
+) ([]string, []string, error) {
+	if !had {
+		return removed, append(unchanged, key), nil
+	}
+	if strictBaseline {
+		hit, err := repo.DeleteCAS(ns.ID, serverID, key, previous.Value)
+		if err != nil {
+			return removed, unchanged, err
+		}
+		if !hit {
+			// 该行在基线比对之后被别人改过/删掉了：整批回滚，不覆盖。
+			return removed, unchanged, apperr.ErrApprovalTargetChanged
+		}
+	} else if _, err := repo.Delete(ns.ID, serverID, key); err != nil {
+		return removed, unchanged, err
+	}
+	if err := audit.Create(agentSettingAuditEntry(ns, serverID, key, "", previous.Value,
+		agentSettingOperationDelete, p)); err != nil {
+		return removed, unchanged, err
+	}
+	return append(removed, key), unchanged, nil
+}
+
+// upsertOne 写入「这一层的覆盖」：写行 + 记审计 + 归类到 applied / unchanged。
+//
+// strictBaseline 为 true 时用 UpsertCAS：以冻结时看到的值（had=false → nil）为并发基线，
+// 未命中即整批放弃。
+func upsertOne(
+	repo *repository.AgentSettingRepository, audit *repository.AuditLogRepository,
+	ns *model.Namespace, serverID, key, value string, previous model.AgentSetting, had bool,
+	p AgentSettingsWriteParams, strictBaseline bool, applied, unchanged []string,
+) ([]string, []string, error) {
+	if had && previous.Value == value {
+		return applied, append(unchanged, key), nil
+	}
+	row := &model.AgentSetting{
+		NamespaceID: ns.ID, ServerID: serverID, Key: key, Value: value, UpdatedBy: p.Operator,
+	}
+	if strictBaseline {
+		var expected *string
+		if had {
+			prev := previous.Value
+			expected = &prev
+		}
+		hit, err := repo.UpsertCAS(row, expected)
+		if err != nil {
+			return applied, unchanged, err
+		}
+		if !hit {
+			return applied, unchanged, apperr.ErrApprovalTargetChanged
+		}
+	} else if err := repo.Upsert(row); err != nil {
+		return applied, unchanged, err
+	}
+	if err := audit.Create(agentSettingAuditEntry(ns, serverID, key, value, previous.Value,
+		agentSettingOperationUpsert, p)); err != nil {
+		return applied, unchanged, err
+	}
+	return append(applied, key), unchanged, nil
 }

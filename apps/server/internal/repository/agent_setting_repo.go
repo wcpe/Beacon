@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -57,6 +58,9 @@ func (r *AgentSettingRepository) ListEffective(namespaceID uint, serverID string
 // 直接在 r.db 上执行（r.db 可为外层事务 tx，经 WithTx 注入）——**不自开嵌套事务**：
 // 嵌套 db.Transaction 在单连接池（MaxOpenConns=1，如测试内存库）下会因抢同一连接而死锁，
 // 与 SettingRepository 同一处置。
+//
+// **注意：普通 Upsert 不是并发安全的 CAS**（先查后写）。审批执行这类「必须确认基线没被别人
+// 改过」的场景请用 [UpsertCAS]，否则多 worker 并发时后写者会静默覆盖先写者。
 func (r *AgentSettingRepository) Upsert(row *model.AgentSetting) error {
 	var existing model.AgentSetting
 	err := r.db.Where("namespace_id = ? AND server_id = ? AND setting_key = ?",
@@ -70,6 +74,88 @@ func (r *AgentSettingRepository) Upsert(row *model.AgentSetting) error {
 		return err
 	}
 	return r.db.Create(row).Error
+}
+
+// UpsertCAS 以「该作用域内该键的既有值」为并发基线写入；基线不符时不写。
+//
+// ## 为什么需要它
+//
+// 「既有值当版本」只有在比对与写入是**同一个原子谓词**时才成立。普通 Upsert 先 SELECT 再
+// UPDATE，两次查询之间别的 worker 可能已改过该行：两个针对同一键的审批各自都在自己快照里
+// 看到旧值，双双重校验通过，后提交者静默覆盖先提交者，两张票却都记 succeeded。
+// 对 `override.command-whitelist` 这种键，这是安全相关变更的静默丢失。
+//
+// ## 约定
+//
+//   - `expected == nil` 表示「调用方认为该层本无覆盖」：只在真的没有行时才插入；
+//     若此时已有行（别人抢先写了），返回 (false, nil) 且不覆盖。
+//   - `expected != nil` 表示「调用方看到的值是 *expected」：更新时带 `AND value = ?` 谓词，
+//     受影响行数为 0 即基线已变；此时若该行已被删除，同样返回 (false, nil)。
+//
+// 返回 (是否命中, error)。未命中不是错误——调用方据此判「目标已变」。
+func (r *AgentSettingRepository) UpsertCAS(
+	row *model.AgentSetting,
+	expected *string,
+) (bool, error) {
+	query := r.db.Where("namespace_id = ? AND server_id = ? AND setting_key = ?",
+		row.NamespaceID, row.ServerID, row.Key)
+
+	if expected == nil {
+		return r.insertIfAbsent(query, row)
+	}
+
+	// 带 value 谓词更新：row.Value 可能为空串（合法值域已排除空串，这里只防误用）。
+	res := r.db.Model(&model.AgentSetting{}).
+		Where("namespace_id = ? AND server_id = ? AND setting_key = ? AND value = ?",
+			row.NamespaceID, row.ServerID, row.Key, *expected).
+		Updates(map[string]any{"value": row.Value, "updated_by": row.UpdatedBy})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// insertIfAbsent 只在「该作用域该键确实没有行」时插入。
+//
+// 拆出来是为了把 UpsertCAS 的嵌套压平：三层嵌套（判存在 → 插入 → 判唯一键冲突）
+// 会触发 nestif，而这段逻辑本身并不复杂，只是错误分支多。
+func (r *AgentSettingRepository) insertIfAbsent(query *gorm.DB, row *model.AgentSetting) (bool, error) {
+	var count int64
+	if err := query.Model(&model.AgentSetting{}).Count(&count).Error; err != nil {
+		return false, err
+	}
+	if count > 0 {
+		return false, nil // 调用方以为是「本无覆盖」，但已有行：基线已变
+	}
+	// 插入靠唯一键兜底：并发插入时只有一个能成功，另一个拿到唯一键冲突（同样视为基线已变）。
+	if err := r.db.Create(row).Error; err != nil {
+		if isUniqueViolation(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// DeleteCAS 以「该作用域内该键的既有值」为并发基线删除；基线不符时不删。
+//
+// `expected` 为调用方看到的当前值。返回 (是否删除, error)。
+func (r *AgentSettingRepository) DeleteCAS(namespaceID uint, serverID, key, expected string) (bool, error) {
+	res := r.db.Where("namespace_id = ? AND server_id = ? AND setting_key = ? AND value = ?",
+		namespaceID, serverID, key, expected).Delete(&model.AgentSetting{})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// isUniqueViolation 粗略识别唯一键冲突（sqlite / MySQL 文案不同，两者都覆盖）。
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate")
 }
 
 // Delete 删除某作用域下某键的覆盖；不存在时静默成功（幂等，撤销不存在的下发不是错误）。

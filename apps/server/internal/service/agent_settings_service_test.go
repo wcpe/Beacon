@@ -664,3 +664,32 @@ func mustAgentSettingItem(t *testing.T, items []AgentSettingItemView, key string
 	t.Fatalf("视图中缺少键 %q", key)
 	return AgentSettingItemView{}
 }
+
+// TestAgentSettingMetadataMatchesAgentDefaults 锁住「控制面元数据」与「agent 代码默认值」的一致性。
+//
+// 为什么必须有这把锁（FR-280 #4/#5）：这两处默认值分处 Go 与 Kotlin，语言不同、无编译期关联，
+// 已有先例就是它们悄悄漂移——元数据 desc 曾写「默认 0=不设超时」而 agent 实际默认 30000，
+// 上限也曾是 600000 vs 3600000：运维在 config.yml 写 1800000 能生效、在 Web 上填同样的值
+// 却被 400 拒，两边"合法范围"说的不是一回事。跨语言无法共享常量，只能在此显式对齐。
+func TestAgentSettingMetadataMatchesAgentDefaults(t *testing.T) {
+	// 期望值来自 agent 侧：AgentSettings.configReloadTimeoutMs / configReloadPoolSize 的默认值，
+	// 以及 PushedConfigCoordinator.MAX_RELOAD_TIMEOUT_MS / MAX_RELOAD_POOL_SIZE。
+	cases := []struct {
+		key     string
+		wantMin int
+		wantMax int
+	}{
+		{"delivery.config-reload-timeout-ms", 0, 3_600_000},
+		{"delivery.reload-pool-size", 1, 256},
+	}
+	for _, c := range cases {
+		meta, ok := agentSettingMetaFor(c.key)
+		if !ok {
+			t.Fatalf("%s 必须登记在元数据表里", c.key)
+		}
+		if meta.min != c.wantMin || meta.max != c.wantMax {
+			t.Fatalf("%s 的合法区间应与 agent 侧同值：期望 [%d,%d]，实际 [%d,%d]",
+				c.key, c.wantMin, c.wantMax, meta.min, meta.max)
+		}
+	}
+}

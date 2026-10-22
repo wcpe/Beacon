@@ -549,7 +549,15 @@ func deliveryResultDetail(orderID uint, input DeliveryResultInput) string {
 	// 不写这里等于把结构化明细丢在回执入口——error 只剩一句文本，前端明细列与告警明细都无从渲染。
 	// 老 agent 不上报时为 nil，保持既有形状不变。
 	if input.Reload != nil {
-		detail["reload"] = input.Reload
+		// 必须先收口再塞进 detail：result_detail 是 type:text（65535 字节），而这段内容
+		// **由被管端提供**（插件条数 / reason / detailJson 都没有上限）。超宽在 MySQL 严格模式下
+		// 会让 UpdateStatus 报 1406 → handler 返回错误 → agent 拿同一份回执重试，
+		// 形成稳定失败循环（正是 reason_cap 整段注释要堵的形态，只是这条是入站路径）。
+		// 收口只影响留痕副本，推进器判定仍用原始 res.Reload。
+		if rawReload, marshalErr := json.Marshal(input.Reload); marshalErr == nil {
+			detail["reload"] = json.RawMessage(
+				capReloadReportJSON(string(rawReload), changeTargetReloadReportMaxBytes))
+		}
 	}
 	raw, _ := json.Marshal(detail)
 	return string(raw)

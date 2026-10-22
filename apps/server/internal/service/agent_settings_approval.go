@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -247,6 +249,14 @@ func (s *AgentSettingsService) requestWithTerminalSupersede(op authz.Operation, 
 		}
 		op.IdempotencyKey = agentSettingsApprovalSupersedeKey(baseKey, req.RequestID)
 		next, nextErr := s.approval.Request(op, payload, principal, clientIP)
+		if errors.Is(nextErr, apperr.ErrIdempotencyKeyReused) {
+			// 改派键撞上了「同键不同载荷」：冻结载荷里含 previousValue（并发基线），
+			// 基线在两次驳回之间被别人改过就会出现这种情况。若不处理，运维会被一个
+			// 「幂等键已被不同申请内容使用」的 409 永久挡住，且报错完全没提示怎么脱困。
+			// 把载荷指纹一并纳入派生 —— 基线变了就是另一件事，理应换一张新票。
+			op.IdempotencyKey = agentSettingsApprovalSupersedeKeyWithPayload(baseKey, req.RequestID, payload)
+			next, nextErr = s.approval.Request(op, payload, principal, clientIP)
+		}
 		if nextErr != nil {
 			return model.ApprovalRequest{}, nextErr
 		}
@@ -286,6 +296,21 @@ func agentSettingsApprovalSupersedeKey(baseKey, supersededRequestID string) stri
 	// \x1d 分隔符不会出现在两个输入里（前者是 hex + 连字符，后者是 apr_ + hex），不会撞键。
 	sum := sha256.Sum256([]byte(baseKey + "\x1d" + supersededRequestID))
 	return "agent-settings-s" + hex.EncodeToString(sum[:])[:32]
+}
+
+// agentSettingsApprovalSupersedeKeyWithPayload 在改派键里并入载荷指纹。
+//
+// 只在「改派键撞上同键不同载荷」时用作第二选择：冻结载荷包含并发基线（previousValue），
+// 基线在两次驳回之间变化会让同一个改派键指向不同载荷 —— 那不是重复提交，而是另一个意图，
+// 必须换键。并入指纹后键仍然确定（同样输入同键），幂等性不受影响。
+func agentSettingsApprovalSupersedeKeyWithPayload(baseKey, supersededRequestID string, payload map[string]any) string {
+	// 载荷用 encoding/json 序列化：map 键序在 Go 里是随机的，必须先规范化再哈希。
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		raw = []byte(fmt.Sprintf("%v", payload))
+	}
+	sum := sha256.Sum256(append([]byte(baseKey+"\x1d"+supersededRequestID+"\x1d"), raw...))
+	return "agent-settings-p" + hex.EncodeToString(sum[:])[:32]
 }
 
 // agentSettingsApprovalAdapter 是批准后的执行适配器。
@@ -385,7 +410,7 @@ func (s *AgentSettingsService) applyApprovedBatchInTx(tx *gorm.DB, requestID str
 		// 让每条变更审计都能反查审批单据（审计列表只看得出「改了」，加上它才说明「凭什么改的」）。
 		ApprovalRequestID: requestID,
 	}
-	result, err := s.applyInTx(tx, ns, payload.ServerID, pending, writeParams)
+	result, err := s.applyInTx(tx, ns, payload.ServerID, pending, writeParams, true)
 	if err != nil {
 		return empty, err
 	}

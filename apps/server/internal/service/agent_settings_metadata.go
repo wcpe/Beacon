@@ -151,8 +151,13 @@ var agentSettingKeys = map[string]agentSettingMeta{
 
 	// —— 配置重载（交付编排消费，FR-274 / FR-278）——
 	"delivery.config-reload-timeout-ms": {
-		valueType: agentSettingTypeInt, min: 0, max: 600000,
-		desc: "单业务插件配置重载超时（毫秒），默认 30000；填 0 表示不设超时（不建议，卡死插件会一直占住）。" +
+		// max 与 agent 侧 MAX_RELOAD_TIMEOUT_MS（3_600_000）保持同值。
+		//
+		// 此前这里写 600000、agent 侧收口到 3600000：方向虽安全（服务端更严），但运维在
+		// config.yml 里写 1800000 能生效、在 Web 上填同样的值却被 400 拒，两边"合法范围"
+		// 说的不是一回事，而 PRD 明确要求上限 3600000ms。改齐并在此处互相引用。
+		valueType: agentSettingTypeInt, min: 0, max: 3600000,
+		desc: "单业务插件配置重载超时（毫秒），默认 30000，上限 3600000；填 0 表示不设超时（不建议，卡死插件会一直占住）。" +
 			"须小于控制面 activateTimeoutSec，否则控制面先判整体超时、回执里看不出是哪个插件卡住",
 	},
 	"delivery.reload-pool-size": {
@@ -214,11 +219,26 @@ func agentSettingMetaFor(key string) (agentSettingMeta, bool) {
 // 这里**不**复用 validateSettingValue：那张表按 value_type 三分支且枚举语义绑定控制面自身
 // （如 log.level），而 agent 配置有 string-list、有「0 合法」的超时（delivery.config-reload-timeout-ms），
 // 混用会把两套约束搅在一起。
+// agentSettingValueMaxRunes 是单个配置值的字符上限。
+//
+// 与 model.AgentSetting.Value 的 `size:4096` 同值：超出这一列宽在 MySQL 严格模式下必然 1406。
+// 两者必须一起改——只改列宽不放开这里会让新容量用不上，只放开这里不改列宽会退化成 500。
+const agentSettingValueMaxRunes = 4096
+
 func validateAgentSettingValue(meta agentSettingMeta, value string) bool {
 	trimmed := strings.TrimSpace(value)
 	// 空值一律拒：agent 侧读下发缓存时对空白值按「未下发」处理（isNotBlank 过滤），
 	// 存进去等于「写了个永远不会生效的值」。撤销下发请删除该行（PUT 传 null）。
 	if trimmed == "" {
+		return false
+	}
+	// 长度上限对齐 agent_setting.value 的列宽（size:4096）。
+	//
+	// 不设这道闸的实际后果比「存不下」更糟：直写路径会在事务提交时抛 1406 并回滚，
+	// 调用方拿到的是 500 而不是可读的 400；审批路径更糟——申请能建票、能被批准，
+	// 执行时才因列溢出失败，把一张人工审查过的票据变成 failed，白耗一轮审批。
+	// string-list 也要管：它是整串存在同一列里，超长一样写不进去。
+	if len([]rune(trimmed)) > agentSettingValueMaxRunes {
 		return false
 	}
 	switch meta.valueType {
