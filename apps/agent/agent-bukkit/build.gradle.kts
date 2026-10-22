@@ -63,6 +63,20 @@ taboolib {
         install(BukkitUtil)
         install(BukkitHook)
         install(I18n)
+        // 构建期就锁定依赖下载源（写进产物 META-INF/taboolib/env.properties）。
+        //
+        // 为什么必须显式设：`6.3.0-wcpe.N` 这类定制坐标**只发布在 WCPE 私有仓库**，
+        // 上游 tabooproject 上是 404。而这两层默认值分属不同工件、没有联动：
+        //   - 运行期（common-6.3.0-wcpe.5 的 PrimitiveSettings）默认已是 repo.wcpe.top；
+        //   - 构建期（io.izzel.taboolib:taboolib-gradle-plugin:2.0.39 的 Env.groovy）
+        //     仍硬编码 tabooproject，并把它写进 env.properties。
+        // env.properties 优先于运行期默认值，于是产物拿到的是那个 404 地址，
+        // 插件在任何拿到 jar 的机器上都无法自举下载依赖（表现为
+        // 「Failed to download common-env-6.3.0-wcpe.5.jar」后插件被禁用）。
+        //
+        // 在这里显式覆盖即让产物自洽：不需要改上游插件、不需要发新版本，
+        // 也不会影响其它 WCPE 项目。
+        repoTabooLib = "https://repo.wcpe.top/repository/maven-public/"
     }
     // 第三方库本身不打包（@RuntimeDependencies 运行期下载），但仍打包期 relocate：把 agent 自身字节码里
     // 对 okhttp3/okio/kotlinx.serialization 的引用重写到 top.wcpe.beacon.agent.lib.* —— 与运行期下载时的
