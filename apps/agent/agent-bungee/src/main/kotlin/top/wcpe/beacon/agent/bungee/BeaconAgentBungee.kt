@@ -201,9 +201,10 @@ object BeaconAgentBungee : Plugin() {
             // 只读不新建：旧实现走 loadOrCreate()，文件缺失时会落盘一个从未在控制面注册过的新 UUID。
             // 凭据才是身份真源，那个 UUID 只会在凭据变得不可读时被迁移「复活」成一台新服务器。
             val storedIdentity = identityStore.loadExisting()
-            // fail-fast（保留既有语义）：旧身份文件损坏、且凭据里也没有合法身份，才是真的丢了身份。
-            // 反过来，凭据里已有合法身份时旧文件损坏不挡接入——凭据才是单一真源。
-            if (!storedIdentity.isValid && credentialsStore.load() == null) {
+            // 只有「文件存在但读不懂」才是真损坏，须 fail-fast 让人看见。
+            // 「文件不存在」是全新安装的正常态：此时凭据可能也还没有（等 join），
+            // 若也按损坏处理，就会把「还没接入」误报成「身份坏了」并把零配置接入直接堵死。
+            if (storedIdentity.fileExists && !storedIdentity.isValid) {
                 severe("身份文件损坏：${storedIdentity.error}，Beacon agent 不接入控制面")
                 return@submitAsync
             }

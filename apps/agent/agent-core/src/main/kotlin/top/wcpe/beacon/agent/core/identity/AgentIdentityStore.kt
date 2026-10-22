@@ -18,6 +18,14 @@ data class StoredAgentIdentity(
     val createdAt: Instant?,
     val isValid: Boolean,
     val error: String = "",
+    /**
+     * 身份文件是否**存在于磁盘上**。
+     *
+     * 必须与 [isValid] 分开：全新安装时文件本来就不存在，那是正常态（等 join 即可），
+     * 「不存在」和「存在但读不懂」的处理完全不同——后者才是真损坏，须拒绝接入并告警；
+     * 前者若也按损坏处理，会把「还没接入」误报成「身份坏了」，直接把零配置接入堵死。
+     */
+    val fileExists: Boolean = false,
 )
 
 class AgentIdentityStore(
@@ -71,7 +79,8 @@ class AgentIdentityStore(
 
     fun loadExisting(): StoredAgentIdentity {
         if (!Files.exists(file)) {
-            return StoredAgentIdentity("", null, isValid = false, error = "身份文件不存在")
+            // 文件不存在 = 全新安装的正常态，不是损坏。fileExists 置 false 让调用方能区分二者。
+            return StoredAgentIdentity("", null, isValid = false, error = "身份文件不存在", fileExists = false)
         }
         val fields = parseFields(Files.readAllLines(file, StandardCharsets.UTF_8))
         val formatVersion = fields["format-version"]
@@ -81,7 +90,7 @@ class AgentIdentityStore(
             formatVersion != IDENTITY_FORMAT_VERSION -> invalidIdentity("身份文件格式版本不支持")
             !isUuidV4(identityId) -> invalidIdentity("身份标识不是合法 UUIDv4")
             createdAt == null -> invalidIdentity("身份文件缺少合法生成时间")
-            else -> StoredAgentIdentity(identityId, createdAt, isValid = true)
+            else -> StoredAgentIdentity(identityId, createdAt, isValid = true, fileExists = true)
         }
     }
 
@@ -159,5 +168,9 @@ class AgentIdentityStore(
  * 放在类外（顶层私有）而不是成员：本类已贴着 detekt 的类内函数数上限，
  * 而它不碰任何实例状态，只把一个错误原因包成「无效身份」
  * （与 `ReloadDispatcher` 里的 `sanitizeForReceipt` 同一处理方式，不用 @Suppress）。
+ *
+ * 走到这里的都发生在「文件确实存在」的解析路径上，故 fileExists 必为 true ——
+ * 这正是需要与「文件不存在」区分开的那一类：存在但读不懂才是真损坏。
  */
-private fun invalidIdentity(message: String): StoredAgentIdentity = StoredAgentIdentity("", null, isValid = false, error = message)
+private fun invalidIdentity(message: String): StoredAgentIdentity =
+    StoredAgentIdentity("", null, isValid = false, error = message, fileExists = true)
