@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.core.settings
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * AgentBootstrap 读取「单插件配置重载超时」（FR-274）的单测。
@@ -48,6 +49,88 @@ class AgentBootstrapConfigReloadTimeoutTest {
             )
         val settings = AgentBootstrap.readSettings(reader)
         assertEquals(30_000L, settings.configReloadTimeoutMs)
+    }
+
+    @Test
+    fun `越界值被收口且必须告警`() {
+        val warnings = mutableListOf<String>()
+        val reader =
+            MapConfigReader(
+                mapOf(
+                    "delivery.config-reload-timeout-ms" to -5L,
+                    "delivery.reload-pool-size" to 9999,
+                ),
+            )
+
+        val settings = AgentBootstrap.readSettings(reader, warnings::add)
+
+        // 回归锁：越界照样收口到合法区间（FR-280），不抛异常、不让 agent 起不来。
+        assertEquals(0L, settings.configReloadTimeoutMs, "负超时应收口到下限 0")
+        assertEquals(256, settings.configReloadPoolSize, "9999 应收口到上限 256")
+        // 但**不能静默收口**（FR-280 #3）：手写的越界值被改掉却不吭一声，运维会照着原值排错。
+        assertEquals(2, warnings.size, "两个越界项都该告警，实际：$warnings")
+        assertTrue(
+            warnings.any { it.contains("delivery.config-reload-timeout-ms") && it.contains("-5") && it.contains("0") },
+            "超时告警须含键名、原值、生效值，实际：$warnings",
+        )
+        assertTrue(
+            warnings.any { it.contains("delivery.reload-pool-size") && it.contains("9999") && it.contains("256") },
+            "并发告警须含键名、原值、生效值，实际：$warnings",
+        )
+    }
+
+    @Test
+    fun `扫描间隔低于下限时收口并告警`() {
+        val warnings = mutableListOf<String>()
+        val reader = MapConfigReader(mapOf("assets.scan-interval-sec" to 10L))
+
+        val settings = AgentBootstrap.readSettings(reader, warnings::add)
+
+        assertEquals(300L, settings.assets.scanIntervalSec, "低于下限 300 秒应收口")
+        assertEquals(1, warnings.size, "收口必须告警，实际：$warnings")
+        // 该项只有下限，不该打印一串天文数字的上限。
+        assertTrue(warnings.single().contains("≥300"), "区间文案应只表达下限，实际：${warnings.single()}")
+    }
+
+    @Test
+    fun `合法值不告警`() {
+        val warnings = mutableListOf<String>()
+        val reader =
+            MapConfigReader(
+                mapOf(
+                    "delivery.config-reload-timeout-ms" to 15_000L,
+                    "delivery.reload-pool-size" to 8,
+                    "assets.scan-interval-sec" to 600L,
+                ),
+            )
+
+        val settings = AgentBootstrap.readSettings(reader, warnings::add)
+
+        // 合法值照原样生效，且**不打扰**：告警只在真越界时才有意义（否则会被训练成无视）。
+        assertEquals(15_000L, settings.configReloadTimeoutMs)
+        assertEquals(8, settings.configReloadPoolSize)
+        assertEquals(600L, settings.assets.scanIntervalSec)
+        assertTrue(warnings.isEmpty(), "合法值不该告警，实际：$warnings")
+    }
+
+    @Test
+    fun `收口区间边界值本身合法且不告警`() {
+        val warnings = mutableListOf<String>()
+        val atBounds =
+            MapConfigReader(
+                mapOf(
+                    "delivery.config-reload-timeout-ms" to 0L,
+                    "delivery.reload-pool-size" to 1,
+                    "assets.scan-interval-sec" to 300L,
+                ),
+            )
+        val settings = AgentBootstrap.readSettings(atBounds, warnings::add)
+
+        // 边界值属于合法范围：收口不能把合法值也当成越界（会产生假告警）。
+        assertEquals(0L, settings.configReloadTimeoutMs)
+        assertEquals(1, settings.configReloadPoolSize)
+        assertEquals(300L, settings.assets.scanIntervalSec)
+        assertTrue(warnings.isEmpty(), "边界值合法，不该告警，实际：$warnings")
     }
 
     /** 测试用 ConfigReader：从 map 取值，缺失返回默认。 */

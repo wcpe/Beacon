@@ -36,7 +36,9 @@ class EffectiveSettingsResolver(
      * 复用旧值会让「刚 join 完却仍不接入」这类问题非常难查。
      */
     fun resolve(): AgentSettings {
-        val pushed = pushedStore.load()
+        // 缓存读不出来（损坏 / 版本不支持 / 读失败）必须**显式告警**（FR-277 #6）：
+        // 否则「这台机器没被下发过」和「缓存坏了」在运维眼里长得一模一样。
+        val pushed = pushedStore.load(warn)
         // 键级防护：下发里的接入目标/身份一律丢弃（并告知，避免「Web 改了没生效」无从排查）。
         val (allowed, rejected) = PushedConfigPolicy.partition(pushed.values)
         if (rejected.isNotEmpty()) {
@@ -50,7 +52,8 @@ class EffectiveSettingsResolver(
                     warn("下发配置值非法已忽略：$key=$raw（期望 $type），回退到本地配置")
                 },
             )
-        return mergeCredentials(AgentBootstrap.readSettings(reader))
+        // 本地配置的越界收口同样要告警（FR-280 #3）：运维手写的越界值不该被悄悄改掉。
+        return mergeCredentials(AgentBootstrap.readSettings(reader, warn))
     }
 
     /**

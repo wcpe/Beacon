@@ -43,7 +43,13 @@ internal class ReloadOutcomeCollector(
      * 这里先做一遍**非阻塞**收割（`isDone` 为真即取，绝不等），再对仍未完成的项按剩余预算等待。
      */
     fun collectAll(submitted: List<Submitted>): List<PluginReloadOutcome> {
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        // 用 Math.addExact 判溢出，而不用「Long.MAX_VALUE - now」的差判：System.nanoTime() 的
+        // 起点是任意的，JVM 允许为负——负数起点下差值比较自身就会溢出成负数，判定恒真，
+        // 反而把 deadline 推到 Long.MAX_VALUE 之后 remaining 再次溢出 → 整批立即判超时。
+        val budgetNanos = TimeUnit.MILLISECONDS.toNanos(timeoutMs.coerceAtLeast(0L))
+        val now = System.nanoTime()
+        val deadline =
+            runCatching { Math.addExact(now, budgetNanos) }.getOrElse { Long.MAX_VALUE }
         val outcomes = arrayOfNulls<PluginReloadOutcome>(submitted.size)
 
         // 提交阶段就失败的项先落定（它们没有 future 可取）。
@@ -87,8 +93,7 @@ internal class ReloadOutcomeCollector(
         }
 
         // 仍未落定的：按超时/未执行收口（这些是真的没在预算内完成）。
-        pending.forEach { index -> outcomes[index] = onTimeout(submitted[index]) }
-
+        // 循环只有两种退出方式（pending 收割清空 / 显式置空），故这里不需要再遍历一次 pending。
         return outcomes.mapIndexed { index, outcome -> outcome ?: onTimeout(submitted[index]) }
     }
 

@@ -5,3 +5,8 @@ beacon:
   endpoints:
     - "<CONTROL_PLANE_URL>"
   bootstrap-token: "<NAMESPACE_ACCESS_TOKEN>"
+
+# 并发 reload 的插件数上限（默认 64，范围 1~256）。
+# 此项以 Beacon Web 下发为准，本地值仅作离线兜底。
+delivery:
+  reload-pool-size: 64

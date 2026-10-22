@@ -56,6 +56,84 @@ class PushedConfigStoreTest {
     }
 
     @Test
+    fun `缓存损坏时降级仍不抛异常且必须告警一次`() {
+        val dir = tempDir()
+        Files.writeString(dir.resolve("pushed-config.json"), "{ 坏掉的")
+        val store = PushedConfigStore(dir, TestJsonCodec)
+        val warnings = mutableListOf<String>()
+
+        // 行为不变：读不出就给空 map，绝不抛。
+        assertTrue(store.load(warnings::add).values.isEmpty())
+
+        // 但**不能静默**（FR-277 #6）：静默降级会让运维分不清「没下发过」和「缓存坏了」。
+        assertEquals(1, warnings.size, "缓存损坏必须告警，不能静默降级")
+        val msg = warnings.single()
+        assertTrue(msg.contains("损坏"), "告警要说清是哪类失败，实际：$msg")
+        assertTrue(msg.contains("config.yml"), "告警要说清已降级到 config.yml，实际：$msg")
+        assertTrue(msg.contains(dir.resolve("pushed-config.json").toString()), "告警要给出缓存文件路径，实际：$msg")
+    }
+
+    @Test
+    fun `缓存格式版本不支持时告警原因与解析失败可区分`() {
+        val dir = tempDir()
+        // 格式版本 2：能解析，但本版本不认识——与「内容坏掉」是两种失败。
+        Files.writeString(dir.resolve("pushed-config.json"), """{"formatVersion":2,"values":{"a":"b"}}""")
+        val store = PushedConfigStore(dir, TestJsonCodec)
+        val warnings = mutableListOf<String>()
+
+        assertTrue(store.load(warnings::add).values.isEmpty())
+
+        assertEquals(1, warnings.size)
+        val msg = warnings.single()
+        assertTrue(msg.contains("版本"), "版本不支持要报「版本」，实际：$msg")
+        assertTrue(msg.contains("升级"), "处置建议应指向升级 agent 而非删文件，实际：$msg")
+        // 与解析失败可区分：两种原因不能共用一句文案。
+        assertTrue(!msg.contains("损坏"), "版本不支持不该被报成「内容损坏」，实际：$msg")
+    }
+
+    @Test
+    fun `缓存文件不存在时静默不告警`() {
+        val store = PushedConfigStore(tempDir(), TestJsonCodec)
+        val warnings = mutableListOf<String>()
+
+        // 首次启动本来就没有缓存：这是常态，不是故障，打扰运维只会训练人无视告警。
+        assertTrue(store.load(warnings::add).values.isEmpty())
+        assertTrue(warnings.isEmpty(), "缓存不存在不该告警，实际：$warnings")
+    }
+
+    @Test
+    fun `同一坏文件被周期读取时只告警一次`() {
+        val dir = tempDir()
+        Files.writeString(dir.resolve("pushed-config.json"), "{ 坏掉的")
+        val store = PushedConfigStore(dir, TestJsonCodec)
+        val warnings = mutableListOf<String>()
+
+        // 30s 轮询 × 24h ≈ 2880 次：不去重会把这些日志刷成噪声，真故障反而被淹掉。
+        repeat(5) { store.load(warnings::add) }
+
+        assertEquals(1, warnings.size, "同一原因只该告警一次，实际：$warnings")
+    }
+
+    @Test
+    fun `缓存损坏后修好再坏掉会重新告警`() {
+        val dir = tempDir()
+        val file = dir.resolve("pushed-config.json")
+        Files.writeString(file, "{ 坏掉的")
+        val store = PushedConfigStore(dir, TestJsonCodec)
+        val warnings = mutableListOf<String>()
+
+        store.load(warnings::add)
+        // 修好：写回一份合法缓存，恢复正常态（只清记录、不告警）。
+        store.update(mapOf("delivery.reload-pool-size" to "8"), "prod", "lobby-1")
+        assertEquals("8", store.load(warnings::add).values["delivery.reload-pool-size"])
+        // 又坏掉：这是**新的**故障，必须再报一次，不能被上一轮的记录吃掉。
+        Files.writeString(file, "{ 又坏掉的")
+        assertTrue(store.load(warnings::add).values.isEmpty())
+
+        assertEquals(2, warnings.size, "修好后再坏掉应重新告警，实际：$warnings")
+    }
+
+    @Test
     fun `三层优先级为下发大于本地大于默认`() {
         val local = MapConfigReader(mapOf("delivery.config-reload-timeout-ms" to 5000L))
         val reader =

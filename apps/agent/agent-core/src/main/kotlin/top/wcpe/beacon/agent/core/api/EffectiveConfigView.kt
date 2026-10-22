@@ -37,6 +37,14 @@ class EffectiveConfigView(
     private val dispatcher = ReloadDispatcher(reloadTimeoutMs, reloadExecutor, reloadPoolSize)
 
     /**
+     * 当前生效的 reload 并发位（已收口到 [1, 256]）。
+     *
+     * 供诊断与测试读取：下发值是否真的穿过「协调器 → 视图 → 派发器」落到执行器上，
+     * 只有这个读口能让它成为**可断言**的事实（否则测试只能靠数线程、造并发来间接推理）。
+     */
+    internal val effectiveReloadPoolSize: Int get() = dispatcher.effectivePoolSize
+
+    /**
      * 释放派发器自建的线程池（幂等）。
      *
      * 由壳层在 agent 禁用 / reload 时调用：不释放的话，每次 reload 都会留下一组空闲线程，
@@ -55,6 +63,19 @@ class EffectiveConfigView(
      */
     fun updateReloadTimeout(timeoutMs: Long) {
         dispatcher.updateTimeoutMs(timeoutMs)
+    }
+
+    /**
+     * 热重载并发 reload 的插件数上限（FR-278/FR-280）：下一轮 `fireChanged` 即按新容量执行。
+     *
+     * 与 [updateReloadTimeout] 的关键差别：**这一项会换池**。并发位是线程池的构造属性，
+     * 改它只能重建——但重建用的是「旧池优雅退役、在途 reload 跑完」，不是中断，
+     * 因为改并发位不该丢任务。语义细节见 [ReloadDispatcher.updatePoolSize]。
+     *
+     * @param poolSize 目标并发位数；非法值由派发器收口到 [1, 256]
+     */
+    fun updateReloadPoolSize(poolSize: Int) {
+        dispatcher.updatePoolSize(poolSize)
     }
 
     override fun dataIds(): List<String> = store.dataIds()

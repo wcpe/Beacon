@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * @param apiClient 控制面客户端
  * @param store 下发缓存（落盘，断连时仍可用）
- * @param view 有效配置视图（热重载超时的落点）
+ * @param view 有效配置视图（热重载超时与 reload 并发位的落点）
  * @param adapter 日志出口
  */
 internal class PushedConfigCoordinator(
@@ -103,8 +103,8 @@ internal class PushedConfigCoordinator(
             return
         }
         applied = values
-        // 重载超时有独立的运行时落点（视图里的派发器），必须显式推给它；
-        // 其余参数在下一次 full reload 时随 readEffectiveSettings 生效。
+        // 重载超时与并发位各有独立的运行时落点（视图里的派发器），必须显式推给它；
+        // 其余参数在下一次 full reload 时由 AgentBootstrap 重新读取生效。
         val rawTimeout = values[timeoutMsKey]
         if (rawTimeout != null) {
             val parsed = rawTimeout.trim().toLongOrNull()
@@ -119,7 +119,35 @@ internal class PushedConfigCoordinator(
                 adapter.info("已应用下发的重载超时：${sanitized}ms（下一轮配置变更即生效）")
             }
         }
+        applyPoolSize(values[KEY_RELOAD_POOL_SIZE])
         adapter.info("已接收控制面下发的 agent 配置（共 ${values.size} 项）")
+    }
+
+    /**
+     * 应用下发的并发 reload 插件数上限（FR-278/FR-280）。
+     *
+     * 三条与 [applyIfChanged] 里超时那段刻意一致的收口：
+     * 1. **非法值保留旧值**（warn 后不应用）：宁可继续用当前容量，也不把一次手误变成
+     *    「悄悄换成默认值」——那会让运维看到"已下发"，而实际容量与他填的毫无关系。
+     * 2. 越界值收口并 warn：让「填了 9999」在日志里留下痕迹，而不是静默生效成 256。
+     * 3. 应用后打 info 说明**会换池**：运维需要知道在途 reload 不会被中断，
+     *    但新一波派发要等新池建好。
+     */
+    private fun applyPoolSize(raw: String?) {
+        if (raw == null) {
+            return
+        }
+        val parsed = raw.trim().toIntOrNull()
+        if (parsed == null) {
+            adapter.warn("下发的 $KEY_RELOAD_POOL_SIZE 不是合法整数已忽略：$raw")
+            return
+        }
+        val sanitized = parsed.coerceIn(MIN_RELOAD_POOL_SIZE, MAX_RELOAD_POOL_SIZE)
+        if (sanitized != parsed) {
+            adapter.warn("下发的 $KEY_RELOAD_POOL_SIZE=$parsed 超出合理范围，已收口为 $sanitized")
+        }
+        view.updateReloadPoolSize(sanitized)
+        adapter.info("已应用下发的 reload 并发位：$sanitized（旧池优雅退役，在途任务跑完；新派发即生效）")
     }
 
     /**
@@ -186,6 +214,25 @@ internal class PushedConfigCoordinator(
 
         /** 重载超时的键名（与 config.yml 一致）。 */
         const val KEY_RELOAD_TIMEOUT_MS = "delivery.config-reload-timeout-ms"
+
+        /**
+         * 并发 reload 的插件数上限键名（与 config.yml / 控制面元数据一致）。
+         *
+         * 它与 [KEY_RELOAD_TIMEOUT_MS] 同属「delivery」分组，但两者的热重载代价不同：
+         * 超时只影响等待时长，并发位要换线程池（旧池优雅退役）。
+         */
+        const val KEY_RELOAD_POOL_SIZE = "delivery.reload-pool-size"
+
+        /** 并发位下界：与派发器 `ReloadDispatcher.MIN_POOL_SIZE` 同值（至少 1，否则线程池无法构造）。 */
+        const val MIN_RELOAD_POOL_SIZE = 1
+
+        /**
+         * 并发位上界：256。
+         *
+         * 与 AgentBootstrap 读 config.yml 的收口、控制面元数据的 max 三处同值——
+         * 任一处理放松，就会出现「Web 显示 256、实际建了 800 个线程」这类对不上的状态。
+         */
+        const val MAX_RELOAD_POOL_SIZE = 256
 
         /**
          * 重载超时的合理上限：1 小时。
