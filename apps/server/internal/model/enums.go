@@ -787,12 +787,12 @@ const (
 )
 
 // 告警事件类型（FR-89，落 VARCHAR + 应用层校验，见 ADR-0041）。
-// 当前唯一真实触发点为健康流转；publish-fail / backend-unreachable 预置为枚举取值，
-// 供将来在对应发生处接入告警扇出时复用，本期不凭空制造这两类触发（守范围纪律）。
+// health-transition / identity-conflict / publish-fail 均已有真实触发点；
+// backend-unreachable 仍是预置枚举取值，供将来在对应发生处接入告警扇出时复用。
 const (
 	AlertEventTypeHealthTransition   = "health-transition"   // 实例健康状态异常转移（degraded/lost/offline）
 	AlertEventTypeIdentityConflict   = "identity-conflict"   // 并发身份冲突（Q4，FR-177）：同 identityId 交替 bootId 判并发双实例，转 conflict 冻结
-	AlertEventTypePublishFail        = "publish-fail"        // 配置/文件发布失败（预留枚举，当前无触发点）
+	AlertEventTypePublishFail        = "publish-fail"        // 交付失败（FR-275）：目标生效失败或回滚失败时逐台扇出，见 emitDeliveryFailAlert
 	AlertEventTypeBackendUnreachable = "backend-unreachable" // 后端不可达（预留枚举，当前无触发点）
 )
 

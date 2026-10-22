@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -665,5 +666,76 @@ func (s *recordingFileSyncSink) waitFor(t *testing.T, pred func(FileSyncEvent) b
 			t.Fatal("等待指定文件同步事件超时")
 			return FileSyncEvent{}
 		}
+	}
+}
+
+// TestCapReasonRunesContract 锁死 capReasonRunes 的契约：返回值的 rune 数恒 <= max。
+//
+// 这条契约是「error 列不会超宽」的唯一保证。边界必须覆盖：
+// 放不下截断标记的小 max、max<=0、恰好等于上限（不加标记）、以及中文（多字节）。
+func TestCapReasonRunesContract(t *testing.T) {
+	cases := []struct {
+		name  string
+		text  string
+		max   int
+		want  int  // 期望的 rune 数（-1 表示「等于原串」）
+		empty bool // 期望空串
+	}{
+		{name: "空串", text: "", max: 10, want: 0},
+		{name: "未超限原样返回", text: "abc", max: 10, want: 3},
+		{name: "恰好等于上限不加标记", text: "abcde", max: 5, want: 5},
+		{name: "超限加截断标记", text: strings.Repeat("a", 20), max: 10, want: 10},
+		{name: "中文超限不切半字符", text: strings.Repeat("配置失败", 10), max: 12, want: 12},
+		{name: "max 为 0 返回空", text: "abc", max: 0, empty: true},
+		{name: "max 为负返回空", text: "abc", max: -1, empty: true},
+		// 放不下 6 rune 的截断标记时硬截断，不得返回超长标记。
+		{name: "max 小于标记长度", text: strings.Repeat("a", 20), max: 3, want: 3},
+		{name: "max 恰等于标记长度", text: strings.Repeat("a", 20), max: 6, want: 6},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := capReasonRunes(c.text, c.max)
+			if c.empty {
+				if got != "" {
+					t.Fatalf("期望空串，实际 %q", got)
+				}
+				return
+			}
+			if n := len([]rune(got)); n != c.want {
+				t.Fatalf("rune 数应为 %d，实际 %d（%q）", c.want, n, got)
+			}
+			if c.max > 0 && len([]rune(got)) > c.max {
+				t.Fatalf("违反契约：rune 数 %d 超过 max %d", len([]rune(got)), c.max)
+			}
+			// 截断产物必须是合法 UTF-8（按字节切中文会在此暴露）。
+			if !utf8.ValidString(got) {
+				t.Fatalf("截断后不是合法 UTF-8：%q", got)
+			}
+		})
+	}
+}
+
+// TestTargetLogMessageFitsColumn 锁死「拼接后仍不超 file_sync_log.message 列宽」。
+//
+// message 是 size:512，且带「目标 <serverID> 同步失败：」前缀。只按 reason 收口会让
+// 长原因 + 长 serverID 拼完溢出——而落日志在事务内，严格模式下 1406 会让整个事务失败。
+func TestTargetLogMessageFitsColumn(t *testing.T) {
+	// 极端组合：最长的 serverID 量级 + 已按 reason 上限收口的中文原因。
+	serverID := strings.Repeat("s", 128)
+	reason := capReasonRunes(strings.Repeat("配置解析失败", 200), fileSyncReasonMaxRunes)
+
+	msg := targetLogMessage(serverID, model.FileSyncTargetStatusFailed, reason)
+	if n := len([]rune(msg)); n > fileSyncLogMessageMaxRunes {
+		t.Fatalf("message rune 数 %d 超过上限 %d（列宽 512）", n, fileSyncLogMessageMaxRunes)
+	}
+	if n := len([]rune(msg)); n > 512 {
+		t.Fatalf("message rune 数 %d 超过物理列宽 512", n)
+	}
+	if !utf8.ValidString(msg) {
+		t.Fatal("message 必须是合法 UTF-8")
+	}
+	// 截断也要保留前缀语义，运维才看得出是哪台服的哪一步。
+	if !strings.Contains(msg, "同步失败") {
+		t.Fatalf("截断后须保留失败语义，实际 %q", msg)
 	}
 }

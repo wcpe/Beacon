@@ -106,6 +106,24 @@ func TestAlertEventDedupIndexUpgradeKeepsData(t *testing.T) {
 
 	// 步骤 2：重开连接走新模型迁移（与 store.Open 同序）
 	db = open()
+	// 这条连接必须显式关闭：t.TempDir() 的清理会删目录，而 Windows 上只要还有 sqlite
+	// 句柄持有该文件，RemoveAll 就会失败（unlinkat: The process cannot access the file）。
+	// Linux 上 unlink 已打开的文件不报错，所以这个泄漏在 CI 上看不出来——但泄漏是真实的，
+	// 用 t.Cleanup 关掉比依赖「Linux 容忍」更可靠（也让本用例能在 Windows 上跑）。
+	//
+	// 显式捕获句柄：闭包若读外层变量 db，日后再加一次 `db = open()` 就会关错连接。
+	// 关闭失败必须报出来——静默放弃会让泄漏以「这个用例在 Windows 上又挂了」的形式重现。
+	dbStep2 := db
+	t.Cleanup(func() {
+		sqlDB, err := dbStep2.DB()
+		if err != nil {
+			t.Errorf("取步骤 2 的底层连接失败: %v", err)
+			return
+		}
+		if cerr := sqlDB.Close(); cerr != nil {
+			t.Errorf("关闭步骤 2 的连接失败: %v", cerr)
+		}
+	})
 	if err := db.AutoMigrate(&model.AlertEvent{}); err != nil {
 		t.Fatalf("新模型迁移失败: %v", err)
 	}

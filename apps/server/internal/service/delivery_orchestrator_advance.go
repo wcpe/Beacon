@@ -288,7 +288,7 @@ func reloadMD5MismatchReason(plugins []deliveryReloadPlugin, expected string) (s
 	if total > shown {
 		reason += "；另有 " + strconv.Itoa(total-shown) + " 个插件同样不符"
 	}
-	return reason, true
+	return capReasonRunes(reason, changeTargetErrorMaxRunes), true
 }
 
 // reloadPluginsFailedReason 检查 reload 段是否已含插件失败，返回可落 error 的原因（纯函数，便于穷举单测）。
@@ -339,7 +339,10 @@ func reloadPluginsFailedReason(report *deliveryReloadReport) (string, bool) {
 		}
 		reason += "）"
 	}
-	return reason, true
+	// 控制面自己拼的原因串同样要收口：单插件 reason 上限 512 字符，5 条明细叠起来轻松超
+	// change_target.error 的 1024 列宽。超宽会让整条 CAS UPDATE 报 1406 → 目标卡在 activating
+	// 且每 tick 重试同一超宽值，形成稳定失败循环——比报错更难查。
+	return capReasonRunes(reason, changeTargetErrorMaxRunes), true
 }
 
 // shortMd5 截取 md5 前 12 位作可读标识（md5 全量 32 位，前缀足以区分且不把原因串撑长）。
@@ -825,6 +828,16 @@ func (s *DeliveryOrchestrator) tripBreaker(rt *orderRuntime, batch *model.Change
 
 // casTarget 事务外单表 CAS 迁移目标状态并就地更新快照，成功发目标事件、返回是否命中。
 func (s *DeliveryOrchestrator) casTarget(rt *orderRuntime, t *model.ChangeTarget, from []string, to string, updates map[string]any) bool {
+	// 统一在唯一写入漏斗收口自由文本（就地写回 updates，不另做「落库副本」）：
+	//   - error（列宽 1024）
+	//   - reload_report（TEXT 64KB，超限时退化为截断形态）
+	// agent 上报原文、控制面自拼原因串都会经过这里（含 rejectUnsupportedTargets / failRollbackTarget
+	// 等直连路径，它们不过 failureFacts）。超宽在严格模式下让整条 CAS UPDATE 报 1406 →
+	// 目标卡在原状态且每 tick 重试同一超宽值，形成稳定失败循环——比报错更难查。
+	//
+	// 必须**就地**收口（与 casRollbackFrom 同构）：随后从 updates 取原因发告警，拿到的是与库内
+	// 完全一致的值。此前只收拷贝副本，告警读原始 updates，同一条原因出现「库里短、告警长」双口径。
+	capDeliveryTargetUpdates(updates, "error")
 	full := map[string]any{"status": to}
 	for k, v := range updates {
 		full[k] = v
@@ -850,7 +863,8 @@ func (s *DeliveryOrchestrator) casTarget(rt *orderRuntime, t *model.ChangeTarget
 	// （未命中说明前态不符、状态没变，发告警就是误报）。放在 emitTargetEvent 之后、
 	// 事务与锁之外——告警是旁路，落库失败只由 Dispatcher 记 WARN，绝不回滚状态迁移。
 	if to == model.ChangeTargetStatusFailed {
-		s.emitDeliveryFailAlert(rt, t, updates)
+		failReason, _ := updates["error"].(string)
+		s.emitDeliveryFailAlert(rt, t, updates, failReason)
 	}
 	return true
 }
@@ -861,26 +875,36 @@ func (s *DeliveryOrchestrator) casTarget(rt *orderRuntime, t *model.ChangeTarget
 // 逐条处置，合并会掩盖「同一台服反复交付失败」这条关键信号。
 //
 // 装配缺失（未 SetAlerter）时静默跳过：告警是旁路，不得因它未接线而阻断交付编排。
-func (s *DeliveryOrchestrator) emitDeliveryFailAlert(rt *orderRuntime, t *model.ChangeTarget, updates map[string]any) {
+//
+// reason **由调用方显式传入**，不从 updates 里按固定键名反查：正推路径落 error、回滚路径落
+// rollback_error，靠猜键名会让回滚失败的告警退化成「未提供原因」，把根因丢掉。
+func (s *DeliveryOrchestrator) emitDeliveryFailAlert(
+	rt *orderRuntime, t *model.ChangeTarget, updates map[string]any, reason string,
+) {
 	if s.alerter == nil {
 		return
 	}
-	reason, _ := updates["error"].(string)
 	detail := map[string]any{
 		"orderId":  rt.order.ID,
 		"serverId": t.ServerID,
 		"status":   t.Status,
 	}
+	// 回滚失败时 t.Status 仍是生效阶段的值（如 activated），单看会读成「已生效却报交付失败」。
+	// 补上回滚阶段事实，让告警自己说清是「生效失败」还是「回滚失败」。
+	if t.RollbackStatus != "" {
+		detail["rollbackStatus"] = t.RollbackStatus
+	}
 	if reason != "" {
-		detail["error"] = reason
+		// alert_event.detail 与 change_target.error 同为「有上限的列」：这里再收一次口，
+		// 保证直接调用本函数的路径（不经过 casTarget / casRollbackFrom）也不会把超宽原因塞进 detail——
+		// 溢出会让整条告警写入失败，而 Dispatcher 只记 WARN，事件页那条告警会静默消失。
+		detail["error"] = capReasonRunes(reason, alertDetailErrorMaxRunes)
 	}
 	// 逐插件重载明细（FR-274 落库的同一份事实）：告警里带上失败项，运维无需再翻交付单才知道是哪个插件。
+	// 复用与落库同一份收口结果（幂等：已收口的值不会再变），否则一条大报告会让整份 detail 越过
+	// alert_event.detail 的 TEXT 上限，同样静默丢告警。
 	if raw, ok := updates["reload_report"].(string); ok && raw != "" {
-		detail["reloadReport"] = json.RawMessage(raw)
-	}
-	message := "交付失败：" + reason
-	if message == "交付失败：" {
-		message = "交付失败（未提供原因）"
+		detail["reloadReport"] = json.RawMessage(capReloadReportJSON(raw, changeTargetReloadReportMaxBytes))
 	}
 	// message 落 alert_event.message（size:512, not null）：超列宽在 MySQL 严格模式下会让整条告警
 	// 写入失败，而 Dispatcher 只记 WARN——告警会在最需要它的那一次静默消失。逐插件明细靠 detail
@@ -894,9 +918,25 @@ func (s *DeliveryOrchestrator) emitDeliveryFailAlert(rt *orderRuntime, t *model.
 		Namespace: rt.nsCode,
 		ServerID:  t.ServerID,
 		At:        s.now(),
-		Message:   truncateAlertMessage(message),
+		Message:   truncateAlertMessage(failAlertMessage(t, reason)),
 		Detail:    detail,
 	})
+}
+
+// failAlertMessage 组装告警正文前缀：生效失败与回滚失败必须在**列表层**就分得清。
+//
+// 两类失败的告警 Type 同为 publish-fail（刻意不拆新类型、也不纳入收敛），事件页只看 type / message，
+// 而回滚失败时目标主状态往往仍是 activated——只写「交付失败：」会让「回滚被拒、当时其实已生效」
+// 读起来像一次生效失败，处置方向完全不同（一个是重推，一个是人工上机核对）。
+func failAlertMessage(t *model.ChangeTarget, reason string) string {
+	prefix := "交付失败："
+	if t.RollbackStatus == model.RollbackStatusFailed {
+		prefix = "回滚失败："
+	}
+	if reason == "" {
+		return strings.TrimSuffix(prefix, "：") + "（未提供原因）"
+	}
+	return prefix + reason
 }
 
 // alertMessageMaxRunes 是告警正文的字符上限：alert_event.message 为 size:512。
@@ -904,6 +944,12 @@ func (s *DeliveryOrchestrator) emitDeliveryFailAlert(rt *orderRuntime, t *model.
 // 留出余量取 480：MySQL 的 size 在 utf8mb4 下按字符计，但前缀固定文案与截断标记也要占位，
 // 留 32 字符余量避免边界上恰好超限。
 const alertMessageMaxRunes = 480
+
+// alertDetailErrorMaxRunes 是告警 detail.error 的字符上限。
+//
+// detail 是 TEXT（65535 字节）：单条原因按 1000 字符收口（≈4KB），与 change_target.error 同口径，
+// 保证「库里与告警里读到的是同一个值」，也给同列并排的 reloadReport 留足预算。
+const alertDetailErrorMaxRunes = changeTargetErrorMaxRunes
 
 // truncateAlertMessage 按 rune 截断告警正文，避免把多字节字符切成非法 UTF-8。
 //
@@ -957,6 +1003,7 @@ func (s *DeliveryOrchestrator) failPushingWithResult(rt *orderRuntime, t *model.
 
 // failureFacts 组装失败迁移要落的客观事实：脱敏原因 + 只增不减的计数 / 备份标记（[markPushed] 时补推送留痕）。
 func (s *DeliveryOrchestrator) failureFacts(reason string, res deliveryCmdResult, markPushed bool) map[string]any {
+	// 长度收口统一由 casTarget 在写入口完成，这里不再重复截断。
 	updates := map[string]any{"error": reason}
 	if res.ChangedFileCount > 0 {
 		updates["changed_file_count"] = gorm.Expr(
