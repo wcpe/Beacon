@@ -11,18 +11,48 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
-// 生效来源标记（FR-277，管理面「这个值是哪来的」的唯一答案）。
+// 生效来源标记（FR-277 / FR-279，管理面「这个值是哪来的」的唯一答案）。
+//
+// ## 为什么只有这三个取值（这是刻意保留的信息边界，不是没做完）
+//
+// 真实生效值由 agent 侧按 ADR-0095 的四层链决定：
+//
+//	Web 下发（server 级 > namespace 级） > 环境变量 > config.yml > 代码默认
+//
+// 控制面只拥有这条链的**上半段**——它知道自己下发过什么。下半段（环境变量 / config.yml /
+// 代码默认）全部发生在被管理端本机：agent **不回传生效值**，它只拉取下发缓存
+// （见 AgentSettingsHandler.Settings 与 EffectiveSettingsResolver.resolve()，后者解析出的
+// AgentSettings 只进本地运行时依赖，没有任何上报通道）。
+//
+// 因此对「某台 agent 的某个键」，控制面能断言的只有两件事：
+//  1. 该键在本作用域链上有下发行 → 来源就是那一层（server / namespace）。此时下发值**就是**
+//     生效值，可以断言；
+//  2. 该键没有下发行 → agent 会走本地链，但具体落在环境变量、config.yml 还是代码默认，
+//     控制面**一个都看不见**，也无法从任何已知信息推出。
+//
+// 所以第 2 种情况必须如实标成「agent 本地或代码默认」（[AgentSettingSourceLocalOrDefault]），
+// 而不是编一个「代码默认」或「本地配置」出来。把不可知的事实说成已知，运维就会照着错误结论
+// 去 config.yml 里找一个根本不存在的配置项，比不显示来源更糟——这正是 FR-279 #2 的要点：
+// 原先的 `unset` 把「本地配置」和「代码默认」一起抹成了「未设置」，丢掉了「这段确实不由
+// 控制面管、要去机器上改」这层信息；但据此声称能区分二者，则是假报。二者之间没有第二种诚实解。
+//
+// 注：`agent_settings_metadata.go` 目前**没有**逐键的机器可读默认值字段（默认值只写在 desc 的
+// 中文说明里），且 agent 侧每个键都必然解析出一个值（含空串形式的默认），故连「某键没有代码
+// 默认、只可能是本地配置」这种细分也不成立——不做解析 desc 文本这类易漂移的推断。
 const (
 	// AgentSettingSourceServer 该键由本 server 级覆盖提供
 	AgentSettingSourceServer = "server"
 	// AgentSettingSourceNamespace 该键沿用 namespace 级默认
 	AgentSettingSourceNamespace = "namespace"
-	// AgentSettingSourceUnset 两级都没有值，agent 会回落到环境变量 / config.yml / 代码默认
-	AgentSettingSourceUnset = "unset"
+	// AgentSettingSourceLocalOrDefault 控制面未下发该键：生效值由 agent 本地链决定
+	// （环境变量 > config.yml > 代码默认），控制面无法再细分到具体是哪一层。
+	// 运维的处置方向是「去该机器的本地配置改」，而不是在 Web 上改。
+	AgentSettingSourceLocalOrDefault = "local-or-default"
 )
 
 // AgentSettingItemView 是单个键在某作用域下的生效视图（管理面读端点）。
@@ -32,7 +62,7 @@ const (
 type AgentSettingItemView struct {
 	// 配置键
 	Key string `json:"key"`
-	// 生效值（unset 时为空串）
+	// 生效值（控制面未下发时为空串——它不知道 agent 本地的生效值，故不回填代码默认）
 	Value string `json:"value"`
 	// 值类型：int / bool / string / string-list
 	ValueType string `json:"valueType"`
@@ -42,11 +72,11 @@ type AgentSettingItemView struct {
 	Dangerous bool `json:"dangerous"`
 	// 该键是否在控制面已知清单内（false = 库里存着但控制面不认识，建议清理或升级控制面）
 	Known bool `json:"known"`
-	// 生效来源：server / namespace / unset
+	// 生效来源：server / namespace / local-or-default（口径与不可区分的根因见来源常量注释）
 	Source string `json:"source"`
-	// 生效值的最后修改时间（unset 时为 null）
+	// 生效值的最后修改时间（无下发行时为 null）
 	UpdatedAt *time.Time `json:"updatedAt"`
-	// 生效值的最后修改人（unset 时为空串）
+	// 生效值的最后修改人（无下发行时为空串）
 	UpdatedBy string `json:"updatedBy"`
 }
 
@@ -90,17 +120,21 @@ type AgentSettingsWriteParams struct {
 	Values map[string]*string
 	// 二次确认串：必须与 AgentSettingScopeView.ScopeLabel 逐字一致
 	ConfirmationScope string
-	// 变更原因（写入审计，便于事后回答「为什么改」）
+	// 变更原因（写入审计，便于事后回答「为什么改」；含高危键时审批也要求它）
 	Reason string
 	// 操作人（取自认证态）
 	Operator string
 	// 来源 IP
 	ClientIP string
+	// 发起主体；高危键要建审批申请时必须带能力集，普通键路径不读它
+	Principal auth.Principal
+	// 本次写入在审批通过后执行时回填的审批申请 ID（仅审批路径使用，入审计）
+	ApprovalRequestID string
 }
 
 // AgentSettingsWriteResult 是批量写入结果（哪些键被写入 / 撤销 / 未变）。
 type AgentSettingsWriteResult struct {
-	// 作用域视图（写入后的最新生效状态）
+	// 作用域视图（写入后的最新生效状态；走审批时是**提交前**的状态，因为库内尚未变更）
 	Scope AgentSettingScopeView `json:"scope"`
 	// 本次实际写入（新增或改值）的键
 	Applied []string `json:"applied"`
@@ -108,6 +142,9 @@ type AgentSettingsWriteResult struct {
 	Removed []string `json:"removed"`
 	// 提交值与库内一致、未产生任何写入的键（幂等重放时全是这一类）
 	Unchanged []string `json:"unchanged"`
+	// 非 nil 表示本次提交已被拦到审批：库内**未变更**，上面三个变更集必为空。
+	// 用 omitempty 保证不含高危键的响应体与引入审批前逐字节一致（老客户端不受影响）。
+	ApprovalTicket *ApprovalTicketView `json:"approvalTicket,omitempty"`
 }
 
 // AgentSettingsService 承载 agent 运行配置的下发侧（FR-277）。
@@ -120,6 +157,8 @@ type AgentSettingsService struct {
 	repo      *repository.AgentSettingRepository
 	auditRepo *repository.AuditLogRepository
 	nsRepo    *repository.NamespaceRepository
+	// approval 是统一审批核心；未注入时含高危键的提交一律失败（绝不退回直写）
+	approval *ApprovalService
 }
 
 // NewAgentSettingsService 构造服务。
@@ -127,6 +166,11 @@ func NewAgentSettingsService(db *gorm.DB, repo *repository.AgentSettingRepositor
 	auditRepo *repository.AuditLogRepository, nsRepo *repository.NamespaceRepository,
 ) *AgentSettingsService {
 	return &AgentSettingsService{db: db, repo: repo, auditRepo: auditRepo, nsRepo: nsRepo}
+}
+
+// SetApprovalService 注入统一审批核心（高危键下发链路依赖它建审批申请）。
+func (s *AgentSettingsService) SetApprovalService(approval *ApprovalService) {
+	s.approval = approval
 }
 
 // ListEffective 返回某作用域的生效配置（server 级覆盖 namespace 级，逐键给出生效来源）。
@@ -149,22 +193,40 @@ func (s *AgentSettingsService) ListEffective(namespaceID uint, serverID string) 
 //
 // 校验顺序刻意从「作用域是否可信」到「值是否合法」：作用域错了（二次确认不符）就不该
 // 再费劲校验值——否则运维看到的错误会指向「某个值不合法」，而真正的问题是他改错了服。
+//
+// 通过校验后按**键的危险标记**分流：本次提交只要含任一高危键，整单转审批（返回票据、
+// 库内不变）；否则沿用直写路径。取舍写在 requestDangerousBatch 的注释里。
 func (s *AgentSettingsService) UpdateBatch(p AgentSettingsWriteParams) (*AgentSettingsWriteResult, error) {
-	ns, err := s.requireNamespace(p.NamespaceID)
+	ns, serverID, pending, err := s.prepareWrite(p)
 	if err != nil {
 		return nil, err
+	}
+	if dangerous := dangerousAgentSettingKeys(pending); len(dangerous) > 0 {
+		return s.requestDangerousBatch(p, ns, serverID, pending)
+	}
+	return s.commitDirectWrite(p, ns, serverID, pending)
+}
+
+// prepareWrite 完成写入前的全部校验并归一化待写项，不含任何落库动作。
+//
+// 抽成独立函数是为了让「直写」与「转审批」两条出口共用同一套校验：若审批路径另写一套，
+// 迟早会出现「审批通道能写进直写通道拒绝的值」这类边界塌陷（禁区键尤其致命）。
+func (s *AgentSettingsService) prepareWrite(p AgentSettingsWriteParams) (*model.Namespace, string, []agentSettingPending, error) {
+	ns, err := s.requireNamespace(p.NamespaceID)
+	if err != nil {
+		return nil, "", nil, err
 	}
 	serverID := strings.TrimSpace(p.ServerID)
 	scopeLabel := agentSettingScopeLabel(ns.Code, serverID)
 	if strings.TrimSpace(p.ConfirmationScope) != scopeLabel {
-		return nil, agentSettingConfirmMismatch(scopeLabel)
+		return nil, "", nil, agentSettingConfirmMismatch(scopeLabel)
 	}
 	if len(p.Values) == 0 {
-		return nil, apperr.ErrInvalidParam
+		return nil, "", nil, apperr.ErrInvalidParam
 	}
 	pending, err := normalizeAgentSettingsWrite(p.Values)
 	if err != nil {
-		return nil, err
+		return nil, "", nil, err
 	}
 	// 作用域运行资格：已归档环境 / 已归档 server 不再接受运行参数下发（与其它运行写入同口径）。
 	// 这里复用刚读出的 namespace 行判资格、再单独判 server 行——不走 ensureServerActive，
@@ -172,64 +234,27 @@ func (s *AgentSettingsService) UpdateBatch(p AgentSettingsWriteParams) (*AgentSe
 	// 注意**不**要求 server 行必须存在：agent 可能已注册而拓扑尚未补录，
 	// 「配置先行、服后上」是合法工作流（ensureServerRowActive 自身也只在行存在时判归档）。
 	if err := ensureNamespaceRuntimeActive(ns); err != nil {
-		return nil, err
+		return nil, "", nil, err
 	}
 	if err := ensureServerRowActive(s.db, ns.ID, serverID); err != nil {
-		return nil, err
+		return nil, "", nil, err
 	}
+	return ns, serverID, pending, nil
+}
 
-	existing, err := s.repo.ListEffective(ns.ID, serverID)
-	if err != nil {
-		return nil, err
-	}
-	// 写路径按**本作用域**的既有行判变更（见 indexAgentSettingRowsAtScope 注释），
-	// 而不是按合并后的生效值——后者会把「与继承值恰好相同」误判成无需写入。
-	current := indexAgentSettingRowsAtScope(existing, serverID)
-	result := AgentSettingsWriteResult{Applied: []string{}, Removed: []string{}, Unchanged: []string{}}
-
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		repo := s.repo.WithTx(tx)
-		audit := s.auditRepo.WithTx(tx)
-		for _, item := range pending {
-			previous, had := current[item.key]
-			if item.value == nil {
-				if !had {
-					result.Unchanged = append(result.Unchanged, item.key)
-					continue
-				}
-				if _, delErr := repo.Delete(ns.ID, serverID, item.key); delErr != nil {
-					return delErr
-				}
-				if auditErr := audit.Create(agentSettingAuditEntry(ns, serverID, item.key, "", previous.Value,
-					agentSettingOperationDelete, p)); auditErr != nil {
-					return auditErr
-				}
-				result.Removed = append(result.Removed, item.key)
-				continue
-			}
-			if had && previous.Value == *item.value {
-				result.Unchanged = append(result.Unchanged, item.key)
-				continue
-			}
-			row := &model.AgentSetting{
-				NamespaceID: ns.ID, ServerID: serverID, Key: item.key,
-				Value: *item.value, UpdatedBy: p.Operator,
-			}
-			if upErr := repo.Upsert(row); upErr != nil {
-				return upErr
-			}
-			if auditErr := audit.Create(agentSettingAuditEntry(ns, serverID, item.key, *item.value, previous.Value,
-				agentSettingOperationUpsert, p)); auditErr != nil {
-				return auditErr
-			}
-			result.Applied = append(result.Applied, item.key)
-		}
-		return nil
+// commitDirectWrite 直接落库（不含高危键的路径，行为与引入审批前完全一致）。
+func (s *AgentSettingsService) commitDirectWrite(p AgentSettingsWriteParams, ns *model.Namespace,
+	serverID string, pending []agentSettingPending,
+) (*AgentSettingsWriteResult, error) {
+	var result AgentSettingsWriteResult
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var txErr error
+		result, txErr = s.applyInTx(tx, ns, serverID, pending, p)
+		return txErr
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	rows, err := s.repo.ListEffective(ns.ID, serverID)
 	if err != nil {
 		return nil, err
@@ -238,6 +263,60 @@ func (s *AgentSettingsService) UpdateBatch(p AgentSettingsWriteParams) (*AgentSe
 	slog.Info("agent 运行配置已更新", "namespace", ns.Code, "serverId", serverID,
 		"applied", len(result.Applied), "removed", len(result.Removed), "operator", p.Operator)
 	return &result, nil
+}
+
+// applyInTx 在调用方事务内逐键 upsert / delete 并各写一条审计，返回实际变更集。
+//
+// 既有行**在事务内**重读：直写路径与审批执行路径都调它，两者必须看到同一时刻的作用域现状，
+// 否则「审批通过时按冻结基线判并发、落库时按另一份快照判未变化」会自相矛盾。
+func (s *AgentSettingsService) applyInTx(tx *gorm.DB, ns *model.Namespace, serverID string,
+	pending []agentSettingPending, p AgentSettingsWriteParams,
+) (AgentSettingsWriteResult, error) {
+	result := AgentSettingsWriteResult{Applied: []string{}, Removed: []string{}, Unchanged: []string{}}
+	repo := s.repo.WithTx(tx)
+	audit := s.auditRepo.WithTx(tx)
+	existing, err := repo.ListEffective(ns.ID, serverID)
+	if err != nil {
+		return result, err
+	}
+	// 写路径按**本作用域**的既有行判变更（见 indexAgentSettingRowsAtScope 注释），
+	// 而不是按合并后的生效值——后者会把「与继承值恰好相同」误判成无需写入。
+	current := indexAgentSettingRowsAtScope(existing, serverID)
+	for _, item := range pending {
+		previous, had := current[item.key]
+		if item.value == nil {
+			if !had {
+				result.Unchanged = append(result.Unchanged, item.key)
+				continue
+			}
+			if _, delErr := repo.Delete(ns.ID, serverID, item.key); delErr != nil {
+				return result, delErr
+			}
+			if auditErr := audit.Create(agentSettingAuditEntry(ns, serverID, item.key, "", previous.Value,
+				agentSettingOperationDelete, p)); auditErr != nil {
+				return result, auditErr
+			}
+			result.Removed = append(result.Removed, item.key)
+			continue
+		}
+		if had && previous.Value == *item.value {
+			result.Unchanged = append(result.Unchanged, item.key)
+			continue
+		}
+		row := &model.AgentSetting{
+			NamespaceID: ns.ID, ServerID: serverID, Key: item.key,
+			Value: *item.value, UpdatedBy: p.Operator,
+		}
+		if upErr := repo.Upsert(row); upErr != nil {
+			return result, upErr
+		}
+		if auditErr := audit.Create(agentSettingAuditEntry(ns, serverID, item.key, *item.value, previous.Value,
+			agentSettingOperationUpsert, p)); auditErr != nil {
+			return result, auditErr
+		}
+		result.Applied = append(result.Applied, item.key)
+	}
+	return result, nil
 }
 
 // Pull 返回某 agent 作用域的生效值（数据面 GET /beacon/v2/agent/settings）。
@@ -418,6 +497,26 @@ func indexAgentSettingRows(rows []model.AgentSetting, serverID string) map[strin
 	return out
 }
 
+// agentSettingItemSource 判定某键在给定合并视图里的生效来源（纯函数，便于穷举测试）。
+//
+// 只有「该键在本作用域链上确实有下发行」这一种情形能给出确定答案：下发行属于谁，来源就是谁，
+// 且此时下发值**就是** agent 的生效值。反过来，键不在视图里就说明控制面没下发过它，agent 会
+// 回落到本地链（环境变量 > config.yml > 代码默认）——而这条链的解析结果只在被管理端，
+// 控制面没有任何观测通道，故只能如实返回不可区分的 local-or-default。
+//
+// 这个「不下发就没有确定答案」的分支是本函数的**唯一**判断依据：不要在这里引入任何
+// 「按元数据猜默认值」之类的推断，那会把假报变成默认行为（根因见来源常量注释）。
+func agentSettingItemSource(effective map[string]model.AgentSetting, key string) string {
+	row, hit := effective[key]
+	if !hit {
+		return AgentSettingSourceLocalOrDefault
+	}
+	if row.ServerID != "" {
+		return AgentSettingSourceServer
+	}
+	return AgentSettingSourceNamespace
+}
+
 // buildAgentSettingScopeView 组装作用域视图：以「控制面认识的键」并上「库里存着的键」为全集。
 //
 // 并上库里的键是为了不隐藏数据：某个键被移出元数据后，行还在库里（可能需要运维清理），
@@ -447,17 +546,13 @@ func buildAgentSettingScopeView(ns *model.Namespace, serverID string, rows []mod
 		meta, known := agentSettingMetaFor(key)
 		item := AgentSettingItemView{
 			Key: key, ValueType: meta.valueType, Desc: meta.desc, Dangerous: meta.dangerous,
-			Known: known, Source: AgentSettingSourceUnset,
+			Known: known, Source: agentSettingItemSource(effective, key),
 		}
 		if row, hit := effective[key]; hit {
 			item.Value = row.Value
 			item.UpdatedBy = row.UpdatedBy
 			updated := row.UpdatedAt
 			item.UpdatedAt = &updated
-			item.Source = AgentSettingSourceNamespace
-			if row.ServerID != "" {
-				item.Source = AgentSettingSourceServer
-			}
 			if latest == nil || updated.After(*latest) {
 				latest = &updated
 			}
@@ -481,18 +576,24 @@ const agentSettingOperationDelete = "delete"
 func agentSettingAuditEntry(ns *model.Namespace, serverID, key, value, previousValue, operation string,
 	p AgentSettingsWriteParams,
 ) *model.AuditLog {
-	detail, _ := json.Marshal(map[string]any{
+	detail := map[string]any{
 		"namespaceId": ns.ID, "namespaceCode": ns.Code, "serverId": serverID,
 		"key": key, "value": value, "previousValue": previousValue, "operation": operation,
 		"reason": p.Reason,
-	})
+	}
+	// 经审批落库的变更额外记下审批单据：审计列表只看得见「改了」，加上它才能回答
+	// 「这条改动是凭哪张批准执行的」。直写路径不带该字段，保持既有 detail 形状不变。
+	if p.ApprovalRequestID != "" {
+		detail["approvalRequestId"] = p.ApprovalRequestID
+	}
+	raw, _ := json.Marshal(detail)
 	return &model.AuditLog{
 		NamespaceCode: ns.Code,
 		Operator:      p.Operator,
 		Action:        model.ActionAgentSettingsUpdate,
 		TargetType:    model.TargetTypeAgentSetting,
 		TargetRef:     agentSettingScopeLabel(ns.Code, serverID) + "/" + key,
-		Detail:        string(detail),
+		Detail:        string(raw),
 		Result:        model.ResultOK,
 		ClientIP:      p.ClientIP,
 	}

@@ -69,6 +69,13 @@ type v2AgentSettingsPutRequest struct {
 //
 // 整批在一个事务内完成（逐键 upsert / delete + 逐键审计），任一键失败则整批不落地——
 // 半套配置生效比整套不生效更难排查。
+//
+// 两种结果对应两种状态码：
+//   - 200：不含高危键，已直接落库（与引入审批前完全一致）；
+//   - 202：本次提交含高危键，已冻结为审批申请、**库内未变更**，回审批票据。
+//
+// 202 绝不能"顺手也写一份"：票据只表示受理，真正的写入发生在审批通过后的执行事务里。
+// 前端按响应体是否带 approvalRequestId 区分两种结果（见 apps/web/src/api/agent-settings.ts）。
 func (h *V2AgentSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 	var req v2AgentSettingsPutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -79,9 +86,14 @@ func (h *V2AgentSettingsHandler) Put(w http.ResponseWriter, r *http.Request) {
 		NamespaceID: req.NamespaceID, ServerID: req.ServerID, Values: req.Values,
 		ConfirmationScope: req.ConfirmationScope, Reason: req.Reason,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+		Principal: requestPrincipal(r),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
+		return
+	}
+	if result.ApprovalTicket != nil {
+		render.WriteJSON(w, http.StatusAccepted, result.ApprovalTicket)
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, result)

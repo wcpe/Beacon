@@ -53,6 +53,11 @@ const (
 	OperationSystemUpdateApply    = "system.update.apply"
 	OperationSystemUpdateRollback = "system.update.rollback"
 	OperationSettingsDangerous    = "settings.update.dangerous"
+	// OperationAgentSettingsDangerous 是 agent 运行配置里高危键（如命令白名单）的下发操作。
+	// 与 OperationSettingsDangerous 分开而不复用：前者管控制面自身热改项，后者管下发到
+	// 被管端的运行参数，两者的资源、冻结载荷与执行适配器都不同，共用一键会让审计里
+	// 「谁批准了哪一类变更」失去区分度。
+	OperationAgentSettingsDangerous = "agent-settings.update.dangerous"
 	OperationConfigPublish        = "config.publish"
 	OperationConfigRollback       = "config.rollback"
 	OperationConfigGrayPublish    = "config.gray_publish"
@@ -163,6 +168,7 @@ func capabilityFor(kind string) string {
 		OperationSystemUpdateApply,
 		OperationSystemUpdateRollback,
 		OperationSettingsDangerous,
+		OperationAgentSettingsDangerous,
 		OperationConfigPublish,
 		OperationConfigRollback,
 		OperationConfigGrayPublish,

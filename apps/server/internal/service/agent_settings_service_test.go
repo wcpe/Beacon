@@ -225,6 +225,9 @@ func TestUpdateBatchRejectsEmptyAndInvalidValues(t *testing.T) {
 		{"assets.scan-interval-sec", "60"},    // 低于 agent 侧收口下限 300
 		{"backoff.jitter-ratio", "2"},         // 比例越界
 		{"snapshot.file-name", "../etc/passwd"},
+		// string-list 也必须有非法值用例：列表按逗号 / 换行切分后要求至少一个非空项。
+		{"override.command-whitelist", ","},
+		{"override.command-whitelist", " \n , \n "},
 	}
 	for _, c := range bad {
 		_, err := svc.UpdateBatch(AgentSettingsWriteParams{
@@ -239,7 +242,6 @@ func TestUpdateBatchRejectsEmptyAndInvalidValues(t *testing.T) {
 	good := []struct{ key, value string }{
 		{"delivery.config-reload-timeout-ms", "0"},
 		{"delivery.config-reload-timeout-ms", "30000"},
-		{"override.command-whitelist", "reload, taboolib"},
 	}
 	for _, c := range good {
 		if _, err := svc.UpdateBatch(AgentSettingsWriteParams{
@@ -248,6 +250,15 @@ func TestUpdateBatchRejectsEmptyAndInvalidValues(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("%s=%q 应通过，实际 %v", c.key, c.value, err)
 		}
+	}
+	// override.command-whitelist 的**合法值**不在此处断言「直写成功」：它是高危键，
+	// 即便值合法也必须转审批（本夹具未注入审批核心，故这里只可能报内部错误）。
+	// 值校验本身由上面两条非法用例锁定，合法值经审批落库的路径见 agent_settings_approval_test.go。
+	if _, err := svc.UpdateBatch(AgentSettingsWriteParams{
+		NamespaceID: nsID, Values: map[string]*string{"override.command-whitelist": ptr("reload, taboolib")},
+		ConfirmationScope: "prod", Operator: "admin",
+	}); err == nil || containsAll(err.Error(), "AGENT_SETTING_VALUE_INVALID") {
+		t.Fatalf("合法白名单值应通过值校验后停在审批环节，实际 %v", err)
 	}
 }
 
@@ -509,6 +520,136 @@ func TestIndexAgentSettingRowsPrefersServerRegardlessOfOrder(t *testing.T) {
 	merged := indexAgentSettingRows([]model.AgentSetting{serverRow}, "lobby-2")
 	if _, hit := merged[key]; hit {
 		t.Fatal("他服的 server 级行不得混入本服视角")
+	}
+}
+
+// TestAgentSettingItemSource 是「生效来源判定」的表驱动测试（FR-279 #2）。
+//
+// 这张表锁的不是「三态凑齐了」，而是**控制面敢断言到哪里**：
+//   - 有下发行 → 来源必须精确到那一层（server / namespace），因为此时下发值就是生效值；
+//   - 没有下发行 → 只能给 local-or-default。控制面看不到 agent 本地链
+//     （环境变量 > config.yml > 代码默认）的解析结果，因此**不允许**在这里返回
+//     `default` / `local` 之类「看起来更精确」的值。
+//
+// 把这条口径钉进测试，是为了防止后来者顺手补一个 `default` 来源把假报变成默认行为：
+// 一旦服务端开始声称「这是代码默认值」，运维就会照着结论去排查、而那个结论并不成立。
+func TestAgentSettingItemSource(t *testing.T) {
+	const nsID uint = 7
+	ns := &model.Namespace{Code: "prod"}
+	ns.ID = nsID
+
+	cases := []struct {
+		name     string
+		serverID string
+		rows     []model.AgentSetting
+		key      string
+		want     string
+	}{
+		{
+			name:     "有 server 级下发行 → server",
+			serverID: "lobby-1",
+			rows: []model.AgentSetting{
+				{NamespaceID: nsID, ServerID: "lobby-1", Key: "timing.poll-timeout-ms", Value: "15000"},
+			},
+			key:  "timing.poll-timeout-ms",
+			want: AgentSettingSourceServer,
+		},
+		{
+			name:     "无 server 行、有 namespace 行 → namespace",
+			serverID: "lobby-1",
+			rows: []model.AgentSetting{
+				{NamespaceID: nsID, ServerID: "", Key: "messaging.rpc-timeout-ms", Value: "5000"},
+			},
+			key:  "messaging.rpc-timeout-ms",
+			want: AgentSettingSourceNamespace,
+		},
+		{
+			name:     "两级都有行 → server 级胜出",
+			serverID: "lobby-1",
+			rows: []model.AgentSetting{
+				{NamespaceID: nsID, ServerID: "", Key: "assets.scan-interval-sec", Value: "1800"},
+				{NamespaceID: nsID, ServerID: "lobby-1", Key: "assets.scan-interval-sec", Value: "600"},
+			},
+			key:  "assets.scan-interval-sec",
+			want: AgentSettingSourceServer,
+		},
+		{
+			// 元数据里 desc 写着「默认 2.0」，但那是给人看的中文说明，不是机器可读的默认值；
+			// 即便有，也只说明「本地链的最后一环有兜底」，无法排除环境变量 / config.yml 先命中。
+			name:     "两级都无行 + 该键有代码默认 → 仍不可区分（local-or-default）",
+			serverID: "lobby-1",
+			rows:     nil,
+			key:      "backoff.multiplier",
+			want:     AgentSettingSourceLocalOrDefault,
+		},
+		{
+			// proxy.home-group 的 agent 侧默认是空串。空默认也仍是「代码默认」，
+			// 并不能推出「这一定是本地配置」——所以同样不可区分。
+			name:     "两级都无行 + 该键默认是空串 → 同为 local-or-default",
+			serverID: "lobby-1",
+			rows:     nil,
+			key:      "proxy.home-group",
+			want:     AgentSettingSourceLocalOrDefault,
+		},
+		{
+			// 只有他服的 server 级行：对本作用域而言等于「没下发过」，
+			// 但下发行属于本环境，来源仍是 namespace 级（不是 local-or-default）。
+			name:     "只有他服的 server 级行 → 本服沿用 namespace 默认",
+			serverID: "lobby-1",
+			rows: []model.AgentSetting{
+				{NamespaceID: nsID, ServerID: "lobby-2", Key: "snapshot.enabled", Value: "false"},
+			},
+			key:  "snapshot.enabled",
+			want: AgentSettingSourceLocalOrDefault,
+		},
+		{
+			// 控制面不认识的键（已从元数据移除但库里还有行）：来源判定与 known 无关，
+			// 有 server 级行就仍是 server——否则运维会把「遗留覆盖」误当成「本地配置」。
+			name:     "未知键但有 server 级行 → server（来源判定不受 known 影响）",
+			serverID: "lobby-1",
+			rows: []model.AgentSetting{
+				{NamespaceID: nsID, ServerID: "lobby-1", Key: "legacy.retired-option", Value: "on"},
+			},
+			key:  "legacy.retired-option",
+			want: AgentSettingSourceServer,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			view := buildAgentSettingScopeView(ns, c.serverID, c.rows)
+			if got := mustAgentSettingItem(t, view.Items, c.key).Source; got != c.want {
+				t.Fatalf("%s：来源应为 %q，实际 %q", c.key, c.want, got)
+			}
+		})
+	}
+}
+
+// TestAgentSettingLocalOrDefaultDoesNotFabricateValue 守护 local-or-default 的**另一半诚实性**：
+// 既然控制面不知道 agent 本地的生效值，视图就不能顺手回填一个「看起来像生效值」的东西
+// （比如按元数据里的默认值填上）。value 必须为空串、updatedAt 必须为 nil，前端据此显示占位符。
+func TestAgentSettingLocalOrDefaultDoesNotFabricateValue(t *testing.T) {
+	ns := &model.Namespace{Code: "prod"}
+	ns.ID = 7
+	view := buildAgentSettingScopeView(ns, "lobby-1", nil)
+
+	const key = "timing.request-timeout-ms"
+	item := mustAgentSettingItem(t, view.Items, key)
+	if item.Source != AgentSettingSourceLocalOrDefault {
+		t.Fatalf("无下发行应报 local-or-default，实际 %q", item.Source)
+	}
+	if item.Value != "" {
+		t.Fatalf("控制面不知道本地生效值，value 必须为空串，实际 %q", item.Value)
+	}
+	if item.UpdatedAt != nil {
+		t.Fatalf("未下发过的键不应有更新时间，实际 %v", item.UpdatedAt)
+	}
+	if !item.Known {
+		t.Fatalf("该键在控制面已知清单内，known 应为 true")
+	}
+	// 作用域整体也没有任何下发时间：前端据此展示「该作用域尚未下发过任何配置」。
+	if view.UpdatedAt != nil {
+		t.Fatalf("无任何下发行时作用域 updatedAt 应为 nil，实际 %v", view.UpdatedAt)
 	}
 }
 

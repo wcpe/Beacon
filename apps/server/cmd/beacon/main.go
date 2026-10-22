@@ -867,6 +867,11 @@ func run() error {
 	mcpToolRegistry.SetUpdateService(updateAPIService)
 	updateAPIService.SetApprovalService(approvalService)
 	settingsService.SetApprovalService(approvalService)
+	// agent 运行配置高危键（override.command-whitelist 等）的下发走审批链路（FR-277 #4）：
+	// 注入审批核心并登记执行适配器，缺一不可——只注入不登记会在批准后无处执行，
+	// 只登记不注入则申请入口永远拿不到票据。
+	agentSettingsService.SetApprovalService(approvalService)
+	service.RegisterAgentSettingsApprovalAdapter(approvalRegistry, agentSettingsService)
 	service.RegisterSystemOperationApprovalAdapters(approvalRegistry, updateAPIService, settingsService, db)
 	updateHandler := handler.NewUpdateHandler(updateAPIService)
 	slog.Info("控制面在线更新核心已就绪",

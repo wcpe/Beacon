@@ -149,11 +149,16 @@ var agentSettingKeys = map[string]agentSettingMeta{
 		desc: "本地资产清单缓存文件名，默认 asset-manifest.json",
 	},
 
-	// —— 配置重载（交付编排消费，FR-274）——
+	// —— 配置重载（交付编排消费，FR-274 / FR-278）——
 	"delivery.config-reload-timeout-ms": {
 		valueType: agentSettingTypeInt, min: 0, max: 600000,
-		desc: "单业务插件配置重载超时（毫秒），默认 0=不设超时。须小于控制面 activateTimeoutSec，" +
-			"否则控制面先判整体超时、回执里看不出是哪个插件卡住",
+		desc: "单业务插件配置重载超时（毫秒），默认 30000；填 0 表示不设超时（不建议，卡死插件会一直占住）。" +
+			"须小于控制面 activateTimeoutSec，否则控制面先判整体超时、回执里看不出是哪个插件卡住",
+	},
+	"delivery.reload-pool-size": {
+		valueType: agentSettingTypeInt, min: 1, max: 256,
+		desc: "单服并发 reload 的插件数上限，默认 64（单服装 60+ 插件是常见形态）。" +
+			"下发后 agent 侧旧线程池优雅退役、在途 reload 跑完，新池接管后续派发（不中断、不丢任务）",
 	},
 }
 
