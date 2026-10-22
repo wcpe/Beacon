@@ -63,12 +63,6 @@ taboolib {
         install(BukkitUtil)
         install(BukkitHook)
         install(I18n)
-        // 依赖下载源**不在这里覆盖**：上游插件 2.0.39-wcpe.2 起 Env.repoTabooLib 默认已是
-        // WCPE 私有仓库（`X.Y.Z-wcpe.N` 定制坐标只发布在那里，上游 tabooproject 是 404），
-        // 产物 META-INF/taboolib/env.properties 自然正确。
-        //
-        // 之所以要上游改默认、而不是每个消费工程各覆盖一次：任何用该插件构建的工程都会踩同一个坑，
-        // 逐工程覆盖迟早漏一处。若某个工程确需换源，仍可在此显式 repoTabooLib = "..." 覆盖。
     }
     // 第三方库本身不打包（@RuntimeDependencies 运行期下载），但仍打包期 relocate：把 agent 自身字节码里
     // 对 okhttp3/okio/kotlinx.serialization 的引用重写到 top.wcpe.beacon.agent.lib.* —— 与运行期下载时的
