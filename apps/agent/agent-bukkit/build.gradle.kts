@@ -63,19 +63,15 @@ taboolib {
         install(BukkitUtil)
         install(BukkitHook)
         install(I18n)
-        // 构建期就锁定依赖下载源（写进产物 META-INF/taboolib/env.properties）。
+        // 依赖下载源显式钉到 WCPE 私有仓库（写进产物 META-INF/taboolib/env.properties）。
         //
-        // 为什么必须显式设：`6.3.0-wcpe.N` 这类定制坐标**只发布在 WCPE 私有仓库**，
-        // 上游 tabooproject 上是 404。而这两层默认值分属不同工件、没有联动：
-        //   - 运行期（common-6.3.0-wcpe.5 的 PrimitiveSettings）默认已是 repo.wcpe.top；
-        //   - 构建期（io.izzel.taboolib:taboolib-gradle-plugin:2.0.39 的 Env.groovy）
-        //     仍硬编码 tabooproject，并把它写进 env.properties。
-        // env.properties 优先于运行期默认值，于是产物拿到的是那个 404 地址，
-        // 插件在任何拿到 jar 的机器上都无法自举下载依赖（表现为
-        // 「Failed to download common-env-6.3.0-wcpe.5.jar」后插件被禁用）。
+        // 背景：`X.Y.Z-wcpe.N` 定制坐标只发布在私有仓库，上游 tabooproject 上是 404。
+        // 上游插件 2.0.38-wcpe.4 起默认值已改为私有仓库（本工程已一并提交该修复），
+        // 但那版**尚未发布到 repo.wcpe.top**（实测 404，wcpe.3 才是当前可用版），
+        // 所以这里先保留显式覆盖，保证任何一次构建的产物都自洽。
         //
-        // 在这里显式覆盖即让产物自洽：不需要改上游插件、不需要发新版本，
-        // 也不会影响其它 WCPE 项目。
+        // TODO(升级)：待 2.0.38-wcpe.4（或更高）发布后，删掉这一行并把
+        // settings.gradle.kts 的插件版本升上去，让默认值成为唯一来源。
         repoTabooLib = "https://repo.wcpe.top/repository/maven-public/"
     }
     // 第三方库本身不打包（@RuntimeDependencies 运行期下载），但仍打包期 relocate：把 agent 自身字节码里
