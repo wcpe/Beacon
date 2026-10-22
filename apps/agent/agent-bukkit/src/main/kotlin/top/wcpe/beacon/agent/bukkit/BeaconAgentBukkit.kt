@@ -233,7 +233,7 @@ object BeaconAgentBukkit : Plugin() {
                         // 归属确认即落盘（FR-276）：join 的「已绑定则拒绝」守卫读的就是这份 binding，
                         // 不写盘则该守卫永不可达。写盘失败不影响接入——绑定是控制面权威事实，
                         // 内存里已生效，磁盘只为下次启动与 join 判断可见。
-                        runCatching { credentialsStore.updateBinding(binding.toCredentialsBinding(activeIdentity.role)) }
+                        runCatching { credentialsStore.setBinding(binding.toCredentialsBinding(activeIdentity.role)) }
                             .onFailure { warning("写入绑定凭据失败（不影响本次接入）：${it.javaClass.simpleName}: ${it.message}") }
                         startActiveRuntime(
                             identity = activeIdentity,
@@ -243,6 +243,11 @@ object BeaconAgentBukkit : Plugin() {
                     },
                     onTerminal = {
                         bindingSnapshot.invalidate()
+                        // 终端态意味着归属已被控制面解除（解绑 / 否决）：本地必须同步清掉 binding，
+                        // 否则 /beacon join 的「已绑定则拒绝」会永远挡住自助恢复，运维只能手删凭据文件
+                        // （那样会生成新身份，控制面上多一台孤儿服）。
+                        runCatching { credentialsStore.setBinding(null) }
+                            .onFailure { warning("清除本地绑定记录失败（不影响停机）：${it.javaClass.simpleName}: ${it.message}") }
                         stopActiveRuntime()
                     },
                 )
@@ -282,11 +287,15 @@ object BeaconAgentBukkit : Plugin() {
         // 把 config.yml 里的接入目标与令牌作为种子传进去：新建/迁移凭据时一并落盘，
         // 否则凭据只剩身份，config.yml 一旦被清空或换机遗漏就再也连不回去
         // （「重启后不必再配地址」这个承诺会落空）。
+        // 种子必须先滤掉模板占位符：把 <CONTROL_PLANE_URL> 写进凭据后，即使清空 config.yml，
+        // agent 仍会对着占位符重连，而凭据文件不像 config.yml 那样显眼，极难排查。
+        val (seedEndpoint, seedToken) =
+            EffectiveSettingsResolver.connectionSeed(settings.endpoints, settings.bootstrapToken)
         val identityId =
             credentialsStore.resolveIdentityId(
                 storedIdentity,
-                seedEndpoint = settings.endpoints.firstOrNull().orEmpty(),
-                seedToken = settings.bootstrapToken,
+                seedEndpoint = seedEndpoint,
+                seedToken = seedToken,
             )
         // 把 identity.yml 对齐成权威身份：两份文件从此永远指向同一个 ID，
         // 历史上残留的休眠 UUID 就地纠正，迁移路径再也不会把它复活（取舍见 alignTo 注释）。

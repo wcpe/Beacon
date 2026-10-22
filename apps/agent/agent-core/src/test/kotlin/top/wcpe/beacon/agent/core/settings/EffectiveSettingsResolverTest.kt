@@ -216,6 +216,60 @@ class EffectiveSettingsResolverTest {
         override fun keys(path: String): Set<String> = emptySet()
     }
 
+    /**
+     * 出厂模板的占位符必须被当成「未配置」，而不是「运维已显式填好」。
+     *
+     * 真机实测暴露：出厂 config.yml 写的是 `<CONTROL_PLANE_URL>` / `<NAMESPACE_ACCESS_TOKEN>`，
+     * 两者都非空 → 被判成「已接入」→ ① `/beacon join` 写入的凭据被永远盖住（join 静默失效）；
+     * ② agent 对着不存在的地址无限重连；③ 占位符还会被当种子写进凭据文件，
+     * 之后清空 config.yml 也救不回来。
+     */
+    @Test
+    fun `模板占位符不构成接入配置`() {
+        val dir = tempDir()
+        val warns = mutableListOf<String>()
+        // 用真实 config.yml 的形态（占位符）走完整解析，而不是手搓 AgentSettings。
+        val subject =
+            resolver(
+                dir,
+                MapConfigReader(
+                    mapOf(
+                        "beacon.endpoints" to listOf("<CONTROL_PLANE_URL>"),
+                        "beacon.bootstrap-token" to "<NAMESPACE_ACCESS_TOKEN>",
+                    ),
+                ),
+                warns = warns,
+            )
+
+        assertFalse(subject.hasConnectionConfig(subject.resolve()), "占位符不能算已配置")
+        assertTrue(warns.any { it.contains("占位符") }, "必须明确告警是占位符，实际：$warns")
+    }
+
+    /** 真的填了地址与令牌才算已配置（回归锁：别把正常配置也拦掉）。 */
+    @Test
+    fun `真实地址与令牌构成接入配置`() {
+        val dir = tempDir()
+        val subject = resolver(dir, legacyConfig())
+        assertTrue(subject.hasConnectionConfig(subject.resolve()))
+    }
+
+    /** 占位符绝不能作为凭据种子写进 agent-credentials.json。 */
+    @Test
+    fun `占位符不会作为凭据种子`() {
+        val (phEndpoint, phToken) =
+            EffectiveSettingsResolver.connectionSeed(
+                listOf("<CONTROL_PLANE_URL>"),
+                "<NAMESPACE_ACCESS_TOKEN>",
+            )
+        assertEquals("", phEndpoint, "占位符地址不得进入凭据")
+        assertEquals("", phToken, "占位符令牌不得进入凭据")
+
+        val (okEndpoint, okToken) =
+            EffectiveSettingsResolver.connectionSeed(listOf("https://beacon.example.com"), "bn_local")
+        assertEquals("https://beacon.example.com", okEndpoint)
+        assertEquals("bn_local", okToken)
+    }
+
     private companion object {
         /** 合法 UUIDv4：凭据解析要求身份标识必须是 v4，随便编一个会被判整份无效。 */
         const val IDENTITY_ID = "0f8fad5b-d9cb-469f-a165-70867728950e"

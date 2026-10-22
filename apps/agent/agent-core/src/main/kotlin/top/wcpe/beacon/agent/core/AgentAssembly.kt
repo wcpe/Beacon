@@ -485,7 +485,15 @@ object AgentAssembly {
         view: EffectiveConfigView,
     ) {
         val coordinator =
-            PushedConfigCoordinator.forAssembly(ctx.apiClient, ctx.adapter.dataFolder(), ctx.codec, view, ctx.adapter)
+            PushedConfigCoordinator.forAssembly(
+                ctx.apiClient,
+                ctx.adapter.dataFolder(),
+                ctx.codec,
+                view,
+                ctx.adapter,
+                // 撤销下发后要回落到本地生效值：用 ctx.settings（config.yml / 环境变量 / 默认的解析结果）。
+                localFallback = { ctx.settings },
+            )
         lifecycle.onRegistered { coordinator.start(ctx.identity, ctx.adapter::runAsyncDelayed) }
         lifecycle.shutdownListeners.add { coordinator.stop() }
     }

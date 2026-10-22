@@ -39,6 +39,18 @@ internal class PushedConfigCoordinator(
     private val store: PushedConfigStore,
     private val view: EffectiveConfigView,
     private val adapter: PlatformAdapter,
+    /**
+     * 本地生效值（config.yml / 环境变量 / 代码默认的解析结果）。
+     *
+     * 用途只有一个：**撤销下发后回落到本地值**。撤销在控制面侧是「删掉这一行」，
+     * agent 拉到的 values 里该键直接消失；若这里只是「键不存在就不动」，
+     * 派发器会一直保持上一份下发值直到进程重启——Web 上显示「已回退到本地配置」，
+     * 实际却没回退，两边说的不是一回事。撤销「关闭超时保护」这类键尤其危险。
+     *
+     * 传函数而不是值：装配期解析出来的本地设置可能在运行期并不变，
+     * 但用 Supplier 能让未来「改了 config.yml 再重载」自然拿到新值，不需要改这里。
+     */
+    private val localFallback: (() -> AgentSettings)? = null,
 ) {
     /** 上次已应用的键值快照：用于判断「真的变了没有」。 */
     @Volatile
@@ -102,6 +114,9 @@ internal class PushedConfigCoordinator(
         if (values == applied) {
             return
         }
+        // 记住上一轮的键集合：撤销（键从下发里消失）与「从未下发」必须区分开，
+        // 否则无法判断该不该回落到本地值。
+        val previousKeys = applied.keys
         applied = values
         // 重载超时与并发位各有独立的运行时落点（视图里的派发器），必须显式推给它；
         // 其余参数在下一次 full reload 时由 AgentBootstrap 重新读取生效。
@@ -118,8 +133,16 @@ internal class PushedConfigCoordinator(
                 view.updateReloadTimeout(sanitized)
                 adapter.info("已应用下发的重载超时：${sanitized}ms（下一轮配置变更即生效）")
             }
+        } else if (timeoutMsKey in previousKeys) {
+            // 该键曾被下发过、这次消失了 = 运维在 Web 上撤销了本层覆盖。
+            // 必须回落到本地值，否则派发器会一直保持上一份下发值到进程重启。
+            localFallback?.let { fallback ->
+                val local = fallback().configReloadTimeoutMs
+                view.updateReloadTimeout(local)
+                adapter.info("下发的 $timeoutMsKey 已被撤销，回落到本地配置：${local}ms")
+            }
         }
-        applyPoolSize(values[KEY_RELOAD_POOL_SIZE])
+        applyPoolSize(values[KEY_RELOAD_POOL_SIZE], wasPushed = KEY_RELOAD_POOL_SIZE in previousKeys)
         adapter.info("已接收控制面下发的 agent 配置（共 ${values.size} 项）")
     }
 
@@ -133,8 +156,19 @@ internal class PushedConfigCoordinator(
      * 3. 应用后打 info 说明**会换池**：运维需要知道在途 reload 不会被中断，
      *    但新一波派发要等新池建好。
      */
-    private fun applyPoolSize(raw: String?) {
+    private fun applyPoolSize(
+        raw: String?,
+        wasPushed: Boolean,
+    ) {
         if (raw == null) {
+            // 曾被下发过、现在消失 = 撤销：回落到本地配置，理由同超时那段。
+            if (wasPushed) {
+                localFallback?.let { fallback ->
+                    val local = fallback().configReloadPoolSize
+                    view.updateReloadPoolSize(local)
+                    adapter.info("下发的 $KEY_RELOAD_POOL_SIZE 已被撤销，回落到本地配置：$local")
+                }
+            }
             return
         }
         val parsed = raw.trim().toIntOrNull()
@@ -205,9 +239,15 @@ internal class PushedConfigCoordinator(
             codec: JsonCodec,
             view: EffectiveConfigView,
             adapter: PlatformAdapter,
+            localFallback: (() -> AgentSettings)? = null,
         ): PushedConfigCoordinator =
-            PushedConfigCoordinator(apiClient, PushedConfigStore(dataFolder.toPath(), codec), view, adapter)
-                .also { it.primeFromCache() }
+            PushedConfigCoordinator(
+                apiClient,
+                PushedConfigStore(dataFolder.toPath(), codec),
+                view,
+                adapter,
+                localFallback,
+            ).also { it.primeFromCache() }
 
         /** 拉取周期（毫秒）：30 秒。变更本就低频，改小收益有限，改大会拉长生效延迟。 */
         const val POLL_INTERVAL_MS = 30_000L

@@ -210,11 +210,14 @@ object BeaconAgentBungee : Plugin() {
             }
             // 身份单一真源（FR-276）：凭据 > 旧 identity.yml（迁移一次） > 新生成并落盘。
             // 种子化 config.yml 的接入信息，理由同 Bukkit 壳：否则凭据只剩身份，换机或清空配置后连不回去。
+            // 种子必须先滤掉模板占位符（同 Bukkit 壳）：否则占位符进凭据后清空 config.yml 也救不回来。
+            val (seedEndpoint, seedToken) =
+                EffectiveSettingsResolver.connectionSeed(activeSettings.endpoints, activeSettings.bootstrapToken)
             val identityId =
                 credentialsStore.resolveIdentityId(
                     storedIdentity,
-                    seedEndpoint = activeSettings.endpoints.firstOrNull().orEmpty(),
-                    seedToken = activeSettings.bootstrapToken,
+                    seedEndpoint = seedEndpoint,
+                    seedToken = seedToken,
                 )
             // 把 identity.yml 对齐成权威身份：两份文件从此永远指向同一个 ID，
             // 历史上残留的休眠 UUID 就地纠正，迁移路径再也不会把它复活（取舍见 alignTo 注释）。
@@ -304,13 +307,16 @@ object BeaconAgentBungee : Plugin() {
                     // 归属确认即落盘（FR-276）：join 的「已绑定则拒绝」守卫读的就是这份 binding，
                     // 不写盘则该守卫永不可达。写盘失败不影响接入——绑定是控制面权威事实，
                     // 内存里已生效，磁盘只为下次启动与 join 判断可见。
-                    runCatching { credentialsStore.updateBinding(binding.toCredentialsBinding(activeIdentity.role)) }
+                    runCatching { credentialsStore.setBinding(binding.toCredentialsBinding(activeIdentity.role)) }
                         .onFailure { warning("写入绑定凭据失败（不影响本次接入）：${it.javaClass.simpleName}: ${it.message}") }
                     confirmedBinding = binding
                     enable()
                 },
                 onTerminal = {
                     bindingSnapshot.invalidate()
+                    // 同 Bukkit 壳：终端态清掉本地绑定，避免 join 守卫永久挡住自助恢复。
+                    runCatching { credentialsStore.setBinding(null) }
+                        .onFailure { warning("清除本地绑定记录失败（不影响停机）：${it.javaClass.simpleName}: ${it.message}") }
                     stopActiveRuntime()
                 },
             )

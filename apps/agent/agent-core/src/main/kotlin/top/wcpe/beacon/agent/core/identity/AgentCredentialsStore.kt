@@ -235,14 +235,20 @@ class AgentCredentialsStore(
     }
 
     /**
-     * 更新绑定事实（控制面确认归属后调用），其余字段保持不变。
+     * 写入或清除绑定事实，其余字段保持不变。
      *
-     * 与已存绑定完全一致时不写盘：绑定每次接入确认都会到来，无谓刷盘只会让文件时间戳抖动。
+     * - 传 [AgentCredentials.BoundIdentity]：控制面确认归属后写入。
+     * - 传 `null`：控制面已解绑 / 否决，必须清掉本地归属记录。
+     *   否则 `/beacon join` 的「已绑定则拒绝」会**永远**挡住自助恢复，而它提示的
+     *   「联系管理员解绑」恰恰是刚做完的那一步 —— 运维只能手删凭据文件，
+     *   那会让下次启动生成新身份、在控制面上多出一台孤儿服务器（正是 FR-276 要消除的形态）。
+     *
+     * 与已存值完全一致时不写盘：绑定每次接入确认都会到来，无谓刷盘只会让文件时间戳抖动。
      * 读 → 改 → 写整体持锁，避免与 join 的写入交错丢字段。
      *
      * @return 更新后的凭据；无凭据时返回 null（此时无从更新，也说明流程还没 join 过）
      */
-    fun updateBinding(binding: AgentCredentials.BoundIdentity): AgentCredentials? =
+    fun setBinding(binding: AgentCredentials.BoundIdentity?): AgentCredentials? =
         writeLock.withLock {
             load()?.let { current ->
                 if (current.binding == binding) current else current.copy(binding = binding).also { save(it) }

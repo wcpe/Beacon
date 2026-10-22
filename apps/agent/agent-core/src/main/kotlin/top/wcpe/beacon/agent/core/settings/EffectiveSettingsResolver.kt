@@ -63,8 +63,19 @@ class EffectiveSettingsResolver(
      * 不该刷 ERROR 让人以为装坏了。只有「配了但配错」才值得警告。
      */
     fun hasConnectionConfig(settings: AgentSettings): Boolean {
-        if (settings.endpoints.isNotEmpty() && settings.bootstrapToken.isNotBlank()) {
+        if (hasRealConnectionConfig(settings)) {
             return true
+        }
+        // 配了东西但全是占位符：这是最容易让人以为「装好了连不上」的形态，必须说清楚。
+        val placeholderOnly =
+            (settings.endpoints.any { it.isNotBlank() } || settings.bootstrapToken.isNotBlank()) &&
+                !hasRealConnectionConfig(settings)
+        if (placeholderOnly) {
+            warn(
+                "config.yml 里的接入信息仍是模板占位符（如 <CONTROL_PLANE_URL>），已按「未配置」处理：" +
+                    "请填入真实地址与令牌，或清空后使用 /beacon join；占位符不会写入凭据",
+            )
+            return false
         }
         val partial = settings.endpoints.isNotEmpty() || settings.bootstrapToken.isNotBlank()
         if (partial) {
@@ -73,6 +84,47 @@ class EffectiveSettingsResolver(
             info("尚未接入 Beacon。使用 /beacon join <控制面地址> <令牌> 完成接入，或在 config.yml 配置")
         }
         return false
+    }
+
+    /**
+     * config.yml 里是否**填了真实的接入信息**（占位符不算）。
+     *
+     * 出厂模板曾把 `<CONTROL_PLANE_URL>` / `<NAMESPACE_ACCESS_TOKEN>` 当作示例值，
+     * 两者都非空 —— 于是被当成「运维已显式配置」：`/beacon join` 被静默忽略、
+     * agent 对着一个不存在的地址无限重连，而且占位符还会被写进凭据文件，
+     * 之后即使清空 config.yml 也再救不回来（凭据仍声称「我能连」）。
+     *
+     * 模板现在填空，但**已发出的 jar 与被复制过的旧模板仍在外面**，故此处保留识别：
+     * 让占位符等价于「未配置」，退回凭据 / 静待 join，绝不把它当成真实目标。
+     */
+    private fun hasRealConnectionConfig(settings: AgentSettings): Boolean =
+        settings.endpoints.any { it.isNotBlank() && !isPlaceholder(it) } &&
+            settings.bootstrapToken.isNotBlank() && !isPlaceholder(settings.bootstrapToken)
+
+    /**
+     * 形如 `<CONTROL_PLANE_URL>` / `${...}` 的模板占位符。
+     *
+     * 判据刻意保守（整串被尖括号或 `${}` 包住才算），避免把真实地址里的字符误判。
+     */
+    private fun isPlaceholder(raw: String): Boolean = looksLikePlaceholder(raw)
+
+    companion object {
+        /**
+         * 过滤掉模板占位符，返回可安全用作「凭据种子」的接入信息。
+         *
+         * 壳层在新建/迁移凭据时把 config.yml 的值当种子传下去。若不过滤，占位符会被
+         * 写进 `agent-credentials.json` 且 `canConnect == true` —— 此后即使清空 config.yml，
+         * agent 仍会对着占位符地址重连，而凭据文件又不像 config.yml 那样显眼，极难排查。
+         * 收在 core 里而不是两个壳各写一遍，保证判定口径只有一处。
+         */
+        fun connectionSeed(
+            endpoints: List<String>,
+            bootstrapToken: String,
+        ): Pair<String, String> {
+            val endpoint = endpoints.firstOrNull { it.isNotBlank() && !looksLikePlaceholder(it) }.orEmpty()
+            val token = if (bootstrapToken.isNotBlank() && !looksLikePlaceholder(bootstrapToken)) bootstrapToken else ""
+            return endpoint to token
+        }
     }
 
     /**
@@ -85,9 +137,26 @@ class EffectiveSettingsResolver(
         if (!credentials.canConnect) {
             return settings
         }
-        if (settings.endpoints.isNotEmpty() && settings.bootstrapToken.isNotBlank()) {
+        // 只有 config.yml 填了**真实**接入信息才压过凭据；占位符等同于未配置，
+        // 否则 join 写入的凭据会被模板占位符永远盖住（join 静默失效的根因）。
+        if (hasRealConnectionConfig(settings)) {
             return settings
         }
         return settings.copy(endpoints = listOf(credentials.endpoint), bootstrapToken = credentials.token)
     }
+}
+
+/**
+ * 是否为模板占位符（`<CONTROL_PLANE_URL>` / `${VAR}` 这类整串包裹的写法）。
+ *
+ * 判据刻意保守：只认「整串被尖括号或 `${}` 包住」，避免把真实地址里的字符误判成占位符。
+ * 放在文件顶层供实例方法与 [EffectiveSettingsResolver.connectionSeed] 共用，保证只有一处口径。
+ */
+private fun looksLikePlaceholder(raw: String): Boolean {
+    val text = raw.trim()
+    if (text.length < 3) {
+        return false
+    }
+    return (text.startsWith("<") && text.endsWith(">")) ||
+        (text.startsWith("\${") && text.endsWith("}"))
 }

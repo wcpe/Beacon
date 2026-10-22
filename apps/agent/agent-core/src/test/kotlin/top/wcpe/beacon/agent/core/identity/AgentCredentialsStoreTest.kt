@@ -86,7 +86,7 @@ class AgentCredentialsStoreTest {
         )
 
         val updated =
-            store.updateBinding(
+            store.setBinding(
                 AgentCredentials.BoundIdentity(
                     namespace = "prod",
                     serverId = "lobby-1",
@@ -251,9 +251,9 @@ class AgentCredentialsStoreTest {
                 boundAt = Instant.parse("2024-05-01T00:00:00Z"),
             )
 
-        assertNotNull(store.updateBinding(binding))
+        assertNotNull(store.setBinding(binding))
         Files.setLastModifiedTime(store.filePath(), staleMarker)
-        assertNotNull(store.updateBinding(binding))
+        assertNotNull(store.setBinding(binding))
 
         // 绑定每次接入确认都会到来，重复写盘只会让文件时间戳无谓抖动。
         assertEquals(staleMarker, Files.getLastModifiedTime(store.filePath()), "绑定没变就不该再写盘")
