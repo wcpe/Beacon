@@ -212,4 +212,3 @@ func TestAgentSettingsPutTicketStatusIsReadFromEntity(t *testing.T) {
 		t.Fatalf("202 的 status 必须取自申请实体（%s），实际 %s", stored.Status, got)
 	}
 }
-
