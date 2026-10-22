@@ -63,16 +63,12 @@ taboolib {
         install(BukkitUtil)
         install(BukkitHook)
         install(I18n)
-        // 依赖下载源显式钉到 WCPE 私有仓库（写进产物 META-INF/taboolib/env.properties）。
+        // 依赖下载源**不在这里覆盖**：上游插件 2.0.39-wcpe.2 起 Env.repoTabooLib 默认已是
+        // WCPE 私有仓库（`X.Y.Z-wcpe.N` 定制坐标只发布在那里，上游 tabooproject 是 404），
+        // 产物 META-INF/taboolib/env.properties 自然正确。
         //
-        // 背景：`X.Y.Z-wcpe.N` 定制坐标只发布在私有仓库，上游 tabooproject 上是 404。
-        // 上游插件 2.0.38-wcpe.4 起默认值已改为私有仓库（本工程已一并提交该修复），
-        // 但那版**尚未发布到 repo.wcpe.top**（实测 404，wcpe.3 才是当前可用版），
-        // 所以这里先保留显式覆盖，保证任何一次构建的产物都自洽。
-        //
-        // TODO(升级)：待 2.0.38-wcpe.4（或更高）发布后，删掉这一行并把
-        // settings.gradle.kts 的插件版本升上去，让默认值成为唯一来源。
-        repoTabooLib = "https://repo.wcpe.top/repository/maven-public/"
+        // 之所以要上游改默认、而不是每个消费工程各覆盖一次：任何用该插件构建的工程都会踩同一个坑，
+        // 逐工程覆盖迟早漏一处。若某个工程确需换源，仍可在此显式 repoTabooLib = "..." 覆盖。
     }
     // 第三方库本身不打包（@RuntimeDependencies 运行期下载），但仍打包期 relocate：把 agent 自身字节码里
     // 对 okhttp3/okio/kotlinx.serialization 的引用重写到 top.wcpe.beacon.agent.lib.* —— 与运行期下载时的
