@@ -638,22 +638,49 @@ export const system = {
       actions: '操作',
       edit: '编辑',
       cancel: '取消',
+      // 撤销本层覆盖：删掉这一行，该键回退到上一级 / 本地配置 / 代码默认。
+      // 与「编辑」并列而不是藏在编辑态里：它是「把控制权交还回去」的独立意图，
+      // 而编辑态里唯一能表达的是「写一个新值」。
+      revoke: '撤销本层覆盖',
+      undoRevoke: '取消撤销',
+      revokePending: '待撤销：提交后该键回退到上一级或本地配置',
       pending: '待下发',
       unset: '—',
+      // 待下发值为空：不显示成 —（那是「未设置」），避免被读成「已关闭」
+      blank: '（空）',
     },
-    // 来源标记：三态对应三层优先级
+    // 来源标记：只表达「控制面能断言到哪一层」（完整口径见契约 AgentSettingSource）。
+    // 不要在这里补「代码默认」单独一档：控制面看不到 agent 本地链的解析结果，那会是假报。
     source: {
       server: 'server 级覆盖',
       namespace: 'namespace 默认',
-      default: '未设置',
+      // 两级都没下发：生效值由 agent 本地链（环境变量 > config.yml > 代码默认）决定，
+      // 控制面无法再细分，故如实合并成这一档
+      'local-or-default': '本地配置或代码默认',
+      unknown: '来源未知',
+      // 告诉运维「看到这一档该去哪改」——这一列存在的意义就是决定去哪改
+      legend:
+        '「server 级覆盖」与「namespace 默认」改在本页；「本地配置或代码默认」表示控制面没下发该键，要到该机器的 config.yml（或它的环境变量）里改。',
     },
     // 高危警告（ADR-0011：白名单可由控制面下发，是唯一能执行命令的闸门）
     highRisk: {
       badge: '高危',
       title: '高危配置：命令白名单',
-      body: 'override.command-whitelist 决定 agent 能执行哪些控制台命令——这是「控制面 → 被管理端」唯一能落地执行动作的入口（ADR-0011）。留空时 agent 不执行任何重载命令；放宽前请确认命令已在插件侧审核完毕，每次改动都会记录下发人与原因。',
-      jsonHint: '取值为 JSON 字符串数组，如 ["reload"]；留空 = 关闭命令派发',
-      invalidJson: '取值必须是 JSON 字符串数组，如 ["reload"]',
+      body: 'override.command-whitelist 决定 agent 能执行哪些控制台命令——这是「控制面 → 被管理端」唯一能落地执行动作的入口（ADR-0011）。只有撤销本层覆盖（回到上一级）才会关闭命令派发；放宽前请确认命令已在插件侧审核完毕，每次改动都会记录下发人与原因。',
+      // 键名沿用 jsonHint：渲染它的 HighRiskNotice 不在本次改动范围。文案口径已改为 stringList
+      jsonHint: '逗号或换行分隔的命令首 token，如 reload, taboolib（不要写成 JSON 数组）',
+      // 逐类问题给「能照做」的提示：笼统的「格式错误」会把人推回 JSON 老路
+      issue: {
+        jsonArray:
+          '不要填 JSON 数组（如 ["reload"]）：服务端按逗号或换行分隔存储，["reload"] 会被当成一个命令名，agent 永远匹配不到——白名单会静默失效。正确写法：reload, taboolib',
+        unsafe: '命令名里不允许出现 ; & | > < $ 反引号或控制字符',
+        format: '每项须是一个不含空格的命令名（命令首 token），如 reload, taboolib',
+      },
+    },
+    // 取值本身的硬约束（与键无关）
+    value: {
+      empty:
+        '清空不等于撤销：空值服务端一律拒绝，撤销本层覆盖须走「撤销覆盖」入口（本版界面尚未提供）',
     },
     // 本机权威键：控制面永远无权下发
     localOnly: {
@@ -672,18 +699,25 @@ export const system = {
       reason: '下发原因',
       reasonPlaceholder: '说明本次下发的业务原因（审批与审计都会记录）',
       reasonRequired: '请填写下发原因',
+      scopeUnconfirmed:
+        '作用域尚未确认（缺少二次确认串），暂不能下发：请重新选择作用域或刷新后重试',
       pendingCount: '{{count}} 项改动待下发',
       noChange: '没有待下发的改动',
       submit: '保存 {{count}} 项改动',
       submitting: '下发中…',
       saved: '已下发，agent 将在约 30 秒内热生效',
       submitted: '已提交审批（票据 {{id}}），批准后才会下发到 agent',
+      // 票据已终结：本次没下发，且这条变更再也提交不出去——必须说清，不能留着「已提交审批」
+      ticketTerminal: '该变更的审批票据已终结（{{status}}），本次未下发，请修改原因后重新提交',
+      ticketSucceeded: '该票据已执行完毕，请刷新查看当前生效值',
+      ticketUnknown: '票据状态未知（{{status}}），请到审批中心确认该变更是否已下发',
       viewApproval: '查看审批',
       failed: '下发失败：{{message}}',
     },
     // 配置项说明（点分键 → 中文说明；未收录的键回退后端 desc）
     descs: {
-      'override.command-whitelist': '允许执行的控制台命令白名单（JSON 字符串数组），留空 = 不执行任何命令',
+      'override.command-whitelist':
+        '允许执行的控制台命令白名单（逗号或换行分隔的命令首 token，如 reload, taboolib）',
       'delivery.config-reload-timeout-ms': '配置文件重载超时（毫秒）：热重载超过此时长即放弃本次重载并告警',
       'timing.poll-timeout-ms': '长轮询挂起上限（毫秒），实际取 min(服务端上限, 此值)',
       'timing.request-timeout-ms': '单次 HTTP 请求超时（毫秒）',

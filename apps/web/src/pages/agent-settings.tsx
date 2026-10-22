@@ -4,9 +4,9 @@
 // 改要改的项 → 填原因一次性下发 → 看到「已下发，agent 将在约 30 秒内热生效」。
 //
 // 三条硬边界都做在界面上，不靠文档提醒：
-// 1. 命令白名单是高危项（ADR-0011）：页顶常驻警告 + 行内高危药丸 + 取值 JSON 校验；
+// 1. 命令白名单是高危项（ADR-0011）：页顶常驻警告 + 行内高危药丸 + stringList 取值校验；
 // 2. 本机权威键（接入目标 / 接入凭据 / 身份标识）一个都不进可编辑表，单独一区说明「只能本地配置」；
-// 3. 高危键的下发可能被拦到审批（202 票据），页面必须区分「已下发」与「已提交审批」，
+// 3. 高危键的下发可能被拦到审批（202 票据），页面必须区分「已下发」「已提交审批」「票据已终结」，
 //    不能糊成一句成功——运维需要知道此刻到底生没生效。
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -19,7 +19,7 @@ import type { UpdateAgentSettingsBody } from '@beacon/contracts'
 import {
   ApiClientError,
   fetchAgentSettings,
-  isAgentSettingsApprovalTicket,
+  readAgentSettingsApprovalTicket,
   updateAgentSettings,
 } from '../api/agent-settings'
 import { fetchNamespaces, fetchServers } from '../api/cluster'
@@ -29,13 +29,56 @@ import HighRiskNotice from './agent-settings/high-risk-notice'
 import LocalOnlyCard from './agent-settings/local-only-card'
 import ScopeBar from './agent-settings/scope-bar'
 import SettingsTable from './agent-settings/settings-table'
-import { isForbiddenAgentSettingKey, isHighRiskAgentSettingKey, validateCommandWhitelist } from './agent-settings/keys'
+import {
+  ISSUE_MESSAGE_KEY,
+  agentSettingValueIssue,
+  isForbiddenAgentSettingKey,
+  isHighRiskAgentSetting,
+  isRevocableAgentSettingSource,
+  type CommandWhitelistIssue,
+} from './agent-settings/keys'
 
 // 服务器候选上限：只取一页并缓存，避免把上千子服塞进 DOM（与交付域 ServerPicker 同口径）
 const SERVER_CANDIDATE_PAGE_SIZE = 200
 
-// 下发结果的两种呈现：直执生效 / 已提交审批
-type SaveResultView = { kind: 'saved' } | { kind: 'approval'; requestId: string }
+/**
+ * 票据状态归类。服务端 status 取值见 model.ApprovalStatus*：
+ * pending / executing / rejected / withdrawn / expired / succeeded / failed。
+ *
+ * 必须读 status 而不是只看有没有 approvalRequestId：服务端命中幂等键时直接回既有申请、
+ * **不判状态**，一张早已 rejected 的旧票据与刚创建的长得一模一样。只认 id 就会把「已终结」
+ * 谎报成「已提交审批」，而那条变更其实再也提交不出去。
+ */
+type ApprovalOutcome =
+  /** pending：还在等签发 */
+  | 'pending'
+  /** rejected / withdrawn / expired / failed：已终结，本次没有下发 */
+  | 'terminal'
+  /** succeeded：审批已执行完，库里已经变了 */
+  | 'succeeded'
+  /** 其余（含 executing 与未来新增值）：不猜，让运维去审批中心确认 */
+  | 'unknown'
+
+const TERMINAL_APPROVAL_STATUSES = ['rejected', 'withdrawn', 'expired', 'failed']
+
+function approvalOutcome(status: string): ApprovalOutcome {
+  const normalized = status.trim().toLowerCase()
+  if (normalized === 'pending') {
+    return 'pending'
+  }
+  if (TERMINAL_APPROVAL_STATUSES.includes(normalized)) {
+    return 'terminal'
+  }
+  if (normalized === 'succeeded') {
+    return 'succeeded'
+  }
+  return 'unknown'
+}
+
+// 下发结果的四种呈现：直执生效 / 待审批 / 票据已终结 / 票据已执行
+type SaveResultView =
+  | { kind: 'saved' }
+  | { kind: 'approval'; requestId: string; status: string; outcome: ApprovalOutcome }
 
 function messageOf(error: unknown): string {
   return error instanceof ApiClientError ? error.message : String(error)
@@ -49,7 +92,8 @@ export default function AgentSettingsPage() {
   const [serverId, setServerId] = useState('')
   // 行内草稿：key → 待下发值（不即时提交，由页脚统一下发）。
   // 值是稀疏的（只有编辑过的键才存在），故显式允许 undefined，避免误判「一定已设置」。
-  const [drafts, setDrafts] = useState<Record<string, string | undefined>>({})
+  // 草稿：undefined=未改；null=标记撤销本层覆盖；字符串=设为该值
+  const [drafts, setDrafts] = useState<Record<string, string | null | undefined>>({})
   const [editingKey, setEditingKey] = useState<string | null>(null)
   const [reason, setReason] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
@@ -90,19 +134,39 @@ export default function AgentSettingsPage() {
   })
   const items = useMemo(() => valuesQuery.data?.items ?? [], [valuesQuery.data])
 
+  // 写端点的二次确认串：只能原样回填 GET 给的 scopeLabel。
+  // 绝不凭 namespaceId / serverId 自己拼——那样「以为在改这台服、实际改了整个环境」
+  // 这道闸门就退化成前端自说自话，服务端也无从发现作用域搞错了。
+  const scopeLabel = valuesQuery.data?.scopeLabel ?? ''
+
   // 禁止下发的键一律不进可编辑表：前端侧第二道闸（后端另有 400 拒发兜底）
   const editableItems = useMemo(() => items.filter((item) => !isForbiddenAgentSettingKey(item.key)), [items])
-  const highRiskItems = useMemo(
-    () => editableItems.filter((item) => isHighRiskAgentSettingKey(item.key)),
-    [editableItems],
-  )
+  // 高危以服务端 dangerous 字段为准，本地清单只在字段缺失时兜底（否则服务端新增危险键会漏报）
+  const highRiskItems = useMemo(() => editableItems.filter(isHighRiskAgentSetting), [editableItems])
 
-  // 只有「与当前生效值不同」的草稿才算改动：改回原值不该产生一条下发记录
+  // 只有「与当前生效值不同」的草稿才算改动：改回原值不该产生一条下发记录。
+  //
+  // 草稿有三种状态：
+  //   - `undefined` → 没动过（不在 drafts 里）
+  //   - `null`      → 标记为「撤销本层覆盖」，提交时传 null，服务端删掉这一层
+  //   - 字符串      → 设为该值（空串在下面被拦下，它不等于撤销）
   const dirtyValues = useMemo(() => {
     const currentValueByKey = new Map(items.map((item) => [item.key, item.value]))
-    const next: Record<string, string> = {}
+    const next: Record<string, string | null> = {}
     for (const [key, value] of Object.entries(drafts)) {
-      if (value === undefined || value === (currentValueByKey.get(key) ?? '')) {
+      if (value === undefined) {
+        continue
+      }
+      if (value === null) {
+        // 只有当前**确实有本层覆盖**时，撤销才是一个真实改动。
+        // 本来就是「本地配置或代码默认」的键，撤销是无操作，不该产生一条空下发。
+        const item = items.find((row) => row.key === key)
+        if (item !== undefined && isRevocableAgentSettingSource(item.source)) {
+          next[key] = null
+        }
+        continue
+      }
+      if (value === (currentValueByKey.get(key) ?? '')) {
         continue
       }
       next[key] = value
@@ -111,27 +175,47 @@ export default function AgentSettingsPage() {
   }, [drafts, items])
   const dirtyCount = Object.keys(dirtyValues).length
 
-  // 白名单取值非法时挡住下发：这是唯一能执行命令的开关，宁可报错也不静默失败
-  const whitelistInvalid = useMemo(
-    () =>
-      Object.entries(dirtyValues).some(
-        ([key, value]) => isHighRiskAgentSettingKey(key) && !validateCommandWhitelist(value),
-      ),
-    [dirtyValues],
-  )
+  // 取值问题就地拦下：白名单按 stringList 口径，其余键拦「清空」（清空不等于撤销，服务端 400）。
+  // 撤销（null）无需校验取值——它不写任何值。
+  const valueIssues = useMemo(() => {
+    const issues: { key: string; issue: CommandWhitelistIssue }[] = []
+    for (const [key, value] of Object.entries(dirtyValues)) {
+      if (value === null) {
+        continue
+      }
+      const item = items.find((row) => row.key === key)
+      const issue = agentSettingValueIssue(item ?? { key }, value)
+      if (issue !== null) {
+        issues.push({ key, issue })
+      }
+    }
+    return issues
+  }, [dirtyValues, items])
+  const firstIssue = valueIssues.at(0)
 
   const mutation = useMutation({
     mutationFn: (body: UpdateAgentSettingsBody) => updateAgentSettings(body),
     onSuccess: async (result) => {
-      setDrafts({})
-      setEditingKey(null)
-      setReason('')
+      const ticket = readAgentSettingsApprovalTicket(result)
       setFormError(null)
-      setSaveResult(
-        isAgentSettingsApprovalTicket(result)
-          ? { kind: 'approval', requestId: result.approvalRequestId }
-          : { kind: 'saved' },
-      )
+      if (ticket === null) {
+        // 200 直执：变更已落库，清空草稿与原因
+        setDrafts({})
+        setEditingKey(null)
+        setReason('')
+        setSaveResult({ kind: 'saved' })
+      } else {
+        const outcome = approvalOutcome(ticket.status)
+        if (outcome === 'pending') {
+          // 已受理、等签发：本次意图已经交出去了，清空草稿
+          setDrafts({})
+          setEditingKey(null)
+          setReason('')
+        }
+        // 票据已终结 / 已执行 / 状态未知：库内没变，**保留草稿与原因**——
+        // 运维要改的往往就是那句话（驳回理由常常指向它），重敲一遍值毫无意义
+        setSaveResult({ kind: 'approval', requestId: ticket.approvalRequestId, status: ticket.status, outcome })
+      }
       await queryClient.invalidateQueries({ queryKey: ['agent-settings', 'values'] })
     },
     onError: (error) => {
@@ -151,8 +235,13 @@ export default function AgentSettingsPage() {
   }
 
   const submit = () => {
-    if (whitelistInvalid) {
-      setFormError(t('system.agentSettings.highRisk.invalidJson'))
+    // 没有二次确认串就不发：空串过去只会换一个 400，且说不清是模板错了还是作用域错了
+    if (scopeLabel === '') {
+      setFormError(t('system.agentSettings.save.scopeUnconfirmed'))
+      return
+    }
+    if (firstIssue !== undefined) {
+      setFormError(t(ISSUE_MESSAGE_KEY[firstIssue.issue]))
       return
     }
     if (dirtyCount === 0) {
@@ -168,10 +257,14 @@ export default function AgentSettingsPage() {
     mutation.mutate({
       namespaceId: activeNamespaceId,
       serverId: serverId === '' ? undefined : serverId,
+      confirmationScope: scopeLabel,
       values: dirtyValues,
       reason: reason.trim(),
     })
   }
+
+  const submitDisabled =
+    mutation.isPending || dirtyCount === 0 || firstIssue !== undefined || scopeLabel === ''
 
   return (
     <section className="grid gap-4">
@@ -242,7 +335,24 @@ export default function AgentSettingsPage() {
                     setFormError(null)
                     setSaveResult(null)
                     setEditingKey(key)
-                    setDrafts((prev) => ({ ...prev, [key]: prev[key] ?? item?.value ?? '' }))
+                    // 编辑一个「已标记撤销」的行 = 放弃撤销、改成写入新值
+                    setDrafts((prev) => {
+                      const next = prev[key]
+                      return { ...prev, [key]: typeof next === 'string' ? next : (item?.value ?? '') }
+                    })
+                  }}
+                  onRevoke={(key) => {
+                    // 标记撤销：提交时传 null，服务端删掉该层的覆盖行
+                    setFormError(null)
+                    setSaveResult(null)
+                    setEditingKey((prev) => (prev === key ? null : prev))
+                    setDrafts((prev) => ({ ...prev, [key]: null }))
+                  }}
+                  onUndoRevoke={(key) => {
+                    // 取消撤销 = 丢弃该行草稿，恢复成未改动
+                    setDrafts((prev) =>
+                      Object.fromEntries(Object.entries(prev).filter(([draftKey]) => draftKey !== key)),
+                    )
                   }}
                   onCancel={(key) => {
                     // 取消 = 丢弃该行草稿：用重建成对过滤实现，避免动态 delete
@@ -279,7 +389,7 @@ export default function AgentSettingsPage() {
                 <Button
                   className="ml-auto"
                   size="sm"
-                  disabled={mutation.isPending || dirtyCount === 0 || whitelistInvalid}
+                  disabled={submitDisabled}
                   onClick={submit}
                 >
                   {mutation.isPending
@@ -287,6 +397,11 @@ export default function AgentSettingsPage() {
                     : t('system.agentSettings.save.submit', { count: dirtyCount })}
                 </Button>
               </div>
+
+              {/* 待下发却有作用域未确认：说明为什么按钮按不下去，而不是让它默默灰着 */}
+              {scopeLabel === '' && dirtyCount > 0 && !valuesQuery.isLoading && (
+                <p className="text-xs text-ink-3">{t('system.agentSettings.save.scopeUnconfirmed')}</p>
+              )}
 
               {formError !== null && (
                 <p role="alert" className="text-xs text-destructive">
@@ -301,7 +416,7 @@ export default function AgentSettingsPage() {
                   {t('system.agentSettings.save.saved')}
                 </p>
               )}
-              {saveResult?.kind === 'approval' && (
+              {saveResult?.kind === 'approval' && saveResult.outcome === 'pending' && (
                 <div
                   role="status"
                   className="flex flex-wrap items-center gap-2 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-ink-2"
@@ -315,6 +430,21 @@ export default function AgentSettingsPage() {
                   </Link>
                 </div>
               )}
+              {saveResult?.kind === 'approval' &&
+                (saveResult.outcome === 'terminal' ||
+                  saveResult.outcome === 'succeeded' ||
+                  saveResult.outcome === 'unknown') && (
+                  <p
+                    role="status"
+                    className="rounded-lg border border-warn-bd bg-warn-bg px-3 py-2 text-sm text-ink-2"
+                  >
+                    {saveResult.outcome === 'terminal' &&
+                      t('system.agentSettings.save.ticketTerminal', { status: saveResult.status })}
+                    {saveResult.outcome === 'succeeded' && t('system.agentSettings.save.ticketSucceeded')}
+                    {saveResult.outcome === 'unknown' &&
+                      t('system.agentSettings.save.ticketUnknown', { status: saveResult.status })}
+                  </p>
+                )}
             </div>
           </div>
         </>
