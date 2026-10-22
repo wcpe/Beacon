@@ -122,6 +122,8 @@ export interface IdentityRow {
   migrationState: string | null
   legacyMigratedAt: string | null
   bindingFingerprint: string | null
+  /** 接入 token 指纹（FR-279）：与真后端同口径——同 namespace 的 token 派生出同一短指纹 */
+  tokenFingerprint: string | null
   statusChangedAt: string
   conflictReason: string | null
   /** conflict 状态时的冲突双方明细（详情端点返回） */
@@ -182,6 +184,8 @@ function makeIdentity(
     legacyMigratedAt: serverId === null ? null : isoOffset(-19 * DAY),
     bindingFingerprint:
       status === 'active' || status === 'disabled' ? `sha256:${uuidFrom(`fingerprint:${identitySeed}`).replaceAll('-', '')}` : null,
+    // token 是 namespace 级凭据：同一 namespace 下所有身份必须得到同一指纹，故以 namespaceId 为种子。
+    tokenFingerprint: uuidFrom(`token-fingerprint:${String(namespaceId)}`).replaceAll('-', '').slice(0, 8),
     statusChangedAt: isoOffset(-6 * HOUR),
     conflictReason: null,
     conflictPeers: null,

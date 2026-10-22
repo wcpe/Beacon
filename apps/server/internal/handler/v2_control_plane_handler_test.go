@@ -432,6 +432,89 @@ func TestFR203AgentIdentityDetailReusesListBindingFacts(t *testing.T) {
 	}
 }
 
+// TestFR279AgentIdentityResponsesCarryTokenFingerprint 校验 FR-279「接入待确认列表含 token 标识」的
+// HTTP 口径：列表与详情都下发 token 指纹（8 位小写 hex），同 token 的身份共享同一指纹，
+// 且任一响应体都不出现 token 明文或完整摘要。
+func TestFR279AgentIdentityResponsesCarryTokenFingerprint(t *testing.T) {
+	_, svc, h := newV2HandlerTestService(t)
+	_, token, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	pendingIDs := []string{"27900000-0000-4000-8000-0000000000a1", "27900000-0000-4000-8000-0000000000a2"}
+	for _, identityID := range pendingIDs {
+		if _, err := svc.RegisterAgentV2(service.AgentRegisterV2Params{
+			Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-" + identityID,
+		}); err != nil {
+			t.Fatalf("注册待确认身份失败: %v", err)
+		}
+	}
+
+	listCode, items := invokeJSONList(h.ListAgentIdentities, http.MethodGet, "/admin/v2/agent-identities?status=pending", nil)
+	if listCode != http.StatusOK || len(items) != len(pendingIDs) {
+		t.Fatalf("待确认列表应返回 %d 条，实际 %d：%v", len(pendingIDs), len(items), items)
+	}
+	var listFingerprint string
+	for _, identityID := range pendingIDs {
+		item := identityListItem(items, identityID)
+		if item == nil {
+			t.Fatalf("列表缺少身份 %s，实际 %v", identityID, items)
+		}
+		fingerprint, ok := item["tokenFingerprint"].(string)
+		if !ok || len(fingerprint) != 8 || strings.ToLower(fingerprint) != fingerprint {
+			t.Fatalf("列表必须给出 8 位小写 hex 的 token 标识，实际 %v", item["tokenFingerprint"])
+		}
+		if listFingerprint == "" {
+			listFingerprint = fingerprint
+		} else if fingerprint != listFingerprint {
+			t.Fatalf("同 token 的身份必须共享标识，实际 %q 与 %q", listFingerprint, fingerprint)
+		}
+	}
+
+	detailCode, detail := invokeJSONWithParam(
+		h.GetAgentIdentity, http.MethodGet, "/admin/v2/agent-identities/"+pendingIDs[0], "", nil, "identityId", pendingIDs[0],
+	)
+	if detailCode != http.StatusOK || detail["tokenFingerprint"] != listFingerprint {
+		t.Fatalf("详情必须复用列表的 token 标识，实际 %d：%v", detailCode, detail)
+	}
+
+	// 反向约束：响应体不得出现 token 明文。
+	for name, recorder := range map[string]*httptest.ResponseRecorder{
+		"列表": rawRecorder(t, h.ListAgentIdentities, http.MethodGet, "/admin/v2/agent-identities?status=pending", nil),
+		"详情": rawRecorderWithParam(t, h.GetAgentIdentity, http.MethodGet, "/admin/v2/agent-identities/"+pendingIDs[0], nil, "identityId", pendingIDs[0]),
+	} {
+		if body := recorder.Body.String(); strings.Contains(body, token) {
+			t.Fatalf("%s响应泄露了 token 明文：%s", name, body)
+		}
+	}
+}
+
+// rawRecorder 原样返回响应体，供「不得出现明文」这类整串断言使用。
+func rawRecorder(t *testing.T, handler http.HandlerFunc, method, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(method, path, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	return rr
+}
+
+// rawRecorderWithParam 在 rawRecorder 基础上注入 chi URL 参数（详情端点按 identityId 取路径参数）。
+func rawRecorderWithParam(t *testing.T, handler http.HandlerFunc, method, path string, body any, key, value string) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(method, path, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, value)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.HumanPrincipal("test-admin")))
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	return rr
+}
+
 func TestV2NamespaceCreateHTTPReturnsOneTimeToken(t *testing.T) {
 	db, _, h := newV2HandlerTestService(t)
 	code, parsed := invokeJSON(h.CreateNamespace, http.MethodPost, "/admin/v2/namespaces", "", map[string]any{

@@ -1314,10 +1314,12 @@ func agentIdentityView(ident *model.AgentIdentity) map[string]any {
 	}
 }
 
-// agentIdentityReadView 补管理面查询契约的迁移状态；绑定指纹仅在详情返回。
+// agentIdentityReadView 补管理面查询契约的迁移状态与 token 标识；绑定指纹仅在详情返回。
 func agentIdentityReadView(ident *service.AgentIdentityReadView) map[string]any {
 	view := agentIdentityView(&ident.Identity)
 	view["migrationState"] = ident.MigrationState
+	// FR-279：「接入待确认列表含 token 标识」——下发由 token 摘要派生的短标识（非明文、不可认证）。
+	view["tokenFingerprint"] = ident.TokenFingerprint
 	return view
 }
 
@@ -1343,11 +1345,12 @@ func agentIdentityDetailView(ident *model.AgentIdentity, prefill *service.Rezone
 	return view
 }
 
-// agentIdentityDetailReadView 在查询基础视图上追加服务端权威绑定指纹。
+// agentIdentityDetailReadView 在查询基础视图上追加服务端权威绑定指纹与接入 token 标识。
 func agentIdentityDetailReadView(ident *service.AgentIdentityReadView, prefill *service.RezonePrefillView) map[string]any {
 	view := agentIdentityDetailView(&ident.Identity, prefill)
 	view["migrationState"] = ident.MigrationState
 	view["bindingFingerprint"] = ident.BindingFingerprint
+	view["tokenFingerprint"] = ident.TokenFingerprint
 	view["address"] = ident.Address
 	view["endpoints"] = ident.Endpoints
 	return view

@@ -14,6 +14,9 @@ export const cluster = {
       approveDesc: 'After approval the identity becomes bound and can be assigned to zones and scheduled.',
       rejectTitle: 'Reject access',
       rejectDesc: 'Rejection voids this registration; the agent must re-apply to connect again.',
+      // FR-279: token identifier on pending rows — short digest-derived fingerprint, never plaintext, not usable for auth
+      tokenFingerprint: 'Token fingerprint {{fingerprint}}',
+      tokenFingerprintMissing: 'Token fingerprint unavailable',
     },
     assets: {
       title: 'Server assets',

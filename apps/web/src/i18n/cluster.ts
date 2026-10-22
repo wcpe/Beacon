@@ -14,6 +14,9 @@ export const cluster = {
       approveDesc: '确认后该身份进入已绑定，可被分配区服与调度。',
       rejectTitle: '拒绝接入',
       rejectDesc: '拒绝后该注册请求作废，agent 需重新申请方可再次接入。',
+      // FR-279：待确认行的 token 标识——由 token 摘要派生的短指纹，不含明文、不能用于认证
+      tokenFingerprint: 'token 指纹 {{fingerprint}}',
+      tokenFingerprintMissing: 'token 指纹未提供',
     },
     assets: {
       title: '服务器资产',

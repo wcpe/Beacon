@@ -2230,6 +2230,22 @@ func agentBindingSnapshot(ident *model.AgentIdentity, namespace string) (*time.T
 	return ident.BoundAt, &fingerprint
 }
 
+// agentTokenFingerprint 由 namespace 接入 token 的摘要派生「token 标识」：取版本前缀载荷二次摘要的
+// 前 8 位小写 hex，供运维分辨「这条待确认请求用的是哪个 token」。
+//
+// 只派生不可逆短标识：既不能反推 token，也不能用于认证；token 明文仍只在创建 / 轮换响应返回一次、
+// 从不落库（v2-zone-authority §3.2）。同一 token 的派生值恒定（sha256 对固定输入确定），
+// 因此同 token 的多次注册指纹一致；token 轮换后该值随之改变——它表达的是「当前 namespace 接入凭据」。
+// 未签发 token 的旧 namespace（摘要为空串）返回 nil，界面据此显示「未提供」而非伪造值。
+func agentTokenFingerprint(accessTokenHash string) *string {
+	if accessTokenHash == "" {
+		return nil
+	}
+	payload := strings.Join([]string{"beacon-token-hint-v1", accessTokenHash}, "\n")
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))[:8]
+	return &fingerprint
+}
+
 // agentBindingFingerprint 使用版本前缀和换行分隔的稳定字段顺序，摘要中绝不包含 token 或密钥。
 func agentBindingFingerprint(identityID, namespace, serverID, kind string, boundAt time.Time) string {
 	payload := strings.Join([]string{
