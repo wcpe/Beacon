@@ -176,9 +176,9 @@ func ReadAgentCredentials(runDir string) (AgentCredentials, error) {
 // AssertCredentialsUsable 断言凭据里 endpoint/token 均为给定值，且不含模板占位符。
 //
 // 这里刻意同时做**解析级**与**字面量级**检查：
-//  - 解析级：字段值必须逐字等于本次 join 传入的地址与令牌（证明是 join 写的）；
-//  - 字面量级：整份凭据不得出现占位符文本——占位符回归的形态正是
-//    「字段有值、值却是 <CONTROL_PLANE_URL>」，只断言「字段非空」会放过它。
+//   - 解析级：字段值必须逐字等于本次 join 传入的地址与令牌（证明是 join 写的）；
+//   - 字面量级：整份凭据不得出现占位符文本——占位符回归的形态正是
+//     「字段有值、值却是 <CONTROL_PLANE_URL>」，只断言「字段非空」会放过它。
 func AssertCredentialsUsable(runDir, wantEndpoint, wantToken string) error {
 	cred, err := ReadAgentCredentials(runDir)
 	if err != nil {
