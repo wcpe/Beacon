@@ -185,7 +185,22 @@ class AgentCredentialsStore(
      * @param legacy 旧 `identity.yml` 的读取结果（可能合法、可能损坏、可能不存在）
      * @return 最终使用的 identityId
      */
-    fun resolveIdentityId(legacy: StoredAgentIdentity): String =
+    fun resolveIdentityId(
+        legacy: StoredAgentIdentity,
+        /**
+         * 来自 config.yml 的接入目标与令牌，仅在「需要新建凭据」时作为种子写入。
+         *
+         * 为什么必须种子化：全新安装若用 config.yml 直接连上，凭据文件只存 identityId 而不存
+         * 地址与令牌，那么一旦 config.yml 被清空或换机复制遗漏，agent 就再也连不回去——
+         * 「重启后不必再配地址」这个承诺是空的。显式传入而不是内部读配置，是为了让 core
+         * 不依赖具体配置实现（壳层才知道 config.yml 长什么样）。
+         *
+         * 已有凭据时不覆盖：内存中的 config.yml 可能刚被改过，但未经 join 确认就改写凭据
+         * 会让「文件里存的是什么」变得不可预期；凭据的写入时机只有 join 与本次新建。
+         */
+        seedEndpoint: String = "",
+        seedToken: String = "",
+    ): String =
         when (val read = loadResult()) {
             // 1) 凭据是单一真源：读到合法身份就直接用，旧 identity.yml 损坏与否都不影响。
             is CredentialsRead.Ok -> read.credentials.identityId
@@ -199,11 +214,12 @@ class AgentCredentialsStore(
             // 4) 两者都没有 → 造新身份并落盘，失败同样不静默。
             is CredentialsRead.Absent ->
                 if (legacy.isValid) {
-                    migrateFromLegacy(legacy)?.identityId ?: legacy.identityId
+                    migrateFromLegacy(legacy, seedEndpoint, seedToken)?.identityId ?: legacy.identityId
                 } else {
                     newIdentityId().also { fresh ->
-                        runCatching { save(AgentCredentials(identityId = fresh, endpoint = "", token = "")) }
-                            .onFailure { warn("生成新身份后写入凭据失败（$file）：${describe(it)}，本次仍用该身份接入") }
+                        runCatching {
+                            save(AgentCredentials(identityId = fresh, endpoint = seedEndpoint, token = seedToken))
+                        }.onFailure { warn("生成新身份后写入凭据失败（$file）：${describe(it)}，本次仍用该身份接入") }
                     }
                 }
         }
@@ -246,7 +262,12 @@ class AgentCredentialsStore(
      *
      * @return 迁移得到的凭据；已有可用凭据、旧文件不合法、或迁移被拒绝时返回 null
      */
-    fun migrateFromLegacy(legacy: StoredAgentIdentity): AgentCredentials? =
+    fun migrateFromLegacy(
+        legacy: StoredAgentIdentity,
+        /** 见 [resolveIdentityId]：迁移时一并落盘的接入目标与令牌，避免凭据只剩身份。 */
+        seedEndpoint: String = "",
+        seedToken: String = "",
+    ): AgentCredentials? =
         writeLock.withLock {
             val read = loadResult()
             when {
@@ -268,7 +289,7 @@ class AgentCredentialsStore(
                             "凭据文件不可读（${read.reason}），已备份为 ${backup.fileName} 后按旧身份迁移；" +
                                 "若原文件里有可用的地址/令牌，可从该备份人工恢复",
                         )
-                        persistMigrated(legacy, file, ::save, warn)
+                        persistMigrated(legacy, file, ::save, warn, seedEndpoint, seedToken)
                     } ?: run {
                         // 备份失败就不再往下走：直接覆盖等于把「人工抢救」的最后一份材料也销毁。
                         error(
@@ -278,7 +299,7 @@ class AgentCredentialsStore(
                         null
                     }
                 // 文件不存在：这是唯一可以放心写入的状态。
-                else -> persistMigrated(legacy, file, ::save, warn)
+                else -> persistMigrated(legacy, file, ::save, warn, seedEndpoint, seedToken)
             }
         }
 
@@ -496,8 +517,13 @@ private fun persistMigrated(
     file: Path,
     persist: (AgentCredentials) -> Unit,
     warn: (String) -> Unit,
+    seedEndpoint: String = "",
+    seedToken: String = "",
 ): AgentCredentials {
-    val migrated = AgentCredentials(identityId = legacy.identityId, endpoint = "", token = "")
+    // 迁移时把 config.yml 里的接入信息一并带上：否则凭据只剩身份，
+    // config.yml 一旦被清空或换机遗漏，agent 就再也连不回去。
+    val migrated =
+        AgentCredentials(identityId = legacy.identityId, endpoint = seedEndpoint, token = seedToken)
     // 迁移没落盘等于没迁移：下次启动会重来，运维也看不到。失败必须显式告知。
     runCatching { persist(migrated) }
         .onFailure { warn("迁移旧身份到凭据失败（$file）：${describe(it)}，下次启动会重试") }

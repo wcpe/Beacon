@@ -446,6 +446,85 @@ class AgentCredentialsStoreTest {
     private fun listNames(dir: Path): List<String> =
         Files.newDirectoryStream(dir).use { entries -> entries.toList() }.map { it.fileName.toString() }
 
+    /**
+     * 全新安装且用 config.yml 直接连上时，凭据必须**一并记住地址与令牌**。
+     *
+     * ## 这条防的是什么（真机实测暴露）
+     *
+     * 早先新建凭据只写 identityId，endpoint / token 留空。看起来「已经接入成功」，
+     * 但那份凭据是残缺的：一旦 config.yml 被清空、被换机复制遗漏，agent 就再也连不回去，
+     * 「重启后不必再配地址」这个承诺直接落空。真机上表现为重启后完全静默、不发起任何注册。
+     *
+     * 故 resolveIdentityId 支持传入种子，并在**新建**凭据时落盘。
+     */
+    @Test
+    fun `新建凭据时把配置里的地址与令牌一并落盘`() {
+        val dir = tempDir()
+        val store = AgentCredentialsStore(dir, TestJsonCodec)
+
+        val identityId =
+            store.resolveIdentityId(
+                StoredAgentIdentity("", null, isValid = false, error = "身份文件不存在"),
+                seedEndpoint = "http://127.0.0.1:50199",
+                seedToken = "bn_seed_token",
+            )
+
+        val saved = store.load()
+        assertNotNull(saved, "新建身份必须落盘凭据")
+        assertEquals(identityId, saved.identityId)
+        assertEquals("http://127.0.0.1:50199", saved.endpoint, "地址必须写入凭据，否则换机后连不回去")
+        assertEquals("bn_seed_token", saved.token, "令牌必须写入凭据")
+        assertTrue(saved.canConnect, "种子化之后凭据本身应已具备直连条件")
+    }
+
+    /** 已有合法凭据时，种子**不得**覆盖文件里既有的接入信息。 */
+    @Test
+    fun `已有凭据时种子不覆盖原有地址与令牌`() {
+        val dir = tempDir()
+        val store = AgentCredentialsStore(dir, TestJsonCodec)
+        val existing =
+            AgentCredentials(
+                identityId = "1f8fad5b-d9cb-469f-a165-70867728950e",
+                endpoint = "https://kept.example.com",
+                token = "bn_kept",
+            )
+        store.save(existing)
+
+        val resolved =
+            store.resolveIdentityId(
+                StoredAgentIdentity("", null, isValid = false, error = "身份文件不存在"),
+                seedEndpoint = "http://new.example.com",
+                seedToken = "bn_new",
+            )
+
+        assertEquals(existing.identityId, resolved, "已有凭据时用凭据里的身份")
+        val kept = store.load()
+        assertNotNull(kept)
+        assertEquals("https://kept.example.com", kept.endpoint, "种子只用于新建，绝不覆盖既有凭据")
+        assertEquals("bn_kept", kept.token)
+    }
+
+    /** 从旧 `identity.yml` 迁移时同样要带上种子，否则迁移出来的凭据仍是残缺的。 */
+    @Test
+    fun `迁移旧身份时也带上配置里的接入信息`() {
+        val dir = tempDir()
+        val store = AgentCredentialsStore(dir, TestJsonCodec)
+        val legacyId = "1f8fad5b-d9cb-469f-a165-70867728950e"
+
+        val resolved =
+            store.resolveIdentityId(
+                StoredAgentIdentity(legacyId, null, isValid = true),
+                seedEndpoint = "http://127.0.0.1:50199",
+                seedToken = "bn_seed_token",
+            )
+
+        assertEquals(legacyId, resolved, "迁移必须搬旧身份，不能换新的")
+        val saved = store.load()
+        assertNotNull(saved)
+        assertEquals("http://127.0.0.1:50199", saved.endpoint, "迁移时同样要记住地址")
+        assertEquals("bn_seed_token", saved.token)
+    }
+
     private companion object {
         const val THREADS = 8
         const val ROUNDS = 10

@@ -209,7 +209,13 @@ object BeaconAgentBungee : Plugin() {
                 return@submitAsync
             }
             // 身份单一真源（FR-276）：凭据 > 旧 identity.yml（迁移一次） > 新生成并落盘。
-            val identityId = credentialsStore.resolveIdentityId(storedIdentity)
+            // 种子化 config.yml 的接入信息，理由同 Bukkit 壳：否则凭据只剩身份，换机或清空配置后连不回去。
+            val identityId =
+                credentialsStore.resolveIdentityId(
+                    storedIdentity,
+                    seedEndpoint = activeSettings.endpoints.firstOrNull().orEmpty(),
+                    seedToken = activeSettings.bootstrapToken,
+                )
             // 把 identity.yml 对齐成权威身份：两份文件从此永远指向同一个 ID，
             // 历史上残留的休眠 UUID 就地纠正，迁移路径再也不会把它复活（取舍见 alignTo 注释）。
             identityStore.alignTo(identityId)

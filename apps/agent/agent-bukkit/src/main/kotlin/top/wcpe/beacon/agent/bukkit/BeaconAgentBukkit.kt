@@ -193,7 +193,7 @@ object BeaconAgentBukkit : Plugin() {
         val maxPlayers = readMaxPlayers()
         submitAsync {
             // 身份单一真源（FR-276）：凭据 > 旧 identity.yml（迁移一次） > 新生成并落盘。
-            val identity = resolveIdentity(credentialsStore, endpointReport, maxPlayers) ?: return@submitAsync
+            val identity = resolveIdentity(credentialsStore, activeSettings, endpointReport, maxPlayers) ?: return@submitAsync
 
             // 合并凭据后的生效设置：地址/令牌可能来自 agent-credentials.json。
             val active = activeSettings
@@ -262,6 +262,7 @@ object BeaconAgentBukkit : Plugin() {
      */
     private fun resolveIdentity(
         credentialsStore: AgentCredentialsStore,
+        settings: AgentSettings,
         endpointReport: EndpointReport,
         capacity: Int,
     ): AgentIdentity? {
@@ -277,7 +278,16 @@ object BeaconAgentBukkit : Plugin() {
             return null
         }
         // 凭据 > 旧 identity.yml（迁移一次） > 新生成并落盘。
-        val identityId = credentialsStore.resolveIdentityId(storedIdentity)
+        //
+        // 把 config.yml 里的接入目标与令牌作为种子传进去：新建/迁移凭据时一并落盘，
+        // 否则凭据只剩身份，config.yml 一旦被清空或换机遗漏就再也连不回去
+        // （「重启后不必再配地址」这个承诺会落空）。
+        val identityId =
+            credentialsStore.resolveIdentityId(
+                storedIdentity,
+                seedEndpoint = settings.endpoints.firstOrNull().orEmpty(),
+                seedToken = settings.bootstrapToken,
+            )
         // 把 identity.yml 对齐成权威身份：两份文件从此永远指向同一个 ID，
         // 历史上残留的休眠 UUID 就地纠正，迁移路径再也不会把它复活（取舍见 alignTo 注释）。
         identityStore.alignTo(identityId)
