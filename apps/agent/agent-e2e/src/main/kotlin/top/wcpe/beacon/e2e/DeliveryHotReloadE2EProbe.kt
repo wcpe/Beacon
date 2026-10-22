@@ -39,11 +39,34 @@ object DeliveryHotReloadE2EProbe {
     const val NULL_PATH = "plugins/BeaconE2E/delivery-reload-null.yml"
     const val LEGACY_PATH = "plugins/BeaconE2E/delivery-reload-legacy.yml"
 
+    /**
+     * FR-278「重载超时热生效」计时路径（两条，用于同一运行时下做 A/B 观测）。
+     *
+     * ## 为什么需要专门的路径
+     *
+     * 超时值本身不对外暴露，唯一能证明「运行时真的按新值工作」的事实是**它何时打断插件**。
+     * 故这两条路径的回调会睡满 [TIMED_SLEEP_MS]（远超任何被测超时），并记录：
+     *  - `elapsed`：从进入回调到离开（被中断或睡满）的毫秒数；
+     *  - `interrupted`：是否被中断——为 true 即「派发器按超时预算把它掐了」。
+     *
+     * 于是 `elapsed` 就是**生效中的超时预算的实测值**：下发 2000 应量到 ~2000，
+     * 再下发 12000 应量到 ~12000。若热生效没接线，第二次仍会量到 ~2000 之类，
+     * 断言据此落地——这是「运行时行为」而非「缓存文件里有没有这个值」。
+     */
+    const val TIMED_A_PATH = "plugins/BeaconE2E/delivery-reload-timed-a.yml"
+    const val TIMED_B_PATH = "plugins/BeaconE2E/delivery-reload-timed-b.yml"
+
     /** 兼容既有 hot_reload 用例（FR-171）沿用的两个路径名。 */
     const val SUCCESS_PATH = OK_PATH
     const val FAILURE_PATH = FAIL_PATH
 
     const val OBSERVATION_FILE = "e2e-delivery-hot-reload.log"
+
+    /**
+     * FR-278 计时观测的来源标记：外部驱动据此筛出「超时预算实测」行，
+     * 并从明细里解析 elapsed / interrupted 两个字段。
+     */
+    const val TIMED_SOURCE = "RELOAD_TIMED"
 
     private const val INITIAL_CONTENT = "marker: original\n"
     private const val POLL_INTERVAL_TICKS = 20L
@@ -52,8 +75,35 @@ object DeliveryHotReloadE2EProbe {
     /** 睡眠时长：需明显超过 agent 侧 `delivery.config-reload-timeout-ms`（真机取 3000ms）。 */
     private const val HANG_MS = 60_000L
 
+    /**
+     * 计时路径的睡眠时长：同样须明显超过被测超时（本用例会下发 2000 / 12000）。
+     *
+     * 取 60s 而不是「刚好超一点」：睡满说明**超时没有生效**（未被中断），
+     * 那本身就是一条要暴露的失败形态，不该被「睡够了就返回」掩盖。
+     */
+    private const val TIMED_SLEEP_MS = 60_000L
+
     private val WATCHED =
-        listOf(OK_PATH, FAIL_PATH, THROW_PATH, ERROR_PATH, HANG_PATH, NULL_PATH, LEGACY_PATH)
+        listOf(OK_PATH, FAIL_PATH, THROW_PATH, ERROR_PATH, HANG_PATH, NULL_PATH, LEGACY_PATH, TIMED_A_PATH, TIMED_B_PATH)
+
+    /**
+     * 计时路径的「裸 dataId」别名（FR-278）。
+     *
+     * ## 为什么需要别名
+     *
+     * 变更集里的标识有两套词表，取决于哪条链路触发：
+     *  - 交付 / 文件树链路：`plugins/BeaconE2E/xxx.yml`（相对服务器根的路径）；
+     *  - **V1 配置中心链路**：控制面里配置项的 dataId（`xxx.yml`，不含目录）。
+     * FR-278 只想验证「下发新超时值 → 运行时按新值工作」，走轻量的 V1 配置中心即可，
+     * 不必造一张交付单。故这里为计时路径额外接受裸 dataId。
+     *
+     * 只对这两条新路径开别名，既有路径的匹配语义保持不变（否则会悄悄改变既有用例的口径）。
+     */
+    private val TIMED_DATA_IDS =
+        mapOf(
+            "delivery-reload-timed-a.yml" to TIMED_A_PATH,
+            "delivery-reload-timed-b.yml" to TIMED_B_PATH,
+        )
 
     @Volatile
     private var reportingHandle: ListenerHandle? = null
@@ -134,9 +184,7 @@ object DeliveryHotReloadE2EProbe {
         changed: Set<String>,
         newMd5: String,
     ): ConfigReloadResult {
-        val path =
-            WATCHED.firstOrNull { it != LEGACY_PATH && it != NULL_PATH && changed.contains(it) }
-                ?: return ConfigReloadResult.ok().withAppliedMd5(newMd5)
+        val path = resolveWatched(changed) ?: return ConfigReloadResult.ok().withAppliedMd5(newMd5)
         val target = target(path)
         val raw = if (target.exists()) target.readText(Charsets.UTF_8) else "（目标文件不存在）"
         val md5 = if (target.exists()) E2EObservation.md5Hex(target.readBytes()) else newMd5
@@ -173,8 +221,33 @@ object DeliveryHotReloadE2EProbe {
                 // LegacyNullResultProbe 承担（见 apps/agent/agent-e2e/src/main/java）。
                 ConfigReloadResult.ok().withAppliedMd5(newMd5)
             }
+            // FR-278：计时路径——睡满并记录「实际被掐断的时刻」，即以毫秒量出生效中的超时预算。
+            TIMED_A_PATH, TIMED_B_PATH -> {
+                val (elapsed, interrupted) = sleepMeasuring(TIMED_SLEEP_MS)
+                E2EObservation.append(
+                    observation,
+                    TIMED_SOURCE,
+                    path,
+                    md5,
+                    "elapsed=${elapsed}ms interrupted=$interrupted",
+                )
+                ConfigReloadResult.ok().withAppliedMd5(newMd5)
+            }
             else -> ConfigReloadResult.ok().withAppliedMd5(newMd5)
         }
+    }
+
+    /**
+     * 从本次变更集里解析出**本探针要按哪条受控路径响应**；无命中返回 null。
+     *
+     * 先按完整路径匹配（交付 / 文件树链路的词表、也是既有用例的口径），
+     * 再回落到计时路径的裸 dataId 别名（V1 配置中心链路）。
+     * 排除 LEGACY_PATH / NULL_PATH：它们由各自的专用监听处理，不得影响上报式结果。
+     */
+    private fun resolveWatched(changed: Set<String>): String? {
+        WATCHED.firstOrNull { it != LEGACY_PATH && it != NULL_PATH && changed.contains(it) }
+            ?.let { return it }
+        return TIMED_DATA_IDS.entries.firstOrNull { changed.contains(it.key) }?.value
     }
 
     /** 遗留 void 回调（老插件路径，A9）：只留证，不返回结果。 */
@@ -197,6 +270,35 @@ object DeliveryHotReloadE2EProbe {
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
         }
+    }
+
+    /**
+     * 睡 [ms] 毫秒，并**量出实际睡了多久、是否被中断**（FR-278 运行时生效的直接证据）。
+     *
+     * 派发器判超时时会 `future.cancel(true)` 打断执行线程（见 `ReloadOutcomeCollector.onTimeout`），
+     * 于是这里的 [Thread.sleep] 抛 InterruptedException —— 抛出的时刻即「超时预算到期的时刻」。
+     * 因此 elapsed 就是把生效中的超时值**量出来**：这是运行时行为，不是读配置缓存。
+     *
+     * 与 [sleepQuietly] 刻意分开：那个服务于 HANG 分支，只需「卡住」、不需要测量，
+     * 混在一起会让 HANG 的语义（睡满 60s 后正常返回）被测量逻辑改变。
+     *
+     * **不重新设置中断标志**：本线程（线程池中的 reload 线程）随后要回到池里继续服务，
+     * 带着中断标志返回会让下一轮 reload 一进入就抛 InterruptedException（假超时）。
+     * 中断在此处已消费完毕、语义已记入观测，故吞掉是正确处置。
+     *
+     * @return (实际耗时毫秒, 是否被中断)
+     */
+    private fun sleepMeasuring(ms: Long): Pair<Long, Boolean> {
+        val startedAt = System.nanoTime()
+        val interrupted =
+            try {
+                Thread.sleep(ms)
+                false
+            } catch (_: InterruptedException) {
+                true
+            }
+        val elapsed = (System.nanoTime() - startedAt) / 1_000_000
+        return elapsed to interrupted
     }
 
     /** 仅当文件不存在时种原始内容，避免覆盖 Agent 已落盘事实。 */

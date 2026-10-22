@@ -91,6 +91,10 @@ object BeaconE2EBukkit : Plugin() {
 
         // 启动门面连通性探针（connected/effectiveMd5/awaitRegistered 这三个此前零覆盖的入口）。
         FacadeConnectivityE2EProbe.start()
+
+        // 启动 FR-276 join 代执行探针：外部驱动投递请求文件，本探针在主线程经控制台派发
+        // /beacon join <地址> <令牌>（Go 侧无 stdin/RCON 通道，见该探针注释）。
+        JoinE2EProbe.start()
     }
 
     @Awake(LifeCycle.DISABLE)

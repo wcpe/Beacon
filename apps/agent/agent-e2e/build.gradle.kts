@@ -128,6 +128,9 @@ mcTestkit {
         optionalEnvironment("BEACON_E2E_PREFIX_LIST")?.let { env("BEACON_E2E_PREFIX_LIST", it) }
         // 门面连通性探针（connected / effectiveMd5 / awaitRegistered）。
         optionalEnvironment("BEACON_E2E_FACADE")?.let { env("BEACON_E2E_FACADE", it) }
+        // FR-276 join 代执行探针：外部驱动投递请求文件，探针在主线程经控制台派发 /beacon join。
+        // 必须显式门控：该探针具备「派发控制台命令」的能力，不经开关不得上线。
+        optionalEnvironment("BEACON_E2E_JOIN")?.let { env("BEACON_E2E_JOIN", it) }
     }
     proxy("bungee") {
         platform = bungeecord

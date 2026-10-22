@@ -216,6 +216,15 @@ func TestAgentApiRemainingSurfaceE2E(t *testing.T) {
 		assertAgentConfigPush(t, repoRoot, base, adminToken, ns.ID, paper)
 	})
 
+	// ---- 相位：重载超时热生效（FR-278 运行时行为）----
+	//
+	// 必须紧接「下发配置闭环」：那里刚把超时设为 45000，本相位据此把 45000 当作「旧值」基线，
+	// 再下发 2000 / 12000 各量一次实测打断时刻——若热生效没接线，实测会停在 45000 附近。
+	// 同样必须在拓扑相位之前（换区会打断在线身份）。
+	t.Run("重载超时热生效", func(t *testing.T) {
+		assertReloadTimeoutHotEffect(t, repoRoot, base, adminToken, ns.ID, paper)
+	})
+
 	// ---- 相位 8：拓扑订阅 ----
 	//
 	// **必须放最后**：换区是两阶段操作，第一步会解绑该服的全部归属（ZoneID 置空）并把身份
