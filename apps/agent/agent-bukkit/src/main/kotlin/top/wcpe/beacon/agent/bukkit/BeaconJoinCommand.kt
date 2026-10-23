@@ -5,6 +5,7 @@ import taboolib.common.platform.command.command
 import top.wcpe.beacon.agent.core.client.sendMessage
 import top.wcpe.beacon.agent.core.identity.AgentCredentials
 import top.wcpe.beacon.agent.core.identity.AgentCredentialsStore
+import top.wcpe.beacon.agent.core.identity.JoinDecision
 
 /**
  * `/beacon join <控制面地址> <令牌>`：零配置接入的入口（FR-276）。
@@ -76,25 +77,36 @@ object BeaconJoinCommand {
         onJoined: () -> Unit,
         logger: JoinLogger,
     ) {
-        val existing = credentials.load()
-        // 已绑定的实例不允许用 join 改指向：那会让控制面上一台服对应两个身份，
-        // 或把已生效的归属悄悄换掉。要换控制面请显式关掉插件后手工处理。
-        if (existing?.binding != null) {
-            sender.sendMessage(
-                "本机已绑定到 ${existing.binding!!.namespace}/${existing.binding!!.serverId}，" +
-                    "不通过 join 改指向。如需换控制面，请先停用插件并联系管理员解绑。",
-            )
-            return
+        // 决策（含「已绑定即拒绝」）收敛在 core 的 JoinDecision 里，与 Bungee 端共用同一份实现。
+        // 若只在这里内联判断，该分支永远测不到（private 方法 + TabooLib 的 sender 参数）。
+        when (val decision = JoinDecision.decide(credentials.load(), listOf(request.endpoint, request.token)) {
+                credentials.newIdentityId()
+            }) {
+            is JoinDecision.AlreadyBound -> {
+                sender.sendMessage(JoinDecision.alreadyBoundMessage(decision.namespace, decision.serverId))
+                return
+            }
+            is JoinDecision.MissingArgs -> {
+                sender.sendMessage(JoinDecision.USAGE)
+                return
+            }
+            is JoinDecision.InvalidEndpoint -> {
+                sender.sendMessage(JoinDecision.invalidEndpointMessage())
+                return
+            }
+            is JoinDecision.Proceed -> persistAndConnect(sender, credentials, decision, onJoined, logger)
         }
-        val identityId = existing?.identityId?.takeIf { it.isNotBlank() } ?: credentials.newIdentityId()
-        // 保留已有绑定（此处必为 null，但显式带上避免将来改逻辑时丢字段）。
-        val saved =
-            AgentCredentials(
-                identityId = identityId,
-                endpoint = request.endpoint,
-                token = request.token,
-                binding = existing?.binding,
-            )
+    }
+
+    /** 落盘并触发装配（决策已通过，此处只做副作用）。 */
+    private fun persistAndConnect(
+        sender: ProxyCommandSender,
+        credentials: AgentCredentialsStore,
+        decision: JoinDecision.Proceed,
+        onJoined: () -> Unit,
+        logger: JoinLogger,
+    ) {
+        val saved = decision.credentials
         runCatching { credentials.save(saved) }
             .onFailure { e ->
                 // 写盘失败必须让人看见：不写盘的 join 等于什么都没做，却容易被误认为成功。
@@ -105,7 +117,7 @@ object BeaconJoinCommand {
             }
         val where = credentials.filePath().toString()
         logger.info("已保存接入凭据：$where")
-        sender.sendMessage("已保存接入凭据，正在连接 ${request.endpoint} …")
+        sender.sendMessage("已保存接入凭据，正在连接 ${saved.endpoint} …")
         sender.sendMessage("若控制面要求审批，请联系管理员在 Beacon 后台确认。")
         // 触发装配（可重入）：凭据已落盘，装配流程会读到它。
         runCatching { onJoined() }.onFailure { e ->
@@ -116,10 +128,9 @@ object BeaconJoinCommand {
     }
 
     /** 粗校验地址形态：必须是 http(s):// 开头。不追求完整 URL 校验（避免误拒内网写法）。 */
-    private fun looksLikeEndpoint(raw: String): Boolean =
-        raw.startsWith("http://", ignoreCase = true) || raw.startsWith("https://", ignoreCase = true)
+    private fun looksLikeEndpoint(raw: String): Boolean = JoinDecision.looksLikeEndpoint(raw)
 
-    private const val USAGE = "用法：/beacon join <控制面地址> <令牌>（例：/beacon join http://127.0.0.1:20020 bn_xxxxxxxx）"
+    private const val USAGE = JoinDecision.USAGE
 
     private val WHITESPACE = Regex("\\s+")
 
