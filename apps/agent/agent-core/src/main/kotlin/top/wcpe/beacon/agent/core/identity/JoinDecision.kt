@@ -53,32 +53,33 @@ sealed interface JoinDecision {
             existing: AgentCredentials?,
             args: List<String>,
             newIdentityId: () -> String,
-        ): JoinDecision {
-            if (args.size < REQUIRED_ARG_COUNT) return MissingArgs
+        ): JoinDecision =
+            // 按「参数 → 归属 → 地址」三段依次判定，收敛成一个表达式而不是多出口 return：
+            // 判定顺序本身就是语义（见下），写成单表达式能一眼看出优先级不会被中途插入的分支打乱。
+            when {
+                args.size < REQUIRED_ARG_COUNT -> MissingArgs
 
-            // 已绑定即拒绝，且**先于地址校验**。
-            //
-            // 顺序是有意的：已绑定的机器上执行 join 本身就是误操作，此时若先报「地址格式不对」，
-            // 运维会以为改对地址就能重接，改完再撞一次墙才看到真实原因。先报归属能让人一步到位
-            // 去解绑，而不是在地址上白折腾一轮。
-            val binding = existing?.binding
-            if (binding != null) return AlreadyBound(binding.namespace, binding.serverId)
+                // 已绑定即拒绝，且**先于地址校验**。
+                //
+                // 顺序是有意的：已绑定的机器上执行 join 本身就是误操作，此时若先报「地址格式不对」，
+                // 运维会以为改对地址就能重接，改完再撞一次墙才看到真实原因。先报归属能让人一步到位
+                // 去解绑，而不是在地址上白折腾一轮。
+                existing?.binding != null ->
+                    AlreadyBound(existing.binding!!.namespace, existing.binding!!.serverId)
 
-            val endpoint = args[0]
-            if (!looksLikeEndpoint(endpoint)) return InvalidEndpoint(endpoint)
+                !looksLikeEndpoint(args[0]) -> InvalidEndpoint(args[0])
 
-            val token = args[1]
-            val identityId = existing?.identityId?.takeIf { it.isNotBlank() } ?: newIdentityId()
-            return Proceed(
-                AgentCredentials(
-                    identityId = identityId,
-                    endpoint = endpoint,
-                    token = token,
-                    // 走到这里 binding 必为 null；显式带上是为了将来加分支时不丢字段。
-                    binding = null,
-                ),
-            )
-        }
+                else ->
+                    Proceed(
+                        AgentCredentials(
+                            identityId = existing?.identityId?.takeIf { it.isNotBlank() } ?: newIdentityId(),
+                            endpoint = args[0],
+                            token = args[1],
+                            // 走到这里 binding 必为 null；显式带上是为了将来加分支时不丢字段。
+                            binding = null,
+                        ),
+                    )
+            }
 
         /** 粗校验地址形态：必须是 http(s):// 开头。不追求完整 URL 校验（避免误拒内网写法）。 */
         fun looksLikeEndpoint(raw: String): Boolean =
@@ -88,11 +89,12 @@ sealed interface JoinDecision {
         const val USAGE = "用法：/beacon join <控制面地址> <令牌>（例：/beacon join http://127.0.0.1:20020 bn_xxxxxxxx）"
 
         /** 已绑定时的拒绝文案。 */
-        fun alreadyBoundMessage(namespace: String, serverId: String): String =
-            "本机已绑定到 $namespace/$serverId，不通过 join 改指向。如需换控制面，请先停用插件并联系管理员解绑。"
+        fun alreadyBoundMessage(
+            namespace: String,
+            serverId: String,
+        ): String = "本机已绑定到 $namespace/$serverId，不通过 join 改指向。如需换控制面，请先停用插件并联系管理员解绑。"
 
         /** 地址格式错误的提示文案。 */
-        fun invalidEndpointMessage(): String =
-            "地址格式不对：应形如 http://127.0.0.1:20020 或 https://beacon.example.com"
+        fun invalidEndpointMessage(): String = "地址格式不对：应形如 http://127.0.0.1:20020 或 https://beacon.example.com"
     }
 }

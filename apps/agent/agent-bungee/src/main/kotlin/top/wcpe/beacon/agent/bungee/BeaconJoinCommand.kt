@@ -3,7 +3,6 @@ package top.wcpe.beacon.agent.bungee
 import taboolib.common.platform.ProxyCommandSender
 import taboolib.common.platform.command.command
 import top.wcpe.beacon.agent.core.client.sendMessage
-import top.wcpe.beacon.agent.core.identity.AgentCredentials
 import top.wcpe.beacon.agent.core.identity.AgentCredentialsStore
 import top.wcpe.beacon.agent.core.identity.JoinDecision
 
@@ -77,24 +76,24 @@ object BeaconJoinCommand {
         onJoined: () -> Unit,
         logger: JoinLogger,
     ) {
-        // 决策（含「已绑定即拒绝」）收敛在 core 的 JoinDecision 里，与 Bungee 端共用同一份实现。
+        // 决策（含「已绑定即拒绝」）收敛在 core 的 JoinDecision 里，与 Bukkit 端共用同一份实现。
         // 若只在这里内联判断，该分支永远测不到（private 方法 + TabooLib 的 sender 参数）。
-        when (val decision = JoinDecision.decide(credentials.load(), listOf(request.endpoint, request.token)) {
+        val decision =
+            JoinDecision.decide(credentials.load(), listOf(request.endpoint, request.token)) {
                 credentials.newIdentityId()
-            }) {
-            is JoinDecision.AlreadyBound -> {
-                sender.sendMessage(JoinDecision.alreadyBoundMessage(decision.namespace, decision.serverId))
-                return
             }
-            is JoinDecision.MissingArgs -> {
-                sender.sendMessage(JoinDecision.USAGE)
-                return
+        // 拒绝分支统一收敛成「给用户看的一句话」，避免每个分支各写一个 return。
+        val rejection =
+            when (decision) {
+                is JoinDecision.AlreadyBound -> JoinDecision.alreadyBoundMessage(decision.namespace, decision.serverId)
+                is JoinDecision.MissingArgs -> JoinDecision.USAGE
+                is JoinDecision.InvalidEndpoint -> JoinDecision.invalidEndpointMessage()
+                is JoinDecision.Proceed -> null
             }
-            is JoinDecision.InvalidEndpoint -> {
-                sender.sendMessage(JoinDecision.invalidEndpointMessage())
-                return
-            }
-            is JoinDecision.Proceed -> persistAndConnect(sender, credentials, decision, onJoined, logger)
+        if (rejection != null) {
+            sender.sendMessage(rejection)
+        } else if (decision is JoinDecision.Proceed) {
+            persistAndConnect(sender, credentials, decision, onJoined, logger)
         }
     }
 
