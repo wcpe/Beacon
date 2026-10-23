@@ -7,9 +7,11 @@ import taboolib.common.env.RuntimeDependency
 import taboolib.common.platform.Awake
 import taboolib.common.platform.Plugin
 import taboolib.common.platform.function.getDataFolder
+import taboolib.common.platform.function.info
 import taboolib.common.platform.function.pluginVersion
 import taboolib.common.platform.function.severe
 import taboolib.common.platform.function.submitAsync
+import taboolib.common.platform.function.warning
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
 import top.wcpe.beacon.agent.adapters.HttpRosterDirectory
@@ -34,11 +36,13 @@ import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.connection.ConnectionEventBuffer
 import top.wcpe.beacon.agent.core.connection.ConnectionReportCoordinator
 import top.wcpe.beacon.agent.core.connection.ProxyConnectionTracker
+import top.wcpe.beacon.agent.core.identity.AgentCredentialsStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.identity.EndpointReport
 import top.wcpe.beacon.agent.core.identity.IdentityBindingSnapshotStore
 import top.wcpe.beacon.agent.core.identity.ProxyListenerEndpoint
+import top.wcpe.beacon.agent.core.identity.toCredentialsBinding
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.lifecycle.BootstrapRuntime
 import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
@@ -48,7 +52,9 @@ import top.wcpe.beacon.agent.core.proxy.InitialLobbyRouter
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.AgentSettings
+import top.wcpe.beacon.agent.core.settings.EffectiveSettingsResolver
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
+import top.wcpe.beacon.agent.core.settings.PushedConfigStore
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -97,7 +103,40 @@ object BeaconAgentBungee : Plugin() {
     @Config("config.yml")
     lateinit var config: Configuration
 
-    /** 当前生命周期；null 表示因身份缺失未启动。 */
+    /** JSON 编解码（无状态，凭据与下发缓存共用）。 */
+    private val jsonCodec = KotlinxJsonCodec()
+
+    /** 身份凭据存储（FR-276）：join 命令与启动流程共用同一实例。 */
+    private var credentials: AgentCredentialsStore? = null
+
+    /** 合并凭据后的生效设置。 */
+    private var effectiveSettings: AgentSettings? = null
+
+    /**
+     * 生效设置解析器（三层优先级 + 凭据合并）。
+     *
+     * 惰性创建：`config` 在 ENABLE 阶段才注入，构造期取不到。
+     * 凭据存储复用 `credentials`，**不另建实例**：join 命令持有的是 enable 里那个实例，
+     * 若这里再造一个，两边的写锁互相不可见，读-改-写会交错丢字段（绑定或令牌被覆盖）。
+     */
+    private val settingsResolver: EffectiveSettingsResolver by lazy {
+        EffectiveSettingsResolver(
+            localReader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv),
+            pushedStore = PushedConfigStore(getDataFolder().toPath(), jsonCodec),
+            credentialsStore =
+                credentials
+                    ?: AgentCredentialsStore(
+                        getDataFolder().toPath(),
+                        jsonCodec,
+                        warn = ::warning,
+                        error = { severe(it) },
+                    ).also { credentials = it },
+            warn = ::warning,
+            info = ::info,
+        )
+    }
+
+    /** 当前生命周期；null 表示尚未接入或已停止。 */
     private var lifecycle: AgentLifecycle? = null
 
     /** pending 阶段唯一运行的最小身份引导器。 */
@@ -128,11 +167,27 @@ object BeaconAgentBungee : Plugin() {
     @Volatile
     private var legacyProxyWarningLogged = false
 
-    @Awake(LifeCycle.ENABLE)
-    fun enable() {
-        // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
-        val reader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
-        val settings = AgentBootstrap.readSettings(reader)
+    /**
+     * 可重入的装配动作（join 成功后需再执行一次）。
+     *
+     * 用 lambda 字段而不是私有函数：本对象已贴 detekt 的 TooManyFunctions 阈值，
+     * 再加一个函数就超限；而这段逻辑只需要「能被 enable 与 join 各触发一次」。
+     */
+    private val doAssemble: () -> Unit = {
+        bootstrapRuntime?.shutdown()
+        bootstrapRuntime = null
+        // 每次重入都重读配置：join 刚写过凭据，必须拿到最新的地址与令牌。
+        val activeSettings = settingsResolver.resolve()
+        effectiveSettings = activeSettings
+        // 复用 enable 阶段建好的同一实例：join、设置解析、身份解析与绑定落盘必须读写同一个文件。
+        val credentialsStore =
+            credentials
+                ?: AgentCredentialsStore(
+                    getDataFolder().toPath(),
+                    jsonCodec,
+                    warn = ::warning,
+                    error = { severe(it) },
+                ).also { credentials = it }
         val endpointReport =
             EndpointReport(
                 proxyListeners =
@@ -142,47 +197,86 @@ object BeaconAgentBungee : Plugin() {
                     },
             )
         submitAsync {
-            val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
+            val identityStore = AgentIdentityStore(getDataFolder().toPath())
+            // 只读不新建：旧实现走 loadOrCreate()，文件缺失时会落盘一个从未在控制面注册过的新 UUID。
+            // 凭据才是身份真源，那个 UUID 只会在凭据变得不可读时被迁移「复活」成一台新服务器。
+            val storedIdentity = identityStore.loadExisting()
+            // 只有「文件存在但读不懂」才是真损坏，须 fail-fast 让人看见。
+            // 「文件不存在」是全新安装的正常态：此时凭据可能也还没有（等 join），
+            // 若也按损坏处理，就会把「还没接入」误报成「身份坏了」并把零配置接入直接堵死。
+            if (storedIdentity.fileExists && !storedIdentity.isValid) {
+                severe("身份文件损坏：${storedIdentity.error}，Beacon agent 不接入控制面")
+                return@submitAsync
+            }
+            // 身份单一真源（FR-276）：凭据 > 旧 identity.yml（迁移一次） > 新生成并落盘。
+            // 种子化 config.yml 的接入信息，理由同 Bukkit 壳：否则凭据只剩身份，换机或清空配置后连不回去。
+            // 种子必须先滤掉模板占位符（同 Bukkit 壳）：否则占位符进凭据后清空 config.yml 也救不回来。
+            val (seedEndpoint, seedToken) =
+                EffectiveSettingsResolver.connectionSeed(activeSettings.endpoints, activeSettings.bootstrapToken)
+            val identityId =
+                credentialsStore.resolveIdentityId(
+                    storedIdentity,
+                    seedEndpoint = seedEndpoint,
+                    seedToken = seedToken,
+                )
+            // 把 identity.yml 对齐成权威身份：两份文件从此永远指向同一个 ID，
+            // 历史上残留的休眠 UUID 就地纠正，迁移路径再也不会把它复活（取舍见 alignTo 注释）。
+            identityStore.alignTo(identityId)
             // 服务器工作目录（FR-226）：agent dataFolder 的父（plugins）的父 = 代理根。
             val serverWorkDir = getDataFolder().absoluteFile.parentFile?.parentFile?.absolutePath.orEmpty()
             // 角色按壳固定为 bungee；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
             val identity =
                 AgentBootstrap.readIdentity(role = "bungee", agentVersion = pluginVersion, serverWorkDir = serverWorkDir)
-                    .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString(), endpointReport = endpointReport)
+                    .copy(identityId = identityId, bootId = UUID.randomUUID().toString(), endpointReport = endpointReport)
 
             confirmedBinding?.takeIf { it.namespace.isNotBlank() && it.serverId.isNotBlank() }?.let {
                 identity.bind(it.namespace, it.serverId)
             }
 
-            // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断代理，仅 agent 不接入）。
-            var canConnect = true
-            if (!storedIdentity.isValid) {
-                severe("身份文件损坏：${storedIdentity.error}，Beacon agent 不接入控制面")
-                canConnect = false
-            }
-            if (canConnect && (settings.endpoints.isEmpty() || settings.bootstrapToken.isBlank())) {
-                severe("配置缺失：beacon.endpoints 与 beacon.bootstrap-token 必填，Beacon agent 不接入控制面")
-                canConnect = false
-            }
-            if (!canConnect) {
+            // 未接入 ≠ 配置错误（FR-276）：未 join 时静静等待，不刷 ERROR。
+            if (!settingsResolver.hasConnectionConfig(activeSettings)) {
                 return@submitAsync
             }
 
             // 装配：先建 store + view，再用 view 构 adapter（adapter 在变更时回调 view 派发 API 监听器）。
             val store = EffectiveConfigStore()
-            val view = EffectiveConfigView(store)
+            val view =
+                EffectiveConfigView(store, activeSettings.configReloadTimeoutMs, reloadPoolSize = activeSettings.configReloadPoolSize)
             val adapter = BungeePlatformAdapter(view)
-            warnLegacyProxySettings(adapter, settings)
+            warnLegacyProxySettings(adapter, activeSettings)
             val codec = KotlinxJsonCodec()
             val bindingSnapshot = IdentityBindingSnapshotStore(File(getDataFolder(), "identity-binding.snapshot.json"), codec)
             if (confirmedBinding == null) {
-                startBootstrap(identity, settings, adapter, codec, bindingSnapshot)
+                startBootstrap(identity, activeSettings, adapter, codec, bindingSnapshot)
                 return@submitAsync
             }
             // 装配一次稳定依赖组，供 active 阶段各私有方法复用，避免长参数列表。
-            val deps = BungeeRuntimeDeps(settings, adapter, codec, store, view, bindingSnapshot)
+            val deps = BungeeRuntimeDeps(activeSettings, adapter, codec, store, view, bindingSnapshot)
             startActiveRuntime(identity, deps)
         }
+    }
+
+    @Awake(LifeCycle.ENABLE)
+    fun enable() {
+        // 身份凭据存储（FR-276）：地址 + 令牌，与 config.yml 分文件保存。
+        // 这里只建实例不读值——真正的读取在 startBootstrap() 里，因为 join 之后要重读。
+        val credentialsStore =
+            AgentCredentialsStore(
+                getDataFolder().toPath(),
+                jsonCodec,
+                // 告警出口必须在这里接上：Windows 上「创建即 0600」必然走降级分支，
+                // 不接线的话运维看不到任何提示（护栏「任何降级都要显式呈现」）。
+                warn = ::warning,
+                error = { severe(it) },
+            )
+        credentials = credentialsStore
+        // 命令注册提到接入之前（FR-276）：/beacon join 是接入入口，等接入成功才注册就永远执行不到。
+        BeaconJoinCommand.register(
+            credentials = credentialsStore,
+            onJoined = { doAssemble() },
+            logger = BeaconJoinCommand.JoinLogger(info = ::info, warning = ::warning),
+        )
+        doAssemble()
     }
 
     /** pending 阶段：身份已就绪但尚未获控制面确认绑定时，仅启最小引导器，绝不提前创建数据面组件。 */
@@ -193,6 +287,15 @@ object BeaconAgentBungee : Plugin() {
         codec: KotlinxJsonCodec,
         bindingSnapshot: IdentityBindingSnapshotStore,
     ) {
+        // 复用 enable 阶段建好的同一实例：join、设置解析、身份解析与绑定落盘必须读写同一个文件。
+        val credentialsStore =
+            credentials
+                ?: AgentCredentialsStore(
+                    getDataFolder().toPath(),
+                    jsonCodec,
+                    warn = ::warning,
+                    error = { severe(it) },
+                ).also { credentials = it }
         val bootstrap =
             BootstrapRuntime(
                 identity = identity,
@@ -200,12 +303,20 @@ object BeaconAgentBungee : Plugin() {
                 adapter = adapter,
                 apiClient = BeaconApiClient(OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs), codec, settings),
                 snapshots = bindingSnapshot,
-                onActive = { _, binding ->
+                onActive = { activeIdentity, binding ->
+                    // 归属确认即落盘（FR-276）：join 的「已绑定则拒绝」守卫读的就是这份 binding，
+                    // 不写盘则该守卫永不可达。写盘失败不影响接入——绑定是控制面权威事实，
+                    // 内存里已生效，磁盘只为下次启动与 join 判断可见。
+                    runCatching { credentialsStore.setBinding(binding.toCredentialsBinding(activeIdentity.role)) }
+                        .onFailure { warning("写入绑定凭据失败（不影响本次接入）：${it.javaClass.simpleName}: ${it.message}") }
                     confirmedBinding = binding
                     enable()
                 },
                 onTerminal = {
                     bindingSnapshot.invalidate()
+                    // 同 Bukkit 壳：终端态清掉本地绑定，避免 join 守卫永久挡住自助恢复。
+                    runCatching { credentialsStore.setBinding(null) }
+                        .onFailure { warning("清除本地绑定记录失败（不影响停机）：${it.javaClass.simpleName}: ${it.message}") }
                     stopActiveRuntime()
                 },
             )

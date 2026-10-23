@@ -111,10 +111,32 @@ public final class BeaconAccess {
      * @return 订阅句柄，由调用方保管并 {@code close()}
      */
     public BeaconSubscription subscribeConfig(ConfigChangeListener listener) {
+        return subscribeConfig(null, listener);
+    }
+
+    /**
+     * 订阅**本插件目录下**的有效配置变更（按 dataId 路径前缀过滤）。
+     *
+     * <p>与无前缀版本只差一件事：只有本次变更里存在以 {@code pathPrefix} 开头的 dataId 时才回调，
+     * 回调携带的集合也只含匹配项。别的插件发布配置不会再把你叫醒——这是「无关变更必须返回 ok()」
+     * 之外更彻底的一层：根本不进入你的代码，就没有判断失误把整批交付打挂的机会。</p>
+     *
+     * <p><b>前缀请以 {@code /} 结尾</b>（如 {@code plugins/Foo/}）：匹配是字符串前缀，
+     * 写 {@code plugins/Foo} 会连 {@code plugins/Foo2/config.yml} 一起命中。
+     * {@code pathPrefix} 为 {@code null} 或空串时等价于不过滤，行为同单参版本。</p>
+     *
+     * <p>注册即重放同样按前缀裁剪：只重放匹配项，零匹配则不回调（不拿空基线打扰下游）。
+     * 前缀随句柄保存，{@link BeaconSubscription#pump()} 补注册时不会丢。</p>
+     *
+     * @param pathPrefix 过滤前缀（如 {@code plugins/Foo/}）；null/空表示不过滤
+     * @param listener   变更回调
+     * @return 订阅句柄，由调用方保管并 {@code close()}
+     */
+    public BeaconSubscription subscribeConfig(String pathPrefix, ConfigChangeListener listener) {
         if (listener == null) {
             throw new IllegalArgumentException("监听器不能为空");
         }
-        return new BeaconSubscription(listener);
+        return new BeaconSubscription(pathPrefix, listener);
     }
 
     /**

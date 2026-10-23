@@ -680,9 +680,13 @@ type AgentIdentityReadView struct {
 	MigrationState     string
 	Address            string
 	Endpoints          []AgentEndpointView
+	// TokenFingerprint 是接入该身份的 namespace token 的不可逆短标识（FR-279）：
+	// 由 access_token_hash 派生，不含明文、不能用于认证；旧 namespace 无 token 时为 nil。
+	TokenFingerprint *string
 }
 
-// enrichAgentIdentityReadViews 批量补齐身份的 namespace code、迁移状态与绑定指纹，禁循环内查库。
+// enrichAgentIdentityReadViews 批量补齐身份的 namespace code、迁移状态、绑定指纹与 token 标识，
+// 禁循环内查库。
 func enrichAgentIdentityReadViews(db *gorm.DB, identities []model.AgentIdentity) ([]AgentIdentityReadView, error) {
 	views := make([]AgentIdentityReadView, 0, len(identities))
 	if len(identities) == 0 {
@@ -692,13 +696,16 @@ func enrichAgentIdentityReadViews(db *gorm.DB, identities []model.AgentIdentity)
 	for i := range identities {
 		namespaceIDs[identities[i].NamespaceID] = struct{}{}
 	}
+	// 一次取齐 code 与 token 摘要：code 供绑定指纹，摘要供 token 标识（不额外查库、不查明文）。
 	var namespaces []model.Namespace
-	if err := db.Select("id", "code").Where("id IN ?", uintKeys(namespaceIDs)).Find(&namespaces).Error; err != nil {
+	if err := db.Select("id", "code", "access_token_hash").Where("id IN ?", uintKeys(namespaceIDs)).Find(&namespaces).Error; err != nil {
 		return nil, err
 	}
 	codeByID := make(map[uint]string, len(namespaces))
+	tokenHashByID := make(map[uint]string, len(namespaces))
 	for i := range namespaces {
 		codeByID[namespaces[i].ID] = namespaces[i].Code
+		tokenHashByID[namespaces[i].ID] = namespaces[i].AccessTokenHash
 	}
 	if len(codeByID) != len(namespaceIDs) {
 		return nil, apperr.ErrIllegalState
@@ -708,6 +715,7 @@ func enrichAgentIdentityReadViews(db *gorm.DB, identities []model.AgentIdentity)
 		_, fingerprint := agentBindingSnapshot(ident, codeByID[ident.NamespaceID])
 		views = append(views, AgentIdentityReadView{
 			Identity: *ident, BindingFingerprint: fingerprint, MigrationState: agentMigrationState(ident),
+			TokenFingerprint: agentTokenFingerprint(tokenHashByID[ident.NamespaceID]),
 		})
 	}
 	return views, nil

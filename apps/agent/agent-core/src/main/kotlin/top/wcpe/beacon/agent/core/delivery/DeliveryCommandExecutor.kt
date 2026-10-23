@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.delivery
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.fetchDeliveryManifest
 import top.wcpe.beacon.agent.core.client.fetchDeliveryUploadManifest
@@ -53,6 +54,9 @@ class DeliveryCommandExecutor(
     private val apiClient: BeaconApiClient,
     private val adapter: PlatformAdapter,
     private val pipeline: DeliveryPipeline,
+    // 单监听器重载超时（毫秒，FR-274）：仅用于在回执里告知控制面「超时判定口径」，0=未启用超时。
+    // 真正的超时执行在 EffectiveConfigView 内；此处不重复实现，避免两处口径漂移。
+    private val reloadTimeoutMs: Long = 0,
 ) {
     private val running = AtomicBoolean(false)
 
@@ -75,9 +79,37 @@ class DeliveryCommandExecutor(
         }
         try {
             dispatch(command)
+        } catch (e: Throwable) {
+            // 顶层兜底：dispatch 各分支只按需 catch 具体异常（如 IOException），任何未预期的
+            // RuntimeException / Error 都会一路逃到这里。若不兜住，异常会穿出 execute → trigger 的
+            // 排空循环 → 平台异步线程池，后果是：该轮剩余命令不再被处理、控制面该目标只能等
+            // activateTimeoutSec 超时、agent 侧连一条 error 日志都没有。
+            // 这里必须兜 Throwable 而非 Exception：插件侧 LinkageError 在本工程是已知现实。
+            handleUnexpectedFailure(command, e)
         } finally {
             running.set(false)
         }
+    }
+
+    /**
+     * 未预期异常的收口：记 ERROR 并按 sentinel 语义回执 failed（有 orderId 才回，无处回执时上报告警）。
+     *
+     * 回执**不编造**具体插件结果——异常发生在派发/落盘/摘要计算任一环节，此时并不知道哪个插件失败，
+     * 只陈述可确证的事实（执行异常 + 异常摘要）。这与「不得假报成功」是同一原则的两面：不知道就不编。
+     */
+    private fun handleUnexpectedFailure(
+        command: AgentCommand,
+        e: Throwable,
+    ) {
+        adapter.error("交付命令执行抛出未预期异常（已兜住，不回执成功）：id=${command.id}，type=${command.type}", e)
+        val orderId = command.deliveryPayload?.orderId ?: 0L
+        if (orderId <= 0L) {
+            reportUnaddressable(command)
+            return
+        }
+        // reasonOf 必须能接 Throwable：Error 也要变成一句可读原因，不能吞成空串。
+        val reason = "交付命令执行异常：${reasonOf(e)}"
+        postResult(orderId, DeliveryStageReport(phaseOf(command.type), STATUS_FAILED, 0, 0, false, reason))
     }
 
     /**
@@ -415,8 +447,11 @@ class DeliveryCommandExecutor(
         }
         val configFiles = normalizedConfigFiles(manifest.files)
         val effectiveCount = if (phase == PHASE_ACTIVATE) maxOf(changedFileCount, configFiles.size) else changedFileCount
-        if (publishConfigChanged(orderId, phase, configFiles, effectiveCount, backupPresent)) {
-            postResult(orderId, DeliveryStageReport(phase, STATUS_SUCCESS, effectiveCount, 0, backupPresent, ""))
+        val reload = publishConfigChanged(orderId, phase, configFiles, effectiveCount, backupPresent)
+        if (reload != null || configFiles.isEmpty()) {
+            // 成功回执也带 reload 段：控制面据此核对「回执成功但版本不符」（护栏：不得假报成功）。
+            val report = reload?.let { DeliveryReloadReport.from(it, reloadTimeoutMs) }
+            postResult(orderId, DeliveryStageReport(phase, STATUS_SUCCESS, effectiveCount, 0, backupPresent, "", report))
             adapter.info("交付 hot_reload 完成：orderId=$orderId，phase=$phase，配置工件=${configFiles.size}")
         }
     }
@@ -453,10 +488,14 @@ class DeliveryCommandExecutor(
             .distinctBy { it.path }
 
     /**
-     * 有配置工件时派发一次通知；无配置工件成功 no-op。
+     * 有配置工件时派发一次通知并返回聚合报告；无配置工件返回 null（成功 no-op）。
      *
-     * 通知失败按**部分成功**回执（FR-266）：文件在推送阶段已落盘、只是生效通知没送到，与「什么都没做」是两回事——
-     * 故失败回执仍带上真实变更计数与 backupPresent，并点明「文件已落盘、仅通知失败」，而不是一句无上下文的失败。
+     * **一票否决（FR-274）**：`adapter.publishConfigChanged` 返回逐监听器的重载报告，
+     * 任一插件重载失败即整体回执 `failed`——不得因为「通知已派发」就判成功（护栏：不得假报成功）。
+     * 回执失败后返回 null，调用方据此不再发成功回执。
+     *
+     * 失败回执按**部分成功**语义（FR-266）：文件在推送阶段已落盘、只是插件重载没成功，与「什么都没做」是两回事——
+     * 故失败回执仍带上真实变更计数与 backupPresent，并点明「文件已落盘」，再附逐插件明细。
      *
      * **处置建议按 phase 分野**（FR-266 评审 P1）：控制面是否下发整单回滚由**它自己的预检**决定
      * （目标须 `pushed_at` 非空且有可回滚备份），agent 无从核实，故正推阶段（`activate`）不得承诺「可整单回滚」——
@@ -469,22 +508,27 @@ class DeliveryCommandExecutor(
         configFiles: List<DeliveryManifestFile>,
         changedFileCount: Int,
         backupPresent: Boolean,
-    ): Boolean {
-        if (configFiles.isEmpty()) return true
+    ): ConfigReloadReport? {
+        if (configFiles.isEmpty()) return null
         val changed = configFiles.mapTo(linkedSetOf()) { it.path }
-        return try {
-            adapter.publishConfigChanged(changed, configArtifactMd5(configFiles))
-            true
-        } catch (e: Exception) {
+        // 平台壳按契约不抛异常（改用返回报告表达失败），runCatching 只防实现走偏：
+        // 一旦抛了也必须让目标失败，不得当作「通知已发出」继续判成功。
+        val attempt = runCatching { adapter.publishConfigChanged(changed, configArtifactMd5(configFiles)) }
+        val report = attempt.getOrNull()
+        // 两类失败共用同一出口：派发抛异常（report 为 null）与插件逐个重载失败（hasFailures）。
+        val failure = attempt.exceptionOrNull()?.let(::reasonOf) ?: report?.takeIf { it.hasFailures }?.failureSummary()
+        if (failure != null) {
             failResultWithState(
                 orderId = orderId,
                 phase = phase,
                 changedFileCount = changedFileCount,
                 backupPresent = backupPresent,
-                error = "文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：${reasonOf(e)}${remedyHint(phase)}",
+                error = "文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败：$failure${remedyHint(phase)}",
+                reload = report,
             )
-            false
         }
+        // 回执已发出则返回 null，调用方据此不再发成功回执（一票否决）。
+        return report?.takeIf { !it.hasFailures }
     }
 
     /**
@@ -595,9 +639,13 @@ class DeliveryCommandExecutor(
         changedFileCount: Int,
         backupPresent: Boolean,
         error: String,
+        reload: ConfigReloadReport? = null,
     ) {
         adapter.error("交付阶段失败：orderId=$orderId，phase=$phase，原因=$error", null)
-        postResult(orderId, DeliveryStageReport(phase, STATUS_FAILED, changedFileCount, 0, backupPresent, error))
+        // reload 段必须透传：失败回执正是「哪个插件重载失败」的唯一结构化来源，
+        // 丢了它控制面只剩一句 error 文本，前端明细列与告警明细都无从渲染（FR-273）。
+        val report = reload?.let { DeliveryReloadReport.from(it, reloadTimeoutMs) }
+        postResult(orderId, DeliveryStageReport(phase, STATUS_FAILED, changedFileCount, 0, backupPresent, error, report))
     }
 
     companion object {
@@ -647,5 +695,10 @@ private class DeliveryPushException(
     val backupPresent: Boolean = false,
 ) : Exception(message)
 
-/** 异常摘要（类名 + 消息，无凭据；上层再经控制面脱敏兜底）。 */
-private fun reasonOf(e: Exception): String = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}"
+/**
+ * 异常摘要（类名 + 消息，无凭据；上层再经控制面脱敏兜底）。
+ *
+ * 收 `Throwable` 而非 `Exception`：插件侧 `NoClassDefFoundError` / `LinkageError` 同样必须
+ * 变成一句可读的原因，不能让 `Error` 逃逸掉整个阶段的回执。
+ */
+private fun reasonOf(e: Throwable): String = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}"

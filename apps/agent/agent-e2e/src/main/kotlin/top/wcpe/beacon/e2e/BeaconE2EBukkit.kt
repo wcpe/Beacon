@@ -76,6 +76,25 @@ object BeaconE2EBukkit : Plugin() {
 
         // 启动 FR-171 hot_reload 业务插件探针，观测真实 onChange、失败回执与进程存活。
         DeliveryHotReloadE2EProbe.start()
+
+        // 启动 FR-29/30/31 服务发现 + 拓扑订阅 + 玩家名册探针。
+        DiscoveryE2EProbe.start()
+
+        // 启动 FR-243 节点自声明探针（唯一写入面的三态）。
+        SelfDeclarationE2EProbe.start()
+
+        // 启动 FR-147/244 健康视图 + 准入作用域探针。
+        SchedulingHealthE2EProbe.start()
+
+        // 启动前缀过滤订阅探针（验证只唤醒关心的监听器、且收到的是裁剪子集）。
+        PrefixSubscriptionE2EProbe.start()
+
+        // 启动门面连通性探针（connected/effectiveMd5/awaitRegistered 这三个此前零覆盖的入口）。
+        FacadeConnectivityE2EProbe.start()
+
+        // 启动 FR-276 join 代执行探针：外部驱动投递请求文件，本探针在主线程经控制台派发
+        // /beacon join <地址> <令牌>（Go 侧无 stdin/RCON 通道，见该探针注释）。
+        JoinE2EProbe.start()
     }
 
     @Awake(LifeCycle.DISABLE)
@@ -83,6 +102,8 @@ object BeaconE2EBukkit : Plugin() {
         handle?.remove()
         handle = null
         DeliveryHotReloadE2EProbe.stop()
+        DiscoveryE2EProbe.stop()
+        PrefixSubscriptionE2EProbe.stop()
     }
 
     /** 注册 onChange 监听；agent 尚未就绪时静默跳过，由轮询兜底重试注册。 */

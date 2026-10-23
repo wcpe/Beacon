@@ -230,6 +230,35 @@ function makeExecution(
                 activatedAt: isoOffset(-2 * HOUR + b * 600_000 + 240_000),
               }
             : null,
+        // 逐插件重载结果（FR-272）：失败台给出真实形状的明细，供演示展开；
+        // 未生效/未失败的台为 null（等价「无重载信息」，与真实老 agent 回执一致）。
+        reloadReport: failed
+          ? {
+              total: 2,
+              okCount: 1,
+              failedCount: 1,
+              timeoutMs: 30_000,
+              plugins: [
+                {
+                  listener: 'top.wcpe.allin.bp.ReloadHook',
+                  status: 'ok',
+                  reason: '',
+                  timeout: false,
+                  appliedMd5: 'md5-mock',
+                  appliedVersion: 'v7',
+                  appliedCount: 12,
+                },
+                {
+                  listener: 'top.wcpe.allin.aie.ReloadHook',
+                  status: 'failed',
+                  reason: 'schedule.json 解析失败：unexpected token at line 8',
+                  timeout: false,
+                  appliedMd5: '',
+                  appliedVersion: '',
+                },
+              ],
+            }
+          : null,
       })
     })
   }

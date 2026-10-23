@@ -1,5 +1,7 @@
 package top.wcpe.beacon.agent.core.delivery
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
+import top.wcpe.beacon.agent.core.api.PluginReloadOutcome
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.fetchDeliveryManifest
 import top.wcpe.beacon.agent.core.command.AgentCommand
@@ -461,6 +463,49 @@ class DeliveryCommandExecutorTest : DeliveryExecutorFixture() {
         assertTrue(body.contains("backupPresent=true"), "文件已落盘：失败回执须保留备份标记（可否回滚）：$body")
         assertTrue(body.contains("已落盘"), "原因应点明「已落盘、仅通知失败」，便于决定回滚还是手工重载：$body")
         assertTrue(body.contains("可整单回滚还原"), "回滚阶段备份已在盘，可给回滚建议：$body")
+    }
+
+    @Test
+    fun `hot_reload 插件上报失败时回执携带 reload 段`() {
+        // FR-273：插件**返回 failed**（而非派发抛异常）时，回执必须带 reload 段——
+        // 它是「哪个插件重载失败」的唯一结构化来源，丢了它控制面 reload_report 恒为空。
+        val backupManager = seededBackup()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray())
+        adapter.configChangeReport =
+            ConfigReloadReport(
+                setOf("plugins/upd.txt"),
+                "md5",
+                listOf(
+                    PluginReloadOutcome.ok("test.OkHook"),
+                    PluginReloadOutcome.failed("test.FailHook", "schedule.json 解析失败"),
+                ),
+            )
+        val tree = manifestTree(listOf(configFileNode("plugins/upd.txt", DeliveryTestSupport.sha256("NEW".toByteArray()))))
+
+        executorWith(backupManager, tree).execute(rollbackCommand("hot_reload"))
+
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=failed"), "有插件失败即一票否决：$body")
+        assertTrue(body.contains("reload"), "失败回执必须携带 reload 段：$body")
+        assertTrue(body.contains("failedCount=1"), "reload 段应含失败计数：$body")
+        assertTrue(body.contains("test.FailHook"), "reload 段应含失败插件标识：$body")
+        assertTrue(body.contains("schedule.json 解析失败"), "reload 段应含可读原因：$body")
+    }
+
+    @Test
+    fun `hot_reload 派发抛异常时回执如实记录且不伪造插件结果`() {
+        // 派发整体抛异常（平台壳实现走偏）时没有逐插件报告：此时不得伪造 reload 段，
+        // 只如实回执 error；这是「不得假报」的另一面——不知道就不编。
+        val backupManager = seededBackup()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray())
+        adapter.configChangeError = RuntimeException("事件总线不可用")
+        val tree = manifestTree(listOf(configFileNode("plugins/upd.txt", DeliveryTestSupport.sha256("NEW".toByteArray()))))
+
+        executorWith(backupManager, tree).execute(rollbackCommand("hot_reload"))
+
+        val body = resultBodies.single()
+        assertTrue(body.contains("status=failed"), "派发异常仍判失败：$body")
+        assertTrue(body.contains("事件总线不可用"), "原因应保留可读信息：$body")
     }
 
     @Test

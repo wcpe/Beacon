@@ -687,7 +687,11 @@ func targetLogLevel(status string) string {
 
 func targetLogMessage(serverID, status, reason string) string {
 	if status == model.FileSyncTargetStatusFailed {
-		return fmt.Sprintf("目标 %s 同步失败：%s", serverID, reason)
+		// 收口放**拼接之后**：file_sync_log.message 与 file_sync_target.last_error 同为 512 列，
+		// 但 message 多了「目标 <serverID> 同步失败：」前缀。只按 reason 收口会让拼装后的整串溢出，
+		// 而落日志在 finishTargetResult 的事务内——严格模式下 1406 会让整个事务失败、
+		// agent 拿同一份结果重试，形成稳定失败循环。
+		return capReasonRunes(fmt.Sprintf("目标 %s 同步失败：%s", serverID, reason), fileSyncLogMessageMaxRunes)
 	}
 	return fmt.Sprintf("目标 %s 同步成功", serverID)
 }
@@ -697,11 +701,19 @@ func sanitizeFileSyncError(reason string) string {
 	if text == "" {
 		return "agent 执行失败（未提供原因）"
 	}
-	if len(text) > 480 {
-		return text[:480]
-	}
-	return text
+	return capReasonRunes(text, fileSyncReasonMaxRunes)
 }
+
+// fileSyncReasonMaxRunes 是 agent 上报原因的字符上限（file_sync_target.last_error 为 512 列）。
+//
+// 取 480 留余量：前缀文案与截断标记也要占位。该值必须**小于** message 列宽减去前缀长度，
+// 否则 targetLogMessage 拼完会溢出——真正兜底的是那里对整串的收口，这里只是让常见原因不至于被截。
+const fileSyncReasonMaxRunes = 480
+
+// fileSyncLogMessageMaxRunes 是 file_sync_log.message 的字符上限（列宽 512）。
+//
+// 留 12 字符余量给列宽本身的口径差异；拼接后的整串在此收口，避免前缀把原因顶出列宽。
+const fileSyncLogMessageMaxRunes = 500
 
 func (s *FileSyncService) scheduleNextBatch(taskID uint, delaySec int) {
 	if delaySec <= 0 {

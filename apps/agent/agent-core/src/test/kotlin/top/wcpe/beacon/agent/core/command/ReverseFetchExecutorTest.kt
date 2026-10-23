@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.command
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.browse.BrowseEntry
 import top.wcpe.beacon.agent.core.browse.DirListing
@@ -302,7 +303,7 @@ class ReverseFetchExecutorTest {
         override fun publishConfigChanged(
             changed: Set<String>,
             newMd5: String,
-        ) {}
+        ): ConfigReloadReport = ConfigReloadReport.empty(changed, newMd5)
 
         override fun info(msg: String) {}
 

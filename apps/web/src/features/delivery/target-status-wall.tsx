@@ -25,7 +25,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { ChangeTarget } from '@beacon/contracts'
+import type { ChangeReloadReport, ChangeTarget } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
 import {
@@ -209,6 +209,13 @@ export default function TargetStatusWall({ orderId, orderStatus, batches }: Targ
         cell: (row) => <FailureReason text={row.error} />,
       },
       {
+        // 逐插件重载结果（FR-272）：汇总 + 可展开明细。
+        // 三态刻意区分：null=老 agent 未上报（显示「无重载信息」）/ 全成功 / 有失败，
+        // 不能把 null 渲染成「全部成功」——那会把「不知道」伪装成好消息。
+        header: t('delivery.changes.detail.targets.columns.reload'),
+        cell: (row) => <ReloadOutcomeCell report={row.reloadReport} />,
+      },
+      {
         header: t('delivery.changes.detail.targets.columns.rollbackError'),
         cell: (row) => <FailureReason text={row.rollbackError} />,
       },
@@ -381,5 +388,83 @@ function FailureReason({ text }: { text: string | null }) {
     <span className="text-crit" title={text}>
       {text}
     </span>
+  )
+}
+
+/**
+ * 逐插件重载结果（FR-272）：汇总徽标 + 可展开明细。
+ *
+ * 三态必须区分开，不能合并：
+ *   - report === null        → 「无重载信息」（老 agent 未上报）。**不得**渲染成「全部成功」，
+ *                              否则会把「不知道」伪装成好消息（护栏：不得假报成功）。
+ *   - failedCount === 0      → 全成功徽标；
+ *   - failedCount > 0        → 失败徽标 + 明细，逐项列出插件、原因、超时标记与实际加载版本。
+ */
+function ReloadOutcomeCell({ report }: { report: ChangeReloadReport | null }) {
+  const { t } = useTranslation()
+  if (report === null) {
+    return (
+      <span className="text-ink-4" title={t('delivery.changes.detail.targets.reload.noReloadHint')}>
+        {t('delivery.changes.detail.targets.reload.noReload')}
+      </span>
+    )
+  }
+  const summary =
+    report.failedCount === 0
+      ? t('delivery.changes.detail.targets.reload.summaryAllOk', { total: report.total })
+      : t('delivery.changes.detail.targets.reload.summary', {
+          ok: report.okCount,
+          total: report.total,
+          failed: report.failedCount,
+        })
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none">
+        <Badge variant={report.failedCount === 0 ? 'ok' : 'crit'} className="gap-1.5">
+          <span className="size-1.5 rounded-full bg-current" aria-hidden />
+          {summary}
+        </Badge>
+      </summary>
+      <ul className="mt-2 space-y-1.5 border-l border-line-2 pl-3 text-xs">
+        {report.plugins.map((plugin) => (
+          <li key={plugin.listener} className="space-y-0.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="font-mono text-ink-2">{plugin.listener}</span>
+              {plugin.status === 'failed' ? (
+                <Badge variant="crit">
+                  {plugin.timeout
+                    ? t('delivery.changes.detail.targets.reload.pluginTimeout')
+                    : t('delivery.changes.detail.targets.reload.pluginFailed')}
+                </Badge>
+              ) : (
+                <Badge variant="ok">{t('delivery.changes.detail.targets.reload.pluginOk')}</Badge>
+              )}
+            </div>
+            {plugin.reason !== '' && (
+              <div className="text-crit">
+                {t('delivery.changes.detail.targets.reload.reason', { reason: plugin.reason })}
+              </div>
+            )}
+            {plugin.timeout && (
+              <div className="text-ink-4">
+                {t('delivery.changes.detail.targets.reload.timeoutHint', { ms: report.timeoutMs })}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-x-3 text-ink-4">
+              {plugin.appliedVersion !== '' && (
+                <span>
+                  {t('delivery.changes.detail.targets.reload.appliedVersion')}：{plugin.appliedVersion}
+                </span>
+              )}
+              <span>
+                {t('delivery.changes.detail.targets.reload.appliedCount')}：
+                {/* 未自报显示「未自报」而非 0：0 是合法值（确实加载了 0 条），两者语义不同。 */}
+                {plugin.appliedCount ?? t('delivery.changes.detail.targets.reload.appliedCountUnknown')}
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </details>
   )
 }

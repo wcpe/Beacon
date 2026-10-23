@@ -32,6 +32,10 @@ type ChangeTarget struct {
 	BackupPresent bool `gorm:"column:backup_present;not null;default:false"`
 	// 失败原因（脱敏，展示到前端，ADR-0057；可空）
 	Error string `gorm:"column:error;size:1024"`
+	// 逐插件重载结果 JSON（FR-274，可空）：agent 上报的 reload 段原文，供交付单详情展开
+	// 「哪个插件、什么原因、实际加载了什么」。落 TEXT 而非 JSON 列类型（守 DB 可移植）。
+	// 老 agent 不上报时为 NULL，前端据此显示「无重载信息（agent 版本较旧）」而非空白。
+	ReloadReport string `gorm:"column:reload_report;type:text"`
 	// 回滚状态（独立于主状态，可空）：pending / running / rolled_back / failed
 	RollbackStatus string `gorm:"column:rollback_status;size:32"`
 	// 回滚失败原因（脱敏，可空）

@@ -214,6 +214,13 @@ func run() error {
 	// 环境服务（含改名 / 删除守卫，FR-53）依赖注册表 / zone 指派 / 配置仓库查在用数据，
 	// 故其构造延后到 registry、assignRepo、configRepo 就绪之后（见下方）。
 
+	// agent 运行配置下发（FR-277）：两级作用域（namespace 默认 + server 覆盖）的读写 + 审计，
+	// 挂 /admin/v2/agent-settings（管理面）与 /beacon/v2/agent/settings（数据面拉取）。
+	// 与 setting 表分开：那张是控制面自身热改项，语义与安全边界都不同（见 model.AgentSetting 注释）。
+	agentSettingsService := service.NewAgentSettingsService(db, repository.NewAgentSettingRepository(db), auditRepo, nsRepo)
+	v2AgentSettingsHandler := handler.NewV2AgentSettingsHandler(agentSettingsService)
+	agentSettingsHandler := handler.NewAgentSettingsHandler(agentSettingsService)
+
 	// 配置加密密钥由数据目录同级 secrets 持久文件统一管理；目录或文件异常时拒绝启动。
 	keyDirectory, err := keyDirectoryForDatabase(cfg.Database)
 	if err != nil {
@@ -295,9 +302,11 @@ func run() error {
 	// persist 通道把告警额外留痕（FR-89，落库失败仅 WARN、不阻断扫描，见 Dispatcher 兜错）。
 	inbox := alert.NewInboxAlerter(cfg.Alert.InboxCapacity)
 	alertChannels := []alert.Alerter{inbox, alert.NewWebhookAlerter(settingsService), alert.NewPersistAlerter(alertEventService)}
+	// 健康告警分发器提到变量：关停时要 drain，不能让它随进程退出静默吞掉最后一批告警。
+	healthAlertDispatcher := alert.NewDispatcher(alertChannels...)
 	// 健康阈值 / 扫描周期由健康扫描器每轮从设置 store 读、热生效（FR-61）。
 	healthScanner := runtime.NewHealthScanner(
-		registry, settingsService, alert.NewDispatcher(alertChannels...))
+		registry, settingsService, healthAlertDispatcher)
 
 	// 可观测性指标（注册/健康 gauge 抓取时读内存注册表；发布/推送 counter 由事件处自增，见 ADR-0020）
 	metricsSet := metrics.New(registry)
@@ -643,6 +652,11 @@ func run() error {
 	// 回执经 blob 服务 SetProgressWaker 即时唤醒推进器（单一驱动源）、观察窗序列经 SetObserveProvider 供 /observe 接真。
 	deliveryOrchestrator := service.NewDeliveryOrchestrator(db, changeOrderRepo, deliveryBlobService,
 		commandRepo, auditRepo, healthViewStore, metricWindow, notifier)
+	// 交付失败告警扇出（FR-275）：复用健康告警同一套通道（persist + webhook + 站内信），
+	// 写 alert_event 的类型为 publish-fail，且刻意不收敛（逐条可见）。旁路依赖，不影响交付编排。
+	// 同样提到变量：关停时要 drain，避免最后一批 publish-fail 静默消失。
+	deliveryAlertDispatcher := alert.NewDispatcher(alertChannels...)
+	deliveryOrchestrator.SetAlerter(deliveryAlertDispatcher)
 	// 交付能力版本守卫（FR-264，落实 ADR-0069 L58）：启动 / 下发前校验目标与模板源 agent 版本，
 	// 不具备流式交付能力的旧 agent 被显式拒绝且原因可读；最低版本走运维设置热改（留空即关闭守卫）。
 	deliveryOrchestrator.SetCapabilityGuard(repository.NewAgentIdentityRepository(db), func() string {
@@ -853,6 +867,11 @@ func run() error {
 	mcpToolRegistry.SetUpdateService(updateAPIService)
 	updateAPIService.SetApprovalService(approvalService)
 	settingsService.SetApprovalService(approvalService)
+	// agent 运行配置高危键（override.command-whitelist 等）的下发走审批链路（FR-277 #4）：
+	// 注入审批核心并登记执行适配器，缺一不可——只注入不登记会在批准后无处执行，
+	// 只登记不注入则申请入口永远拿不到票据。
+	agentSettingsService.SetApprovalService(approvalService)
+	service.RegisterAgentSettingsApprovalAdapter(approvalRegistry, agentSettingsService)
 	service.RegisterSystemOperationApprovalAdapters(approvalRegistry, updateAPIService, settingsService, db)
 	updateHandler := handler.NewUpdateHandler(updateAPIService)
 	slog.Info("控制面在线更新核心已就绪",
@@ -864,7 +883,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2Roster: v2RosterHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2Roster: v2RosterHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, V2AgentSettings: v2AgentSettingsHandler, AgentSettings: agentSettingsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, MCPInvocation: mcpInvocationHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, HTTPMetrics: metricsSet, Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
@@ -961,6 +980,17 @@ func run() error {
 	// 鉴权判据走 metricsAuthEnabled——它与实现同口径，理由见该函数注释。
 	serveMetricsEndpoint(metricsSrv, metricsAuthEnabled(cfg.MetricsEndpoint.BearerToken), errCh)
 
+	// 关停时补投告警：三个分支（正常退出 / 自更新重启 / 手动回滚）都会走到本函数返回，
+	// 用 defer 覆盖全部，避免逐个分支重复。
+	//
+	// 为什么必须 drain：告警走有界异步队列（见 alert.Dispatcher.DispatchAsync），
+	// 退出瞬间队列里可能还压着「已接受但未发出」的告警——而那一刻往往正是最需要留痕的一批
+	// （一批目标刚全部失败）。不 drain 就等于静默吞掉它们。
+	//
+	// 用独立的短超时而不复用 HTTP 的 35s 预算：webhook 通道默认 3s、可配 60s，
+	// 给它一个上限即可，不该让告警 drain 拖长整体关停。
+	defer drainAlertDispatchers(healthAlertDispatcher, deliveryAlertDispatcher)
+
 	select {
 	case <-ctx.Done():
 		slog.Info("收到关停信号，开始优雅关停")
@@ -1025,8 +1055,37 @@ func shutdownAll(ctx context.Context, srv, metricsSrv *http.Server) error {
 	return preferShutdownError(srv.Shutdown(ctx), metricsErr)
 }
 
-// preferShutdownError 在两次关停都失败时挑出该上报的那个：主服务错误优先，它成功才回落到抓取端点错误。
+// drainAlertDispatchers 关停时把两个告警分发器里排队与在途的告警投完。
 //
+// 三重取舍：
+//   - **不对每个分发器各起一个超时**：两者共用同一个预算，避免关停时长叠加；
+//   - **失败只 WARN 不返回错误**：告警是旁路，drain 超时不得改变进程退出码——
+//     这跟「告警不得阻断主流程」是同一条原则，只是发生在退出阶段；
+//   - **逐个串行 drain**：并发 drain 会让两个分发器争抢同一批 webhook 连接，
+//     反而更容易一起超时。
+//
+// 丢弃条数一并记录：drain 期间若队列曾溢出，运维需要知道「这次关停到底少了多少条」。
+func drainAlertDispatchers(dispatchers ...*alert.Dispatcher) {
+	if len(dispatchers) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, d := range dispatchers {
+		if d == nil {
+			continue
+		}
+		if err := d.Shutdown(ctx); err != nil {
+			slog.Warn("告警分发器 drain 未在期限内完成（旁路，不影响退出）", "错误", err, "累计丢弃", d.Dropped())
+			continue
+		}
+		if dropped := d.Dropped(); dropped > 0 {
+			slog.Warn("本次运行期间有告警被丢弃（队列溢出或关停后提交）", "累计丢弃", dropped)
+		}
+	}
+}
+
+// preferShutdownError 在两次关停都失败时挑出该上报的那个：主服务错误优先，它成功才回落到抓取端点错误。
 // 为什么单独拆出来而不是内联在 shutdownAll 里：这条优先级是**有意为之的反直觉选择**
 // （字面读"返回首个错误"会以为先关的 metricsSrv 优先），值得被单测直接锁死。而真去构造
 // "两个 http.Server 同时关停失败"来测，代价高且脆弱——两者的失败都表现为 ctx.Err()，无法

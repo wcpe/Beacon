@@ -1,4 +1,5 @@
-// 身份详情抽屉：复用 /servers 既有抽屉交互，只展示控制面身份事实，绝不展示 token。
+// 身份详情抽屉：复用 /servers 既有抽屉交互，只展示控制面身份事实。
+// 绝不展示 token 明文：接入 token 只以服务端派生的不可逆短指纹（tokenFingerprint）呈现。
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
@@ -61,6 +62,8 @@ export default function IdentityDetailSheet({ identityId, onOpenChange }: Identi
                 <IdentityField label="旧绑定迁移时间" value={formatTime(detail.legacyMigratedAt)} />
                 <IdentityField label="最近权威确认" value={formatTime(detail.boundAt)} />
                 <IdentityField label="绑定指纹摘要" value={summarizeFingerprint(detail.bindingFingerprint)} mono />
+                {/* FR-279：接入 token 标识——由 token 摘要派生的短指纹，明文从不落库也不下发 */}
+                <IdentityField label="接入 token 指纹" value={detail.tokenFingerprint ?? '未提供'} mono />
               </dl>
             )}
             {detail && (

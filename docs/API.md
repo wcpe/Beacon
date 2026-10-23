@@ -99,8 +99,8 @@ agent 面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/admin/v2/agent-identities` | 身份分页列表（状态 / namespace / 关键字筛选） |
-| GET | `/admin/v2/agent-identities/{identityId}` | 单条身份详情（附 `conflictPeers` 与换区 `rezonePrefill` 预填目标） |
+| GET | `/admin/v2/agent-identities` | 身份分页列表（状态 / namespace / 关键字筛选）；每条带 `tokenFingerprint`——由该 namespace 接入 token 摘要派生的 8 位短标识（不可逆、不能认证、不含明文；token 轮换后随之改变，无 token 的旧 namespace 为 `null`） |
+| GET | `/admin/v2/agent-identities/{identityId}` | 单条身份详情（附 `conflictPeers` 与换区 `rezonePrefill` 预填目标、`bindingFingerprint`、`tokenFingerprint`） |
 | POST | `/admin/v2/agent-identities/{identityId}/approve` | 确认接入（Q3 占用冲突须显式强制解绑；首次确认只创建未分配 server；换区中按预填 / 指定 `target` 落区或 `target:null` 暂不分配） |
 | POST | `/admin/v2/agent-identities/{identityId}/reject` | 拒绝接入（原因必填） |
 | POST | `/admin/v2/agent-identities/{identityId}/allow-reapply` | 申请恢复被拒身份的重新申请资格；返回 `202 + approvalRequestId` |

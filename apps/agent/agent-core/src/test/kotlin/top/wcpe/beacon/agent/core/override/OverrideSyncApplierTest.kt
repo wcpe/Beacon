@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.override
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.filetree.FileContent
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.io.File
@@ -41,7 +42,7 @@ class OverrideSyncApplierTest {
         override fun publishConfigChanged(
             changed: Set<String>,
             newMd5: String,
-        ) {}
+        ): ConfigReloadReport = ConfigReloadReport.empty(changed, newMd5)
 
         override fun dispatchConsoleCommand(command: String) {
             dispatched.add(command)

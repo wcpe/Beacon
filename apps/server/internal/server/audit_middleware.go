@@ -202,6 +202,9 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/server-placement-transfers": {},
 	// 健康权重版本化配置全量替换（health-weights.update，service 在事务内自记专项审计）
 	"PUT /admin/v2/settings/health-weights": {},
+	// agent 运行配置批量下发 / 撤销（FR-277：agent-settings.update，service 在事务内逐键自记专项审计，
+	// detail 记作用域 + 键 + 新值 + previousValue + 操作类型）
+	"PUT /admin/v2/agent-settings": {},
 	// 跨服消息 payload 直读由 MessagePayloadService 先写元数据审计再返回，detail 不含 payload 正文。
 	"POST /admin/v2/messages/{messageId}/payload":                   {},
 	"POST /admin/v2/messages/{messageId}/payload/approval-requests": {},

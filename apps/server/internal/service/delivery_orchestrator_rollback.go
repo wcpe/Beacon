@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -77,7 +78,13 @@ const (
 )
 
 // initTargetRollback 为曾覆盖磁盘但回滚态为空的目标就地补回滚初态并更新快照（FR-262r），
-// 返回补态结果；无备份目标直接判 failed（与整单回滚预检 §4.7.2 step1 同口径）。
+// 返回补态结果；无备份目标直接判 failed（与整单回滚预检 §4.7.2 step1「同口径」）。
+//
+// **与 casRollback 漏斗的分工（判断依据）**：本函数走仓库层 InitTargetRollbackIfEmpty 而非
+// casRollbackFrom——空回滚态在库里是 NULL，而 CAS 漏斗的 `rollback_status IN (?)` 匹配不到 NULL。
+// 因此「备份缺失判 failed」这条入口刻意不经告警漏斗、也不发 publish-fail：它是对**已知前置条件**
+// （覆盖前没留下备份）的落库，不是一次回滚动作失败；该事实在回滚动作记录的逐台初始结果里
+// 已直接呈现给发起人，重复扇告警只会稀释真正需要人上机处置的信号。
 func (s *DeliveryOrchestrator) initTargetRollback(rt *orderRuntime, t *model.ChangeTarget) rollbackInitResult {
 	ok, err := s.repo.InitTargetRollbackIfEmpty(t.ID, t.BackupPresent, rollbackBackupMissingReason)
 	if err != nil {
@@ -122,21 +129,68 @@ func (s *DeliveryOrchestrator) rollbackGuardReason(rt *orderRuntime, t *model.Ch
 }
 
 // failRollbackTarget 把「能力不足」的回滚目标置回滚失败（前态 pending / running 都收），并落可读原因。
+//
+// 与 casRollback 共用同一条收口逻辑：能力拒绝同样是「回滚失败」，必须逐条可见（不得假报成功），
+// 若绕过漏斗就既漏告警、又漏 error 列长度收口。
 func (s *DeliveryOrchestrator) failRollbackTarget(rt *orderRuntime, t *model.ChangeTarget, reason string) {
-	updates := map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": reason}
-	ok, err := s.repo.UpdateTargetRollbackCAS(t.ID,
-		[]string{model.RollbackStatusPending, model.RollbackStatusRunning}, updates)
+	s.casRollbackFrom(rt, t,
+		[]string{model.RollbackStatusPending, model.RollbackStatusRunning},
+		model.RollbackStatusFailed,
+		map[string]any{"rollback_error": reason})
+}
+
+// casRollback 事务外 CAS 迁移目标 rollback_status（从 running）并就地更新快照，成功发目标事件、返回是否命中。
+//
+// 回滚失败的告警收口在这里（与 casTarget 同构）：CAS 命中且 `to == failed` 才发，未命中不误报。
+// 放在漏斗上而不是各个调用点，才能覆盖**在途回滚动作**的四条失败入口——回执失败、命令过期、
+// 超时、能力守卫拒绝。
+//
+// **为何不含「备份缺失、根本没法回滚」这条入口（判断依据，勿改回「全部」）**：
+// 备份缺失在回滚**入态**就已落定（整单 / 子集回滚的 initRollbackTargetsCAS，以及推进器自愈的
+// initTargetRollback），它是「确定性前置条件不满足」，不是一次回滚动作失败；该事实已由回滚动作
+// 记录的逐台初始结果直接呈现给发起人，并逐台可见（rollback_status=failed + rollback_error），
+// 再扇一条 publish-fail 只是对同一条已知事实重复报警。
+// 另：把这条入口硬塞进本漏斗也不可行——本漏斗走 UpdateTargetRollbackCAS 的 `rollback_status IN (?)`，
+// SQL 里 NULL 不匹配任何 IN 集合，而「回滚态为空」恰恰是 NULL（见 InitTargetRollbackIfEmpty 的注释），
+// 真要做就得改仓库层的匹配条件与语义，属于另一件事。
+func (s *DeliveryOrchestrator) casRollback(rt *orderRuntime, t *model.ChangeTarget, to string, extra map[string]any) bool {
+	return s.casRollbackFrom(rt, t, []string{model.RollbackStatusRunning}, to, extra)
+}
+
+// casRollbackFrom 是 casRollback 的带前置状态版本（能力拒绝需要同时收 pending 与 running）。
+func (s *DeliveryOrchestrator) casRollbackFrom(
+	rt *orderRuntime, t *model.ChangeTarget, from []string, to string, extra map[string]any,
+) bool {
+	// rollback_error 与 error 同列宽（1024），reload_report 与正推腿同一列（TEXT）：在**入口**就地
+	// 收口并写回，让后续所有读取（内存快照 t.RollbackError、逐台动作留痕、告警入参）拿到同一份
+	// 收口后的值。只在 updates 上收口会让留痕表 change_rollback_record_target.error（同样 1024）
+	// 仍写全文，告警也会拿到未收口原文。
+	capDeliveryTargetUpdates(extra, "rollback_error")
+	updates := map[string]any{"rollback_status": to}
+	for k, v := range extra {
+		updates[k] = v
+	}
+	ok, err := s.repo.UpdateTargetRollbackCAS(t.ID, from, updates)
 	if err != nil {
-		slog.Error("交付编排回滚能力拒绝落库失败", "orderId", rt.order.ID, "serverId", t.ServerID, "错误", err)
-		return
+		slog.Error("交付编排回滚状态迁移失败", "targetId", t.ID, "to", to, "错误", err)
+		return false
 	}
 	if !ok {
-		return
+		return false
 	}
-	t.RollbackStatus = model.RollbackStatusFailed
+	t.RollbackStatus = to
+	reason := ""
+	if raw, has := extra["rollback_error"]; has {
+		reason, _ = raw.(string)
+	}
 	t.RollbackError = reason
-	s.recordRollbackTargetResult(rt.order.ID, t.ServerID, model.RollbackStatusFailed, reason)
+	// 逐台结果写回本次动作记录：状态墙看「现在」，记录看「每次动作各自的结果」（FR-271）。
+	s.recordRollbackTargetResult(rt.order.ID, t.ServerID, to, reason)
 	s.emitTargetEvent(rt, t)
+	if to == model.RollbackStatusFailed {
+		s.emitDeliveryFailAlert(rt, t, extra, reason)
+	}
+	return true
 }
 
 // dispatchRollback 下发回滚命令（rollback_status pending→running + delivery_rollback 命令，一事务原子），提交后唤醒 agent。
@@ -185,9 +239,12 @@ func (s *DeliveryOrchestrator) reconcileRollback(rt *orderRuntime, t *model.Chan
 	}
 	switch cmd.Status {
 	case model.CommandStatusDone:
-		s.completeRollback(rt, t)
+		s.completeRollback(rt, t, parseDeliveryCmdResult(cmd.ResultDetail))
 	case model.CommandStatusFailed:
-		s.failRollback(rt, t, targetErrorOr(parseDeliveryCmdResult(cmd.ResultDetail).Error, "回滚失败"))
+		// 回滚失败同样带逐插件明细（FR-274）：回滚阶段的 hot_reload 也会派发配置变更通知，
+		// 插件重载失败时运维需要知道是哪个插件——只回一句「回滚失败」等于把根因丢掉。
+		res := parseDeliveryCmdResult(cmd.ResultDetail)
+		s.failRollbackWithResult(rt, t, targetErrorOr(res.Error, "回滚失败"), res)
 	case model.CommandStatusExpired:
 		s.failRollback(rt, t, "回滚命令过期（agent 离线或长时间未回执）")
 	default:
@@ -195,14 +252,66 @@ func (s *DeliveryOrchestrator) reconcileRollback(rt *orderRuntime, t *model.Chan
 	}
 }
 
+// failRollbackWithResult 回滚失败时一并落 reload_report 并扇出 publish-fail 告警。
+//
+// 与生效路径同口径：回滚也是在改线上文件，失败就是交付失败，必须逐条可见（护栏：不得假报成功）。
+func (s *DeliveryOrchestrator) failRollbackWithResult(
+	rt *orderRuntime,
+	t *model.ChangeTarget,
+	reason string,
+	res deliveryCmdResult,
+) bool {
+	updates := map[string]any{"rollback_error": reason}
+	for k, v := range rollbackReloadUpdates(rt, t, res) {
+		updates[k] = v
+	}
+	// 告警由 casRollback 在 CAS 命中后统一扇出（to == failed），此处不再重复发，
+	// 否则回执失败会因「调用点 + 漏斗」各发一次，让运维收到两条同样的失败。
+	return s.casRollback(rt, t, model.RollbackStatusFailed, updates)
+}
+
+// rollbackReloadUpdates 把回执里的逐插件重载明细组装成回滚迁移的额外列（无明细返回 nil）。
+//
+// 失败与成功两条路径共用：成功路径同样要落 reload_report，否则「回滚到底把哪个版本的插件
+// 加载起来了」无据可查（与正推腿 reconcileActivatingByAck 的成功落库同口径）。
+func rollbackReloadUpdates(rt *orderRuntime, t *model.ChangeTarget, res deliveryCmdResult) map[string]any {
+	if res.Reload == nil {
+		return nil
+	}
+	raw, err := json.Marshal(res.Reload)
+	if err != nil {
+		slog.Warn("交付编排序列化回滚重载明细失败，明细将缺失",
+			"orderId", rt.order.ID, "serverId", t.ServerID, "错误", err)
+		return nil
+	}
+	return map[string]any{"reload_report": string(raw)}
+}
+
 // completeRollback 处理回滚命令 done（agent 已完成对应回滚动作）：
 //   - push_only：备份还原完成后直接 rolled_back，随目标下次自然重启读盘。
 //   - hot_reload：备份还原与配置变更回调均成功后直接 rolled_back。
 //   - restart：agent 还原后已 gracefulShutdown，须重置回滚重启锚点（首次 done、锚点尚为正推旧值）后判心跳回归；
 //     心跳回归→rolled_back，activate_timeout 内未回归→failed（「关了没起来」，与正推 restart 同构）。
-func (s *DeliveryOrchestrator) completeRollback(rt *orderRuntime, t *model.ChangeTarget) {
+//
+// **done 不等于回滚成功——控制面必须自己再看一眼明细（与正推腿同口径的一票否决兜底）**：
+// agent 保证语义（任一插件失败即回 failed），控制面保证不因对端实现漂移而误判。第三方 agent、
+// 或 agent 后续重构漏改某条早退路径时，都可能出现「整体 status=success 但 reload 明细里有 failed」
+// （正是 reloadPluginsFailedReason 存在的理由，该前提对回滚腿完全同样成立）。回滚腿若只信
+// status 就会把「备份还原了、插件没重载成功」判成 rolled_back —— 回滚假报成功比生效假报成功更危险：
+// 运维会以为线上已经退回去了。
+//
+// 判定一律基于**收口之前**的原始报告（res.Reload）；收口只影响落库 / 告警的展示内容，
+// 故截断绝不会削弱一票否决。版本核对（reloadVersionMismatch）不适用于回滚：回滚的目标版本
+// 不是本单的期望工件，拿它比对只会产出假的「版本不符」。
+func (s *DeliveryOrchestrator) completeRollback(rt *orderRuntime, t *model.ChangeTarget, res deliveryCmdResult) {
+	if reason, failed := reloadPluginsFailedReason(res.Reload); failed {
+		s.failRollbackWithResult(rt, t, reason, res)
+		return
+	}
+	// 成功路径同样落 reload_report：让「回滚究竟加载了什么版本」有据可查。
+	updates := rollbackReloadUpdates(rt, t, res)
 	if rt.order.ActivationMethod != model.ActivationMethodRestart {
-		s.casRollback(rt, t, model.RollbackStatusRolledBack, nil)
+		s.casRollback(rt, t, model.RollbackStatusRolledBack, updates)
 		return
 	}
 	// 首次读到 done 时锚点仍为正推旧值（早于回滚触发）→ 重置为 now 作回滚重启心跳锚点，等新心跳回归。
@@ -214,7 +323,7 @@ func (s *DeliveryOrchestrator) completeRollback(rt *orderRuntime, t *model.Chang
 		return
 	}
 	if s.heartbeatReturned(rt.order.NamespaceID, t.ServerID, t.ActivatingStartedAt) {
-		s.casRollback(rt, t, model.RollbackStatusRolledBack, nil)
+		s.casRollback(rt, t, model.RollbackStatusRolledBack, updates)
 		return
 	}
 	s.rollbackRestartTimeout(rt, t)
@@ -336,33 +445,6 @@ func (s *DeliveryOrchestrator) recordRollbackTargetResult(orderID uint, serverID
 }
 
 // —— 回滚状态 CAS（rollback_status 独立于主状态，就地更新快照）——
-
-// casRollback 事务外 CAS 迁移目标 rollback_status（从 running）并就地更新快照，成功发目标事件、返回是否命中。
-func (s *DeliveryOrchestrator) casRollback(rt *orderRuntime, t *model.ChangeTarget, to string, extra map[string]any) bool {
-	updates := map[string]any{"rollback_status": to}
-	for k, v := range extra {
-		updates[k] = v
-	}
-	ok, err := s.repo.UpdateTargetRollbackCAS(t.ID, []string{model.RollbackStatusRunning}, updates)
-	if err != nil {
-		slog.Error("交付编排回滚状态迁移失败", "targetId", t.ID, "to", to, "错误", err)
-		return false
-	}
-	if !ok {
-		return false
-	}
-	t.RollbackStatus = to
-	reason := ""
-	if raw, has := extra["rollback_error"]; has {
-		reason, _ = raw.(string)
-	}
-	t.RollbackError = reason
-	// 逐台结果写回本次动作记录：状态墙看「现在」，记录看「每次动作各自的结果」（FR-271）。
-	s.recordRollbackTargetResult(rt.order.ID, t.ServerID, to, reason)
-	s.emitTargetEvent(rt, t)
-	return true
-}
-
 // failRollback 把回滚中目标置 failed 并落脱敏原因（ADR-0057），返回是否命中。
 func (s *DeliveryOrchestrator) failRollback(rt *orderRuntime, t *model.ChangeTarget, reason string) bool {
 	return s.casRollback(rt, t, model.RollbackStatusFailed, map[string]any{"rollback_error": reason})

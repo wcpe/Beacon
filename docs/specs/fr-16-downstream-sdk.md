@@ -1,6 +1,12 @@
 # 功能规格：下游 SDK 接入包（FR-16）
 
-> 状态：已交付@v0.2.0　·　关联 PRD：FR-16　·　分支：见 worktree
+> 状态：**归真为开发中**（原 `已交付@v0.2.0`，2026-10-19 归真）　·　关联 PRD：FR-16（Legacy 编号）　·　分支：见 worktree
+>
+> **归真原因**：本 FR 交付的「配置订阅桥」存在缺陷——`EffectiveConfigView.fireChanged` 为裸 `for` 循环，
+> 一个业务插件的重载回调抛异常会让其后所有插件收不到本次变更通知、静默停留在旧配置。
+> 修复已随 FR-275（交付重载回执传导）落地：逐监听器隔离（catch `Throwable`）+ 聚合失败清单。
+> 修复已真机验收，本 FR 随 FR-275 一并重新交付。详见 [CHANGELOG](../../CHANGELOG.md)「未发布 · 修复」与
+> [delivery-reload-ack](delivery-reload-ack.md) §1.2 / §3.2。
 
 ## 1. 背景与目标
 

@@ -27,6 +27,7 @@ function toItem(row: IdentityRow): AgentIdentityItem {
     bindingSource: row.bindingSource,
     migrationState: row.migrationState,
     legacyMigratedAt: row.legacyMigratedAt,
+    tokenFingerprint: row.tokenFingerprint,
     statusChangedAt: row.statusChangedAt,
     conflictReason: row.conflictReason,
   }

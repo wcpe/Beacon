@@ -67,6 +67,59 @@ type deliveryResultRequest struct {
 	SkippedFileCount int    `json:"skippedFileCount"`
 	BackupPresent    bool   `json:"backupPresent"`
 	Error            string `json:"error"`
+	// Reload 是逐插件重载结果（FR-274，见 docs/specs/delivery-reload-ack.md §3.4）。
+	// 指针 + 可选：老 agent 不上报时为 nil，行为等价改造前；新 agent 上报后落 change_target。
+	Reload *deliveryReloadReportDTO `json:"reload"`
+}
+
+// deliveryReloadReportDTO 是逐插件重载结果的回执形状（FR-274）。
+type deliveryReloadReportDTO struct {
+	Total       int                       `json:"total"`
+	OKCount     int                       `json:"okCount"`
+	FailedCount int                       `json:"failedCount"`
+	TimeoutMs   int64                     `json:"timeoutMs"`
+	Plugins     []deliveryReloadPluginDTO `json:"plugins"`
+}
+
+// deliveryReloadPluginDTO 是单个插件的重载结果（FR-274）。
+// AppliedCount 用指针区分「加载了 0 条」与「未自报」。
+type deliveryReloadPluginDTO struct {
+	Listener       string `json:"listener"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	Timeout        bool   `json:"timeout"`
+	AppliedMd5     string `json:"appliedMd5"`
+	AppliedVersion string `json:"appliedVersion"`
+	AppliedCount   *int   `json:"appliedCount"`
+	DetailJSON     string `json:"detailJson"`
+}
+
+// toDeliveryReloadReport 把回执 DTO 映射为服务层形状（FR-274）；nil 原样返回，
+// 表示「老 agent 未上报」，服务层据此保持 reload_report 为 NULL 而非写空对象。
+func toDeliveryReloadReport(dto *deliveryReloadReportDTO) *service.DeliveryReloadReport {
+	if dto == nil {
+		return nil
+	}
+	out := &service.DeliveryReloadReport{
+		Total:       dto.Total,
+		OKCount:     dto.OKCount,
+		FailedCount: dto.FailedCount,
+		TimeoutMs:   dto.TimeoutMs,
+		Plugins:     make([]service.DeliveryReloadPlugin, 0, len(dto.Plugins)),
+	}
+	for _, p := range dto.Plugins {
+		out.Plugins = append(out.Plugins, service.DeliveryReloadPlugin{
+			Listener:       p.Listener,
+			Status:         p.Status,
+			Reason:         p.Reason,
+			Timeout:        p.Timeout,
+			AppliedMd5:     p.AppliedMd5,
+			AppliedVersion: p.AppliedVersion,
+			AppliedCount:   p.AppliedCount,
+			DetailJSON:     p.DetailJSON,
+		})
+	}
+	return out
 }
 
 // Result 处理 POST .../orders/{id}/result：阶段回执（upload / push / activate / rollback）。
@@ -92,6 +145,7 @@ func (h *DeliveryAgentHandler) Result(w http.ResponseWriter, r *http.Request) {
 		SkippedFileCount: req.SkippedFileCount,
 		BackupPresent:    req.BackupPresent,
 		Error:            req.Error,
+		Reload:           toDeliveryReloadReport(req.Reload),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)

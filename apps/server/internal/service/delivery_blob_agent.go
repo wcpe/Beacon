@@ -2,9 +2,12 @@ package service
 
 import (
 	"encoding/json"
+	"sort"
+	"strings"
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/merge"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
@@ -330,6 +333,62 @@ func preferConfigArtifacts(files []DeliveryManifestFileView) []DeliveryManifestF
 	return merged
 }
 
+// ExpectedConfigArtifactMD5 重算某单某目标「配置工件整体摘要」，即交付生效阶段 agent 交给插件的 newMd5
+// 的对照值（agent 侧算法见 `DeliveryCommandExecutor.configArtifactMd5`），供控制面核对插件自报 appliedMd5
+// （FR-273「回执成功但版本不符」判定）。
+//
+// 口径逐字对齐 agent：按 **path 升序、同 path 取 sha 序首个** 取该目标全部配置冻结工件，拼接
+// `path "\n" sha256 "\n"`，整体取小写 md5。
+//
+// **不要改用 EffectiveService 的有效配置 md5**：那是「周期同步」通道交给插件的值（`ConfigApplier`
+// 传 `result.md5`）；交付通道交给插件的是本函数重算的工件摘要，两者语义不同——用错一侧会让
+// 按契约回显 newMd5 的合规插件被系统性判成「版本不符」，等于把核对本身变成批量误判失败。
+//
+// 无工件（纯文件交付单）返回空串与 nil：调用方据此判「期望值不可得」并放行（降级），不误判失败。
+func (s *DeliveryBlobService) ExpectedConfigArtifactMD5(orderID uint, serverID string) (string, error) {
+	if s.artifacts == nil {
+		// 正规装配（NewDeliveryBlobService）必定有该仓库；裸结构体仅在测试里出现。
+		// 返回「期望值不可得」而非 panic：本函数被推进器 goroutine 调用，panic 会打死整个推进循环。
+		return "", nil
+	}
+	arts, err := s.artifacts.ListByOrderServer(orderID, serverID)
+	if err != nil {
+		return "", err
+	}
+	return configArtifactMD5(arts), nil
+}
+
+// configArtifactMD5 对工件集合求整体摘要（纯函数，便于与 agent 侧算法对拍）。
+//
+// 显式按 (path, sha) 用 Go 字符串序排序并去重同 path 项：DB `ORDER BY path` 受排序规则影响
+// （大小写不敏感等），不足以充当跨端对拍依据；去重对齐 agent 的 `distinctBy { path }`。
+func configArtifactMD5(arts []model.DeliveryConfigArtifact) string {
+	if len(arts) == 0 {
+		return ""
+	}
+	sorted := make([]model.DeliveryConfigArtifact, len(arts))
+	copy(sorted, arts)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Path != sorted[j].Path {
+			return sorted[i].Path < sorted[j].Path
+		}
+		return sorted[i].SHA256 < sorted[j].SHA256
+	})
+	var b strings.Builder
+	lastPath := ""
+	for i := range sorted {
+		if i > 0 && sorted[i].Path == lastPath {
+			continue // 同 path 重复项按首个计（工件表以 (单, 目标, path) 唯一，此处仅防御历史脏数据）
+		}
+		lastPath = sorted[i].Path
+		b.WriteString(sorted[i].Path)
+		b.WriteByte('\n')
+		b.WriteString(sorted[i].SHA256)
+		b.WriteByte('\n')
+	}
+	return merge.MD5Hex(b.String())
+}
+
 // 交付阶段回执 phase 取值（spec §5.2）。
 const (
 	DeliveryPhaseUpload   = "upload"
@@ -366,6 +425,31 @@ type DeliveryResultInput struct {
 	BackupPresent bool
 	// 失败原因（脱敏后落库展示，ADR-0057）
 	Error string
+	// 逐插件重载结果（FR-274）：agent 上报时非 nil，落 change_target.reload_report；
+	// 老 agent 不上报时为 nil，保持该列为 NULL（前端据此显示「无重载信息」）。
+	Reload *DeliveryReloadReport
+}
+
+// DeliveryReloadReport 是逐插件重载结果的回执形状（FR-274，见 docs/specs/delivery-reload-ack.md §3.4）。
+type DeliveryReloadReport struct {
+	Total       int                    `json:"total"`
+	OKCount     int                    `json:"okCount"`
+	FailedCount int                    `json:"failedCount"`
+	TimeoutMs   int64                  `json:"timeoutMs"`
+	Plugins     []DeliveryReloadPlugin `json:"plugins"`
+}
+
+// DeliveryReloadPlugin 是单个插件的重载结果（FR-274）。
+// AppliedCount 用指针区分「加载了 0 条」与「未自报」。
+type DeliveryReloadPlugin struct {
+	Listener       string `json:"listener"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	Timeout        bool   `json:"timeout"`
+	AppliedMd5     string `json:"appliedMd5"`
+	AppliedVersion string `json:"appliedVersion"`
+	AppliedCount   *int   `json:"appliedCount,omitempty"`
+	DetailJSON     string `json:"detailJson,omitempty"`
 }
 
 // deliveryCommandPayload 是交付命令 payload 的最小解析形状（M2 只消费 orderId 做归属匹配；
@@ -460,6 +544,20 @@ func deliveryResultDetail(orderID uint, input DeliveryResultInput) string {
 	}
 	if input.Status == DeliveryResultFailed {
 		detail["error"] = sanitizeFileSyncError(input.Error)
+	}
+	// 逐插件重载结果（FR-273）：推进器从 result_detail 反解 reload，再落 change_target.reload_report。
+	// 不写这里等于把结构化明细丢在回执入口——error 只剩一句文本，前端明细列与告警明细都无从渲染。
+	// 老 agent 不上报时为 nil，保持既有形状不变。
+	if input.Reload != nil {
+		// 必须先收口再塞进 detail：result_detail 是 type:text（65535 字节），而这段内容
+		// **由被管端提供**（插件条数 / reason / detailJson 都没有上限）。超宽在 MySQL 严格模式下
+		// 会让 UpdateStatus 报 1406 → handler 返回错误 → agent 拿同一份回执重试，
+		// 形成稳定失败循环（正是 reason_cap 整段注释要堵的形态，只是这条是入站路径）。
+		// 收口只影响留痕副本，推进器判定仍用原始 res.Reload。
+		if rawReload, marshalErr := json.Marshal(input.Reload); marshalErr == nil {
+			detail["reload"] = json.RawMessage(
+				capReloadReportJSON(string(rawReload), changeTargetReloadReportMaxBytes))
+		}
 	}
 	raw, _ := json.Marshal(detail)
 	return string(raw)

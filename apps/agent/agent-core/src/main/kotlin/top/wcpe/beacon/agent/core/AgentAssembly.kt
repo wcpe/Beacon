@@ -52,6 +52,7 @@ import top.wcpe.beacon.agent.core.scheduling.SchedulingSnapshotStore
 import top.wcpe.beacon.agent.core.scheduling.SchedulingView
 import top.wcpe.beacon.agent.core.scheduling.SelfHealthHolder
 import top.wcpe.beacon.agent.core.settings.AgentSettings
+import top.wcpe.beacon.agent.core.settings.PushedConfigCoordinator
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
 import top.wcpe.beacon.agent.core.transport.BlobStreamTransport
 import top.wcpe.beacon.agent.core.transport.HttpTransport
@@ -135,6 +136,8 @@ private data class CoreAssemblyParams(
     val store: EffectiveConfigStore,
     val snapshotStore: SnapshotStore?,
     val applier: ConfigApplier,
+    // 有效配置只读视图：随第 276 行处的 lifecycle 停机释放其自建线程池。
+    val effectiveConfigView: EffectiveConfigView,
 )
 
 /** 装配引用：钩子 + 可变引用（需跨函数传递的 AtomicReference）。 */
@@ -217,7 +220,7 @@ object AgentAssembly {
             createLifecycleAndExecutor(
                 ctx,
                 transport,
-                CoreAssemblyParams(store, snapshotStore, applier),
+                CoreAssemblyParams(store, snapshotStore, applier, effectiveConfigView),
                 MirrorContext(pluginsBase, pluginsBaseValid, mirrorEnabled),
                 AssemblyRefs(hooks, schedulingRefresherRef),
             )
@@ -331,6 +334,11 @@ object AgentAssembly {
                     ),
             )
         lifecycle.onRegistered { messaging.messagingRuntime.start() }
+        // 下发配置的周期拉取（FR-277 闭环末段）：见 attachPushedConfigPolling。
+        attachPushedConfigPolling(ctx, lifecycle, core.effectiveConfigView)
+        // 派发器的自建线程池归本代 active runtime 所有：随 lifecycle 停机一并释放，
+        // 否则每次 reload 都会留下一组空闲线程（虽会在 60s 后回收，但叠加期仍占资源）。
+        lifecycle.shutdownListeners.add { core.effectiveConfigView.close() }
         val declarationHolder = createDeclarationHolder(lifecycle, ctx)
         lifecycleRef.set(lifecycle)
         return LifecycleAndExecutor(lifecycle, topologyWatchHub, scheduling, messaging, declarationHolder)
@@ -429,7 +437,15 @@ object AgentAssembly {
                     tempRoot = File(ctx.adapter.dataFolder(), DELIVERY_TMP_DIR),
                 )
             // 启动期清扫上轮进程遗留的交付临时目录（FR-268）：装配在插件启用期于主线程执行，删盘转异步。
-            DeliveryCommandExecutor(ctx.identity, ctx.apiClient, ctx.adapter, pipeline).also {
+            // reloadTimeoutMs 只用于在交付回执里告知控制面超时判定口径（FR-274）；
+            // 真正的超时执行在 EffectiveConfigView 内，两处共用同一配置源避免口径漂移。
+            DeliveryCommandExecutor(
+                ctx.identity,
+                ctx.apiClient,
+                ctx.adapter,
+                pipeline,
+                ctx.settings.configReloadTimeoutMs,
+            ).also {
                 ctx.adapter.runAsync { it.sweepStaleTemp() }
             }
         } else {
@@ -455,6 +471,31 @@ object AgentAssembly {
             SchedulingRefresher(ctx.apiClient, ctx.identity, ctx.adapter, schedulingCache, schedulingSnapshotStore, reportQueue)
         schedulingRefresherRef.set(schedulingRefresher)
         return SchedulingComponents(selfHealthHolder, schedulingCache, schedulingView, schedulingRefresher)
+    }
+
+    /**
+     * 接上下发配置的周期拉取（FR-277 闭环末段）。
+     *
+     * 注册后才拉：未注册时端点必然 401，提前拉没有意义。
+     * 调度节奏与代号管理都由协调器内部负责，这里只做「装配 + 启停接线」。
+     */
+    private fun attachPushedConfigPolling(
+        ctx: AssemblyContext,
+        lifecycle: AgentLifecycle,
+        view: EffectiveConfigView,
+    ) {
+        val coordinator =
+            PushedConfigCoordinator.forAssembly(
+                ctx.apiClient,
+                ctx.adapter.dataFolder(),
+                ctx.codec,
+                view,
+                ctx.adapter,
+                // 撤销下发后要回落到本地生效值：用 ctx.settings（config.yml / 环境变量 / 默认的解析结果）。
+                localFallback = { ctx.settings },
+            )
+        lifecycle.onRegistered { coordinator.start(ctx.identity, ctx.adapter::runAsyncDelayed) }
+        lifecycle.shutdownListeners.add { coordinator.stop() }
     }
 
     /** 装配跨服消息组件（FR-149，HTTP 中转）：holder、bus、runtime。 */

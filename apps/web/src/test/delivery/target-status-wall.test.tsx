@@ -98,6 +98,7 @@ describe('TargetStatusWall 单服级状态墙', () => {
               error: null,
               rollbackStatus: 'failed',
               rollbackError: '备份不存在（已被保留策略清理），无法文件回滚',
+              reloadReport: null,
             },
             {
               serverId: 'game-2',
@@ -111,6 +112,7 @@ describe('TargetStatusWall 单服级状态墙', () => {
               error: null,
               rollbackStatus: 'rolled_back',
               rollbackError: null,
+              reloadReport: null,
             },
           ],
           total: 2,
@@ -158,6 +160,8 @@ describe('目标级回滚与回滚预检', () => {
             orderTitle: '上一单交付',
             activatedAt: '2026-07-16T07:05:00Z',
           },
+          // 逐插件重载结果（FR-272）：本 fixture 不涉重载明细，置 null（= 无重载信息）。
+          reloadReport: null,
         },
         {
           serverId: 't-2',
@@ -173,6 +177,7 @@ describe('目标级回滚与回滚预检', () => {
           rollbackStatus: null,
           rollbackError: null,
           deliveredVersion: null,
+          reloadReport: null,
         },
       ],
     },
@@ -318,6 +323,7 @@ describe('全选判定基数（可回滚口径）', () => {
     rollbackStatus: null,
     rollbackError: null,
     deliveredVersion: null,
+    reloadReport: null,
   })
 
   it('含未推送台时：勾满可勾选目标即等价整单（提示含配置回退），与后端 eligible 口径一致', async () => {

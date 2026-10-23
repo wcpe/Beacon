@@ -4,10 +4,11 @@ import top.wcpe.beacon.agent.api.AgentUnavailableException;
 import top.wcpe.beacon.agent.api.BeaconAgent;
 import top.wcpe.beacon.agent.api.BeaconAgentProvider;
 import top.wcpe.beacon.agent.api.ConfigChangeListener;
+import top.wcpe.beacon.agent.api.DataIdPrefix;
 import top.wcpe.beacon.agent.api.EffectiveConfig;
 import top.wcpe.beacon.agent.api.ListenerHandle;
 
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -22,6 +23,11 @@ import java.util.Set;
  *       由不可用转可用时（含 reload 后的新门面实例）补注册底层监听并重放当前值。</li>
  * </ul>
  *
+ * <p><b>前缀过滤订阅</b>（{@code subscribeConfig(pathPrefix, listener)}）：前缀在句柄里**存住**，
+ * 重放与补注册都按它裁剪——补注册不会把前缀弄丢（那会让插件某次 agent reload 后又开始被全量唤醒，
+ * 属最难复现的一类回归）。重放同理只给匹配的 dataId；前缀**零匹配时干脆不回调**，不拿空基线打扰下游。
+ * 无前缀（null/空）的订阅行为完全不变：重放全量，哪怕当前一项都没有也照常回调一次。</p>
+ *
  * <p>补注册由下游周期调用 {@link #pump()} 驱动——kit 不自起线程、不碰调度（零三方依赖约束）。
  * 下游在其既有 tick / 心跳里顺手调一次即可，成本极低、线程切换留在下游可控处。</p>
  *
@@ -33,6 +39,9 @@ public final class BeaconSubscription implements AutoCloseable {
     /** 下游传入的变更监听器（重放与透传都回调它）。 */
     private final ConfigChangeListener listener;
 
+    /** 过滤前缀；null/空表示不过滤（老语义）。补注册与重放都依赖它，故必须存住。 */
+    private final String pathPrefix;
+
     /** 当前已注册的底层监听句柄；未注册时为空。 */
     private ListenerHandle handle;
 
@@ -43,7 +52,13 @@ public final class BeaconSubscription implements AutoCloseable {
     private boolean closed;
 
     BeaconSubscription(ConfigChangeListener listener) {
+        this(null, listener);
+    }
+
+    /** @param pathPrefix 过滤前缀（null/空=不过滤），随句柄保存，补注册与重放都按它裁剪 */
+    BeaconSubscription(String pathPrefix, ConfigChangeListener listener) {
         this.listener = listener;
+        this.pathPrefix = pathPrefix;
         // 构造即尝试注册一次：若 agent 已就绪则立即注册底层监听并重放当前值；
         // 未就绪则什么都不做，等下游 pump 驱动补注册。
         pump();
@@ -83,9 +98,23 @@ public final class BeaconSubscription implements AutoCloseable {
         }
         // 门面换了实例（reload）或首次注册：先解绑旧的再绑新的。
         forgetBinding();
-        handle = config.onChange(listener);
+        handle = registerTo(config);
         boundConfig = config;
         replayCurrent(agent, config);
+    }
+
+    /**
+     * 向底层 {@link EffectiveConfig} 注册（**每次都带上本句柄的前缀**，补注册不得丢）。
+     *
+     * <p>无前缀时坚持走单参 {@code onChange(listener)}：那是老契约，任何版本的 agent 都有；
+     * 新编译的插件若跑到旧 agent jar 上，走双参重载会抛 {@code NoSuchMethodError}。
+     * 有前缀时才用双参——此时过滤能力本就是刚需，agent 太旧没这个能力也不该假装订阅成功。
+     * （双参方法本身在 agent-api 里有 default 降级实现，见 {@link EffectiveConfig}。）</p>
+     */
+    private ListenerHandle registerTo(EffectiveConfig config) {
+        return DataIdPrefix.isFiltering(pathPrefix)
+                ? config.onChange(pathPrefix, listener)
+                : config.onChange(listener);
     }
 
     /** 注销底层监听并清空绑定，重复调用安全。 */
@@ -104,12 +133,30 @@ public final class BeaconSubscription implements AutoCloseable {
         boundConfig = null;
     }
 
-    /** 用当前有效配置（全部 dataId + 整体 md5）向监听器重放一次，使订阅方拿到注册时的基线。 */
+    /**
+     * 用当前有效配置向监听器重放一次，使订阅方拿到注册时的基线。
+     *
+     * <p>重放的过滤语义必须与底层派发**一致**，否则「注册即重放」会成为绕过过滤的后门：
+     * 订阅了 {@code plugins/Foo/} 的插件在注册那一刻反而收到全量 dataId，等于白过滤。</p>
+     * <ul>
+     *   <li>无前缀：重放当前**全部** dataId（老行为不变）；整体 md5 尚未收敛时用空串占位，
+     *       仍重放一次让下游知道「已订阅、当前为空」。</li>
+     *   <li>有前缀：只重放匹配项；**零匹配则整次跳过**——没有基线可给，就不该拿一次无关回调
+     *       把下游叫醒。</li>
+     * </ul>
+     */
     private void replayCurrent(BeaconAgent agent, EffectiveConfig config) {
         List<String> dataIds = config.dataIds();
-        // 整体 md5 尚未收敛时用空串占位，仍重放一次让下游知道「已订阅、当前为空」。
         String md5 = agent.effectiveMd5().orElse("");
-        Set<String> changed = new HashSet<>(dataIds);
+        Set<String> changed;
+        if (DataIdPrefix.isFiltering(pathPrefix)) {
+            changed = DataIdPrefix.filter(pathPrefix, dataIds);
+            if (changed.isEmpty()) {
+                return;
+            }
+        } else {
+            changed = new LinkedHashSet<>(dataIds);
+        }
         listener.onConfigChanged(changed, md5);
     }
 }

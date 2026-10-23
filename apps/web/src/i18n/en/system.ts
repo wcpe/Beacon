@@ -626,6 +626,130 @@ export const system = {
       errorSummary: 'Error / rejection summary',
     },
   },
+  // Agent access & config (FR-279): runtime parameters pushed by scope after /beacon join
+  agentSettings: {
+    mission:
+      'Agents onboarded with /beacon join <address> <token> get their runtime parameters pushed from here by scope; changes hot-reload within ~30 seconds, and a disconnected agent keeps using the last cached push.',
+    scope: {
+      namespace: 'Namespace',
+      namespacePlaceholder: 'Select a namespace',
+      namespaceLoading: 'Loading namespaces…',
+      namespaceEmpty: 'No namespace available',
+      server: 'Server (optional)',
+      serverPlaceholder: 'Empty = the whole namespace',
+      serverLoading: 'Loading server candidates…',
+      serverEmpty: 'No server in this namespace',
+      serverClear: 'Clear server selection',
+      hintNamespace: 'Current scope: namespace defaults, applied to servers without their own override',
+      hintServer: 'Current scope: server override, takes precedence over namespace defaults',
+      updatedAt: 'Last push: {{time}}',
+      neverUpdated: 'Nothing has been pushed to this scope yet',
+    },
+    listTitle: 'Pushable settings',
+    listHint: '{{count}} items',
+    empty: 'No pushable settings',
+    loadFail: 'Failed to load agent settings',
+    scopeRequired: 'Select a namespace first',
+    retry: 'Retry',
+    table: {
+      key: 'Setting',
+      value: 'Effective value',
+      source: 'Source',
+      actions: 'Actions',
+      edit: 'Edit',
+      cancel: 'Cancel',
+      // Revoke this layer's override: deletes the row so the key falls back to the upper layer / local config / code default.
+      // Sits next to Edit instead of inside the edit state: it is a distinct intent ("hand control back"),
+      // and the edit state can only express "write a new value".
+      revoke: 'Revoke override',
+      undoRevoke: 'Undo revoke',
+      revokePending: 'Pending revoke: this key falls back to the upper layer or local config after submit',
+      pending: 'Pending push',
+      unset: '—',
+      // A staged empty value must not render as "—" (that means unset), or it reads as "disabled"
+      blank: '(empty)',
+    },
+    // Source markers: only what the control plane can actually assert (see contract AgentSettingSource).
+    // Never add a separate "code default" entry here: the control plane cannot see how the agent's
+    // local chain resolves, so claiming that would be a fabrication.
+    source: {
+      server: 'Server override',
+      namespace: 'Namespace default',
+      // Neither layer pushed: the effective value comes from the agent's local chain
+      // (environment variables > config.yml > code default) and the control plane cannot narrow it down.
+      'local-or-default': 'Local config or code default',
+      unknown: 'Unknown source',
+      // Tells operators where to go and edit — that is the whole point of this column
+      legend:
+        'Edit "Server override" and "Namespace default" here; "Local config or code default" means nothing was pushed for that key — edit config.yml (or its environment variables) on that host instead.',
+    },
+    // High-risk warning (ADR-0011: the whitelist is the only gate that can execute commands)
+    highRisk: {
+      badge: 'High risk',
+      title: 'High-risk setting: command whitelist',
+      body: 'override.command-whitelist decides which console commands the agent may execute — the only path from control plane to a real action on the managed end (ADR-0011). Command dispatch only stops when this layer override is revoked (falling back to the layer above); confirm the command has been reviewed on the plugin side before widening it, and note every change is audited with its author and reason.',
+      // Key name kept as jsonHint: the HighRiskNotice component rendering it is out of scope here
+      jsonHint: 'Comma- or newline-separated command first tokens, e.g. reload, taboolib (not a JSON array)',
+      // One actionable message per issue: a generic "invalid format" pushes people back to JSON
+      issue: {
+        jsonArray:
+          'Do not use a JSON array (e.g. ["reload"]): the server stores this as a comma/newline-separated list, so ["reload"] becomes a single command name the agent can never match — the whitelist silently stops working. Use: reload, taboolib',
+        unsafe: 'A command name may not contain ; & | > < $ backticks or control characters',
+        format: 'Each item must be one command name (first token) without spaces, e.g. reload, taboolib',
+      },
+    },
+    // Hard constraint on the value itself (independent of the key)
+    value: {
+      empty:
+        'Clearing is not revoking: empty values are always rejected; revoking this layer override needs the "revoke override" action (not available in this UI yet)',
+    },
+    // Local-authority keys: the control plane may never push these
+    localOnly: {
+      title: 'Local configuration only',
+      badge: 'Read-only',
+      note: 'Local configuration only',
+      body: 'These keys are authoritative on the agent host (config.yml, or the credential file written by /beacon join) and the control plane may not push them — otherwise a compromised control plane would mean a compromised managed end. Edit the local configuration on that machine and restart the agent instead.',
+      descs: {
+        'beacon.endpoints': 'Access endpoints: changing them points the agent at another control plane (target hijack)',
+        'beacon.bootstrap-token': 'Bootstrap token: changing it swaps identity or locks the agent out (identity hijack)',
+        'identity.server-id': 'Server this host belongs to: authoritative value comes from the registration / approval flow',
+        'identity.identity-id': 'Host identity: only ever generated and migrated locally',
+      },
+    },
+    save: {
+      reason: 'Reason',
+      reasonPlaceholder: 'Why this push is being made (recorded by approval and audit)',
+      reasonRequired: 'A reason is required',
+      scopeUnconfirmed:
+        'Scope is not confirmed yet (no confirmation label), so nothing can be pushed: reselect the scope or refresh and try again',
+      pendingCount: '{{count}} change(s) pending push',
+      noChange: 'No pending changes',
+      submit: 'Save {{count}} change(s)',
+      submitting: 'Pushing…',
+      saved: 'Pushed; the agent will hot-reload within about 30 seconds',
+      submitted: 'Submitted for approval (ticket {{id}}); it reaches the agent only after approval',
+      // Ticket already finished: nothing was pushed this time and it can never be pushed as-is
+      ticketTerminal:
+        'The approval ticket for this change has already finished ({{status}}); nothing was pushed. Edit the reason and submit again',
+      ticketSucceeded: 'This ticket has already been executed; refresh to see the effective values',
+      ticketUnknown:
+        'Ticket status is unknown ({{status}}); check the approval center to confirm whether this change was pushed',
+      viewApproval: 'View approval',
+      failed: 'Push failed: {{message}}',
+    },
+    // Setting descriptions (dotted key -> copy; unknown keys fall back to the backend desc)
+    descs: {
+      'override.command-whitelist':
+        'Console commands allowed to run (comma- or newline-separated command first tokens, e.g. reload, taboolib)',
+      'delivery.config-reload-timeout-ms': 'Config reload timeout (ms): a reload exceeding it is abandoned and reported',
+      'timing.poll-timeout-ms': 'Long-poll hold ceiling (ms); effective value is min(server ceiling, this)',
+      'timing.request-timeout-ms': 'Single HTTP request timeout (ms)',
+      'messaging.enabled': 'Whether the cross-server message channel is enabled',
+      'messaging.rpc-timeout-ms': 'Message RPC timeout (ms)',
+      'assets.enabled': 'Whether file-tree scan reporting is enabled',
+      'assets.scan-interval-sec': 'File-tree scan interval (seconds), minimum 300',
+    },
+  },
   namespaces: {
     title: 'Namespaces',
     isolationHint:

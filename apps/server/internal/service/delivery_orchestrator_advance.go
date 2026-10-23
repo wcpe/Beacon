@@ -1,12 +1,17 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 )
 
 // advanceRolling 推进一个 rolling 单：payload 未就绪先做准备；否则回执驱动在途目标 + 推进当前活动批。
@@ -171,9 +176,37 @@ func (s *DeliveryOrchestrator) reconcileActivatingByAck(rt *orderRuntime, t *mod
 	}
 	switch cmd.Status {
 	case model.CommandStatusDone:
-		s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusActivated,
-			map[string]any{"activated_at": s.now()})
+		// 成功也要落 reload_report（FR-274）：控制面需据此核对「回执成功但版本不符」
+		// （插件自报 appliedMd5/appliedVersion 与期望不一致时必须显式可见，护栏：不得假报成功）。
+		res := parseDeliveryCmdResult(cmd.ResultDetail)
+		updates := map[string]any{"activated_at": s.now()}
+		if res.Reload != nil {
+			if raw, err := json.Marshal(res.Reload); err == nil {
+				updates["reload_report"] = string(raw)
+			}
+		}
+		// 回执成功不等于版本相符：插件自报的 appliedMd5 与期望工件摘要不一致时判 failed（不得留 activated），
+		// 原因显式落到目标行 error（不写成笼统「失败」），reload_report 仍一并保留供展开。
+		if reason, mismatch := s.reloadVersionMismatch(rt, t, res.Reload); mismatch {
+			delete(updates, "activated_at") // 不符即未生效：一并撤掉生效时间锚点，避免「failed 却像生效过」
+			updates["error"] = reason
+			s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusFailed, updates)
+			return
+		}
+		// 一票否决的控制面兜底：agent 侧已按 failed 回执，但控制面不能只信「status=success」这一层。
+		// reload 段自带 failedCount / 逐插件 status，若明细里已有失败而整体却报成功，说明对端实现走偏
+		// （第三方 agent、或 agent 后续重构漏改某条早退路径）——不看这段就会把失败判成 activated，
+		// 正是护栏「不得假报成功」要堵的形态。双保险：agent 保证语义，控制面保证不被漂移带跑。
+		if reason, failed := reloadPluginsFailedReason(res.Reload); failed {
+			delete(updates, "activated_at")
+			updates["error"] = reason
+			s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusFailed, updates)
+			return
+		}
+		s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusActivated, updates)
 	case model.CommandStatusFailed:
+		// 插件重载失败（一票否决，FR-272）只按 agent 给的 reason 落 failed：不再叠加「版本不符」，
+		// 否则真实失败原因会被核对结论掩盖（见 reloadVersionMismatch 只认 status=ok 的插件）。
 		res := parseDeliveryCmdResult(cmd.ResultDetail)
 		s.failTargetWithResult(rt, t, model.ChangeTargetStatusActivating, targetErrorOr(res.Error, "生效失败"), res)
 	case model.CommandStatusExpired:
@@ -181,6 +214,144 @@ func (s *DeliveryOrchestrator) reconcileActivatingByAck(rt *orderRuntime, t *mod
 	default:
 		s.failOnTimeout(rt, t, cmd, model.ChangeTargetStatusActivating, "生效超时（agent 未在 activateTimeoutSec 内回执）")
 	}
+}
+
+// reloadVersionMismatch 判定「回执成功但版本不符」（FR-273 收尾）：核对插件自报 appliedMd5 与期望工件摘要。
+//
+// 三条**只做加法、不做减法**的边界（每条都对应一类误判）：
+//   - 只看 `status=ok` 的插件：已报 failed 的插件不再叠加版本结论，避免真实失败原因被核对结论掩盖。
+//   - 只认**自报**了 appliedMd5 的插件：空串 = 未自报（老插件 / 不关心 md5 的实现），无从核对，放行。
+//   - 期望值不可得即放行：无工件（纯文件单）、未装配来源、查库 / 解析失败一律降级——核对是护栏，
+//     不是闸门，自身故障绝不能把正常交付判成失败。
+//
+// 命中时返回可直接落 `change_target.error` 的可读原因（点明哪个插件、自报值、期望值）。
+//
+// **自报值的语义约定（刻意取舍）**：插件应回显 agent 交给它的 `newMd5`，或干脆不自报；自报**别的**
+// md5 语义（如自算「加载到的文件内容 md5」）会被判不符。宁可让契约在这里显式化，也不放过
+// 「加载了旧内容却回执成功」——后者正是本核对要堵的假成功。`appliedMd5` 是本次新增的可选上报，
+// 生产插件尚未使用，误判面因此可控；契约已写在 `ReportingConfigChangeListener` 的注释里。
+func (s *DeliveryOrchestrator) reloadVersionMismatch(rt *orderRuntime, t *model.ChangeTarget,
+	report *deliveryReloadReport) (string, bool) {
+	if report == nil || len(report.Plugins) == 0 || s.expectedMD5 == nil {
+		return "", false
+	}
+	expected, err := s.expectedMD5.ExpectedConfigArtifactMD5(rt.order.ID, t.ServerID)
+	if err != nil {
+		slog.Warn("交付编排核对重载版本失败，按放行处理（核对不可用不阻断交付）",
+			"orderId", rt.order.ID, "serverId", t.ServerID, "错误", err)
+		return "", false
+	}
+	if expected == "" {
+		slog.Warn("交付编排缺少可核对的期望工件摘要，按放行处理（核对不可用不阻断交付）",
+			"orderId", rt.order.ID, "serverId", t.ServerID)
+		return "", false
+	}
+	return reloadMD5MismatchReason(report.Plugins, expected)
+}
+
+// reloadMD5MismatchReason 逐插件比对自报 md5 与期望值，返回「回执成功但版本不符」原因（纯函数，便于穷举单测）。
+//
+// 只比对 `status=ok` 且自报了 appliedMd5 的插件；任一不一致即整目标判不符（与「插件失败一票否决」同口径）。
+// 原因里保留两个 md5 的可辨识前缀，运维据此一眼看出「插件加载的是别的版本」而不是笼统失败。
+func reloadMD5MismatchReason(plugins []deliveryReloadPlugin, expected string) (string, bool) {
+	const maxReported = 5 // 原因串上限：插件数异常多时不把 error 列撑爆，超出部分只计数量
+	var sb strings.Builder
+	shown, total := 0, 0
+	for i := range plugins {
+		p := &plugins[i]
+		if p.Status != deliveryReloadStatusOK {
+			continue // 已报失败：原因归插件，不叠加版本结论
+		}
+		applied := strings.TrimSpace(p.AppliedMd5)
+		if applied == "" || strings.EqualFold(applied, expected) {
+			continue // 未自报（无从核对）或相符
+		}
+		total++
+		if shown == maxReported {
+			continue
+		}
+		if shown > 0 {
+			sb.WriteString("；")
+		}
+		shown++
+		sb.WriteString("插件 ")
+		sb.WriteString(p.Listener)
+		sb.WriteString(" 自报 md5=")
+		sb.WriteString(shortMd5(applied))
+		sb.WriteString(" ≠ 期望 ")
+		sb.WriteString(shortMd5(expected))
+	}
+	if total == 0 {
+		return "", false
+	}
+	reason := "回执成功但版本不符：" + sb.String()
+	if total > shown {
+		reason += "；另有 " + strconv.Itoa(total-shown) + " 个插件同样不符"
+	}
+	return capReasonRunes(reason, changeTargetErrorMaxRunes), true
+}
+
+// reloadPluginsFailedReason 检查 reload 段是否已含插件失败，返回可落 error 的原因（纯函数，便于穷举单测）。
+//
+// 这是控制面对「一票否决」的独立兜底，不与 agent 侧重复：agent 保证语义（任一插件失败就回 failed），
+// 控制面保证**不因对端实现漂移而误判成功**——第三方 agent、或 agent 后续重构漏改某条早退路径时，
+// 都可能出现「整体 status=success 但 reload 明细里有 failed」的形态，那正是「不得假报成功」要堵的。
+//
+// 判据取「failedCount > 0 或存在任一非 ok 插件」，两者取或：单看 failedCount 会漏掉对端把计数写错
+// 但插件状态如实的情况；单看插件状态会漏掉只给计数不给明细的对端。
+func reloadPluginsFailedReason(report *deliveryReloadReport) (string, bool) {
+	if report == nil {
+		return "", false
+	}
+	failed := report.FailedCount
+	names := make([]string, 0, len(report.Plugins))
+	for i := range report.Plugins {
+		p := &report.Plugins[i]
+		if p.Status == deliveryReloadStatusOK {
+			continue
+		}
+		// 非 ok 的插件：汇总其标识与原因，供运维直接定位。
+		entry := p.Listener
+		if p.Timeout {
+			entry += "（超时）"
+		} else if p.Reason != "" {
+			entry += "：" + p.Reason
+		}
+		names = append(names, entry)
+	}
+	// 计数与明细可能只有一个可信：任一指出「有失败」即成立。
+	if failed <= 0 && len(names) == 0 {
+		return "", false
+	}
+	if failed <= 0 {
+		failed = len(names)
+	}
+	reason := "回执自报成功但重载明细含失败：" + strconv.Itoa(failed) + "/" + strconv.Itoa(report.Total) + " 插件重载失败"
+	if len(names) > 0 {
+		const maxShown = 5 // 上限与 reloadMD5MismatchReason 对齐，避免把 error 列撑爆
+		shown := names
+		if len(shown) > maxShown {
+			shown = shown[:maxShown]
+		}
+		reason += "（" + strings.Join(shown, "；")
+		if len(names) > len(shown) {
+			reason += "；另有 " + strconv.Itoa(len(names)-len(shown)) + " 个"
+		}
+		reason += "）"
+	}
+	// 控制面自己拼的原因串同样要收口：单插件 reason 上限 512 字符，5 条明细叠起来轻松超
+	// change_target.error 的 1024 列宽。超宽会让整条 CAS UPDATE 报 1406 → 目标卡在 activating
+	// 且每 tick 重试同一超宽值，形成稳定失败循环——比报错更难查。
+	return capReasonRunes(reason, changeTargetErrorMaxRunes), true
+}
+
+// shortMd5 截取 md5 前 12 位作可读标识（md5 全量 32 位，前缀足以区分且不把原因串撑长）。
+func shortMd5(md5 string) string {
+	const keep = 12
+	if len(md5) <= keep {
+		return md5
+	}
+	return md5[:keep] + "…"
 }
 
 // heartbeatReturned 判目标 identity 心跳是否已回归（restart 生效判据，spec §4.6.1）：
@@ -657,6 +828,16 @@ func (s *DeliveryOrchestrator) tripBreaker(rt *orderRuntime, batch *model.Change
 
 // casTarget 事务外单表 CAS 迁移目标状态并就地更新快照，成功发目标事件、返回是否命中。
 func (s *DeliveryOrchestrator) casTarget(rt *orderRuntime, t *model.ChangeTarget, from []string, to string, updates map[string]any) bool {
+	// 统一在唯一写入漏斗收口自由文本（就地写回 updates，不另做「落库副本」）：
+	//   - error（列宽 1024）
+	//   - reload_report（TEXT 64KB，超限时退化为截断形态）
+	// agent 上报原文、控制面自拼原因串都会经过这里（含 rejectUnsupportedTargets / failRollbackTarget
+	// 等直连路径，它们不过 failureFacts）。超宽在严格模式下让整条 CAS UPDATE 报 1406 →
+	// 目标卡在原状态且每 tick 重试同一超宽值，形成稳定失败循环——比报错更难查。
+	//
+	// 必须**就地**收口（与 casRollbackFrom 同构）：随后从 updates 取原因发告警，拿到的是与库内
+	// 完全一致的值。此前只收拷贝副本，告警读原始 updates，同一条原因出现「库里短、告警长」双口径。
+	capDeliveryTargetUpdates(updates, "error")
 	full := map[string]any{"status": to}
 	for k, v := range updates {
 		full[k] = v
@@ -678,7 +859,108 @@ func (s *DeliveryOrchestrator) casTarget(rt *orderRuntime, t *model.ChangeTarget
 		}
 	}
 	s.emitTargetEvent(rt, t)
+	// 交付失败告警（FR-275）：只认「迁到 failed」这一个条件，且只在 CAS 真正命中后发
+	// （未命中说明前态不符、状态没变，发告警就是误报）。放在 emitTargetEvent 之后、
+	// 事务与锁之外——告警是旁路，落库失败只由 Dispatcher 记 WARN，绝不回滚状态迁移。
+	if to == model.ChangeTargetStatusFailed {
+		failReason, _ := updates["error"].(string)
+		s.emitDeliveryFailAlert(rt, t, updates, failReason)
+	}
 	return true
+}
+
+// emitDeliveryFailAlert 扇出交付失败告警（FR-275）。
+//
+// 刻意**不收敛**（alert_event 侧 convergesOnRecord 不收录 publish-fail）：交付失败必须逐条可见、
+// 逐条处置，合并会掩盖「同一台服反复交付失败」这条关键信号。
+//
+// 装配缺失（未 SetAlerter）时静默跳过：告警是旁路，不得因它未接线而阻断交付编排。
+//
+// reason **由调用方显式传入**，不从 updates 里按固定键名反查：正推路径落 error、回滚路径落
+// rollback_error，靠猜键名会让回滚失败的告警退化成「未提供原因」，把根因丢掉。
+func (s *DeliveryOrchestrator) emitDeliveryFailAlert(
+	rt *orderRuntime, t *model.ChangeTarget, updates map[string]any, reason string,
+) {
+	if s.alerter == nil {
+		return
+	}
+	detail := map[string]any{
+		"orderId":  rt.order.ID,
+		"serverId": t.ServerID,
+		"status":   t.Status,
+	}
+	// 回滚失败时 t.Status 仍是生效阶段的值（如 activated），单看会读成「已生效却报交付失败」。
+	// 补上回滚阶段事实，让告警自己说清是「生效失败」还是「回滚失败」。
+	if t.RollbackStatus != "" {
+		detail["rollbackStatus"] = t.RollbackStatus
+	}
+	if reason != "" {
+		// alert_event.detail 与 change_target.error 同为「有上限的列」：这里再收一次口，
+		// 保证直接调用本函数的路径（不经过 casTarget / casRollbackFrom）也不会把超宽原因塞进 detail——
+		// 溢出会让整条告警写入失败，而 Dispatcher 只记 WARN，事件页那条告警会静默消失。
+		detail["error"] = capReasonRunes(reason, alertDetailErrorMaxRunes)
+	}
+	// 逐插件重载明细（FR-274 落库的同一份事实）：告警里带上失败项，运维无需再翻交付单才知道是哪个插件。
+	// 复用与落库同一份收口结果（幂等：已收口的值不会再变），否则一条大报告会让整份 detail 越过
+	// alert_event.detail 的 TEXT 上限，同样静默丢告警。
+	if raw, ok := updates["reload_report"].(string); ok && raw != "" {
+		detail["reloadReport"] = json.RawMessage(capReloadReportJSON(raw, changeTargetReloadReportMaxBytes))
+	}
+	// message 落 alert_event.message（size:512, not null）：超列宽在 MySQL 严格模式下会让整条告警
+	// 写入失败，而 Dispatcher 只记 WARN——告警会在最需要它的那一次静默消失。逐插件明细靠 detail
+	// （TEXT）承载，message 只需「一眼看懂是什么事」，故按字符截断并显式标注。
+	//
+	// **必须异步扇出**：本函数在推进器的单 goroutine 主循环里被逐目标调用（经 casTarget），
+	// 而 webhook 通道默认 3s、可配到 60s。同步扇出会让一轮 tick 里多个失败目标的超时累加，
+	// 把其余目标与全部活动单的推进一起拖住，超时判定被推迟。告警是旁路，不得占据主路径。
+	s.alerter.DispatchAsync(context.Background(), alert.Alert{
+		Type:      alert.TypePublishFail,
+		Namespace: rt.nsCode,
+		ServerID:  t.ServerID,
+		At:        s.now(),
+		Message:   truncateAlertMessage(failAlertMessage(t, reason)),
+		Detail:    detail,
+	})
+}
+
+// failAlertMessage 组装告警正文前缀：生效失败与回滚失败必须在**列表层**就分得清。
+//
+// 两类失败的告警 Type 同为 publish-fail（刻意不拆新类型、也不纳入收敛），事件页只看 type / message，
+// 而回滚失败时目标主状态往往仍是 activated——只写「交付失败：」会让「回滚被拒、当时其实已生效」
+// 读起来像一次生效失败，处置方向完全不同（一个是重推，一个是人工上机核对）。
+func failAlertMessage(t *model.ChangeTarget, reason string) string {
+	prefix := "交付失败："
+	if t.RollbackStatus == model.RollbackStatusFailed {
+		prefix = "回滚失败："
+	}
+	if reason == "" {
+		return strings.TrimSuffix(prefix, "：") + "（未提供原因）"
+	}
+	return prefix + reason
+}
+
+// alertMessageMaxRunes 是告警正文的字符上限：alert_event.message 为 size:512。
+//
+// 留出余量取 480：MySQL 的 size 在 utf8mb4 下按字符计，但前缀固定文案与截断标记也要占位，
+// 留 32 字符余量避免边界上恰好超限。
+const alertMessageMaxRunes = 480
+
+// alertDetailErrorMaxRunes 是告警 detail.error 的字符上限。
+//
+// detail 是 TEXT（65535 字节）：单条原因按 1000 字符收口（≈4KB），与 change_target.error 同口径，
+// 保证「库里与告警里读到的是同一个值」，也给同列并排的 reloadReport 留足预算。
+const alertDetailErrorMaxRunes = changeTargetErrorMaxRunes
+
+// truncateAlertMessage 按 rune 截断告警正文，避免把多字节字符切成非法 UTF-8。
+//
+// 明细不丢：调用方把完整 reload 报告放进 detail（TEXT 列），这里只压短「摘要句」。
+func truncateAlertMessage(message string) string {
+	const mark = "…（明细见 detail）"
+	runes := []rune(message)
+	if len(runes) <= alertMessageMaxRunes {
+		return message
+	}
+	return string(runes[:alertMessageMaxRunes-len([]rune(mark))]) + mark
 }
 
 // failTarget 把目标从 from 迁 failed 并落脱敏原因（ADR-0057），返回是否命中。
@@ -721,6 +1003,7 @@ func (s *DeliveryOrchestrator) failPushingWithResult(rt *orderRuntime, t *model.
 
 // failureFacts 组装失败迁移要落的客观事实：脱敏原因 + 只增不减的计数 / 备份标记（[markPushed] 时补推送留痕）。
 func (s *DeliveryOrchestrator) failureFacts(reason string, res deliveryCmdResult, markPushed bool) map[string]any {
+	// 长度收口统一由 casTarget 在写入口完成，这里不再重复截断。
 	updates := map[string]any{"error": reason}
 	if res.ChangedFileCount > 0 {
 		updates["changed_file_count"] = gorm.Expr(
@@ -731,6 +1014,13 @@ func (s *DeliveryOrchestrator) failureFacts(reason string, res deliveryCmdResult
 	}
 	if markPushed {
 		updates["pushed_at"] = s.now()
+	}
+	// 逐插件重载结果原文（FR-274）：只在 agent 上报时写入，供交付单详情展开
+	// 「哪个插件、什么原因、实际加载了什么」。老 agent 不上报则保持 NULL。
+	if res.Reload != nil {
+		if raw, err := json.Marshal(res.Reload); err == nil {
+			updates["reload_report"] = string(raw)
+		}
 	}
 	return updates
 }

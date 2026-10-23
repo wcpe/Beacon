@@ -107,17 +107,26 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
         cell: (row) => {
           const isProxy = row.kind === 'proxy'
           return (
-            <div className="flex items-center gap-2 font-mono font-semibold text-ink-1">
-              <span
-                className={cn(
-                  'grid size-5 place-items-center rounded-md',
-                  isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
-                )}
-                aria-hidden
-              >
-                {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
+            <div className="grid gap-0.5">
+              <div className="flex items-center gap-2 font-mono font-semibold text-ink-1">
+                <span
+                  className={cn(
+                    'grid size-5 place-items-center rounded-md',
+                    isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
+                  )}
+                  aria-hidden
+                >
+                  {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
+                </span>
+                {row.serverId ?? '待分配服务器 ID'}
+              </div>
+              {/* FR-279：token 标识作为服务器 ID 的副标题（不新增列，避免待确认表横向溢出）。
+                  值为 token 摘要派生的短指纹，不含明文、不能用于认证。 */}
+              <span className="pl-7 font-mono text-xs font-normal text-ink-4">
+                {row.tokenFingerprint
+                  ? t('cluster.servers.pending.tokenFingerprint', { fingerprint: row.tokenFingerprint })
+                  : t('cluster.servers.pending.tokenFingerprintMissing')}
               </span>
-              {row.serverId ?? '待分配服务器 ID'}
             </div>
           )
         },

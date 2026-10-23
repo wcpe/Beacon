@@ -25,6 +25,12 @@ export interface AgentIdentityItem {
   migrationState: string | null
   /** 旧本地绑定迁移完成时间。 */
   legacyMigratedAt: string | null
+  /**
+   * 接入该身份的 namespace token 的不可逆短标识（FR-279「接入待确认列表含 token 标识」）。
+   * 由 token 摘要派生，不含明文、不能用于认证；同 token 恒定，轮换 token 后随之改变。
+   * 缺失表示旧控制面尚未提供；显式 null 表示该 namespace 没有接入 token（旧 namespace）。
+   */
+  tokenFingerprint?: string | null
   statusChangedAt: string
   conflictReason: string | null
 }

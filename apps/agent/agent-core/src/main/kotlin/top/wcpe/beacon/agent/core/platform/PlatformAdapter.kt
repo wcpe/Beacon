@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.platform
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.browse.DirListing
 import top.wcpe.beacon.agent.core.browse.FileContent
@@ -124,11 +125,18 @@ interface PlatformBrowse {
  * 平台控制能力：配置变更广播、命令派发、优雅关服。
  */
 interface PlatformControl {
-    /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
+    /**
+     * 广播「配置已更新」给同进程业务插件（平台各自实现事件派发），并返回逐监听器的重载结果。
+     *
+     * **刻意返回报告而非抛异常**（见 `docs/specs/delivery-reload-ack.md` §3.3）：本方法有两个调用方，
+     * 语义不同——交付生效路径要把失败转成 `failed` 回执（一票否决），而周期配置同步路径
+     * （`ConfigApplier.apply`）只应记日志、不得因某个插件重载失败而中断后续配置应用。
+     * 若用抛异常表达失败，后者会被异常打断，属引入缺陷。
+     */
     fun publishConfigChanged(
         changed: Set<String>,
         newMd5: String,
-    )
+    ): ConfigReloadReport
 
     /**
      * 派发一条受限控制台命令（三方插件文件覆盖兼容的重载命令，FR-15）。

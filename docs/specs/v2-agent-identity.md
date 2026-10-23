@@ -232,7 +232,7 @@ agent 启动
 
 | 方法 | 路径 | 请求要点 | 响应要点 |
 |---|---|---|---|
-| GET | `/admin/v2/agent-identities` | query：`status`、`namespaceId`、`keyword`（匹配 serverId/identityId）、`page`、`pageSize`（服务端分页，面向 1000+） | `{items:[{identityId, namespaceId, serverId, kind, status, bootId, lastAddr, agentVersion, pendingExpiresAt, boundAt, statusChangedAt, conflictReason}], total}` |
+| GET | `/admin/v2/agent-identities` | query：`status`、`namespaceId`、`keyword`（匹配 serverId/identityId）、`page`、`pageSize`（服务端分页，面向 1000+） | `{items:[{identityId, namespaceId, serverId, kind, status, bootId, lastAddr, agentVersion, pendingExpiresAt, boundAt, statusChangedAt, conflictReason, tokenFingerprint}], total}` |
 | GET | `/admin/v2/agent-identities/{identityId}` | — | 单条详情；`conflict` 时附冲突双方 `{bootId, lastAddr, lastSeenAt}` 明细 |
 | POST | `/admin/v2/agent-identities/{identityId}/approve` | body：`forceUnbindOccupier`(bool，Q3 占用冲突时必须为 true)；`target?:{kind:zone/bc_cluster, id}`（仅换区重确认时允许：缺省取预填目标，显式 `target:null` 表示确认但暂不分配） | 200；非 pending → 409 `illegal_state`；Q3 未勾选强制解绑 → 409 `server_id_occupied`；非换区中传 `target` → 400 |
 | POST | `/admin/v2/agent-identities/{identityId}/reject` | body：`reason`（必填） | 200；非 pending → 409 |
@@ -248,6 +248,7 @@ agent 启动
 
 - approve 默认不内联 zone 分配（见 §8-8）；首次接入的分配走 zone 域批量分配端点，`/servers` 页面把两步串成向导。**例外**：换区重确认时 approve 同事务按确认目标落区（§4.3「换区」），避免运维填两遍表单。
 - 所有写端点在 DB 事务内完成状态迁移 + serverId 占用校验 + `server` 行创建/解绑联动；事务提交后才对 agent 长轮询可见。
+- `tokenFingerprint`（FR-279「接入待确认列表含 token 标识」）：列表与详情都返回该字段，取值是**由 `namespace.access_token_hash` 派生的 8 位小写 hex 短标识**（版本前缀载荷二次摘要后截断），用于让运维分辨「这条待确认请求由哪个接入 token 递交」。它是**不可逆**的——既不能反推 token，也不能用于认证；token 明文仍只在创建 / 轮换响应返回一次、不落库（见 [v2-zone-authority](v2-zone-authority.md) §3.2），此处**不新增任何落盘字段**。同 token 恒得同一标识（因此同 namespace 的多条身份标识一致），token 轮换后随之改变；未签发 token 的旧 namespace 返回 `null`（界面显示「未提供」，不伪造值）。
 - 运维设置项（走系统设置域热更）：`registration-pending-ttl`（默认 72h）、`identity-conflict-window`（默认 10min）。
 
 ## 6. 与其他规格的边界

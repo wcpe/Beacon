@@ -801,6 +801,7 @@ export const delivery = {
           delivered: '当前交付版本',
           error: '失败原因',
           rollbackError: '回滚失败原因',
+          reload: '插件重载',
           backup: '备份',
         },
         rollbackStatus: {
@@ -808,6 +809,25 @@ export const delivery = {
           running: '回滚中',
           rolled_back: '已回滚',
           failed: '回滚失败',
+        },
+        // 逐插件重载结果（FR-272）
+        reload: {
+          title: '插件重载',
+          summary: '{{ok}}/{{total}} 成功，{{failed}} 失败',
+          summaryAllOk: '{{total}} 个插件全部重载成功',
+          noReload: '无重载信息',
+          noReloadHint: '本次回执未携带插件重载结果（agent 版本较旧）',
+          expand: '查看明细',
+          collapse: '收起',
+          pluginOk: '成功',
+          pluginFailed: '失败',
+          pluginTimeout: '超时',
+          timeoutHint: '单插件重载超过 {{ms}}ms 未返回',
+          reason: '失败原因：{{reason}}',
+          appliedVersion: '加载版本',
+          appliedMd5: '内容 md5',
+          appliedCount: '加载条目',
+          appliedCountUnknown: '未自报',
         },
       },
       // 回滚动作记录（FR-270 / FR-271）：谁 / 何时 / 为何 / 台数 / 是否回退配置 / 逐台结果

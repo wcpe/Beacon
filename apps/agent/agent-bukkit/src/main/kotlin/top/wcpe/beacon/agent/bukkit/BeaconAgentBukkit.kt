@@ -6,6 +6,7 @@ import taboolib.common.env.RuntimeDependency
 import taboolib.common.platform.Awake
 import taboolib.common.platform.Plugin
 import taboolib.common.platform.function.getDataFolder
+import taboolib.common.platform.function.info
 import taboolib.common.platform.function.pluginVersion
 import taboolib.common.platform.function.severe
 import taboolib.common.platform.function.submitAsync
@@ -27,15 +28,21 @@ import top.wcpe.beacon.agent.core.client.ActiveBinding
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.register
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.identity.AgentCredentialsStore
+import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.identity.EndpointReport
 import top.wcpe.beacon.agent.core.identity.IdentityBindingSnapshotStore
+import top.wcpe.beacon.agent.core.identity.toCredentialsBinding
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.lifecycle.BootstrapRuntime
 import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
 import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
+import top.wcpe.beacon.agent.core.settings.AgentSettings
+import top.wcpe.beacon.agent.core.settings.EffectiveSettingsResolver
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
+import top.wcpe.beacon.agent.core.settings.PushedConfigStore
 import java.io.File
 import java.util.UUID
 
@@ -83,7 +90,15 @@ object BeaconAgentBukkit : Plugin() {
     @Config("config.yml")
     lateinit var config: Configuration
 
-    /** 当前生命周期；null 表示因身份缺失未启动。 */
+    /** JSON 编解码（无状态，凭据与下发缓存共用）。 */
+    private val jsonCodec = KotlinxJsonCodec()
+
+    /** 身份凭据存储（FR-276）：join 命令与启动流程共用同一个实例。 */
+    private var credentials: AgentCredentialsStore? = null
+
+    /** 合并了凭据后的生效设置（endpoints/token 可能来自凭据文件）。 */
+    private var effectiveSettings: AgentSettings? = null
+
     private var lifecycle: AgentLifecycle? = null
 
     /** 待确认阶段仅运行此最小引导器，绝不提前创建数据面组件。 */
@@ -111,37 +126,85 @@ object BeaconAgentBukkit : Plugin() {
 
     @Awake(LifeCycle.ENABLE)
     fun enable() {
-        // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
-        val reader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
-        val settings = AgentBootstrap.readSettings(reader)
+        // 身份凭据存储（FR-276）：地址 + 令牌，与 config.yml 分文件保存。
+        // 这里只建实例不读值——真正的读取在 startBootstrap() 里，因为 join 之后要重读。
+        val credentialsStore =
+            AgentCredentialsStore(
+                getDataFolder().toPath(),
+                jsonCodec,
+                // 告警出口必须在这里接上：Windows 上「创建即 0600」必然走降级分支，
+                // 不接线的话运维看不到任何提示（护栏「任何降级都要显式呈现」）。
+                warn = ::warning,
+                error = { severe(it) },
+            )
+        credentials = credentialsStore
+        // 命令注册**提到接入之前**（FR-276）：/beacon join 是接入的入口，
+        // 若等接入成功后才注册，未接入的机器永远执行不到它——那是最需要它的时候。
+        // 此时 lifecycle 还不存在，故先注册「仅接入相关」的命令集，接入成功后再补运维子命令。
+        BeaconJoinCommand.register(
+            credentials = credentialsStore,
+            onJoined = { startBootstrap() },
+            logger = BeaconJoinCommand.JoinLogger(info = ::info, warning = ::warning),
+        )
+        startBootstrap()
+    }
+
+    /** 统一的生效设置解析器（三层优先级 + 凭据合并，规则见 EffectiveSettingsResolver）。 */
+    private fun settingsResolver(): EffectiveSettingsResolver =
+        EffectiveSettingsResolver(
+            localReader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv),
+            pushedStore = PushedConfigStore(getDataFolder().toPath(), jsonCodec),
+            credentialsStore =
+                credentials
+                    ?: AgentCredentialsStore(
+                        getDataFolder().toPath(),
+                        jsonCodec,
+                        warn = ::warning,
+                        error = { severe(it) },
+                    ).also { credentials = it },
+            warn = ::warning,
+            info = ::info,
+        )
+
+    /**
+     * 组装并启动接入（**可重入**：join 成功后再次触发）。
+     *
+     * 这段逻辑原先内联在 `enable()` 里，导致「未接入的机器无法再次尝试」——
+     * 而 join 恰恰要求「保存凭据后立刻连上」，故必须抽出来。
+     * 重入前先停掉上一轮 bootstrap，避免两个运行时并存。
+     */
+    private fun startBootstrap() {
+        bootstrapRuntime?.shutdown()
+        bootstrapRuntime = null
+        // 每次重入都重读配置：join 刚写过凭据，必须拿到最新的地址与令牌。
+        val activeSettings = settingsResolver().resolve()
+        effectiveSettings = activeSettings
+        // 复用 enable 阶段建好的同一实例：join、设置解析、身份解析与绑定落盘必须读写同一个文件。
+        val credentialsStore =
+            credentials
+                ?: AgentCredentialsStore(
+                    getDataFolder().toPath(),
+                    jsonCodec,
+                    warn = ::warning,
+                    error = { severe(it) },
+                ).also { credentials = it }
         val endpointReport = EndpointReport(backendListenPort = readListenPort())
-        // 容量上限（FR-228）：主线程反射读 Paper `max-players`，取不到回 0（→ 控制面 capacity 因子判「不适用」）。
+        // 容量上限（FR-228）：主线程反射读 Paper `max-players`，取回 0（→ 控制面 capacity 因子判「不适用」）。
         val maxPlayers = readMaxPlayers()
         submitAsync {
-            val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
-            // 服务器工作目录（FR-226）：agent dataFolder 的父（plugins）的父 = 服务器根，与 FR-163 扫描根一致。
-            val serverWorkDir = getDataFolder().absoluteFile.parentFile?.parentFile?.absolutePath.orEmpty()
-            // 角色按壳固定为 bukkit；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
-            val identity =
-                AgentBootstrap.readIdentity(role = "bukkit", agentVersion = pluginVersion, serverWorkDir = serverWorkDir)
-                    .copy(
-                        identityId = storedIdentity.identityId,
-                        bootId = UUID.randomUUID().toString(),
-                        endpointReport = endpointReport,
-                        capacity = maxPlayers,
-                    )
+            // 身份单一真源（FR-276）：凭据 > 旧 identity.yml（迁移一次） > 新生成并落盘。
+            val identity = resolveIdentity(credentialsStore, activeSettings, endpointReport, maxPlayers) ?: return@submitAsync
 
-            // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断服务器，仅 agent 不接入）。
-            var canConnect = true
-            if (!storedIdentity.isValid) {
-                severe("身份文件损坏：${storedIdentity.error}，Beacon agent 不接入控制面")
-                canConnect = false
-            }
-            if (canConnect && (settings.endpoints.isEmpty() || settings.bootstrapToken.isBlank())) {
-                severe("配置缺失：beacon.endpoints 与 beacon.bootstrapToken 必填，Beacon agent 不接入控制面")
-                canConnect = false
-            }
-            if (!canConnect) {
+            // 合并凭据后的生效设置：地址/令牌可能来自 agent-credentials.json。
+            val active = activeSettings
+            // **未接入 ≠ 配置错误**（FR-276）。
+            //
+            // 零配置的目标形态是「装上什么都不干」：运维还没 join 时，agent 静静地等着就好，
+            // 不该刷 ERROR 让人以为装坏了。故这里降为 INFO，并且**不进入重连循环**
+            // （否则会无限重试打日志，把真正的故障淹掉）。
+            //
+            // 只有「配了但配错」（例如配了 endpoints 却没令牌）才值得 warning。
+            if (!settingsResolver().hasConnectionConfig(active)) {
                 return@submitAsync
             }
 
@@ -152,27 +215,39 @@ object BeaconAgentBukkit : Plugin() {
 
             // 装配：先建 store + view，再用 view 构 adapter（adapter 在变更时回调 view 派发 API 监听器）。
             val store = EffectiveConfigStore()
-            val view = EffectiveConfigView(store)
+            val view =
+                EffectiveConfigView(store, activeSettings.configReloadTimeoutMs, reloadPoolSize = activeSettings.configReloadPoolSize)
             val adapter = BukkitPlatformAdapter(view)
             val codec = KotlinxJsonCodec()
             val bindingSnapshot = IdentityBindingSnapshotStore(File(getDataFolder(), "identity-binding.snapshot.json"), codec)
-            val bootstrapClient = BeaconApiClient(OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs), codec, settings)
+            val bootstrapClient =
+                BeaconApiClient(OkHttpTransport(connectTimeoutMs = activeSettings.requestTimeoutMs), codec, activeSettings)
             val bootstrap =
                 BootstrapRuntime(
                     identity = identity,
-                    settings = settings,
+                    settings = activeSettings,
                     adapter = adapter,
                     apiClient = bootstrapClient,
                     snapshots = bindingSnapshot,
                     onActive = { activeIdentity, binding ->
+                        // 归属确认即落盘（FR-276）：join 的「已绑定则拒绝」守卫读的就是这份 binding，
+                        // 不写盘则该守卫永不可达。写盘失败不影响接入——绑定是控制面权威事实，
+                        // 内存里已生效，磁盘只为下次启动与 join 判断可见。
+                        runCatching { credentialsStore.setBinding(binding.toCredentialsBinding(activeIdentity.role)) }
+                            .onFailure { warning("写入绑定凭据失败（不影响本次接入）：${it.javaClass.simpleName}: ${it.message}") }
                         startActiveRuntime(
                             identity = activeIdentity,
                             binding = binding,
-                            deps = ActiveRuntimeDeps(settings, adapter, codec, store, view, instrumentation, bindingSnapshot),
+                            deps = ActiveRuntimeDeps(activeSettings, adapter, codec, store, view, instrumentation, bindingSnapshot),
                         )
                     },
                     onTerminal = {
                         bindingSnapshot.invalidate()
+                        // 终端态意味着归属已被控制面解除（解绑 / 否决）：本地必须同步清掉 binding，
+                        // 否则 /beacon join 的「已绑定则拒绝」会永远挡住自助恢复，运维只能手删凭据文件
+                        // （那样会生成新身份，控制面上多一台孤儿服）。
+                        runCatching { credentialsStore.setBinding(null) }
+                            .onFailure { warning("清除本地绑定记录失败（不影响停机）：${it.javaClass.simpleName}: ${it.message}") }
                         stopActiveRuntime()
                     },
                 )
@@ -181,9 +256,65 @@ object BeaconAgentBukkit : Plugin() {
         }
     }
 
+    /**
+     * 解析本轮接入要用的身份（单一真源入口）。
+     *
+     * fail-fast 保留既有语义：旧身份文件损坏、且凭据里也没有合法身份，才是真的丢了身份。
+     * 反过来，凭据里已有合法身份时旧文件损坏不挡接入——凭据才是单一真源。
+     *
+     * @param capacity 容量上限（FR-228），取不到传 0
+     * @return null 表示身份不可用（已打 ERROR，调用方直接放弃接入）
+     */
+    private fun resolveIdentity(
+        credentialsStore: AgentCredentialsStore,
+        settings: AgentSettings,
+        endpointReport: EndpointReport,
+        capacity: Int,
+    ): AgentIdentity? {
+        val identityStore = AgentIdentityStore(getDataFolder().toPath())
+        // 只读不新建：旧实现走 loadOrCreate()，文件缺失时会落盘一个从未在控制面注册过的新 UUID。
+        // 凭据才是身份真源，那个 UUID 只会在凭据变得不可读时被迁移「复活」成一台新服务器。
+        val storedIdentity = identityStore.loadExisting()
+        // 只有「文件存在但读不懂」才是真损坏，须 fail-fast 让人看见。
+        // 「文件不存在」是全新安装的正常态：此时凭据可能也还没有（等 join），
+        // 若也按损坏处理，就会把「还没接入」误报成「身份坏了」并把零配置接入直接堵死。
+        if (storedIdentity.fileExists && !storedIdentity.isValid) {
+            severe("身份文件损坏：${storedIdentity.error}，Beacon agent 不接入控制面")
+            return null
+        }
+        // 凭据 > 旧 identity.yml（迁移一次） > 新生成并落盘。
+        //
+        // 把 config.yml 里的接入目标与令牌作为种子传进去：新建/迁移凭据时一并落盘，
+        // 否则凭据只剩身份，config.yml 一旦被清空或换机遗漏就再也连不回去
+        // （「重启后不必再配地址」这个承诺会落空）。
+        // 种子必须先滤掉模板占位符：把 <CONTROL_PLANE_URL> 写进凭据后，即使清空 config.yml，
+        // agent 仍会对着占位符重连，而凭据文件不像 config.yml 那样显眼，极难排查。
+        val (seedEndpoint, seedToken) =
+            EffectiveSettingsResolver.connectionSeed(settings.endpoints, settings.bootstrapToken)
+        val identityId =
+            credentialsStore.resolveIdentityId(
+                storedIdentity,
+                seedEndpoint = seedEndpoint,
+                seedToken = seedToken,
+            )
+        // 把 identity.yml 对齐成权威身份：两份文件从此永远指向同一个 ID，
+        // 历史上残留的休眠 UUID 就地纠正，迁移路径再也不会把它复活（取舍见 alignTo 注释）。
+        identityStore.alignTo(identityId)
+        // 服务器工作目录（FR-226）：agent dataFolder 的父（plugins）的父 = 服务器根，与 FR-163 扫描根一致。
+        val serverWorkDir = getDataFolder().absoluteFile.parentFile?.parentFile?.absolutePath.orEmpty()
+        // 角色按壳固定为 bukkit；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
+        return AgentBootstrap.readIdentity(role = "bukkit", agentVersion = pluginVersion, serverWorkDir = serverWorkDir)
+            .copy(
+                identityId = identityId,
+                bootId = UUID.randomUUID().toString(),
+                endpointReport = endpointReport,
+                capacity = capacity,
+            )
+    }
+
     private fun startActiveRuntime(
-        identity: top.wcpe.beacon.agent.core.identity.AgentIdentity,
-        binding: top.wcpe.beacon.agent.core.client.ActiveBinding,
+        identity: AgentIdentity,
+        binding: ActiveBinding,
         deps: ActiveRuntimeDeps,
     ) {
         val assembled =

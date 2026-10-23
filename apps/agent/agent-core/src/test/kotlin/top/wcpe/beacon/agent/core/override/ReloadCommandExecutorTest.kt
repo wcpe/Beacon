@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.override
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.io.File
 import kotlin.test.Test
@@ -40,7 +41,7 @@ class ReloadCommandExecutorTest {
         override fun publishConfigChanged(
             changed: Set<String>,
             newMd5: String,
-        ) {}
+        ): ConfigReloadReport = ConfigReloadReport.empty(changed, newMd5)
 
         override fun dispatchConsoleCommand(command: String) {
             if (inAsync) dispatchedViaAsync = true

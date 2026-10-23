@@ -31,6 +31,7 @@ export const nav = {
   apiKeys: 'API keys',
   mcpClients: 'MCP clients',
   mcpInvocations: 'MCP invocations',
+  agentSettings: 'Agent access & config',
   namespaces: 'Namespaces',
   envs: 'Environments',
 } as const

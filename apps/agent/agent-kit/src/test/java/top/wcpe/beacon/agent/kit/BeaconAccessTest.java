@@ -8,6 +8,7 @@ import top.wcpe.beacon.agent.api.BeaconAgentProvider;
 import top.wcpe.beacon.agent.api.BeaconScheduling;
 import top.wcpe.beacon.agent.api.CandidateView;
 import top.wcpe.beacon.agent.api.ConfigChangeListener;
+import top.wcpe.beacon.agent.api.DataIdPrefix;
 import top.wcpe.beacon.agent.api.DataSource;
 import top.wcpe.beacon.agent.api.DataSourceState;
 import top.wcpe.beacon.agent.api.DeclarationOutcome;
@@ -40,6 +41,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** BeaconAccess 便捷门面与订阅桥的单元测试：覆盖回退判据、读配置降级、订阅重放与补注册、close 幂等。 */
@@ -220,6 +222,131 @@ class BeaconAccessTest {
         assertEquals(1, second.config().registeredListeners());
 
         sub.close();
+    }
+
+    // ---------------------------------------------------------------------
+    // 前缀过滤订阅：注册即重放也按前缀裁剪，补注册不丢前缀
+    // ---------------------------------------------------------------------
+
+    @Test
+    void 前缀订阅只重放匹配的dataId() {
+        FakeAgent agent = new FakeAgent();
+        agent.config.put("plugins/Foo/config.yml", "x");
+        agent.config.put("plugins/Bar/config.yml", "y");
+        agent.effectiveMd5 = "m1";
+        BeaconAgentProvider.register(agent);
+
+        BeaconAccess access = new BeaconAccess();
+        RecordingListener listener = new RecordingListener();
+        BeaconSubscription sub = access.subscribeConfig("plugins/Foo/", listener);
+
+        // 重放只给匹配项：过滤若漏在重放这一路，订阅方注册那刻就会收到全量。
+        assertEquals(1, listener.calls.size());
+        assertEquals(new HashSet<>(Collections.singletonList("plugins/Foo/config.yml")), listener.calls.get(0).changed);
+        assertEquals("m1", listener.calls.get(0).md5);
+        // 底层注册也带上了前缀。
+        assertTrue(agent.config().lastUsedPrefixOverload(), "有前缀订阅必须走带前缀的双参注册");
+        assertEquals("plugins/Foo/", agent.config().lastRegisteredPrefix());
+
+        // 无关变更不叫醒：底层派发按同一前缀过滤后再决定是否回调。
+        agent.fireChange(new HashSet<>(Collections.singletonList("plugins/Bar/config.yml")), "m2");
+        assertEquals(1, listener.calls.size(), "无关变更不得把插件叫醒");
+
+        // 相关变更照常透传，且只带匹配项。
+        agent.fireChange(
+                new HashSet<>(Arrays.asList("plugins/Foo/config.yml", "plugins/Bar/config.yml")), "m3");
+        assertEquals(2, listener.calls.size());
+        assertEquals(new HashSet<>(Collections.singletonList("plugins/Foo/config.yml")), listener.calls.get(1).changed);
+
+        sub.close();
+    }
+
+    @Test
+    void 前缀零匹配时注册不重放() {
+        FakeAgent agent = new FakeAgent();
+        agent.config.put("plugins/Bar/config.yml", "y");
+        agent.effectiveMd5 = "m1";
+        BeaconAgentProvider.register(agent);
+
+        BeaconAccess access = new BeaconAccess();
+        RecordingListener listener = new RecordingListener();
+        BeaconSubscription sub = access.subscribeConfig("plugins/Foo/", listener);
+
+        // 零匹配：没有基线可给，就不用一次无关回调把下游叫醒；但底层监听照常注册（后续真变更还能来）。
+        assertTrue(listener.calls.isEmpty());
+        assertEquals(1, agent.config().registeredListeners());
+
+        sub.close();
+    }
+
+    @Test
+    void 前缀在pump补注册后仍生效() {
+        BeaconAccess access = new BeaconAccess();
+        RecordingListener listener = new RecordingListener();
+        // agent 尚未就绪时按前缀订阅：此刻无重放、无注册。
+        BeaconSubscription sub = access.subscribeConfig("plugins/Foo/", listener);
+        assertTrue(listener.calls.isEmpty());
+
+        // agent 转就绪后 pump：补注册必须带上原前缀（丢了就会退化成「被全量唤醒」）。
+        FakeAgent agent = new FakeAgent();
+        agent.config.put("plugins/Foo/config.yml", "x");
+        agent.config.put("plugins/Bar/config.yml", "y");
+        agent.effectiveMd5 = "m9";
+        BeaconAgentProvider.register(agent);
+
+        sub.pump();
+        assertEquals("plugins/Foo/", agent.config().lastRegisteredPrefix(), "补注册不得丢前缀");
+        assertEquals(1, listener.calls.size());
+        assertEquals(new HashSet<>(Collections.singletonList("plugins/Foo/config.yml")), listener.calls.get(0).changed);
+
+        // agent reload 换新门面后再 pump，前缀依然要在。
+        BeaconAgentProvider.unregister();
+        sub.pump();
+        FakeAgent reloaded = new FakeAgent();
+        reloaded.config.put("plugins/Foo/config.yml", "x");
+        BeaconAgentProvider.register(reloaded);
+        sub.pump();
+        assertEquals("plugins/Foo/", reloaded.config().lastRegisteredPrefix());
+        assertEquals(2, listener.calls.size());
+
+        sub.close();
+    }
+
+    @Test
+    void 无前缀订阅行为不变仍重放全量() {
+        FakeAgent agent = new FakeAgent();
+        agent.config.put("plugins/Foo/config.yml", "x");
+        agent.config.put("plugins/Bar/config.yml", "y");
+        agent.effectiveMd5 = "m1";
+        BeaconAgentProvider.register(agent);
+
+        BeaconAccess access = new BeaconAccess();
+        RecordingListener listener = new RecordingListener();
+        // 显式传 null 前缀：等价于单参版本，不过滤。
+        BeaconSubscription sub = access.subscribeConfig(null, listener);
+
+        assertEquals(1, listener.calls.size());
+        assertEquals(
+                new HashSet<>(Arrays.asList("plugins/Foo/config.yml", "plugins/Bar/config.yml")),
+                listener.calls.get(0).changed,
+                "无前缀订阅必须保持重放全量的老行为");
+        // 无前缀走单参重载注册（老 agent jar 没有双参方法，避免版本偏斜时 NoSuchMethodError）。
+        assertFalse(agent.config().lastUsedPrefixOverload(), "无前缀订阅必须走老的单参注册");
+        assertNull(agent.config().lastRegisteredPrefix());
+
+        sub.close();
+    }
+
+    @Test
+    void 前缀匹配规则以斜杠结尾避免误匹配同名前缀() {
+        // 「plugins/Foo」不带斜杠会连 plugins/Foo2 一起命中；文档要求用目录前缀，这里锁住规则本身。
+        assertTrue(DataIdPrefix.filter("plugins/Foo/", Collections.singletonList("plugins/Foo2/config.yml")).isEmpty());
+        assertEquals(
+                new HashSet<>(Collections.singletonList("plugins/Foo/config.yml")),
+                DataIdPrefix.filter("plugins/Foo/", Arrays.asList("plugins/Foo/config.yml", "other/a.yml")));
+        // 空前缀/null 前缀 = 不过滤（全量副本）。
+        assertEquals(2, DataIdPrefix.filter("", Arrays.asList("a.yml", "b.yml")).size());
+        assertEquals(2, DataIdPrefix.filter(null, Arrays.asList("a.yml", "b.yml")).size());
     }
 
     // ---------------------------------------------------------------------
@@ -431,22 +558,39 @@ class BeaconAccessTest {
         }
     }
 
-    /** 假 EffectiveConfig：记录注册的监听器，支持手动触发。 */
+    /** 假 EffectiveConfig：记录注册的监听器与过滤前缀，支持手动触发（并按前缀过滤，模拟 core 的派发语义）。 */
     private static final class FakeEffectiveConfig implements EffectiveConfig {
         private final FakeAgent owner;
-        private final List<ConfigChangeListener> listeners = new ArrayList<>();
+        private final List<Registration> registrations = new ArrayList<>();
+        /** 最近一次注册是否走了双参（带前缀）重载；用于锁住「无前缀仍走老单参」的版本偏斜防线。 */
+        private boolean lastUsedPrefixOverload;
 
         FakeEffectiveConfig(FakeAgent owner) {
             this.owner = owner;
         }
 
         int registeredListeners() {
-            return listeners.size();
+            return registrations.size();
+        }
+
+        /** 最近一次注册所用的前缀；无注册时返回 null，供断言「补注册时前缀没丢」。 */
+        String lastRegisteredPrefix() {
+            return registrations.isEmpty() ? null : registrations.get(registrations.size() - 1).pathPrefix;
+        }
+
+        /** 最近一次注册是否调用了带前缀的双参重载。 */
+        boolean lastUsedPrefixOverload() {
+            return lastUsedPrefixOverload;
         }
 
         void fire(Set<String> changed, String md5) {
-            for (ConfigChangeListener l : new ArrayList<>(listeners)) {
-                l.onConfigChanged(changed, md5);
+            for (Registration registration : new ArrayList<>(registrations)) {
+                Set<String> relevant = registration.relevantSubsetOf(changed);
+                if (relevant == null) {
+                    // 与 core 一致：不相关就根本不调用。
+                    continue;
+                }
+                registration.listener.onConfigChanged(relevant, md5);
             }
         }
 
@@ -472,8 +616,40 @@ class BeaconAccessTest {
 
         @Override
         public ListenerHandle onChange(ConfigChangeListener listener) {
-            listeners.add(listener);
-            return () -> listeners.remove(listener);
+            lastUsedPrefixOverload = false;
+            return register(null, listener);
+        }
+
+        @Override
+        public ListenerHandle onChange(String pathPrefix, ConfigChangeListener listener) {
+            lastUsedPrefixOverload = true;
+            return register(pathPrefix, listener);
+        }
+
+        private ListenerHandle register(String pathPrefix, ConfigChangeListener listener) {
+            Registration registration = new Registration(pathPrefix, listener);
+            registrations.add(registration);
+            return () -> registrations.remove(registration);
+        }
+    }
+
+    /** 一条假注册：带前缀时按 string 前缀过滤（与 agent-api 的 DataIdPrefix 规则一致）。 */
+    private static final class Registration {
+        final String pathPrefix;
+        final ConfigChangeListener listener;
+
+        Registration(String pathPrefix, ConfigChangeListener listener) {
+            this.pathPrefix = pathPrefix;
+            this.listener = listener;
+        }
+
+        /** 返回本次该看到的子集；null 表示本次与它无关、不该调用。 */
+        Set<String> relevantSubsetOf(Set<String> changed) {
+            if (!DataIdPrefix.isFiltering(pathPrefix)) {
+                return changed;
+            }
+            Set<String> matched = DataIdPrefix.filter(pathPrefix, changed);
+            return matched.isEmpty() ? null : matched;
         }
     }
 

@@ -10,6 +10,7 @@ import IdentityDetailSheet from '../../pages/servers/identity-detail-sheet'
 import { fetchDeliveredVersions } from '../../api/delivery-changes'
 import { createTestServer, renderPage, useScenario } from './harness'
 import { uuidFrom } from '@beacon/devmock/support'
+import { i18next } from '../../i18n'
 
 // 本文件独享 mock 服务端实例
 const server = createTestServer()
@@ -96,6 +97,65 @@ describe('/servers 服务器页', () => {
     expect(within(status).getByRole('link', { name: '查看统一审批' })).toHaveAttribute('href', '/approvals/apr_identity_test')
     expect(screen.getByText('game-new-1')).toBeInTheDocument()
   }, 20_000)
+
+  // FR-279：待确认列表必须能分辨「这条请求用哪个 token 接入」——展示服务端派生的 token 指纹，
+  // 且同 token（同 namespace）的行指纹一致、绝不含 token 明文。
+  it('FR-279：待确认行展示 token 指纹，同 token 一致且不含明文', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+
+    await user.click(await screen.findByRole('button', { name: /注册待确认/ }))
+    // 待确认行只在本抽屉内断言：lobby-2 等 serverId 在主体资产表同样出现，全局查询会命中多个元素。
+    const sheet = await screen.findByRole('dialog')
+    const gameRow = (await within(sheet).findByText('game-new-1')).closest('tr')
+    expect(gameRow).not.toBeNull()
+    const unassignedRow = within(sheet).getByText('待分配服务器 ID').closest('tr')
+    expect(unassignedRow).not.toBeNull()
+
+    // 指纹形如「token 指纹 1a2b3c4d」（8 位小写 hex）
+    const gameFingerprint = within(gameRow as HTMLElement).getByText(/^token 指纹 [0-9a-f]{8}$/)
+    expect(gameFingerprint).toBeInTheDocument()
+    // mock 中两条待确认同属 namespace 1（同一 token），指纹必须一致——运维据此判断是否同一凭据接入
+    expect(within(unassignedRow as HTMLElement).getByText(gameFingerprint.textContent ?? '')).toBeInTheDocument()
+    // 硬约束：界面不得出现 token 明文形态（bn_ 前缀 + 长 hex）
+    expect(document.body.textContent).not.toMatch(/bn_[0-9a-f]{16}/)
+  })
+
+  it('FR-279：身份详情抽屉同样展示接入 token 指纹', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+
+    await user.click(await screen.findByRole('button', { name: /注册待确认/ }))
+    const pendingRow = (await screen.findByText('game-new-1')).closest('tr')
+    expect(pendingRow).not.toBeNull()
+    await user.click(within(pendingRow as HTMLElement).getByRole('button', { name: '查看身份详情' }))
+
+    const detailSheet = (await screen.findByText('身份详情')).closest('[data-slot="sheet-content"]')
+    expect(detailSheet).not.toBeNull()
+    expect(within(detailSheet as HTMLElement).getByText('接入 token 指纹')).toBeInTheDocument()
+    expect(within(detailSheet as HTMLElement).getByText(/^[0-9a-f]{8}$/)).toBeInTheDocument()
+  })
+
+  // FR-279 要求「中英文案同步」：英文界面必须解析成英文案，不得回落成中文或裸 i18n key。
+  it('FR-279：英文界面显示英文 token 指纹文案', async () => {
+    useScenario('normal')
+    await i18next.changeLanguage('en')
+    try {
+      const user = userEvent.setup()
+      renderPage(<ServersPage />)
+      await user.click(await screen.findByRole('button', { name: /Pending registration/ }))
+      const sheet = await screen.findByRole('dialog')
+      // 同 namespace 的多条待确认共享同一指纹，故按「至少一条」断言
+      expect(within(sheet).getAllByText(/^Token fingerprint [0-9a-f]{8}$/).length).toBeGreaterThan(0)
+      // 不得露出裸 i18n key
+      expect(within(sheet).queryByText(/cluster\.servers\.pending\./)).not.toBeInTheDocument()
+    } finally {
+      // i18n 是单例：必须复位，否则污染同 worker 内的其它用例
+      await i18next.changeLanguage('zh-CN')
+    }
+  })
 
   it('待分配身份要求显式填写服务器 ID，并展示绑定详情', async () => {
     useScenario('normal')

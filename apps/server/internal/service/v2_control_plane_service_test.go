@@ -1611,3 +1611,105 @@ func TestListServersOnlineMatchesNamespaceCodeCaseInsensitively(t *testing.T) {
 		t.Fatalf("大小写不一致的 namespace code 仍须点亮在线（已按 AlertOrphanMatchKey 同范式归一），实际 online=false")
 	}
 }
+
+// TestFR279AgentTokenFingerprintDerivesStableShortId 钉住 FR-279 的 token 标识派生规则：
+// 同一 token 摘要恒得同一 8 位小写 hex；不同摘要互相可区分；未签发 token（空摘要）返回 nil；
+// 派生值既不等于明文 token，也不是摘要的子串（不把凭据摘要的前缀直接下发）。
+func TestFR279AgentTokenFingerprintDerivesStableShortId(t *testing.T) {
+	prodToken, testToken := "bn_000000000000000000000000000000000000000000000001",
+		"bn_000000000000000000000000000000000000000000000002"
+	prodHash := tokenHash(prodToken)
+
+	first := agentTokenFingerprint(prodHash)
+	if first == nil {
+		t.Fatalf("已签发 token 的 namespace 必须给出 token 标识")
+	}
+	if len(*first) != 8 || *first != strings.ToLower(*first) {
+		t.Fatalf("token 标识必须是 8 位小写 hex，实际 %q", *first)
+	}
+	for _, ch := range *first {
+		if !strings.ContainsRune("0123456789abcdef", ch) {
+			t.Fatalf("token 标识只能含小写 hex 字符，实际 %q", *first)
+		}
+	}
+	// 同一摘要重复派生必须恒定，否则前端每次刷新都会变，运维无法据此认 token。
+	if again := agentTokenFingerprint(prodHash); again == nil || *again != *first {
+		t.Fatalf("同 token 的标识必须恒定，期望 %q，实际 %v", *first, again)
+	}
+	other := agentTokenFingerprint(tokenHash(testToken))
+	if other == nil || *other == *first {
+		t.Fatalf("不同 token 必须派生不同标识，实际 %v 与 %q", other, *first)
+	}
+	if agentTokenFingerprint("") != nil {
+		t.Fatalf("未签发 token 的旧 namespace 必须返回 nil，不得伪造标识")
+	}
+	// 反向约束：标识不得等于 token 明文，也不得是摘要的子串。
+	if *first == prodToken || strings.Contains(prodToken, *first) || strings.Contains(prodHash, *first) {
+		t.Fatalf("token 标识泄露了 token 或摘要片段：%q", *first)
+	}
+}
+
+// TestFR279AgentIdentityReadViewsCarryTokenFingerprint 校验 FR-279 的列表读视图口径：
+// 同 token（同 namespace）的多个身份标识一致、跨 namespace 可区分，空 namespace 无 token 时为 nil，
+// 且令牌标识不会因为身份状态变化（例如 pending → active）而漂移。
+func TestFR279AgentIdentityReadViewsCarryTokenFingerprint(t *testing.T) {
+	_, svc := newV2ControlPlaneTestService(t)
+	prodNS, prodToken, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 prod 失败: %v", err)
+	}
+	_, testToken, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "test", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 test 失败: %v", err)
+	}
+	// 两个同 token（同 namespace）身份 + 一个异 namespace 身份，用于校验标识的一致性与可区分性。
+	prodIDs := []string{"27900000-0000-4000-8000-000000000001", "27900000-0000-4000-8000-000000000002"}
+	for _, identityID := range prodIDs {
+		if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+			Token: prodToken, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-" + identityID,
+		}); err != nil {
+			t.Fatalf("注册 prod 待确认身份失败: %v", err)
+		}
+	}
+	foreignID := "27900000-0000-4000-8000-000000000003"
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: testToken, IdentityID: foreignID, Kind: model.ServerKindBackend, BootID: "boot-" + foreignID,
+	}); err != nil {
+		t.Fatalf("注册 test 待确认身份失败: %v", err)
+	}
+
+	views, _, err := svc.ListAgentIdentityReadViews(ListAgentIdentitiesParams{Status: model.AgentIdentityStatusPending, PageSize: 100})
+	if err != nil {
+		t.Fatalf("查询身份列表失败: %v", err)
+	}
+	byID := map[string]*string{}
+	for i := range views {
+		byID[views[i].Identity.IdentityID] = views[i].TokenFingerprint
+	}
+	for _, identityID := range append(append([]string{}, prodIDs...), foreignID) {
+		if fingerprint, ok := byID[identityID]; !ok || fingerprint == nil {
+			t.Fatalf("身份 %s 必须带 token 标识，实际 %v", identityID, byID[identityID])
+		}
+	}
+	// 同 token 的两个身份标识必须相等：运维据此确认「这批请求出自同一个接入凭据」。
+	if *byID[prodIDs[0]] != *byID[prodIDs[1]] {
+		t.Fatalf("同 namespace 身份必须共享 token 标识，实际 %q 与 %q", *byID[prodIDs[0]], *byID[prodIDs[1]])
+	}
+	if *byID[prodIDs[0]] == *byID[foreignID] {
+		t.Fatalf("不同 namespace 的 token 标识必须可区分，实际均为 %q", *byID[prodIDs[0]])
+	}
+
+	// 轮换 token 后标识必须随之改变，避免界面继续显示已失效凭据的旧标识。
+	if _, _, err := svc.RotateNamespaceToken(RotateNamespaceTokenParams{ID: prodNS.ID, Operator: "admin"}); err != nil {
+		t.Fatalf("轮换 prod token 失败: %v", err)
+	}
+	rotated, _, err := svc.ListAgentIdentityReadViews(ListAgentIdentitiesParams{Status: model.AgentIdentityStatusPending, PageSize: 100})
+	if err != nil {
+		t.Fatalf("轮换后查询身份列表失败: %v", err)
+	}
+	for i := range rotated {
+		if rotated[i].Identity.IdentityID == prodIDs[0] && (rotated[i].TokenFingerprint == nil || *rotated[i].TokenFingerprint == *byID[prodIDs[0]]) {
+			t.Fatalf("轮换 token 后标识必须改变，实际仍为 %v", rotated[i].TokenFingerprint)
+		}
+	}
+}

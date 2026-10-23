@@ -40,9 +40,20 @@ const (
 	regionName     = "hotreload-region"
 	zoneName       = "hotreload-zone"
 
-	successPath  = "plugins/BeaconE2E/delivery-hot-reload.yml"
-	failurePath  = "plugins/BeaconE2E/delivery-hot-reload-fail.yml"
+	successPath  = "plugins/BeaconE2E/delivery-reload-ok.yml"
+	failurePath  = "plugins/BeaconE2E/delivery-reload-fail.yml"
 	probeLogName = "e2e-delivery-hot-reload.log"
+
+	// FR-273 逐插件重载结果的受控路径（与 DeliveryHotReloadE2EProbe 常量一一对应）。
+	throwPath  = "plugins/BeaconE2E/delivery-reload-throw.yml"
+	errorPath  = "plugins/BeaconE2E/delivery-reload-error.yml"
+	hangPath   = "plugins/BeaconE2E/delivery-reload-hang.yml"
+	nullPath   = "plugins/BeaconE2E/delivery-reload-null.yml"
+	legacyPath = "plugins/BeaconE2E/delivery-reload-legacy.yml"
+
+	// reloadTimeoutMs 是 agent 侧单插件重载超时（注入 BEACON_AGENT_DELIVERY_CONFIG_RELOAD_TIMEOUT_MS）。
+	// 必须 < 变更单 activateTimeoutSec（60s）；探针 HANG 分支睡眠 60s 以确保触发。
+	reloadTimeoutMs = 3000
 
 	onlineWait = 12 * time.Minute
 	phaseWait  = 90 * time.Second
@@ -62,6 +73,10 @@ type testEnv struct {
 	db          *gorm.DB
 	cp          *harness.ControlPlane
 	paper       *harness.GradleProc
+	// nsToken / identityID 是 agent 数据面凭据：A8 需要以 agent 身份直接回执（模拟旧版 agent 报文）。
+	// identityID 必须是真实 UUID（服务端按 UUID 校验），不能用 serverId。
+	nsToken    string
+	identityID string
 }
 
 type orderDetail struct {
@@ -79,6 +94,35 @@ type targetView struct {
 	BackupPresent  bool    `json:"backupPresent"`
 	Error          *string `json:"error"`
 	RollbackStatus *string `json:"rollbackStatus"`
+	// ReloadReport 是逐插件重载结果（FR-273）。老 agent 不上报时为 null。
+	ReloadReport *reloadReportView `json:"reloadReport"`
+}
+
+// reloadReportView 对齐 service.DeliveryReloadReport 的对外形状（FR-273）。
+type reloadReportView struct {
+	Total       int                  `json:"total"`
+	OKCount     int                  `json:"okCount"`
+	FailedCount int                  `json:"failedCount"`
+	TimeoutMs   int64                `json:"timeoutMs"`
+	Plugins     []reloadPluginResult `json:"plugins"`
+}
+
+// reloadPluginResult 是单个插件的重载结果。
+type reloadPluginResult struct {
+	Listener       string `json:"listener"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	Timeout        bool   `json:"timeout"`
+	AppliedVersion string `json:"appliedVersion"`
+	AppliedCount   *int   `json:"appliedCount"`
+}
+
+// derefOr 取指针值，nil 时返回兜底串（断言消息里避免 nil 解引用）。
+func derefOr(p *string, fallback string) string {
+	if p == nil {
+		return fallback
+	}
+	return *p
 }
 
 type observation struct {
@@ -93,7 +137,127 @@ func TestDeliveryHotReloadE2E(t *testing.T) {
 
 	waitProbeReady(t, env)
 	runPositiveAndRollback(t, env)
+	settleOrder(t, env, "FR-171 正推与回滚收尾")
 	runFailure(t, env)
+	settleOrder(t, env, "FR-171 回调失败收尾")
+	// FR-273 验收清单：A3 超时 / A4 抛 Error / A5 缺结果 / A9 老插件兼容，全部真机执行。
+	// 每个阶段结束必须等前单到终态：单批次单在 observeWindow 到点后会进 awaiting_confirm，
+	// 此时若立刻起下一单，审批与推进器会互相等待，表现为审批接口超时（真机踩过）。
+	runTimeout(t, env)
+	settleOrder(t, env, "FR-273 A3 收尾")
+	runThrowError(t, env)
+	settleOrder(t, env, "FR-273 A4 收尾")
+	runNullResult(t, env)
+	settleOrder(t, env, "FR-273 A5 收尾")
+	runLegacyPlugin(t, env)
+	// A8 老 agent 兼容：旧版 agent 的回执里没有 reload 段，控制面必须照常解析（不得 400）。
+	runOldAgentReceipt(t, env)
+}
+
+// runOldAgentReceipt 验证 A8：**不带 reload 段**的旧式回执必须被控制面正常解析。
+//
+// 为什么这样做而不是「换个旧 agent 二进制」：A8 的风险点完全在控制面解码侧——
+// 新增字段若被写成必填、或反序列化对未知/缺失形状敏感，旧 agent 的报文会被 400 拒掉，
+// 整条交付线在灰度期直接瘫。用一个与旧版 agent **逐字节同形**的回执打真实端点，
+// 就能精确验证这一点；构造旧 jar 反而是间接证据且有版本耦合。
+//
+// 断言口径：响应必须是「命令不存在」(404)——它证明**解码已通过**、只是这条回执没有挂靠的在途命令。
+// 若返回 400(INVALID_PARAM) 则说明缺 reload 段被当成非法报文，A8 不通过。
+func runOldAgentReceipt(t *testing.T, env *testEnv) {
+	t.Helper()
+	// 旧版 agent（本批改动之前）上报的正是这几个键，没有 reload。
+	legacyBody := map[string]any{
+		"phase": "activate", "status": "success",
+		"changedFileCount": 1, "skippedFileCount": 0,
+		"backupPresent": true, "error": "",
+	}
+	// 用一个不可能存在的 orderId：解码通过后必然落到「命令不存在」。
+	path := "/beacon/v2/agent/delivery/orders/999999/result"
+	status, raw := postAsAgent(t, env, path, legacyBody)
+
+	if status == http.StatusBadRequest {
+		t.Fatalf("旧式回执（无 reload 段）被判非法报文（400），A8 不通过：%s", raw)
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("旧式回执应解析通过后因「命令不存在」返回 404，实际 status=%d body=%s", status, raw)
+	}
+}
+
+// postAsAgent 以 agent 身份（namespace token + identity）向真实控制面发请求并返回状态码与响应体。
+func postAsAgent(t *testing.T, env *testEnv, path string, body any) (int, string) {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("编码请求体失败：%v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(beaconURL, "/")+path, bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("构造请求失败：%v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Beacon-Token", env.nsToken)
+	req.Header.Set("X-Beacon-Identity", env.identityID)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("请求控制面失败：%v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(respBody)
+}
+
+// settleOrder 等上一单彻底离场：交付编排对同一 namespace 的推进是串行的，
+// 前一单停在 awaiting_confirm / observing 时，下一单的审批会一直排队到超时。
+//
+// 做法：先尽力推进（单批次单的末批在观察窗到点后仍需放行才收尾），再等不再有非终态单。
+func settleOrder(t *testing.T, env *testEnv, label string) {
+	t.Helper()
+	// 末批确认放行：单批次单的批会在观察窗到点转 awaiting_confirm，需显式确认才 completed。
+	// 关键是**轮询**：批次是观察窗到点后才转 awaiting_confirm，只放行一次会漏。
+	// 已终结的单确认接口会报错，忽略即可——目标只是「别卡住」。
+	deadline := time.Now().Add(onlineWait)
+	for time.Now().Before(deadline) {
+		var active, awaiting int64
+		_ = env.db.Model(&model.ChangeOrder{}).
+			Where("namespace_id = ? AND status IN ?", env.namespaceID,
+				[]string{model.ChangeOrderStatusRolling, model.ChangeOrderStatusPaused, model.ChangeOrderStatusRollingBack}).
+			Count(&active).Error
+		if active == 0 {
+			return
+		}
+		_ = env.db.Model(&model.ChangeBatch{}).
+			Where("status = ?", model.ChangeBatchStatusAwaitingConfirm).
+			Count(&awaiting).Error
+		if awaiting > 0 {
+			confirmPendingBatches(t, env)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("%s：上一单未在超时内离场（仍在 rolling/paused/rolling_back）", label)
+}
+
+// confirmPendingBatches 对处于 awaiting_confirm 的批次逐个放行（已终结的单忽略错误）。
+func confirmPendingBatches(t *testing.T, env *testEnv) {
+	t.Helper()
+	type batchRow struct {
+		OrderID uint
+		BatchNo int
+	}
+	var rows []batchRow
+	if err := env.db.Model(&model.ChangeBatch{}).
+		Select("order_id, batch_no").
+		Where("status = ?", model.ChangeBatchStatusAwaitingConfirm).
+		Scan(&rows).Error; err != nil {
+		return
+	}
+	for _, r := range rows {
+		path := fmt.Sprintf("/admin/v2/change-orders/%d/batches/%d/confirm", r.OrderID, r.BatchNo)
+		body := map[string]string{"reason": "E2E 放行末批以收尾"}
+		// 忽略失败：单可能已终结，此时确认本就不适用。
+		_, _ = harness.RequestApprovalAndWait(beaconURL, env.adminToken, http.MethodPost, path,
+			body, "succeeded", 30*time.Second, env.paper)
+	}
 }
 
 // startEnvironment 启动隔离 SQLite 控制面与真 Paper，并完成 Agent 身份批准。
@@ -159,8 +323,12 @@ func provisionPaper(t *testing.T, env *testEnv) (uint, *harness.GradleProc) {
 	if err != nil {
 		t.Fatalf("创建 namespace 失败：%v", err)
 	}
+	env.nsToken = accessToken
 	args := []string{"-Pe2eMcPort=" + mcPort}
 	paperEnv := harness.AgentGradleEnv(beaconURL, accessToken, namespace, serverID, "127.0.0.1:"+mcPort)
+	// FR-273 A3（超时）：注入单插件重载超时，必须 < 变更单的 activateTimeoutSec（60s），
+	// 否则控制面先判整体超时、回执里看不出是哪个插件卡住。探针 HANG 分支睡眠 60s 以确保触发。
+	paperEnv["BEACON_AGENT_DELIVERY_CONFIG_RELOAD_TIMEOUT_MS"] = strconv.Itoa(reloadTimeoutMs)
 	identityPath := filepath.Join(harness.BackendRunDir(env.repoRoot), "plugins", "BeaconAgent", "identity.yml")
 	harness.ClearStaleAgentIdentityFile(t, identityPath)
 	paper, err := harness.StartGradleTask(env.repoRoot, ":agent-e2e:servePaper", args, paperEnv, "paper-hotreload")
@@ -187,6 +355,10 @@ func approveAndWaitAgent(t *testing.T, env *testEnv) {
 	if err := harness.WaitInstanceOnline(beaconURL, env.adminToken, namespace, serverID, onlineWait, env.paper); err != nil {
 		t.Fatalf("等待 Agent online 超时：%v", err)
 	}
+	if identityID == "" {
+		t.Fatalf("未能取得 agent identityId")
+	}
+	env.identityID = identityID
 }
 
 // setupZoneAndAssign 建立最小区服权威结构，并通过管理 API 把目标 backend 分配到小区。
@@ -244,10 +416,14 @@ func serverRowID(t *testing.T, env *testEnv) uint {
 // waitProbeReady 等业务插件已通过 BeaconAgentProvider 注册真实 onChange 监听。
 func waitProbeReady(t *testing.T, env *testEnv) {
 	t.Helper()
-	if _, err := waitObservation(env.probeLog(), 30*time.Second, env.paper, func(o observation) bool {
-		return o.source == "LISTENER_READY"
-	}); err != nil {
-		t.Fatalf("业务插件 hot_reload 监听未就绪，观测文件=%s：%v", env.probeLog(), err)
+	// 探针注册三条监听：上报式（新契约）、遗留式 void（A9）、返回 null（A5）。
+	// 三条都就绪才算可测——缺任一条都会让对应用例悄悄退化成「无监听器」而假通过。
+	for _, source := range []string{"REPORTING_READY", "LEGACY_READY", "NULL_PROBE_READY"} {
+		if _, err := waitObservation(env.probeLog(), 60*time.Second, env.paper, func(o observation) bool {
+			return o.source == source
+		}); err != nil {
+			t.Fatalf("业务插件探针 %s 未就绪，观测文件=%s：%v", source, env.probeLog(), err)
+		}
 	}
 }
 
@@ -323,11 +499,35 @@ func runFailure(t *testing.T, env *testEnv) {
 	if target.Error == nil || !strings.Contains(*target.Error, "配置变更通知失败") {
 		t.Fatalf("失败目标应携带业务回调失败摘要，实际=%v", target.Error)
 	}
+	// FR-273 一票否决 + 明细可见：失败报告必须落库并带出逐插件结果，
+	// 否则前端与告警都拿不到「哪个插件、什么原因」。
+	if target.ReloadReport == nil {
+		t.Fatal("失败目标必须携带 reloadReport（逐插件重载结果），否则重载失败不可见")
+	}
+	if target.ReloadReport.FailedCount < 1 {
+		t.Fatalf("reloadReport 应至少 1 个插件失败，实际=%+v", target.ReloadReport)
+	}
+	failed := false
+	for _, p := range target.ReloadReport.Plugins {
+		if p.Status == "failed" && p.Reason != "" {
+			failed = true
+		}
+	}
+	if !failed {
+		t.Fatalf("reloadReport 中应存在带可读原因的失败项，实际=%+v", target.ReloadReport.Plugins)
+	}
+	// 失败原因必须携带插件标识（listener 类名），供运维直接定位。
+	if !strings.Contains(strings.ToLower(derefOr(target.Error, "")), "deliveryhotreloade2eprobe") &&
+		!strings.Contains(derefOr(target.Error, ""), "插件重载失败") {
+		t.Fatalf("失败摘要应含逐插件明细（插件标识或「插件重载失败」），实际=%v", derefOr(target.Error, ""))
+	}
+	// FR-274：目标落 failed 必须产出 publish-fail 告警，且带 orderId 与逐插件明细。
+	assertPublishFailAlert(t, env, orderID)
 	failedIndex, err := waitObservation(env.probeLog(), phaseWait, env.paper, func(o observation) bool {
-		return o.source == "CALLBACK_FAILED" && o.path == failurePath
+		return o.source == "REPORTING_FAILED" && o.path == failurePath
 	})
 	if err != nil {
-		t.Fatalf("业务插件未记录 CALLBACK_FAILED 观测：%v", err)
+		t.Fatalf("业务插件未记录 REPORTING_FAILED 观测：%v", err)
 	}
 	assertFileContains(t, env.target(failurePath), strings.TrimSpace(failedContent))
 	assertPaperAliveAfter(t, env, failedIndex)
@@ -354,6 +554,164 @@ func assertPaperAliveAfter(t *testing.T, env *testEnv, failedIndex int) {
 	_ = conn.Close()
 	if err := harness.WaitInstanceOnline(beaconURL, env.adminToken, namespace, serverID, 15*time.Second, env.paper); err != nil {
 		t.Fatalf("回调失败后 Agent 不再 online：%v", err)
+	}
+}
+
+// runTimeout 验证 A3：单插件卡死时按「重载超时」判失败，且不拖住整批太久。
+//
+// 关键断言：失败发生在控制面 activateTimeoutSec（60s）**之前**——探针睡 60s、
+// agent 超时 3s，若顺序颠倒就会变成「控制面整体超时」，回执里看不出是哪个插件卡住。
+func runTimeout(t *testing.T, env *testEnv) {
+	t.Helper()
+	content := fmt.Sprintf("marker: hang-%d\n", time.Now().UnixNano())
+	versionID := seedConfig(t, env.db, env.namespaceID, hangPath, content)
+	started := time.Now()
+	orderID := createApprovedOrder(t, env, "FR-273 A3 重载超时", versionID)
+
+	target := waitTarget(t, env, orderID, func(v targetView) bool { return v.Status == model.ChangeTargetStatusFailed })
+	if elapsed := time.Since(started); elapsed >= 60*time.Second {
+		t.Fatalf("超时判定耗时 %s，应显著早于控制面 activateTimeoutSec=60s（否则看不出是插件卡住）", elapsed)
+	}
+	if target.ReloadReport == nil || target.ReloadReport.FailedCount < 1 {
+		t.Fatalf("超时必须产出失败项，实际=%+v", target.ReloadReport)
+	}
+	var timedOut bool
+	for _, p := range target.ReloadReport.Plugins {
+		if p.Timeout {
+			timedOut = true
+			if !strings.Contains(p.Reason, "重载超时") {
+				t.Fatalf("超时项原因应含「重载超时」，实际=%q", p.Reason)
+			}
+		}
+	}
+	if !timedOut {
+		t.Fatalf("必须标记 timeout=true 以区别解析失败与卡死，实际=%+v", target.ReloadReport.Plugins)
+	}
+}
+
+// runThrowError 验证 A4：插件抛 NoClassDefFoundError（Error 而非 Exception）被兜住，
+// 交付线程存活（后续用例仍能正常交付），且失败原因可读。
+func runThrowError(t *testing.T, env *testEnv) {
+	t.Helper()
+	content := fmt.Sprintf("marker: error-%d\n", time.Now().UnixNano())
+	versionID := seedConfig(t, env.db, env.namespaceID, errorPath, content)
+	orderID := createApprovedOrder(t, env, "FR-273 A4 抛 Error", versionID)
+
+	target := waitTarget(t, env, orderID, func(v targetView) bool { return v.Status == model.ChangeTargetStatusFailed })
+	if target.ReloadReport == nil || target.ReloadReport.FailedCount < 1 {
+		t.Fatalf("抛 Error 必须产失败项，实际=%+v", target.ReloadReport)
+	}
+	var reason string
+	for _, p := range target.ReloadReport.Plugins {
+		if p.Status == "failed" {
+			reason = p.Reason
+		}
+	}
+	if !strings.Contains(reason, "NoClassDefFoundError") {
+		t.Fatalf("原因应保留 NoClassDefFoundError（证明 catch Throwable 生效），实际=%q", reason)
+	}
+	// 交付线程存活：先让本单收尾（编排同 namespace 串行），再跑一次正常交付验证仍能成功。
+	settleOrder(t, env, "FR-273 A4 本单收尾")
+	verifyDeliveryStillWorks(t, env, "FR-273 A4 后续交付仍可执行")
+}
+
+// runNullResult 验证 A5：插件返回 null（Java 侧实现）必须按失败处置，不得当作成功。
+func runNullResult(t *testing.T, env *testEnv) {
+	t.Helper()
+	content := fmt.Sprintf("marker: null-%d\n", time.Now().UnixNano())
+	versionID := seedConfig(t, env.db, env.namespaceID, nullPath, content)
+	orderID := createApprovedOrder(t, env, "FR-273 A5 缺结果", versionID)
+
+	target := waitTarget(t, env, orderID, func(v targetView) bool { return v.Status == model.ChangeTargetStatusFailed })
+	var reason string
+	if target.ReloadReport != nil {
+		for _, p := range target.ReloadReport.Plugins {
+			if p.Status == "failed" {
+				reason = p.Reason
+			}
+		}
+	}
+	if !strings.Contains(reason, "null") && !strings.Contains(reason, "未返回") {
+		t.Fatalf("缺结果必须显式判失败并说明原因，实际=%q（reload=%+v）", reason, target.ReloadReport)
+	}
+}
+
+// runLegacyPlugin 验证 A9：只实现旧 void 回调的老插件零改动仍工作——
+// 老式监听器被正常派发（有 ON_CHANGE_LEGACY 观测），且不被新契约影响。
+func runLegacyPlugin(t *testing.T, env *testEnv) {
+	t.Helper()
+	content := fmt.Sprintf("marker: legacy-%d\n", time.Now().UnixNano())
+	versionID := seedConfig(t, env.db, env.namespaceID, legacyPath, content)
+	before := countObservation(env.probeLog(), "LEGACY_DONE", legacyPath)
+	orderID := createApprovedOrder(t, env, "FR-273 A9 老插件兼容", versionID)
+
+	// 老插件回调正常执行即为成功（void 回调无法上报结果，按既有语义算成功）。
+	waitTarget(t, env, orderID, func(v targetView) bool {
+		return v.Status == model.ChangeTargetStatusActivated || v.Status == model.ChangeTargetStatusFailed
+	})
+	if _, err := waitObservation(env.probeLog(), phaseWait, env.paper, func(o observation) bool {
+		return o.source == "LEGACY_DONE" && o.path == legacyPath
+	}); err != nil {
+		t.Fatalf("老式 void 回调未被派发（A9 回归）：%v", err)
+	}
+	if countObservation(env.probeLog(), "LEGACY_DONE", legacyPath) <= before {
+		t.Fatal("老式回调观测数未增加")
+	}
+	assertFileContains(t, env.target(legacyPath), strings.TrimSpace(content))
+}
+
+// verifyDeliveryStillWorks 用一条正常路径做一次完整交付，证明交付执行器线程未被前序失败打死。
+//
+// 注意：成功单也不会自动 completed——规格 §4.4 明确「每批都要确认，含末批，人工确认不可跳过」。
+// 因此这里先等目标 activated，再放行末批，最后才等单 completed。
+func verifyDeliveryStillWorks(t *testing.T, env *testEnv, title string) {
+	t.Helper()
+	content := fmt.Sprintf("marker: alive-%d\n", time.Now().UnixNano())
+	versionID := seedConfig(t, env.db, env.namespaceID, successPath, content)
+	orderID := createApprovedOrder(t, env, title, versionID)
+	// 目标 activated 即证明交付链路（推送 → 重载 → 回执）完整可用，这才是「线程存活」的实证。
+	waitTarget(t, env, orderID, func(v targetView) bool { return v.Status == model.ChangeTargetStatusActivated })
+	assertFileContains(t, env.target(successPath), strings.TrimSpace(content))
+	settleOrder(t, env, title+" 收尾")
+	waitOrderStatus(t, env, orderID, model.ChangeOrderStatusCompleted)
+}
+
+// assertPublishFailAlert 验证交付失败产出 publish-fail 告警（FR-274）。
+//
+// 关键点：类型必须是 publish-fail（不是 health-transition）、detail 含 orderId 与逐插件明细；
+// 并断言**未被收敛**（该单的告警行数与失败次数一致，行内 occurrence_count 恒为 1）——
+// 交付失败要逐条可见，收敛会掩盖「同一台服反复失败」。
+func assertPublishFailAlert(t *testing.T, env *testEnv, orderID uint) {
+	t.Helper()
+	var rows []model.AlertEvent
+	if err := waitUntil(phaseWait, env.paper, func(context.Context) bool {
+		rows = rows[:0]
+		if err := env.db.Where("type = ? AND server_id = ?", model.AlertEventTypePublishFail, serverID).
+			Order("id asc").Find(&rows).Error; err != nil {
+			return false
+		}
+		return len(rows) > 0
+	}); err != nil {
+		t.Fatalf("未产出 publish-fail 告警（FR-274）：%v", err)
+	}
+	if rows[0].Level != model.AlertLevelWarning {
+		t.Fatalf("publish-fail 告警级别应为 warning，实际=%q", rows[0].Level)
+	}
+	if rows[0].ToStatus != "" {
+		t.Fatalf("非健康类型不得写 to_status，实际=%q", rows[0].ToStatus)
+	}
+	if !strings.Contains(rows[0].Detail, strconv.FormatUint(uint64(orderID), 10)) {
+		t.Fatalf("告警 detail 应含 orderId=%d，实际=%s", orderID, rows[0].Detail)
+	}
+	if !strings.Contains(rows[0].Detail, "reloadReport") {
+		t.Fatalf("告警 detail 应含逐插件重载明细，否则运维需翻交付单才知道哪个插件失败：%s", rows[0].Detail)
+	}
+	// 不收敛：每条 publish-fail 必须独立成行、occurrence_count 保持 1。
+	for _, r := range rows {
+		if r.OccurrenceCount != 1 {
+			t.Fatalf("publish-fail 不得被收敛合并（occurrence_count 应恒为 1），实际=%d detail=%s",
+				r.OccurrenceCount, r.Detail)
+		}
 	}
 }
 

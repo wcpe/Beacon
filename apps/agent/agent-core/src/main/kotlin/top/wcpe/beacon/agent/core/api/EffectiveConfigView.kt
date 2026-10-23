@@ -1,21 +1,82 @@
 package top.wcpe.beacon.agent.core.api
 
 import top.wcpe.beacon.agent.api.ConfigChangeListener
+import top.wcpe.beacon.agent.api.DataIdPrefix
 import top.wcpe.beacon.agent.api.EffectiveConfig
 import top.wcpe.beacon.agent.api.ListenerHandle
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
 
 /**
  * EffectiveConfig 的 core 实现：读取来自 EffectiveConfigStore，变更监听由 apply 流程经
- * {@link #fireChanged} 派发。两个平台壳共用，避免重复。
+ * [fireChanged] 派发。两个平台壳共用，避免重复。
+ *
+ * 监听注册支持**按 dataId 路径前缀过滤**（`onChange(prefix, listener)`）：插件只订阅自己目录下的
+ * 配置，别人的变更不会把它叫醒。匹配规则见 [DataIdPrefix]。
+ *
+ * 单监听器的并发与超时执行在 [ReloadDispatcher]；本类只负责「读配置」「注册监听」「编排派发」。
+ *
+ * @param store           有效配置存储
+ * @param reloadTimeoutMs 单个监听器的重载超时（毫秒）。**0 表示不设超时、就地内联执行**
+ *                        （默认值，保持既有调用点与测试不变）；生产由壳层按
+ *                        `AgentSettings.configReloadTimeoutMs` 注入。
+ * @param reloadExecutor  执行监听器的线程池；传 null 且 [reloadTimeoutMs] > 0 时自建守护线程池。
  */
 class EffectiveConfigView(
     private val store: EffectiveConfigStore,
+    reloadTimeoutMs: Long = 0,
+    reloadExecutor: ExecutorService? = null,
+    /** 并发重载的插件数上限（FR-280），默认 64。 */
+    reloadPoolSize: Int = 64,
 ) : EffectiveConfig {
-    // 监听器表：以句柄对象自身为键，便于注销。
-    private val listeners = ConcurrentHashMap<Any, ConfigChangeListener>()
+    // 监听器表：以句柄对象自身为键，便于注销。值里带前缀，注销时只认键。
+    private val listeners = ConcurrentHashMap<Any, Registration>()
+
+    private val dispatcher = ReloadDispatcher(reloadTimeoutMs, reloadExecutor, reloadPoolSize)
+
+    /**
+     * 当前生效的 reload 并发位（已收口到 [1, 256]）。
+     *
+     * 供诊断与测试读取：下发值是否真的穿过「协调器 → 视图 → 派发器」落到执行器上，
+     * 只有这个读口能让它成为**可断言**的事实（否则测试只能靠数线程、造并发来间接推理）。
+     */
+    internal val effectiveReloadPoolSize: Int get() = dispatcher.effectivePoolSize
+
+    /**
+     * 释放派发器自建的线程池（幂等）。
+     *
+     * 由壳层在 agent 禁用 / reload 时调用：不释放的话，每次 reload 都会留下一组空闲线程，
+     * 虽然 `allowCoreThreadTimeOut` 会在 60s 后回收，但叠加期仍会短暂增加线程数。
+     * 外部注入的池不在此关闭（生命周期归注入方）。
+     */
+    fun close() {
+        dispatcher.close()
+    }
+
+    /**
+     * 热重载单插件重载超时（FR-278）：下一次 `fireChanged` 即按新值判定。
+     *
+     * 供「控制面下发新值 → agent 应用」这条链路调用。不改线程池、不打断在途任务——
+     * 超时只影响等待时长，与并发能力无关。
+     */
+    fun updateReloadTimeout(timeoutMs: Long) {
+        dispatcher.updateTimeoutMs(timeoutMs)
+    }
+
+    /**
+     * 热重载并发 reload 的插件数上限（FR-278/FR-280）：下一轮 `fireChanged` 即按新容量执行。
+     *
+     * 与 [updateReloadTimeout] 的关键差别：**这一项会换池**。并发位是线程池的构造属性，
+     * 改它只能重建——但重建用的是「旧池优雅退役、在途 reload 跑完」，不是中断，
+     * 因为改并发位不该丢任务。语义细节见 [ReloadDispatcher.updatePoolSize]。
+     *
+     * @param poolSize 目标并发位数；非法值由派发器收口到 [1, 256]
+     */
+    fun updateReloadPoolSize(poolSize: Int) {
+        dispatcher.updatePoolSize(poolSize)
+    }
 
     override fun dataIds(): List<String> = store.dataIds()
 
@@ -25,19 +86,80 @@ class EffectiveConfigView(
 
     override fun md5(dataId: String): Optional<String> = Optional.ofNullable(store.item(dataId)?.md5)
 
-    override fun onChange(listener: ConfigChangeListener): ListenerHandle {
+    override fun onChange(listener: ConfigChangeListener): ListenerHandle = onChange(null, listener)
+
+    /** 统一注册入口：前缀为 null/空表示不过滤（老语义），故单参重载委托到本方法。 */
+    override fun onChange(
+        pathPrefix: String?,
+        listener: ConfigChangeListener,
+    ): ListenerHandle {
         val key = Any()
-        listeners[key] = listener
+        listeners[key] = Registration(pathPrefix, listener)
         return ListenerHandle { listeners.remove(key) }
     }
 
-    /** 由 apply 流程在有效配置变更后调用，回调所有监听器。 */
+    /**
+     * 由 apply 流程在有效配置变更后调用，逐监听器隔离派发并返回聚合结果。
+     *
+     * 五条刻意设计（见 `docs/specs/delivery-reload-ack.md` §3.2）：
+     * 1. **逐监听器独立兜错**：一个插件抛异常不得让后续插件收不到通知。原实现是裸 `for`
+     *    循环，多插件共存时先抛者会让其余插件静默停留在旧配置。
+     * 2. **catch `Throwable` 而非 `Exception`**：插件侧 `NoClassDefFoundError` / `LinkageError`
+     *    在 `agent-api` 版本不匹配时很常见，只兜 `Exception` 会让异常逃逸并打死调用线程
+     *    （交付命令执行线程），连回执都发不出去。隔离点见 [ReloadDispatcher]。
+     * 3. **消费上报结果**：实现 `ReportingConfigChangeListener` 的插件，其返回值（成功/失败 +
+     *    原因 + 实际加载的 md5/版本/条数）进入聚合报告，交付路径据此做一票否决并核对版本。
+     * 4. **逐监听器超时**：单个插件卡死不得拖住整批；超时按失败计并指明是哪个插件。
+     * 5. **前缀过滤发生在执行之前**：带前缀注册的监听器只在「本次变更里有自己关心的路径」时
+     *    才被执行；不相关就**既不回调、也不进 outcomes**——它没跑过，不该凭空多出一条成功记录，
+     *    更不该因为「没跑」而被判失败。
+     */
     fun fireChanged(
         changedDataIds: Set<String>,
         newMd5: String,
+    ): ConfigReloadReport {
+        val snapshot = listeners.values.toList()
+        // 先筛出「本次与它相关」的监听器，再**一次性并发**派发。
+        //
+        // 顺序很关键：过滤必须在提交之前完成，不相关者既不回调也不进 outcomes
+        // ——它没跑过，不该凭空多出一条成功记录，更不该因为「没跑」而被判失败。
+        val relevant =
+            snapshot.mapNotNull { registration ->
+                registration.relevantSubsetOf(changedDataIds)?.let { subset ->
+                    ReloadDispatcher.ReloadRequest(registration.listener, subset, newMd5)
+                }
+            }
+        // 批量并发：总耗时取决于最慢的那个插件，而不是各插件之和。
+        // 逐个 dispatch（提交一个等一个）会让池里永远只有 1 个任务在跑，
+        // 单服几十个插件时总耗时会被串行放大——这正是「服务器多了会卡」的来源之一。
+        val outcomes = dispatcher.dispatchAll(relevant)
+        return ConfigReloadReport(changedDataIds, newMd5, outcomes)
+    }
+
+    /**
+     * 一条监听注册。
+     *
+     * @param pathPrefix 过滤前缀；null/空表示不过滤（老语义，任何变更都回调）
+     * @param listener   下游监听器
+     */
+    private class Registration(
+        private val pathPrefix: String?,
+        val listener: ConfigChangeListener,
     ) {
-        for (listener in listeners.values) {
-            listener.onConfigChanged(changedDataIds, newMd5)
+        /**
+         * 取本次变更中该监听器该看到的子集；返回 null 表示本次与它无关、**不该调用**。
+         *
+         * 三条语义：
+         * 1. 无前缀 → 原样返回（含空集合也照常回调，保持既有行为不变）。
+         * 2. 有前缀且零匹配 → null，跳过（这才是「不被无关唤醒」）。
+         * 3. 有前缀且部分匹配 → 只给匹配项，插件无需再自行筛选，且不会顺手读到别人的文件。
+         */
+        fun relevantSubsetOf(changedDataIds: Set<String>): Set<String>? {
+            if (!DataIdPrefix.isFiltering(pathPrefix)) {
+                return changedDataIds
+            }
+            val matched = DataIdPrefix.filter(pathPrefix, changedDataIds)
+            return matched.ifEmpty { null }
         }
     }
 }

@@ -1,7 +1,7 @@
 // 本文件由 scripts/gen-audit-actions.mjs 自动生成，请勿手工编辑。
 // 重新生成：pnpm gen:audit-actions；校验是否落后：pnpm check:audit-actions
 //
-// 真源：apps/server/internal/model/enums.go 的 model.Action* 常量，当前共 157 个。
+// 真源：apps/server/internal/model/enums.go 的 model.Action* 常量，当前共 159 个。
 // 顺序规则：按动作前缀（首个 '.' 之前）分组，组序取前缀在 enums.go 的首次出现顺序，
 // 组内保持声明顺序——因此审计页动作筛选里同域动作天然相邻，便于按域扫读。
 
@@ -163,4 +163,6 @@ export const AUDIT_ACTIONS = [
   'delivery.order.rollback_finish',
   'delivery.order.circuit_break',
   'delivery.order.blob_cleanup',
+  'agent-settings.update',
+  'agent-settings.rejected',
 ] as const

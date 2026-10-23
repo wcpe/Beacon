@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.testsupport
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.io.File
 
@@ -28,6 +29,9 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     /** 注入配置变更通知失败：非 null 时记录调用后抛出。 */
     var configChangeError: RuntimeException? = null
 
+    /** 注入配置变更重载报告：非 null 时作为派发结果返回（模拟插件上报失败，FR-273）。 */
+    var configChangeReport: ConfigReloadReport? = null
+
     override fun runAsync(task: () -> Unit) {
         task()
     }
@@ -53,9 +57,11 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     override fun publishConfigChanged(
         changed: Set<String>,
         newMd5: String,
-    ) {
+    ): ConfigReloadReport {
         configChanges.add(changed to newMd5)
         configChangeError?.let { throw it }
+        configChangeReport?.let { return it }
+        return ConfigReloadReport.empty(changed, newMd5)
     }
 
     override fun info(msg: String) {

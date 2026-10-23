@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.lifecycle
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
@@ -53,7 +54,7 @@ class MetricsSamplingCoordinatorTest {
         override fun publishConfigChanged(
             changed: Set<String>,
             newMd5: String,
-        ) {}
+        ): ConfigReloadReport = ConfigReloadReport.empty(changed, newMd5)
 
         override fun info(msg: String) {}
 

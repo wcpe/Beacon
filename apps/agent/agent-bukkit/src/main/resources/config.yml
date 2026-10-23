@@ -1,7 +1,21 @@
 # BeaconAgent（Bukkit/Paper）本地引导配置。
-# 只填写控制面地址和 namespace 接入 token；身份、地址、拓扑与业务配置由控制面管理。
-# 需要调整本地运行参数时，按 docs/wiki/bukkit-agent-full-config.md 增量添加，不要复制其它服务器的状态目录。
+#
+# 两种接入方式，二选一：
+#   1. 零配置（推荐）：保持下面两项为空，进游戏执行
+#        /beacon join <控制面地址> <namespace 接入令牌>
+#      凭据会写入 plugins/BeaconAgent/agent-credentials.json（权限 0600），此后无需再配。
+#   2. 直接配好：把控制面地址与令牌填在下面两项，启动即接入（行为与旧版一致）。
+#
+# 注意：**不要保留尖括号占位符**（如 <CONTROL_PLANE_URL>）。占位符非空但不指向真实地址，
+# 会让 agent 走进无限重连，并且会被当作真实配置写进凭据文件，之后清空这里也救不回来。
+# 代码侧虽已把形如 <...> 的值视为未设置并告警，但留着它只会平白多一条告警。
 beacon:
-  endpoints:
-    - "<CONTROL_PLANE_URL>"
-  bootstrap-token: "<NAMESPACE_ACCESS_TOKEN>"
+  # 控制面地址列表（含协议与端口），如 http://10.0.0.5:20020
+  endpoints: []
+  # namespace 接入令牌，形如 bn_xxxxxxxx
+  bootstrap-token: ""
+
+# 并发 reload 的插件数上限（默认 64，范围 1~256）。
+# 此项以 Beacon Web 下发为准，本地值仅作离线兜底。
+delivery:
+  reload-pool-size: 64

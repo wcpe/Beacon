@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.scheduling
 
+import top.wcpe.beacon.agent.core.api.ConfigReloadReport
 import top.wcpe.beacon.agent.core.client.CandidateEntry
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
@@ -135,7 +136,7 @@ class ManualSchedAdapter(private val folder: File) : PlatformAdapter {
     override fun publishConfigChanged(
         changed: Set<String>,
         newMd5: String,
-    ) {}
+    ): ConfigReloadReport = ConfigReloadReport.empty(changed, newMd5)
 
     override fun info(msg: String) {
         infos.add(msg)

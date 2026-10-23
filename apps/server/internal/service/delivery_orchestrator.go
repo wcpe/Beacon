@@ -14,6 +14,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/pkg/lockguard"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
 )
@@ -121,7 +122,40 @@ type DeliveryOrchestrator struct {
 	// lockGuard 是 AttachLockDBGuard 挂上的观测句柄（未装配时为 nil）。
 	// 它不参与任何业务判定，只让「观测是否真的生效」可被核验（见该方法与 LockGuard 的说明）。
 	lockGuard *lockguard.Watcher
+	// alerter 交付失败告警扇出器（FR-275）。未装配（nil）即不产告警——告警是旁路，
+	// 装配缺失不得阻断交付编排本身。经 SetAlerter 注入（与既有 SetNotifier 同惯例）。
+	alerter deliveryFailAlerter
+	// expectedMD5 是「本单本目标下发给插件的内容摘要」期望值来源（FR-273 回执核对用）。
+	// 默认取交付数据面 DeliveryBlobService（构造时注入）；未装配即跳过核对（放行），
+	// 核对本身故障一律降级放行——绝不因核对不可用而阻断正常交付。
+	expectedMD5 deliveryExpectedMD5Source
 }
+
+// deliveryExpectedMD5Source 是编排器对「期望工件摘要」的最小依赖（窄接口，避免把数据面细节拉进推进器）。
+type deliveryExpectedMD5Source interface {
+	// ExpectedConfigArtifactMD5 返回某单某目标的配置工件整体摘要（算法见其实现处的说明）。
+	ExpectedConfigArtifactMD5(orderID uint, serverID string) (string, error)
+}
+
+// SetExpectedMD5Source 替换期望摘要来源（主要供测试注入故障 / 固定值；生产由构造函数注入数据面）。
+func (s *DeliveryOrchestrator) SetExpectedMD5Source(src deliveryExpectedMD5Source) {
+	s.expectedMD5 = src
+}
+
+// deliveryFailAlerter 是编排器对告警域的最小依赖（窄接口，避免 service→runtime/alert 的宽耦合）。
+//
+// 只用 DispatchAsync：本接口的调用点全都在推进器的单 goroutine 主循环里，同步扇出会因
+// webhook 超时（默认 3s、可配 60s）串行阻塞整轮推进。窄接口刻意**不**暴露同步版本，
+// 让「在主循环里同步告警」这种写法从类型上就不可达。
+type deliveryFailAlerter interface {
+	DispatchAsync(ctx context.Context, a alert.Alert)
+}
+
+// SetAlerter 注入交付失败告警扇出器（FR-275，启动时装配）。
+//
+// 刻意用 setter 而非扩展 NewDeliveryOrchestrator 的构造参数：该构造函数已有 8 个参数、
+// 被多处调用（含测试），加参会让所有调用点跟着改；告警又是纯旁路依赖，setter 更贴合既有惯例。
+func (s *DeliveryOrchestrator) SetAlerter(a deliveryFailAlerter) { s.alerter = a }
 
 func (s *DeliveryOrchestrator) SetApprovalService(approval *ApprovalService) { s.approval = approval }
 
@@ -190,7 +224,7 @@ func (s *DeliveryOrchestrator) SetCapabilityGuard(versions *repository.AgentIden
 func NewDeliveryOrchestrator(db *gorm.DB, repo *repository.ChangeOrderRepository, blobs *DeliveryBlobService,
 	cmdRepo *repository.AgentCommandRepository, audit *repository.AuditLogRepository,
 	health *healthview.Store, metrics *metricwindow.Store, notifier CommandNotifier) *DeliveryOrchestrator {
-	return &DeliveryOrchestrator{
+	s := &DeliveryOrchestrator{
 		db: db, repo: repo, blobs: blobs, cmdRepo: cmdRepo, audit: audit,
 		health: health, metrics: metrics, notifier: notifier,
 		events:         newDeliveryEventHub(),
@@ -202,6 +236,12 @@ func NewDeliveryOrchestrator(db *gorm.DB, repo *repository.ChangeOrderRepository
 		stallMu:        &sync.Mutex{},
 		stallByOrder:   map[uint]*deliveryStallState{},
 	}
+	// 期望摘要来源默认指向数据面（配置冻结工件口径）；blobs 为 nil 的测试装配下保持未装配，
+	// 核对逻辑据此降级放行（见 expectedMD5 字段说明）。
+	if blobs != nil {
+		s.expectedMD5 = blobs
+	}
+	return s
 }
 
 // Run 启动推进循环，直到 ctx 取消（随关停信号优雅退出）。
@@ -510,7 +550,34 @@ type deliveryCmdResult struct {
 	SkippedFileCount int    `json:"skippedFileCount"`
 	BackupPresent    bool   `json:"backupPresent"`
 	Error            string `json:"error"`
+	// Reload 是逐插件重载结果（FR-274）；老 agent 不上报时为 nil。
+	Reload *deliveryReloadReport `json:"reload"`
 }
+
+// deliveryReloadReport 是逐插件重载结果的回执形状（FR-274，见 docs/specs/delivery-reload-ack.md §3.4）。
+type deliveryReloadReport struct {
+	Total       int                    `json:"total"`
+	OKCount     int                    `json:"okCount"`
+	FailedCount int                    `json:"failedCount"`
+	TimeoutMs   int64                  `json:"timeoutMs"`
+	Plugins     []deliveryReloadPlugin `json:"plugins"`
+}
+
+// deliveryReloadPlugin 是单个插件的重载结果（FR-274）。
+type deliveryReloadPlugin struct {
+	Listener       string `json:"listener"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	Timeout        bool   `json:"timeout"`
+	AppliedMd5     string `json:"appliedMd5"`
+	AppliedVersion string `json:"appliedVersion"`
+	AppliedCount   *int   `json:"appliedCount"`
+	DetailJSON     string `json:"detailJson"`
+}
+
+// deliveryReloadStatusOK 是插件重载成功的状态取值（与 agent 侧 DeliveryReloadPluginOutcome.STATUS_OK 同值）：
+// 版本核对只认此状态的插件，已报失败者不叠加版本结论（原因归插件）。
+const deliveryReloadStatusOK = "ok"
 
 // parseDeliveryCmdResult 解析命令结果摘要（损坏 / 空则返回零值，不阻断推进）。
 func parseDeliveryCmdResult(raw string) deliveryCmdResult {
