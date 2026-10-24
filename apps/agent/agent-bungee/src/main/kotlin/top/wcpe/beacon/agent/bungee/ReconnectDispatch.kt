@@ -57,6 +57,8 @@ internal object ReconnectDispatch {
         if (reason != ServerConnectEvent.Reason.SERVER_DOWN_REDIRECT) return null
         val selected = route(fromServerId) as? ReconnectRoute.Selected ?: return null
         // 与原生选择一致时不做无意义写回，避免多一层可观测噪音与无谓的目标替换。
+        // 此处拿 serverId 直接比目标名，依赖 BungeeCord 的不变量：constructServerInfo(id, …) 以 id 作为 name，
+        // 故 ServerInfo.name 恒等于受管目录里的 serverId。若将来引入别名映射，这条比较需改为比对解析后的 name。
         if (selected.serverId == nativeTargetId) return null
         return selected
     }

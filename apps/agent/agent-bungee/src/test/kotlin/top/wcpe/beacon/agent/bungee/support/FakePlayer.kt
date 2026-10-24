@@ -31,6 +31,9 @@ import java.util.concurrent.CompletableFuture
  * 其余成员（发包、聊天、切服、标签页、Cookie、传送等约 50 个）与被测能力无关，
  * 一律抛 [UnsupportedOperationException]：真被用到时立刻失败并指出方法名，
  * 避免"默认值假通过"——例如把 [connect] 做成空实现，就无法察觉监听器误改了玩家去向。
+ *
+ * 维护提示：BungeeCord 升级若给 `ProxiedPlayer` 新增抽象方法，本类会**编译失败**而不是运行期静默失效。
+ * 那是提醒替身需要补齐新方法，不代表被测代码坏了。
  */
 class FakePlayer(
     private val name: String,
