@@ -43,6 +43,11 @@ dependencies {
     compileOnly(project(":agent-api"))
     compileOnly(project(":agent-kit"))
     compileOnly(kotlin("stdlib"))
+    // Bukkit 平台 API（org.bukkit.*）：本模块此前靠 `Class.forName("org.bukkit.Bukkit")` 反射调用
+    // 在线人数 / 端口 / 最大人数 / 广播 / 存档 / 关服，纯粹因为编译期看不到 API。
+    // 反射在 JPMS 下易被封装拦截、且拼错方法名只有运行期才炸；改为 compileOnly 硬链，
+    // 方法签名由编译器校验。选 1.16.5：本模块编译目标是 JVM 8，更高的 API 会因 JVM 版本要求被 Gradle 拒绝。
+    compileOnly("org.spigotmc:spigot-api:1.16.5-R0.1-SNAPSHOT")
 }
 
 taboolib {

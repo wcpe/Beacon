@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.bukkit
 
+import org.bukkit.Bukkit
 import taboolib.common.LifeCycle
 import taboolib.common.env.RuntimeDependencies
 import taboolib.common.env.RuntimeDependency
@@ -399,23 +400,23 @@ object BeaconAgentBukkit : Plugin() {
         BeaconAgentProvider.unregister()
     }
 
-    /** 本壳不硬链 Bukkit API，读取导出静态 API 的唯一实际监听端口。 */
+    /** 读取 Bukkit 导出静态 API 的唯一实际监听端口；取不到时交控制面按连接事实补全。 */
     private fun readListenPort(): Int? =
         try {
-            (Class.forName("org.bukkit.Bukkit").getMethod("getPort").invoke(null) as? Number)?.toInt()
-        } catch (e: ReflectiveOperationException) {
+            Bukkit.getPort()
+        } catch (e: Exception) {
             warning("读取 Bukkit 监听端口失败，等待控制面按连接事实补全：${e.message}")
             null
         }
 
     /**
-     * 主线程反射读 Paper `max-players`（FR-228）：作为容量上限上报，使健康 `capacity` 因子可参与打分。
+     * 主线程读 `max-players`（FR-228）：作为容量上限上报，使健康 `capacity` 因子可参与打分。
      * 取不到（非 Paper / API 变更）回 0——控制面据此判因子「不适用」，不报错、不阻断接入。
      */
     private fun readMaxPlayers(): Int =
         try {
-            (Class.forName("org.bukkit.Bukkit").getMethod("getMaxPlayers").invoke(null) as? Number)?.toInt() ?: 0
-        } catch (e: ReflectiveOperationException) {
+            Bukkit.getMaxPlayers()
+        } catch (e: Exception) {
             warning("读取 Bukkit max-players 失败，capacity 因子将不适用：${e.message}")
             0
         }

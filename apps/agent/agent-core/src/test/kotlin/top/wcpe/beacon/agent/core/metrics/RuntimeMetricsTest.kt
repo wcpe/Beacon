@@ -62,12 +62,11 @@ class RuntimeMetricsTest {
 
     @Test
     fun `平台具备扩展接口时 CPU 负载应取到真值而非哨兵`() {
-        // 本测试 JVM（JDK 9+ HotSpot 系）必有 com.sun.management 扩展接口；异构 JVM 取不到则放行（等价旧容忍语义）。
-        val iface = runCatching { Class.forName("com.sun.management.OperatingSystemMXBean") }.getOrNull()
+        // 本测试 JVM（JDK 9+ HotSpot 系）必有 com.sun.management 扩展接口；异构 JVM 取不到则放行。
         val osBean = java.lang.management.ManagementFactory.getOperatingSystemMXBean()
-        if (iface == null || !iface.isInstance(osBean)) return
+        if (osBean !is com.sun.management.OperatingSystemMXBean) return
         // getProcessCpuLoad 首采可能尚无窗口返回负值，小重试内必须出现真值；
-        // 若恒为哨兵 = 反射路径被模块封装拦截（按实现类反射在 JDK 9+ 恒失败），即本测试要防的回归。
+        // 若恒为哨兵 = 取值路径失效，即本测试要防的回归。
         var cpu = RuntimeMetrics.CPU_UNAVAILABLE
         var attempts = 0
         while (cpu < 0.0 && attempts < 20) {
@@ -75,7 +74,7 @@ class RuntimeMetricsTest {
             attempts++
             if (cpu < 0.0) Thread.sleep(100)
         }
-        assertTrue(cpu in 0.0..1.0, "扩展接口可用时 cpuLoad 应取到真值，实得 $cpu（恒 -1 即反射被模块封装拦截）")
+        assertTrue(cpu in 0.0..1.0, "扩展接口可用时 cpuLoad 应取到真值，实得 $cpu（恒 -1 说明取值路径失效）")
     }
 
     @Test
