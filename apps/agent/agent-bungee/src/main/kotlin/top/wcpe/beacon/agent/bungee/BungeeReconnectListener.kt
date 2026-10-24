@@ -65,14 +65,13 @@ object BungeeReconnectListener {
     /** 路径一：子服主动 kick（含正常 stop 时的 "Server closed"）。 */
     @SubscribeEvent
     fun onServerKick(event: ServerKickEvent) {
-        // 仅接管「玩家已在服内、该服断开」；连接阶段失败交给原生重试链。
-        if (event.state != ServerKickEvent.State.CONNECTED || event.isCancelled) return
-
         val player = event.player ?: return
-        val from = event.kickedFrom?.name ?: return
-        val target = resolveTarget(from) ?: return
+        val selected =
+            ReconnectDispatch.forKick(event.state, event.isCancelled, event.kickedFrom?.name, ::routeOf) ?: return
+        val target = managedTarget(selected) ?: return
 
-        info("回退路由（kick）：玩家=${player.name} 从 $from 断开 → ${target.name}")
+        info("回退路由（kick）：玩家=${player.name} 从 ${event.kickedFrom?.name} 断开 → ${target.name}")
+        // 两处都要设：cancelServer 指定落点，isCancelled 才是让 BungeeCord 跳过原 disconnect 的开关。
         event.cancelServer = target
         event.isCancelled = true
     }
@@ -80,29 +79,29 @@ object BungeeReconnectListener {
     /**
      * 路径二：子服进程消失后，BungeeCord 发起的原生回退跳转。
      *
-     * 只处理 `SERVER_DOWN_REDIRECT`——这正是「子服掉了、把人送去 fallback」的语义，
-     * 与玩家主动换服（`COMMAND`）和插件跳转（`PLUGIN`）天然区分开。
+     * 接管范围（只认 `SERVER_DOWN_REDIRECT`）与差异判断都在 [ReconnectDispatch.forConnect] 里，
+     * 这里只负责把平台对象翻译进去、把结果写回事件。
      */
     @SubscribeEvent
     fun onServerConnect(event: ServerConnectEvent) {
-        if (event.reason != ServerConnectEvent.Reason.SERVER_DOWN_REDIRECT) return
-
         val player = event.player ?: return
         // 此刻玩家仍挂在掉线的那台服上，用它作为「原所在服」做区感知；
         // 取不到时退化为按全局登录池选路（ReconnectRouter 对 null 的处理）。
         val from = runCatching { player.server?.info?.name }.getOrNull()
-        val target = resolveTarget(from) ?: return
-        if (target.name == event.target?.name) return
+        val selected = ReconnectDispatch.forConnect(event.reason, from, event.target?.name, ::routeOf) ?: return
+        val target = managedTarget(selected) ?: return
 
         info("回退路由（server-down）：玩家=${player.name} 原服=${from ?: "未知"} 重定向 ${event.target?.name} → ${target.name}")
         event.target = target
     }
 
-    /** 按原所在服求回退目标；未装配、无候选或目标不在受管目录时返回 null（交还原生回退）。 */
-    private fun resolveTarget(fromServerId: String?): ServerInfo? {
-        val route = router?.route(fromServerId, setOfNotNull(fromServerId)) as? ReconnectRoute.Selected ?: return null
-        val target = directory?.managedServerInfo(route.serverId) ?: return null
-        info("回退路由命中层级=${route.reason}，目标=${route.serverId}")
-        return target
+    /** 向 router 求选路结果；未装配时退化为 `Unavailable`，等价于「不干预」。 */
+    private fun routeOf(fromServerId: String?): ReconnectRoute =
+        router?.route(fromServerId, setOfNotNull(fromServerId)) ?: ReconnectRoute.Unavailable
+
+    /** 把选中的 serverId 翻译成可用的 [ServerInfo]；不在受管目录内时返回 null（交还原生回退）。 */
+    private fun managedTarget(selected: ReconnectRoute.Selected): ServerInfo? {
+        info("回退路由命中层级=${selected.reason}，目标=${selected.serverId}")
+        return directory?.managedServerInfo(selected.serverId)
     }
 }
