@@ -922,8 +922,14 @@ func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Req
 		params.TargetKind = req.Target.Kind
 		params.TargetID = req.Target.ID
 	}
-	if params.TargetKind == service.LobbyPlacementKind {
-		tickets, err := h.svc.RequestLobbyMemberAssignments(params, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
+	if params.TargetKind == service.LobbyPlacementKind || params.TargetKind == service.SharedPoolPlacementKind {
+		var tickets []service.LobbyMemberAssignmentTicket
+		var err error
+		if params.TargetKind == service.SharedPoolPlacementKind {
+			tickets, err = h.svc.RequestSharedPoolMemberAssignments(params, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
+		} else {
+			tickets, err = h.svc.RequestLobbyMemberAssignments(params, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
+		}
 		if err != nil {
 			render.WriteError(w, r, err)
 			return
@@ -983,32 +989,97 @@ func (h *V2ControlPlaneHandler) ZoneTree(w http.ResponseWriter, r *http.Request)
 	render.WriteJSON(w, http.StatusOK, tree)
 }
 
-// ListLobbyClusters 处理 GET /admin/v2/lobby-clusters（大厅摘要服务端分页）。
-func (h *V2ControlPlaneHandler) ListLobbyClusters(w http.ResponseWriter, r *http.Request) {
+// ListSharedPools 处理 GET /admin/v2/shared-pools（共享游戏池摘要服务端分页，FR-281）。
+func (h *V2ControlPlaneHandler) ListSharedPools(w http.ResponseWriter, r *http.Request) {
+	params, ok := poolListQuery(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.svc.ListSharedPools(params)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, result)
+}
+
+// GetSharedPool 处理 GET /admin/v2/shared-pools/{id}（成员服务端分页，FR-281）。
+func (h *V2ControlPlaneHandler) GetSharedPool(w http.ResponseWriter, r *http.Request) {
+	id, err := uintURLParam(r, "id")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	params, ok := poolDetailQuery(w, r)
+	if !ok {
+		return
+	}
+	detail, err := h.svc.GetSharedPool(id, params)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, detail)
+}
+
+// poolListQuery 解析池摘要列表的查询参数（大厅与共享游戏池共用）。
+func poolListQuery(w http.ResponseWriter, r *http.Request) (service.ListLobbyClustersParams, bool) {
 	q := r.URL.Query()
 	namespaceID, err := optionalUintQuery(q.Get("namespaceId"))
 	if err != nil {
 		render.WriteError(w, r, err)
-		return
+		return service.ListLobbyClustersParams{}, false
 	}
 	ready, err := optionalBoolQuery(q.Get("ready"))
 	if err != nil {
 		render.WriteError(w, r, err)
-		return
+		return service.ListLobbyClustersParams{}, false
 	}
 	page, err := nonNegativeIntQuery(q.Get("page"))
 	if err != nil {
 		render.WriteError(w, r, err)
-		return
+		return service.ListLobbyClustersParams{}, false
 	}
 	pageSize, err := nonNegativeIntQuery(q.Get("pageSize"))
 	if err != nil {
 		render.WriteError(w, r, err)
+		return service.ListLobbyClustersParams{}, false
+	}
+	return service.ListLobbyClustersParams{
+		NamespaceID: namespaceID, Ready: ready, Page: page, PageSize: pageSize,
+	}, true
+}
+
+// poolDetailQuery 解析池成员详情分页参数（大厅与共享游戏池共用）。
+func poolDetailQuery(w http.ResponseWriter, r *http.Request) (service.LobbyClusterDetailParams, bool) {
+	q := r.URL.Query()
+	memberPage, err := nonNegativeIntQuery(q.Get("memberPage"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return service.LobbyClusterDetailParams{}, false
+	}
+	memberPageSize, err := nonNegativeIntQuery(q.Get("memberPageSize"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return service.LobbyClusterDetailParams{}, false
+	}
+	status := q.Get("status")
+	if status != "" && status != "online" && status != "offline" && status != "schedulable" && status != "unschedulable" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return service.LobbyClusterDetailParams{}, false
+	}
+	return service.LobbyClusterDetailParams{
+		MemberPage: memberPage, MemberPageSize: memberPageSize, Keyword: q.Get("keyword"), Status: status,
+	}, true
+}
+
+// ListLobbyClusters 处理 GET /admin/v2/lobby-clusters（大厅摘要服务端分页）。
+func (h *V2ControlPlaneHandler) ListLobbyClusters(w http.ResponseWriter, r *http.Request) {
+	params, ok := poolListQuery(w, r)
+	if !ok {
 		return
 	}
-	result, err := h.svc.ListLobbyClusters(service.ListLobbyClustersParams{
-		NamespaceID: namespaceID, Ready: ready, Page: page, PageSize: pageSize,
-	})
+	result, err := h.svc.ListLobbyClusters(params)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -1023,25 +1094,11 @@ func (h *V2ControlPlaneHandler) GetLobbyCluster(w http.ResponseWriter, r *http.R
 		render.WriteError(w, r, err)
 		return
 	}
-	q := r.URL.Query()
-	memberPage, err := nonNegativeIntQuery(q.Get("memberPage"))
-	if err != nil {
-		render.WriteError(w, r, err)
+	params, ok := poolDetailQuery(w, r)
+	if !ok {
 		return
 	}
-	memberPageSize, err := nonNegativeIntQuery(q.Get("memberPageSize"))
-	if err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-	status := q.Get("status")
-	if status != "" && status != "online" && status != "offline" && status != "schedulable" && status != "unschedulable" {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
-		return
-	}
-	detail, err := h.svc.GetLobbyCluster(id, service.LobbyClusterDetailParams{
-		MemberPage: memberPage, MemberPageSize: memberPageSize, Keyword: q.Get("keyword"), Status: status,
-	})
+	detail, err := h.svc.GetLobbyCluster(id, params)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

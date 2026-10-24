@@ -37,7 +37,7 @@ func newNamespaceTestDB(t *testing.T) *gorm.DB {
 	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(
 		&model.Namespace{}, &model.AuditLog{}, &model.ZoneAssignment{}, &model.ConfigItem{},
-		&model.FileObject{}, &model.FileOverrideSet{}, &model.LobbyCluster{},
+		&model.FileObject{}, &model.FileOverrideSet{}, &model.LobbyCluster{}, &model.SharedPool{},
 		// 删除守卫的「区服归属」一项读新真源（server.zone_id），需迁移整条层级链路
 		&model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.Server{},
 	); err != nil {

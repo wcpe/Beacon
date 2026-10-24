@@ -63,6 +63,73 @@ func lobbyView(serverID string, clusterID uint, score int, schedulable bool) hea
 	return v
 }
 
+// sharedPoolView 构造一台共享游戏池成员的健康视图（FR-281）。
+func sharedPoolView(serverID string, poolID uint, score int, schedulable bool) healthview.View {
+	v := backendView(serverID, "", score, 10, 100)
+	v.SharedPoolID = poolID
+	v.NamespaceSharedPoolID = poolID
+	v.Schedulable = schedulable
+	if !schedulable {
+		v.Reasons = []string{healthview.ReasonDraining}
+	}
+	return v
+}
+
+// TestFR281SharedPoolCandidatesDoNotLeakIntoLobby 锁住拆池的核心保证：
+// 共享游戏池成员永远不进入 lobby 候选段，反之亦然。
+// 这是「玩家从 BC 进来不会被丢进游戏服」的机制级保证——两种池的成员集合必须不重叠。
+func TestFR281SharedPoolCandidatesDoNotLeakIntoLobby(t *testing.T) {
+	store := healthview.NewStore()
+	store.ReplaceAll([]healthview.View{
+		lobbyView("lobby-1", 12, 90, true),
+		sharedPoolView("game-1", 34, 80, true),
+	})
+	svc := newSchedServiceForTest(store, 1)
+
+	result := svc.Candidates(schedTestIdentity())
+	if result.Lobby.ClusterID != 12 || len(result.Lobby.Candidates) != 1 ||
+		result.Lobby.Candidates[0].ServerID != "lobby-1" {
+		t.Fatalf("lobby 段只应含入口大厅成员，实际 %+v", result.Lobby)
+	}
+	if result.Shared.PoolID != 34 || !result.Shared.Ready || len(result.Shared.Candidates) != 1 ||
+		result.Shared.Candidates[0].ServerID != "game-1" {
+		t.Fatalf("shared 段只应含共享游戏池成员，实际 %+v", result.Shared)
+	}
+}
+
+// TestFR281SharedPoolScopeRejectsZone 大厅档与共享池档都不接受非空 zone。
+func TestFR281SharedPoolScopeRejectsZone(t *testing.T) {
+	store := healthview.NewStore()
+	store.ReplaceAll([]healthview.View{sharedPoolView("game-1", 34, 80, true)})
+	svc := newSchedServiceForTest(store, 1)
+
+	if _, err := svc.DecideScoped(schedTestIdentity(), SchedScopeSharedPool, "", "", ""); err != nil {
+		t.Fatalf("共享池档空 zone 应放行，实际 %v", err)
+	}
+	if _, err := svc.DecideScoped(schedTestIdentity(), SchedScopeSharedPool, "area-1", "", ""); err == nil {
+		t.Fatal("共享池档带非空 zone 必须 400")
+	}
+}
+
+// TestFR281DecideSharedPoolPicksPoolMemberOnly 共享池档选中者必须来自共享池，不得落到小区或大厅成员。
+func TestFR281DecideSharedPoolPicksPoolMemberOnly(t *testing.T) {
+	store := healthview.NewStore()
+	store.ReplaceAll([]healthview.View{
+		lobbyView("lobby-1", 12, 99, true),
+		sharedPoolView("game-1", 34, 80, true),
+		sharedPoolView("game-2", 34, 85, true),
+	})
+	svc := newSchedServiceForTest(store, 1)
+
+	out, err := svc.DecideScoped(schedTestIdentity(), SchedScopeSharedPool, "", "", "")
+	if err != nil {
+		t.Fatalf("共享池决策不应出错: %v", err)
+	}
+	if out.ChosenServerID != "game-2" {
+		t.Fatalf("应按池内最高分选中 game-2，实际 %s", out.ChosenServerID)
+	}
+}
+
 // TestDecideHighestScoreWins 分数最高者胜；候选数 / 排除数 / traceId / 耗时字段齐全。
 func TestDecideHighestScoreWins(t *testing.T) {
 	store := healthview.NewStore()

@@ -17,13 +17,21 @@ import (
 )
 
 const (
-	// LobbyPlacementKind 是大厅归属在迁移契约中的目标类型。
+	// LobbyPlacementKind 是入口大厅归属在迁移契约中的目标类型。
 	LobbyPlacementKind = "lobby_cluster"
+
+	// SharedPoolPlacementKind 是共享游戏池归属在迁移契约中的目标类型（FR-281）。
+	SharedPoolPlacementKind = "shared_pool"
 
 	actionLobbyMemberAssign   = "lobby_cluster.member.assign"
 	actionLobbyMemberMoveIn   = "lobby_cluster.member.move_in"
 	actionLobbyMemberMoveOut  = "lobby_cluster.member.move_out"
 	actionLobbyMemberUnassign = "lobby_cluster.member.unassign"
+
+	actionSharedPoolMemberAssign   = "shared_pool.member.assign"
+	actionSharedPoolMemberMoveIn   = "shared_pool.member.move_in"
+	actionSharedPoolMemberMoveOut  = "shared_pool.member.move_out"
+	actionSharedPoolMemberUnassign = "shared_pool.member.unassign"
 )
 
 var (
@@ -31,6 +39,10 @@ var (
 	errLobbyClusterNamespaceConflict = apperr.New(409, "LOBBY_CLUSTER_NAMESPACE_CONFLICT", "服务器与大厅集群不属于同一 namespace")
 	errLobbyMemberRoleInvalid        = apperr.New(409, "LOBBY_MEMBER_ROLE_INVALID", "仅已确认的 backend 服务器可以加入大厅集群")
 	errServerPlacementConflict       = apperr.New(409, "SERVER_PLACEMENT_CONFLICT", "当前服务器归属不支持此迁移，请使用对应的区服操作")
+
+	errSharedPoolNotFound          = apperr.New(404, "SHARED_POOL_NOT_FOUND", "共享游戏池不存在")
+	errSharedPoolNamespaceConflict = apperr.New(409, "SHARED_POOL_NAMESPACE_CONFLICT", "服务器与共享游戏池不属于同一 namespace")
+	errSharedPoolMemberRoleInvalid = apperr.New(409, "SHARED_POOL_MEMBER_ROLE_INVALID", "仅已确认的 backend 服务器可以加入共享游戏池")
 )
 
 // SetRuntimeRegistry 注入注册/玩家运行态；未注入时迁移按离线处理，便于独立服务测试。
@@ -111,6 +123,9 @@ func (s *V2ControlPlaneService) applyTransferServerPlacement(p ServerPlacementTr
 		if target.kind == LobbyPlacementKind && !isConfirmedBackend(tx, server) {
 			return errLobbyMemberRoleInvalid
 		}
+		if target.kind == SharedPoolPlacementKind && !isConfirmedBackend(tx, server) {
+			return errSharedPoolMemberRoleInvalid
+		}
 		if s.isPlacementOnlineNonempty(namespace.Code, server.ServerID) {
 			return apperr.ErrZoneServerOnlineNonempty
 		}
@@ -122,7 +137,7 @@ func (s *V2ControlPlaneService) applyTransferServerPlacement(p ServerPlacementTr
 		if err := createAudit(tx, model.AuditLog{
 			NamespaceCode: namespace.Code,
 			Operator:      operatorOrSystem(p.Operator),
-			Action:        lobbyPlacementAuditAction(current, target),
+			Action:        placementAuditAction(current, target),
 			TargetType:    model.TargetTypeServer,
 			TargetRef:     server.ServerID,
 			Detail:        lobbyPlacementAuditDetail(server.ServerID, current, target, strings.TrimSpace(p.Reason)),
@@ -153,7 +168,7 @@ func validPlacementTarget(kind string, id uint) bool {
 	if kind == "" {
 		return id == 0
 	}
-	return id != 0 && (kind == LobbyPlacementKind || kind == model.AssignmentTargetZone)
+	return id != 0 && (kind == LobbyPlacementKind || kind == SharedPoolPlacementKind || kind == model.AssignmentTargetZone)
 }
 
 func loadPlacementServerForUpdate(tx *gorm.DB, serverID string) (*model.Server, error) {
@@ -190,11 +205,17 @@ func placementKindOf(server *model.Server) (placementRef, error) {
 	if server.LobbyClusterID != nil {
 		count++
 	}
+	if server.SharedPoolID != nil {
+		count++
+	}
 	if count > 1 || server.BCClusterID != nil {
 		return placementRef{}, errServerPlacementConflict
 	}
 	if server.LobbyClusterID != nil {
 		return placementRef{kind: LobbyPlacementKind, id: *server.LobbyClusterID}, nil
+	}
+	if server.SharedPoolID != nil {
+		return placementRef{kind: SharedPoolPlacementKind, id: *server.SharedPoolID}, nil
 	}
 	if server.ZoneID != nil {
 		return placementRef{kind: model.AssignmentTargetZone, id: *server.ZoneID}, nil
@@ -218,6 +239,18 @@ func resolvePlacementTarget(tx *gorm.DB, p ServerPlacementTransferParams, namesp
 			return placementRef{}, errLobbyClusterNamespaceConflict
 		}
 		return placementRef{kind: LobbyPlacementKind, id: lobby.ID}, nil
+	case SharedPoolPlacementKind:
+		var pool model.SharedPool
+		if err := tx.First(&pool, p.TargetID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return placementRef{}, errSharedPoolNotFound
+			}
+			return placementRef{}, err
+		}
+		if pool.NamespaceID != namespaceID {
+			return placementRef{}, errSharedPoolNamespaceConflict
+		}
+		return placementRef{kind: SharedPoolPlacementKind, id: pool.ID}, nil
 	case model.AssignmentTargetZone:
 		zoneNamespaceID, err := namespaceIDForZone(tx, p.TargetID)
 		if err != nil {
@@ -242,11 +275,13 @@ func placementIsSame(current, target placementRef) bool {
 func placementTransitionAllowed(current, target placementRef) bool {
 	switch current.kind {
 	case "":
-		return target.kind == LobbyPlacementKind
+		return target.kind == LobbyPlacementKind || target.kind == SharedPoolPlacementKind
 	case model.AssignmentTargetZone:
-		return target.kind == LobbyPlacementKind
+		return target.kind == LobbyPlacementKind || target.kind == SharedPoolPlacementKind
 	case LobbyPlacementKind:
-		return target.kind == "" || target.kind == model.AssignmentTargetZone
+		return target.kind == "" || target.kind == model.AssignmentTargetZone || target.kind == SharedPoolPlacementKind
+	case SharedPoolPlacementKind:
+		return target.kind == "" || target.kind == model.AssignmentTargetZone || target.kind == LobbyPlacementKind
 	default:
 		return false
 	}
@@ -276,6 +311,7 @@ func applyPlacementTarget(server *model.Server, target placementRef) {
 	server.ZoneID = nil
 	server.BCClusterID = nil
 	server.LobbyClusterID = nil
+	server.SharedPoolID = nil
 	server.PendingZoneID = nil
 	server.PendingBCClusterID = nil
 	server.IsDefaultEntry = false
@@ -283,23 +319,45 @@ func applyPlacementTarget(server *model.Server, target placementRef) {
 	case LobbyPlacementKind:
 		id := target.id
 		server.LobbyClusterID = &id
+	case SharedPoolPlacementKind:
+		id := target.id
+		server.SharedPoolID = &id
 	case model.AssignmentTargetZone:
 		id := target.id
 		server.ZoneID = &id
 	}
 }
 
-func lobbyPlacementAuditAction(current, target placementRef) string {
-	if current.kind == "" && target.kind == LobbyPlacementKind {
+// placementAuditAction 按「迁往哪个池」分派审计 action（FR-281：两个池各自成组）。
+// 迁出到 zone / 空归属时，动作归属于**迁出的那个池**——它记录的是「谁被移出了哪个池」。
+func placementAuditAction(current, target placementRef) string {
+	poolKind := target.kind
+	if poolKind != LobbyPlacementKind && poolKind != SharedPoolPlacementKind {
+		poolKind = current.kind
+	}
+	shared := poolKind == SharedPoolPlacementKind
+	switch {
+	case current.kind == "" && (target.kind == LobbyPlacementKind || target.kind == SharedPoolPlacementKind):
+		if shared {
+			return actionSharedPoolMemberAssign
+		}
 		return actionLobbyMemberAssign
-	}
-	if current.kind == model.AssignmentTargetZone && target.kind == LobbyPlacementKind {
+	case current.kind == model.AssignmentTargetZone && (target.kind == LobbyPlacementKind || target.kind == SharedPoolPlacementKind):
+		if shared {
+			return actionSharedPoolMemberMoveIn
+		}
 		return actionLobbyMemberMoveIn
-	}
-	if current.kind == LobbyPlacementKind && target.kind == model.AssignmentTargetZone {
+	case (current.kind == LobbyPlacementKind || current.kind == SharedPoolPlacementKind) && target.kind == model.AssignmentTargetZone:
+		if shared {
+			return actionSharedPoolMemberMoveOut
+		}
 		return actionLobbyMemberMoveOut
+	default:
+		if shared {
+			return actionSharedPoolMemberUnassign
+		}
+		return actionLobbyMemberUnassign
 	}
-	return actionLobbyMemberUnassign
 }
 
 func lobbyPlacementAuditDetail(serverID string, current, target placementRef, reason string) string {
@@ -346,14 +404,37 @@ type LobbyMemberAssignmentTicket struct {
 // 业务 serverId，转发给既有的单服入口 RequestTransferServerPlacement（同一 service 方法），
 // 一台一张票据、按请求顺序返回。
 func (s *V2ControlPlaneService) RequestLobbyMemberAssignments(p AssignServersParams, principal auth.Principal, idempotencyKey string) ([]LobbyMemberAssignmentTicket, error) {
+	return s.requestPoolMemberAssignments(p, principal, idempotencyKey, LobbyPlacementKind)
+}
+
+// RequestSharedPoolMemberAssignments 承接 POST /admin/v2/server-assignments 的 target.kind=shared_pool（FR-281）。
+// 与大厅成员分配同一条实现：单服原子迁移 + 单服审批，逐台一张票据。
+func (s *V2ControlPlaneService) RequestSharedPoolMemberAssignments(p AssignServersParams, principal auth.Principal, idempotencyKey string) ([]LobbyMemberAssignmentTicket, error) {
+	return s.requestPoolMemberAssignments(p, principal, idempotencyKey, SharedPoolPlacementKind)
+}
+
+// requestPoolMemberAssignments 是「把一批 server 迁入某个池」的共同实现（FR-281 起两个池共用）。
+func (s *V2ControlPlaneService) requestPoolMemberAssignments(
+	p AssignServersParams,
+	principal auth.Principal,
+	idempotencyKey string,
+	targetKind string,
+) ([]LobbyMemberAssignmentTicket, error) {
+	shared := targetKind == SharedPoolPlacementKind
+	poolLabel := "大厅"
+	poolListHint := "GET /admin/v2/lobby-clusters"
+	if shared {
+		poolLabel = "共享游戏池"
+		poolListHint = "GET /admin/v2/shared-pools"
+	}
 	if len(p.ServerIDs) == 0 {
-		return nil, lobbyAssignmentInvalidParam("serverIds 不能为空：请传待迁入大厅的 server 数字 id（GET /admin/v2/servers 返回的 id）")
+		return nil, lobbyAssignmentInvalidParam("serverIds 不能为空：请传待迁入" + poolLabel + "的 server 数字 id（GET /admin/v2/servers 返回的 id）")
 	}
 	if p.TargetID == 0 {
-		return nil, lobbyAssignmentInvalidParam("target.id 不能为 0：kind=lobby_cluster 时请传大厅集群 id（见 GET /admin/v2/lobby-clusters）")
+		return nil, lobbyAssignmentInvalidParam("target.id 不能为 0：kind=" + targetKind + " 时请传" + poolLabel + " id（见 " + poolListHint + "）")
 	}
 	if p.IsDefaultEntry {
-		return nil, lobbyAssignmentInvalidParam("大厅成员不能是默认入口：kind=lobby_cluster 时请勿传 isDefaultEntry=true（默认入口仅适用于 zone 归属）")
+		return nil, lobbyAssignmentInvalidParam(poolLabel + "成员不能是默认入口：kind=" + targetKind + " 时请勿传 isDefaultEntry=true（默认入口仅适用于 zone 归属）")
 	}
 	servers, err := loadServersByIDs(s.db, p.ServerIDs)
 	if err != nil {
@@ -373,7 +454,7 @@ func (s *V2ControlPlaneService) RequestLobbyMemberAssignments(p AssignServersPar
 			return nil, lobbyAssignmentInvalidParam("serverIds 中存在无效 server id：请先用 GET /admin/v2/servers 核对后重试")
 		}
 		ticket, err := s.RequestTransferServerPlacement(ServerPlacementTransferParams{
-			ServerID: serverID, TargetKind: LobbyPlacementKind, TargetID: p.TargetID,
+			ServerID: serverID, TargetKind: targetKind, TargetID: p.TargetID,
 			Reason: p.Reason, Operator: p.Operator, ClientIP: p.ClientIP,
 		}, principal, perServerIdempotencyKey(idempotencyKey, serverID))
 		if err != nil {
@@ -462,11 +543,31 @@ func (s *V2ControlPlaneService) lobbySummaries(lobbies []model.LobbyCluster) ([]
 	if len(lobbies) == 0 {
 		return []LobbyClusterSummaryView{}, nil
 	}
-	ids := make([]uint, 0, len(lobbies))
-	namespaceIDs := make([]uint, 0, len(lobbies))
+	pools := make([]poolRef, 0, len(lobbies))
 	for i := range lobbies {
-		ids = append(ids, lobbies[i].ID)
-		namespaceIDs = append(namespaceIDs, lobbies[i].NamespaceID)
+		pools = append(pools, poolRef{ID: lobbies[i].ID, NamespaceID: lobbies[i].NamespaceID, UpdatedAt: lobbies[i].UpdatedAt})
+	}
+	return s.poolSummaries(pools, "lobby_cluster_id")
+}
+
+// poolRef 是「池」的最小身份，让两个池共用摘要聚合（FR-281）。
+type poolRef struct {
+	ID          uint
+	NamespaceID uint
+	UpdatedAt   time.Time
+}
+
+// poolSummaries 按归属列名聚合成员数与可调度数。column 只接受内部常量（"lobby_cluster_id" / "shared_pool_id"），
+// 不接受外部输入，故无注入面。
+func (s *V2ControlPlaneService) poolSummaries(pools []poolRef, column string) ([]LobbyClusterSummaryView, error) {
+	if len(pools) == 0 {
+		return []LobbyClusterSummaryView{}, nil
+	}
+	ids := make([]uint, 0, len(pools))
+	namespaceIDs := make([]uint, 0, len(pools))
+	for i := range pools {
+		ids = append(ids, pools[i].ID)
+		namespaceIDs = append(namespaceIDs, pools[i].NamespaceID)
 	}
 	var namespaces []model.Namespace
 	if err := s.db.Where("id IN ?", namespaceIDs).Find(&namespaces).Error; err != nil {
@@ -477,23 +578,30 @@ func (s *V2ControlPlaneService) lobbySummaries(lobbies []model.LobbyCluster) ([]
 		namespaceNames[namespaces[i].ID] = namespaces[i].Code
 	}
 	var members []model.Server
-	if err := s.db.Where("lobby_cluster_id IN ? AND lifecycle = ?", ids, model.ServerLifecycleActive).Find(&members).Error; err != nil {
+	if err := s.db.Where(column+" IN ? AND lifecycle = ?", ids, model.ServerLifecycleActive).Find(&members).Error; err != nil {
 		return nil, err
 	}
 	memberCount := map[uint]int{}
 	schedulableCount := map[uint]int{}
 	for i := range members {
-		memberCount[*members[i].LobbyClusterID]++
+		poolID := members[i].LobbyClusterID
+		if column == "shared_pool_id" {
+			poolID = members[i].SharedPoolID
+		}
+		if poolID == nil {
+			continue
+		}
+		memberCount[*poolID]++
 		if s.memberHealth(members[i]).Schedulable {
-			schedulableCount[*members[i].LobbyClusterID]++
+			schedulableCount[*poolID]++
 		}
 	}
-	out := make([]LobbyClusterSummaryView, 0, len(lobbies))
-	for i := range lobbies {
-		count := schedulableCount[lobbies[i].ID]
+	out := make([]LobbyClusterSummaryView, 0, len(pools))
+	for i := range pools {
+		count := schedulableCount[pools[i].ID]
 		out = append(out, LobbyClusterSummaryView{
-			ID: lobbies[i].ID, NamespaceID: lobbies[i].NamespaceID, NamespaceName: namespaceNames[lobbies[i].NamespaceID],
-			MemberCount: memberCount[lobbies[i].ID], SchedulableCount: count, Ready: count > 0, UpdatedAt: lobbies[i].UpdatedAt,
+			ID: pools[i].ID, NamespaceID: pools[i].NamespaceID, NamespaceName: namespaceNames[pools[i].NamespaceID],
+			MemberCount: memberCount[pools[i].ID], SchedulableCount: count, Ready: count > 0, UpdatedAt: pools[i].UpdatedAt,
 		})
 	}
 	return out, nil
@@ -552,7 +660,17 @@ func (s *V2ControlPlaneService) GetLobbyCluster(id uint, p LobbyClusterDetailPar
 }
 
 func (s *V2ControlPlaneService) listLobbyMembers(lobbyID uint, namespace string, p LobbyClusterDetailParams) ([]LobbyMemberView, int, error) {
-	query := s.db.Where("lobby_cluster_id = ? AND lifecycle = ?", lobbyID, model.ServerLifecycleActive)
+	return s.listPoolMembers(lobbyID, namespace, p, "lobby_cluster_id")
+}
+
+// listPoolMembers 按归属列名列出池成员。column 只接受内部常量，无注入面。
+func (s *V2ControlPlaneService) listPoolMembers(
+	poolID uint,
+	namespace string,
+	p LobbyClusterDetailParams,
+	column string,
+) ([]LobbyMemberView, int, error) {
+	query := s.db.Where(column+" = ? AND lifecycle = ?", poolID, model.ServerLifecycleActive)
 	if p.Keyword != "" {
 		query = query.Where("server_id LIKE ?", "%"+p.Keyword+"%")
 	}
@@ -622,4 +740,64 @@ func lobbyMemberStatusMatches(member LobbyMemberView, status string) bool {
 	default:
 		return false
 	}
+}
+
+// ListSharedPools 返回 namespace 共享游戏池摘要（FR-281）。与大厅列表同一条聚合实现。
+func (s *V2ControlPlaneService) ListSharedPools(p ListLobbyClustersParams) (*LobbyClusterListView, error) {
+	var pools []model.SharedPool
+	query := s.db.Order("id ASC")
+	if p.NamespaceID != 0 {
+		query = query.Where("namespace_id = ?", p.NamespaceID)
+	}
+	if err := query.Find(&pools).Error; err != nil {
+		return nil, err
+	}
+	refs := make([]poolRef, 0, len(pools))
+	for i := range pools {
+		refs = append(refs, poolRef{ID: pools[i].ID, NamespaceID: pools[i].NamespaceID, UpdatedAt: pools[i].UpdatedAt})
+	}
+	summaries, err := s.poolSummaries(refs, "shared_pool_id")
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]LobbyClusterSummaryView, 0, len(summaries))
+	for i := range summaries {
+		if p.Ready != nil && summaries[i].Ready != *p.Ready {
+			continue
+		}
+		filtered = append(filtered, summaries[i])
+	}
+	total := len(filtered)
+	start := pageOffset(p.Page, p.PageSize)
+	if start >= total {
+		return &LobbyClusterListView{Items: []LobbyClusterSummaryView{}, Total: total}, nil
+	}
+	end := start + pageSize(p.PageSize)
+	if end > total {
+		end = total
+	}
+	return &LobbyClusterListView{Items: filtered[start:end], Total: total}, nil
+}
+
+// GetSharedPool 读取单个共享游戏池与成员分页（FR-281）。
+func (s *V2ControlPlaneService) GetSharedPool(id uint, p LobbyClusterDetailParams) (*LobbyClusterDetailView, error) {
+	if id == 0 || p.MemberPage < 0 || p.MemberPageSize < 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	var pool model.SharedPool
+	if err := s.db.First(&pool, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errSharedPoolNotFound
+		}
+		return nil, err
+	}
+	summaries, err := s.poolSummaries([]poolRef{{ID: pool.ID, NamespaceID: pool.NamespaceID, UpdatedAt: pool.UpdatedAt}}, "shared_pool_id")
+	if err != nil {
+		return nil, err
+	}
+	members, total, err := s.listPoolMembers(pool.ID, summaries[0].NamespaceName, p, "shared_pool_id")
+	if err != nil {
+		return nil, err
+	}
+	return &LobbyClusterDetailView{LobbyClusterSummaryView: summaries[0], Members: members, MemberTotal: total}, nil
 }

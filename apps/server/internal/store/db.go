@@ -109,6 +109,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.Region{},
 		&model.Zone{},
 		&model.LobbyCluster{},
+		&model.SharedPool{},
 		&model.Server{},
 		&model.AgentIdentity{},
 		&model.ServerTag{},
@@ -149,6 +150,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return nil, err
 	}
 	if err := backfillLobbyClusters(bootDB); err != nil {
+		return nil, err
+	}
+	if err := backfillSharedPools(bootDB); err != nil {
 		return nil, err
 	}
 	if err := backfillLegacyIdentityBindingSources(bootDB); err != nil {
@@ -228,6 +232,24 @@ func backfillLobbyClusters(db *gorm.DB) error {
 			cluster := model.LobbyCluster{NamespaceID: namespaceID}
 			if err := tx.Where("namespace_id = ?", namespaceID).FirstOrCreate(&cluster).Error; err != nil {
 				return fmt.Errorf("回填 namespace %d 的大厅集群失败: %w", namespaceID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// backfillSharedPools 为升级前已有的 namespace 补建唯一空共享游戏池（FR-281）。
+// 与大厅集群同理：不推断成员；重复启动仅命中已有行，保持幂等。
+func backfillSharedPools(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var namespaceIDs []uint
+		if err := tx.Model(&model.Namespace{}).Pluck("id", &namespaceIDs).Error; err != nil {
+			return fmt.Errorf("查询 namespace 以回填共享游戏池失败: %w", err)
+		}
+		for _, namespaceID := range namespaceIDs {
+			pool := model.SharedPool{NamespaceID: namespaceID}
+			if err := tx.Where("namespace_id = ?", namespaceID).FirstOrCreate(&pool).Error; err != nil {
+				return fmt.Errorf("回填 namespace %d 的共享游戏池失败: %w", namespaceID, err)
 			}
 		}
 		return nil
