@@ -151,6 +151,16 @@
 - **agent-core**：`proxy/ReconnectRouter.kt`——纯逻辑，只读 `ManagedDirectorySnapshot` 与 `CandidateSnapshot`，不做网络/磁盘/平台调用。不违反「控制面不写游戏逻辑」边界（ADR-0017 决策与执行分离）。
 - **agent-bungee**：`BungeeReconnectListener.kt`——订阅 `ServerKickEvent`（设 `cancelServer` + `isCancelled`）
   与 `ServerConnectEvent`（`Reason.SERVER_DOWN_REDIRECT` 时替换 `target`）。全部走公开 API，无反射。
+  - 决策部分抽为 `ReconnectDispatch.kt`：`forKick` / `forConnect` 只吃事件枚举与字符串（`route` 由调用方注入），
+    不碰需要代理实例才能构造的平台对象。这样「接哪些事件」「与原生选择相同时不写回」才能在无平台环境下被单测锁住，
+    handler 也随之退化为「读事件 → 问决策 → 写事件」。
+  - `BungeeServerDirectory.kt` 提供 `ManagedServerLookup` 函数式接口（`managedServerInfo`），
+    让监听器不直接依赖那个会摸 `ProxyServer` 单例的实现，从而可注入替身。装配调用点不变。
+- **测试落点**：`agent-bungee` 此前无测试源集，本 FR 首次引入——
+  `ReconnectDispatchTest`（接管范围 11 例）与 `ReconnectDispatchListenerTest`（事件写入层 8 例，
+  含 `cancelServer` / `isCancelled` 必须成对设置的回归防护）。平台对象用 `support/` 下的手写替身
+  （`FakePlayer` / `FakeServer` / `FakeServerInfo`）构造，事件用 BungeeCord 真实类，不引入 mock 框架与反射。
+  选路算法本身由 `agent-core` 的 `ReconnectRouterTest` 覆盖，两侧不重复。
 - **装配**：`BeaconAgentBungee` 在注册后启动监听器，注入 `ReconnectRouter(directorySyncer::snapshot, assembled.lobbySnapshotProvider)`。
 - **不动的边界**：agent-core 保持 TabooLib-free（ADR-0005）；选路是纯函数，平台 API 只在 bungee 壳内出现。
 

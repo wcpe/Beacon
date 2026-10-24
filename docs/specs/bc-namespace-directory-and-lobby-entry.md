@@ -165,6 +165,9 @@ BC 的玩家首次连接事件不直接调用该 HTTP 端点；它同步读取�
 - 多 listener 全部读取同一 namespace 大厅候选，不为 listener 增加独立大厅模型或策略。
 - Beacon 只在 `ServerConnectEvent` 的首次加入语义下改写本次目标，不持久或运行期改写 listener 的全局 `server-priority` / fallback 列表。
 - 后端断开、业务插件切服、管理员切服和 Bungee 原生 fallback 保持原职责；Beacon 不把这些事件重定向大厅。
+  （注意区分：子服关闭后的**玩家回退**由 FR-282 / [subserver-close-reconnect-fallback](subserver-close-reconnect-fallback.md) 单独承接，
+  它确实会接管 `ServerKickEvent` 与 `SERVER_DOWN_REDIRECT` 的 `ServerConnectEvent`——那是「把已在线玩家送回大厅」，
+  与本处约束的「首次入服路由不得越界」是两个不同功能，互不重叠。）
 - Beacon 不反射、不改写 Bungee 原始配置文件，也不要求普通区服充当首次连接占位目标。
 
 实现前必须用当前锁定的 Bungee 版本写事件契约测试和最小真机验证，证明在不改写全局 fallback、不中断事件线程的前提下，首次连接事件可取得并安全替换目标，且无候选时可明确拒绝。如果当前公开 API 无法同时满足这些条件，应立即停止并回到用户确认，不得用主线程等待 HTTP、反射内部连接类或扩大到后端断线 fallback。
