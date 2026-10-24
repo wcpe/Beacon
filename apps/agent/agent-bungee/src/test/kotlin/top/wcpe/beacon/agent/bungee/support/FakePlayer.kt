@@ -161,15 +161,29 @@ class FakePlayer(
 
     // ---------- Connection ----------
 
+    /**
+     * 已记录的断开理由，按调用顺序追加。
+     *
+     * 首次入服路由在「无可用大厅」时会主动断开玩家，测试需要断言这件事**确实发生**、
+     * 且理由文案符合预期，故这三个 `disconnect` 重载是「记录」而非「抛异常」。
+     */
+    val disconnectReasons: MutableList<String> = mutableListOf()
+
     override fun getAddress(): InetSocketAddress = unsupported("getAddress")
 
     override fun getSocketAddress(): SocketAddress = unsupported("getSocketAddress")
 
-    override fun disconnect(reason: String): Unit = unsupported("disconnect")
+    override fun disconnect(reason: String) {
+        disconnectReasons.add(reason)
+    }
 
-    override fun disconnect(vararg messages: BaseComponent): Unit = unsupported("disconnect")
+    override fun disconnect(vararg messages: BaseComponent) {
+        disconnectReasons.add(messages.joinToString("") { it.toPlainText() })
+    }
 
-    override fun disconnect(reason: BaseComponent): Unit = unsupported("disconnect")
+    override fun disconnect(reason: BaseComponent) {
+        disconnectReasons.add(reason.toPlainText())
+    }
 
     override fun isConnected(): Boolean = unsupported("isConnected")
 

@@ -15,7 +15,7 @@
   - **fail-static**：候选快照缺失、`pool.ready=false`、router/directory 未装配时一律不取消事件，不阻断玩家。
   - **随机源可注入**：并列候选的选取走可注入的 `randomIndex`，单测可确定性验证，运行期用 `Random.nextInt`。
   - 实现落 `agent-core` 的 `ReconnectRouter`（纯逻辑，只读内存快照，不做网络/磁盘/平台调用，不违反 ADR-0017 决策与执行分离）+ `agent-bungee` 的 `BungeeReconnectListener`（`ServerKickEvent` 设 `cancelServer`，`ServerConnectEvent` 替换 `target`）。规格见 [subserver-close-reconnect-fallback](docs/specs/subserver-close-reconnect-fallback.md)。
-  - 另把「接哪些事件、何时不干预」抽为 `ReconnectDispatch` 决策层（只吃事件枚举与字符串，不依赖需代理实例的平台对象），并**首次为 `agent-bungee` 引入测试源集**：19 个单测覆盖决策范围与事件写入层（含 `cancelServer`/`isCancelled` 必须成对设置），平台对象用手写替身构造，全程不引入 mock 框架与反射。
+  - 另把「接哪些事件、何时不干预」抽为 `ReconnectDispatch` 决策层（只吃事件枚举与字符串，不依赖需代理实例的平台对象），并**首次为 `agent-bungee` 引入测试源集**：25 个单测覆盖回退决策范围、回退事件写入层（含 `cancelServer`/`isCancelled` 必须成对设置）与首次入服路由的旁路边界，平台对象用手写替身构造，全程不引入 mock 框架与反射。
 - **E2E 接入 mc-testkit bot 编排（FR-283）**：Beacon 的 E2E 此前只声明 `serve` 拓扑（起服务端供人手测），**从未用过 `scenario` + `bot`**，也没有多后端拓扑先例——而「子服关闭后玩家被送回大厅」是玩家连接行为，纯服务端断言无法覆盖。
   - 新增 `reconnect-bot/` 机器人项目，内核依赖 npm 包 **`@wcpe/mc-testkit-bot`**（WCPE 私有源，经 `.npmrc` 作用域映射解析），**不复制内核源码**（ADR-0014 取代 ADR-0002）。
   - 新增三后端 + 代理的集群场景 `reconnect`：`game` 声明在最前（代理 priorities 按声明顺序取首个可用后端，bot 须先落在业务子服才能把它关掉）。
