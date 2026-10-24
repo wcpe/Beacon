@@ -26,7 +26,8 @@
 
 **不做**：
 
-- 不改 BungeeCord 原生 `priorities` 语义，也不要求运维改 `config.yml`——本能力是叠加在其上的更优选择，选不到时原逻辑照常生效。
+- 不改 BungeeCord 原生 `priorities` 的语义与排序，也不要求运维重排它。
+  但有一条部署前提：`priorities` 须**覆盖全部大厅服**（详见 §4.4）——只配一台时崩溃路径会静默退化为原生断开。
 - 不做跨 namespace 回退（回退目标必须同 namespace）。
 - 不做玩家主动 `/server` 换服的路由干预（那是显式意图，不属"被动回退"）。
 - 不做负载均衡的全局重排（仅回退这一个场景消费选路结果）。
@@ -54,7 +55,14 @@
 
 前两级都选不到 → 返回 `Unavailable`，**不取消事件**，交还 BungeeCord 原生 `priorities` 回退。
 
-这条是硬约束：本能力**绝不成为玩家断线的新的原因**。
+这条的语义**在两条路径上不同**，不可一概而论：
+
+| 路径 | 前两级都选不到时的实际结果 |
+|---|---|
+| 踢人路径（`ServerKickEvent`） | 不取消事件，BungeeCord 按原生行为**断开玩家**（这是它本来就会做的事，本能力未加剧） |
+| 崩溃路径（`ServerConnectEvent`） | 不改写 `target`，BungeeCord 继续用它自己算出的原生回退目标 |
+
+即：硬约束是「本能力**不新增**断线原因」，而非「保证玩家在任何情况下都不掉线」。
 
 ### 3.4 选服打分（同分随机）
 
@@ -117,7 +125,17 @@
 故部署要求：`listeners[].priorities` 覆盖全部大厅服（与多大厅容灾的运维惯例一致）。
 该场景的兜底是原生行为（断开），不比现状更差。
 
-### 4.5 其余边界
+### 4.5 选出的目标本身也不可用时
+
+不是死循环，理由在 BungeeCord 侧：
+
+- `SERVER_DOWN_REDIRECT` 只由**真实服务端连接的** `disconnected()` 触发。连接一个已宕机的服根本建立不起连接，不会再次触发该事件。
+- 连接失败走 `ServerConnector.exception`：仅当 `user.getServer() == null` 才 `disconnect`，否则只给玩家一条错误提示、保留当前状态。
+
+因此最坏结果是「玩家停在原处收到一条连接失败提示」，与原生死服时的表现一致，不会因本能力产生重定向风暴。
+（早期评审曾担心排除集不含"已尝试过的大厅"会反复选中同一台，经源码核对该路径不会形成循环，故不引入重定向计数上限。）
+
+### 4.6 其余边界
 
 | 情形 | 是否接管 | 原因 |
 |---|---|---|
@@ -128,7 +146,9 @@
 
 ## 5. 设计（实现落点）
 
-现状：`ReconnectRouter` 与 `BungeeReconnectListener` **已实现但未纳入版本控制**（`git status` 显示为未跟踪）。本 FR 负责收口入库并补齐文档与测试。- **agent-core**：`proxy/ReconnectRouter.kt`——纯逻辑，只读 `ManagedDirectorySnapshot` 与 `CandidateSnapshot`，不做网络/磁盘/平台调用。不违反「控制面不写游戏逻辑」边界（ADR-0017 决策与执行分离）。
+本 FR 将 `ReconnectRouter` 与 `BungeeReconnectListener` 收口入库，并补齐文档与测试（初版实现游离于版本控制之外，且只接管了 `ServerKickEvent`，见 §4.1）。
+
+- **agent-core**：`proxy/ReconnectRouter.kt`——纯逻辑，只读 `ManagedDirectorySnapshot` 与 `CandidateSnapshot`，不做网络/磁盘/平台调用。不违反「控制面不写游戏逻辑」边界（ADR-0017 决策与执行分离）。
 - **agent-bungee**：`BungeeReconnectListener.kt`——订阅 `ServerKickEvent`（设 `cancelServer` + `isCancelled`）
   与 `ServerConnectEvent`（`Reason.SERVER_DOWN_REDIRECT` 时替换 `target`）。全部走公开 API，无反射。
 - **装配**：`BeaconAgentBungee` 在注册后启动监听器，注入 `ReconnectRouter(directorySyncer::snapshot, assembled.lobbySnapshotProvider)`。
