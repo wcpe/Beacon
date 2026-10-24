@@ -19,7 +19,7 @@
 **做**：
 
 - 新增 agent 侧回退选路：三级优先级（同区大厅 → 全局登录池 → 放行原生）。
-- 在代理侧接管 `ServerKickEvent`（仅 `State.CONNECTED`）执行该选路。
+- 在代理侧接管 `ServerKickEvent`（`State.CONNECTED`）与 `ServerConnectEvent`（`SERVER_DOWN_REDIRECT`），覆盖「踢人」与「进程消失」两条路径。
 - 单元测试覆盖三级降级、随机性、排除当前服、快照缺失不阻断。
 - 真机 E2E 覆盖三条路径（详见 §6）。
 - 文档：PRD 登记、本 spec、CHANGELOG。
@@ -68,18 +68,69 @@
 
 ## 4. 触发时机与边界
 
-| 事件 | 是否接管 | 原因 |
+### 4.1 BungeeCord 的两条断开路径（源码取证，`DownstreamBridge`）
+
+「玩家离开子服」在 BungeeCord 里有两条互斥路径，**只接其一必然漏场景**：
+
+| 路径 | 触发条件 | 触发事件 | 玩家此刻的连接状态 |
+|---|---|---|---|
+| `handle(Kick)` | 子服**主动发 Kick 包**（插件踢人、正常 `stop` 时的 "Server closed"） | `ServerKickEvent`（`State.CONNECTED`） | 尚未断开 |
+| `disconnected(ChannelWrapper)` | 子服**进程消失 / 连接断**（崩溃、被 kill、网络断） | 无 kick 事件；BungeeCord 自行发起 `connectNow(def, SERVER_DOWN_REDIRECT)` | **尚未断开** |
+
+进程消失这条路径**不产生 `ServerKickEvent`**，但 BungeeCord 会在同一方法内发起一次原生跳转，
+该跳转会触发公开事件 `ServerConnectEvent`（`Reason.SERVER_DOWN_REDIRECT`）。本规格即在该事件上接管，
+替换 `target` 实现按区回退。这是能覆盖「进程崩溃」的依据。
+
+**纯 `ServerKickEvent` 实现覆盖不到进程崩溃**——这是真机验收时实测确认的缺口，不是推测。
+
+### 4.2 为什么用 `ServerConnectEvent.setTarget` 而不是改内部状态
+
+两条路径最终都收敛到同一个**公开**事件 `ServerConnectEvent`：
+
+| 来源 | `Reason` |
+|---|---|
+| 子服崩溃后的原生回退 | `SERVER_DOWN_REDIRECT` |
+| `ServerKickEvent` 里设 `cancelServer` 之后的跳转 | `KICK_REDIRECT` |
+
+该事件实现 `Cancellable` 且 `target` 可写，直接替换目标即可。
+
+**不得使用内部类/反射**：内部 `ServerConnection.setObsolete(true)` 走反射虽能实现，
+但依赖非公开契约（内部类不在 `bungeecord-api` 里，模块只能 `compileOnly` 该 API），
+升级即碎。本规格明确禁止该做法。
+
+用 `Reason` 过滤还天然排除了玩家主动 `/server`（`COMMAND`）与插件跳转（`PLUGIN`）。
+
+### 4.3 如何与「玩家主动换服 / 主动退出」区分
+
+| 情形 | 判据 | 是否接管 |
 |---|---|---|
-| `ServerKickEvent` + `State.CONNECTED` | **是** | 玩家已在子服内，该服异常断开——本规格的目标场景 |
-| `ServerKickEvent` + 其他 State | 否 | 连接阶段的失败由 BC 自身重试链负责，接管会与原生逻辑重复 |
+| 玩家主动 `/server` 换服 | 走 `Reason.COMMAND`，不匹配 `SERVER_DOWN_REDIRECT` | 否 |
+| 插件跳转 | 走 `Reason.PLUGIN` | 否 |
+| 子服崩溃 / 进程消失 | 原生回退发出 `Reason.SERVER_DOWN_REDIRECT` | **是** |
+
+### 4.4 已知边界：`priorities` 必须覆盖全部大厅服
+
+原生回退只在「`priorities` 里还能找到第二个候选」时才发起跳转。若 `priorities` 只配了
+玩家当前所在的那一台，`updateAndGetNextServer` 返回 null，BungeeCord 直接
+`con.disconnect(lost_connection)`、**不产生任何事件**，本能力无从接管。
+
+故部署要求：`listeners[].priorities` 覆盖全部大厅服（与多大厅容灾的运维惯例一致）。
+该场景的兜底是原生行为（断开），不比现状更差。
+
+### 4.5 其余边界
+
+| 情形 | 是否接管 | 原因 |
+|---|---|---|
+| `ServerKickEvent` + 非 `CONNECTED` State | 否 | 连接阶段失败由 BC 自身重试链负责，接管会与原生逻辑重复 |
 | 事件已被取消 | 否 | 尊重既有处置 |
-| `event.kickedFrom` 为空 | 否 | 无从判断原服，无法做区感知 |
+| `kickedFrom` / `target` 为空 | 否 | 无从判断原服，无法做区感知 |
 | router / directory 未装配 | 否 | fail-static，不阻断 |
 
 ## 5. 设计（实现落点）
 
 现状：`ReconnectRouter` 与 `BungeeReconnectListener` **已实现但未纳入版本控制**（`git status` 显示为未跟踪）。本 FR 负责收口入库并补齐文档与测试。- **agent-core**：`proxy/ReconnectRouter.kt`——纯逻辑，只读 `ManagedDirectorySnapshot` 与 `CandidateSnapshot`，不做网络/磁盘/平台调用。不违反「控制面不写游戏逻辑」边界（ADR-0017 决策与执行分离）。
-- **agent-bungee**：`BungeeReconnectListener.kt`——订阅 `ServerKickEvent`，命中则设 `event.cancelServer` 并置 `isCancelled`。
+- **agent-bungee**：`BungeeReconnectListener.kt`——订阅 `ServerKickEvent`（设 `cancelServer` + `isCancelled`）
+  与 `ServerConnectEvent`（`Reason.SERVER_DOWN_REDIRECT` 时替换 `target`）。全部走公开 API，无反射。
 - **装配**：`BeaconAgentBungee` 在注册后启动监听器，注入 `ReconnectRouter(directorySyncer::snapshot, assembled.lobbySnapshotProvider)`。
 - **不动的边界**：agent-core 保持 TabooLib-free（ADR-0005）；选路是纯函数，平台 API 只在 bungee 壳内出现。
 
