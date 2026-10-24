@@ -115,6 +115,30 @@ orderId=2  serverId=e2e-bukkit-1  reloadReport.failedCount=1
 2. **隔离真实生效**：同一台服上另一个插件 `ok`，没有被失败者阻断。
 3. **告警带得动定位信息**：`orderId` + `serverId` + 逐插件 `reloadReport` 全在 detail 里。
 
+### 2.5 批次熔断的验证归属（本 FR 不独立举证）
+
+「单个目标 `failed` → 停推下一批」这一句看似属于 A2，实际是**两层不同的机制**，本清单只验证其中一层：
+
+| 层级 | 机制 | 本 FR 证据 |
+|---|---|---|
+| 目标级 | 任一插件失败 → 该 `change_target` 判 `failed`（一票否决） | **有**，见单 #2/#3/#4/#6 |
+| 批次级 | 目标 `failed` 后由**既有**失败率 / 健康恶化熔断停推后续批次 | **无，且本 FR 场景不可验** |
+
+不可验的原因是物理性的：本 FR 的七张单均为**单目标单批次**，且 e2e 建单显式置
+`failureRateThresholdPercent=0` / `unhealthyRateThresholdPercent=0`，熔断被主动关闭——
+**没有「下一批」可停，熔断也不会触发**。这不是漏测，而是本 FR 关注「重载结果如何传导」，
+刻意把批次编排变量固定住了。
+
+批次熔断是**既有能力**（引入于交付灰度编排引擎，早于本 FR），其验证已有独立测试覆盖，
+不应由本清单重复认领：
+
+- `TestOrchestratorCircuitBreakFailureRate`：失败率超阈 → 批 `failed` + 单 `paused(circuit_break)` + 未下发目标 `skipped`
+- `TestOrchestratorRestartTimeoutFailsAndBreaks`、`TestOrchestratorRestartHealthBreaksAfterWarmup`、`TestOrchestratorRestartWarmupSkipsHealthBreak`：重启超时 / 健康恶化触发与预热期排除
+- `TestFileSyncTargetResultCircuitBreaksWhenBatchFailureRateExceeded`：file_sync 路径熔断
+- 阈值 `<= 0` 即关闭熔断，由 `evalFailureRate` / `evalHealthDegradation` 代码级保证
+
+**故 A2 的验收结论仅以目标级 `failed` 为准**；批次侧若要独立取证，应另立多批次 + 非零阈值的编排用例，属既有能力的回归补充，不是 FR-274 的交付门槛。
+
 ## 3. 前置条件
 
 | 项 | 要求 | 为什么 |
@@ -229,7 +253,7 @@ api-version: '1.20'
 | 编号 | 场景 | 操作 | 期望（必须全部满足） |
 |---|---|---|---|
 | **A1** | 全部成功 | 只有 `mode=ok` 的插件 | 目标 `activated`；`change_target.reload_report` 含 `total=1, okCount=1, failedCount=0`；交付单「插件重载」列显示成功徽标 |
-| **A2** | 一票否决 | `ok` + `fail` 两个插件 | 目标 **`failed`**（**不得出现 `activated`**）；`error` 含「1/2 插件重载失败」与失败插件类名；前端可展开看到两个插件各自结果；批次因失败率熔断停推 |
+| **A2** | 一票否决 | `ok` + `fail` 两个插件 | 目标 **`failed`**（**不得出现 `activated`**）；`error` 含「1/2 插件重载失败」与失败插件类名；前端可展开看到两个插件各自结果。**批次侧「熔断停推下一批」不在本 FR 真机验证范围**——本用例为单目标单批次且 `failureRateThresholdPercent=0`，物理上不存在「下一批」可停，语句保留但验证归属见 §2.5 |
 | **A3** | 单插件超时 | `ok` + `hang`，且已配 `config-reload-timeout-ms` | 目标 `failed`；失败项 `timeout=true`、原因含「重载超时」；**`ok` 插件的结果仍被采集**（`okCount=1`）；失败发生在控制面 `activateTimeoutSec` **之前** |
 | **A4** | 抛 Error（非 Exception） | 只有 `error` 模式 | 目标 `failed`；原因为 `NoClassDefFoundError`；**交付命令线程存活**（后续命令仍能执行，不是整个 executor 挂掉） |
 | **A5** | 缺结果 | 只有 `nullret` 模式 | 目标 `failed`；原因含「未返回重载结果」 |

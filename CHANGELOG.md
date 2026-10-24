@@ -61,7 +61,8 @@
   - **结果上报契约**：`agent-api` 新增 `ConfigReloadResult`（ok/failed + reason + appliedMd5/appliedVersion/appliedCount）与 `ReportingConfigChangeListener`（`extends ConfigChangeListener` + default 桥接，老插件零改动）。
   - **逐监听器可配超时**：`AgentSettings.configReloadTimeoutMs`（默认 0=内联无超时），超时按失败计并指明插件；线程池为守护线程，不阻止 JVM 退出。
   - **平台壳返回报告而非抛异常**：`PlatformAdapter.publishConfigChanged` 改返回 `ConfigReloadReport`——因周期同步路径（`ConfigApplier.apply`）也调该入口，抛异常会打断同步循环。
-  - **一票否决**：交付路径读报告，任一插件失败即 `failed` 回执（保留「文件已落盘」的部分成功语义 + 逐插件明细）。
+  - **一票否决（目标级）**：交付路径读报告，**任一插件失败即整个目标 `failed`**，不得降级为「仅告警、仍判 `activated`」；回执 `error` 仍如实携带「文件已落盘（本单变更已生效于磁盘），仅配置变更通知失败」前缀与逐插件明细。此处「部分成功」**仅指 failed 回执保留已落盘事实**（真实变更计数、备份标记、`reload` 段同存于该目标行），**不是**目标级或批次级的半成功。
+  - **停批（批次级，非本 FR 新增）**：目标 `failed` 后由**既有**失败率 / 健康恶化熔断停推后续批次（阈值为 0 时关闭，单个目标失败**不会**立即停批，同批其余目标照常执行）。该机制早于本 FR，本 FR 只是触发它，故其验证归属编排引擎既有测试。
   - **回执与落库**：回执报文加性新增 `reload` 段；`change_target.reload_report`（TEXT，禁 JSON 列类型）在失败与成功路径都落库，供核对「回执成功但版本不符」。
   - **失败告警**：目标落 `failed` 时扇出 `publish-fail`（复用预留枚举），复用健康告警同一套 Dispatcher；**刻意不纳入 FR-232 收敛**——交付失败逐条可见、逐条处置。`alert.Alert` 加性扩展 `Type`/`Message`/`Detail`，健康路径行为不变。
   - **测试**：agent-core 749 例、service 新增 4 例、alert 域新增 2 例、告警接线 3 例，全绿；`go build ./...` 与 `go vet` 通过。
