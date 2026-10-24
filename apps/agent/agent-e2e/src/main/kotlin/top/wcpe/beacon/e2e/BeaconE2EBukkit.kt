@@ -95,6 +95,10 @@ object BeaconE2EBukkit : Plugin() {
         // 启动 FR-276 join 代执行探针：外部驱动投递请求文件，本探针在主线程经控制台派发
         // /beacon join <地址> <令牌>（Go 侧无 stdin/RCON 通道，见该探针注释）。
         JoinE2EProbe.start()
+
+        // 启动 FR-282 子服关闭回退探针（按 BEACON_E2E_RECONNECT_ROLE 区分 game/lobby-1/lobby-2，
+        // 与机器人侧走一组冻结聊天标记：就绪通告 → 触发关服 → 落点上报）。
+        ReconnectE2EProbe.start()
     }
 
     @Awake(LifeCycle.DISABLE)

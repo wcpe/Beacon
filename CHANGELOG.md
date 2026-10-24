@@ -4,6 +4,21 @@
 
 ## 未发布
 
+### 新增
+
+- **子服关闭后按区回退大厅 + 登录池随机（FR-282）**：玩家已在子服内游玩时该服关闭/崩溃，此前会被直接断开回登录界面。根因在 BungeeCord 侧：`DownstreamBridge.disconnected()` 走 `updateAndGetNextServer()`，取 `listener.getServerPriority()` 建队列并**跳过当前服**——线上两个 listener 的 priorities 都只有 `[lobby-1]`，玩家在 `lobby-1` 上时唯一候选被跳过、队列为空，回退失败即断开；且 BC 的 priorities 只有顺序没有随机，还挂在 listener 上拿不到 zone 感知。
+  - **三级回退优先级**：① 同区大厅（原所在服所属 zone 内、属 LobbyCluster 且可调度的成员）→ ② 全局登录池（跨区 LobbyCluster，按健康分最高 → 占用最低 → 同分随机）→ ③ 两级都无命中则**保持事件原样放行**，交还 BC 原生 priorities 回退。第三级是硬约束：本能力绝不成为玩家断线的新原因。
+  - **只接管 `ServerKickEvent.State.CONNECTED`**：连接阶段的失败由 BC 自身重试链负责，接管会与原生逻辑重复。
+  - **fail-static**：候选快照缺失、`pool.ready=false`、router/directory 未装配时一律不取消事件，不阻断玩家。
+  - **随机源可注入**：并列候选的选取走可注入的 `randomIndex`，单测可确定性验证，运行期用 `Random.nextInt`。
+  - 实现落 `agent-core` 的 `ReconnectRouter`（纯逻辑，只读内存快照，不做网络/磁盘/平台调用，不违反 ADR-0017 决策与执行分离）+ `agent-bungee` 的 `BungeeReconnectListener`（订阅事件、设 `cancelServer`）。规格见 [subserver-close-reconnect-fallback](docs/specs/subserver-close-reconnect-fallback.md)。
+- **E2E 接入 mc-testkit bot 编排（FR-283）**：Beacon 的 E2E 此前只声明 `serve` 拓扑（起服务端供人手测），**从未用过 `scenario` + `bot`**，也没有多后端拓扑先例——而「子服关闭后玩家被送回大厅」是玩家连接行为，纯服务端断言无法覆盖。
+  - 新增 `reconnect-bot/` 机器人项目，内核依赖 npm 包 **`@wcpe/mc-testkit-bot`**（WCPE 私有源，经 `.npmrc` 作用域映射解析），**不复制内核源码**（ADR-0014 取代 ADR-0002）。
+  - 新增三后端 + 代理的集群场景 `reconnect`：`game` 声明在最前（代理 priorities 按声明顺序取首个可用后端，bot 须先落在业务子服才能把它关掉）。
+  - 桩侧 `ReconnectE2EProbe` 按 mc-testkit §3.6 契约**原子写结果文件**（`status` / `message`），路径取编排下发的 `MC_TESTKIT_E2E_RESULT_FILE`；仅在 `reconnect` 场景判定，`serve` 手测场景一律空闲。
+  - 平台 API 经 `compileOnly(org.spigotmc:spigot-api:1.16.5-R0.1-SNAPSHOT)` 引入（选 1.16.5 而非 1.20.x：本模块编译目标是 JVM 8，paper-api 1.20.4 要求 JVM 17+ 会被 Gradle 兼容性校验拒绝），并把 `org.spigotmc` 加入 WCPE 私仓的 group 白名单。
+  - 真机结果：bot 进 `game` → 该服关闭 → 经代理回退 → 落 `lobby-2`，结果文件 `status=PASS`。
+
 ### 变更
 
 - **拆出入口大厅与共享游戏池，并在门面暴露两池能力（FR-281）**：`LobbyCluster` 从 FR-199 起只有一个用途——BC 首次落脚时挑一台等待大厅。但下游业务把它当成「跨区共享的游戏服池」复用，两种语义撞在一个池里：BC 落脚只按成员集合过滤、没有字段能区分「等待大厅」与「游戏服」，末段还是按分数 + 负载 + 随机取一台。**若为业务把 game 服放进池，玩家从 BC 进来就会被直接丢进游戏服**；反过来只放入口服，业务的共享池派房又会选中入口服来跑游戏房。这不是配置问题，是模型缺一层，故拆成两个池，决策见 [ADR-0096](docs/adr/0096-split-lobby-cluster-and-shared-game-pool.md)，规格见 [shared-game-pool-scheduling](docs/specs/shared-game-pool-scheduling.md)。

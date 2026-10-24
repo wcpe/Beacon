@@ -50,6 +50,7 @@ import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.proxy.DirectorySyncLoopGate
 import top.wcpe.beacon.agent.core.proxy.InitialLobbyRouter
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
+import top.wcpe.beacon.agent.core.proxy.ReconnectRouter
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.EffectiveSettingsResolver
@@ -438,6 +439,11 @@ object BeaconAgentBungee : Plugin() {
             router = InitialLobbyRouter(directorySyncer::snapshot, assembled.lobbySnapshotProvider),
             directory = serverDirectory,
         )
+        // 子服关闭后的回退：按原服区属回同区大厅，再落全局登录大厅池（同分低负载内随机）。
+        BungeeReconnectListener.start(
+            router = ReconnectRouter(directorySyncer::snapshot, assembled.lobbySnapshotProvider),
+            directory = serverDirectory,
+        )
         assembled.lifecycle.onRegistered {
             directorySyncLoopGate.start { generation ->
                 adapter.runAsync { syncDirectoryLoop(adapter, directorySyncer, generation) }
@@ -504,6 +510,7 @@ object BeaconAgentBungee : Plugin() {
     private fun stopActiveRuntime() {
         directorySyncLoopGate.stop()
         BungeeInitialLobbyListener.stop()
+        BungeeReconnectListener.stop()
         serverDirectory?.resetManaged()
         serverDirectory = null
         BungeeConnectionListener.tracker = null
