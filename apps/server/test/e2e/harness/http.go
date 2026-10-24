@@ -968,18 +968,59 @@ func registeredArtifactSecrets() []string {
 	return values
 }
 
+// artifactLogCandidates 返回**与归档上传范围逐条对齐**的候选文件。
+//
+// 扫描的目的只有一个：确保会被上传的产物里不含动态凭据。因此候选集合必须等于
+// 真实上传集合，多扫与少扫都是缺陷——少扫会漏掉真实泄漏，多扫会把不会上传的
+// 运行期文件当成泄漏而误阻断归档。
+//
+// 上传集合见 .github/workflows/e2e.yml 的 upload-artifact：
+//   - `.tmp/*.log`：只含 .tmp 顶层
+//   - mc-testkit 下递归的 `*.log`
+//   - mc-testkit 下 `results/**` 全量
+//
+// 特别注意 mc-testkit 里的 agent 数据目录：`agent-credentials.json` 依设计含真实
+// token（FR-276 起凭据独立成文件），但它既不是日志也不在 results 下，不会被上传；
+// 把它当候选只会让扫描器与真实归档面漂移，并在定时 E2E 上稳定误报。
 func artifactLogCandidates(repoRoot string) ([]string, error) {
-	roots := []string{
-		filepath.Join(repoRoot, ".tmp"),
-		filepath.Join(repoRoot, "apps", "agent", "agent-e2e", "build", "mc-testkit"),
+	logsRoot := filepath.Join(repoRoot, ".tmp")
+	runRoot := filepath.Join(repoRoot, "apps", "agent", "agent-e2e", "build", "mc-testkit")
+	resultsRoot := filepath.Join(runRoot, "results")
+
+	roots := []struct {
+		dir   string
+		match func(path string, entry os.DirEntry) bool
+	}{
+		{
+			// .tmp 只归档顶层 *.log，子目录不在上传范围内。
+			dir: logsRoot,
+			match: func(path string, entry os.DirEntry) bool {
+				return filepath.Dir(path) == logsRoot && strings.HasSuffix(entry.Name(), ".log")
+			},
+		},
+		{
+			// mc-testkit 递归归档 *.log 与 results/** 全量。
+			dir: runRoot,
+			match: func(path string, entry os.DirEntry) bool {
+				if strings.HasSuffix(entry.Name(), ".log") {
+					return true
+				}
+				rel, err := filepath.Rel(resultsRoot, path)
+				if err != nil {
+					return false
+				}
+				return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+			},
+		},
 	}
+
 	var paths []string
 	for _, root := range roots {
-		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		err := filepath.WalkDir(root.dir, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil || entry.IsDir() {
 				return walkErr
 			}
-			if root != roots[0] || strings.HasSuffix(entry.Name(), ".log") {
+			if root.match(path, entry) {
 				paths = append(paths, path)
 			}
 			return nil

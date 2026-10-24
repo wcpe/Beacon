@@ -4,21 +4,31 @@
 
 ## 未发布
 
-### 变更
-
-- **退役第一版前端目录（FR-273）**：根级 `web/` 是第一版管理台，自 P1 起因「第二版二进制只嵌 `apps/web`」而整体冻结（FR-138），此后不再演进。它与生产链路已无任何耦合——二进制只 `go:embed apps/web/dist`、根 workspace 为 `apps/*` 与 `packages/*`、`Makefile` 与 `turbo` 均不引用——但 CI 仍为它跑依赖安装、lint、格式与覆盖率四项检查，E2E 还保留一个只测它的 Playwright job，等于长期为空壳付门禁成本。
-  - **删除该目录**（255 个源文件、独立 workspace 与 lockfile），历史实现由 `git log -- web/` 追溯
-  - **CI 移除四项旧版检查**与对应的 lockfile 缓存路径；`make web` 与 `make build` 链路不变（只构建 `apps/web`）
-  - **E2E 移除「前端真后端」job**（`web-e2e-real`）；新版前端的假后端 E2E 仍在 `ci.yml` 作为 PR 必跑门禁
-  - **文档补齐退役边界**：ARCHITECTURE 的 Legacy 边界与物理现状、ROADMAP 的冻结条目同步为「已退役」；并记入新版前端的待办功能缺口——旧版独有的覆盖集管理、反向抓取任务化、整树生效预览、可逆操作撤回、服务器实时文件树浏览，后台端点均在线但无前端入口
-
 ### 新增
+
+- **agent 配置热重载（FR-278）**：重载超时与并发位此前写死在启动参数里。现两者均可在运行期修改，且**改并发不丢在途任务**。
+  - **改超时不重建池**：只更新超时预算（`AtomicLong`），下一次派发即按新值判定，不打断在途任务。
+  - **改并发位优雅退役**：新池接管后续派发，旧池用 `shutdown()`（**不是 `shutdownNow()`**）停新提交、已排队与在跑的跑完，并持有到 `close()` 才中断——「改并发」不表现为任务失败。停机语义与热重载语义刻意分离。
+  - **不抖动**：值与当前一致时不重建（每次换池都要起一批新线程，无谓抖动没有收益）；非法值（非整数 / 越界）保留旧值并告警，**不静默套用默认**。
+  - **测试**：热更新链路以单测钉住「运行期真的生效」——此前该结论被托付给真机 e2e，缺单测覆盖。
+
+- **控制面下发 agent 运行参数（FR-277）**：agent 的运行参数此前只能改本地 `config.yml` 再重启。现控制面可按作用域下发，agent 每 30 秒拉取一次（`GET /beacon/v2/agent/settings`）并落盘 `pushed-config.json`。
+  - **断连仍生效**：缓存带 `formatVersion`，本轮取不到下发值时沿用缓存，**不退回代码默认**；下发项被删除时按「`config.yml` → 代码默认」逐级回退，并在日志中写明「已被撤销，回落到本地配置」。
+  - **降级不启动失败**：缓存不可读 / 内容损坏 / 格式版本不支持三态分别归类，降级到本地配置并**按原因去重告警**（同一原因只报一次，不每轮刷屏），agent 照常启动。
+  - **危险键走审批**：`override.command-whitelist` 等高危键的提交整单转审批，接口返回 **202** 票据且**库内零变更**，落库只发生在审批通过后的执行阶段；执行时校验基线未被并发改动，不符即整批拒绝而不覆盖。不含高危键的提交仍是原有 **200 直写**，响应体逐字不变。
+  - **禁区键不可下发**：接入目标、凭据与 `identity.*` 在申请阶段即被拒（400 `AGENT_SETTING_KEY_FORBIDDEN`）且不产生票据——避免控制面被攻破后反过来接管被管理端；拉取侧另有剔除与审计作为双保险。
+  - **加性演进**：老 agent 不调该端点故无感知，服务端对未知键照发、agent 侧放行未知键。
+
+- **agent 零配置接入（FR-276）**：agent 此前必须在 `config.yml` 里手填控制面地址与 namespace token，凭据又与 `identity.yml` 混在一起——全新安装且配置全空时会不停地刷 ERROR 并进入无限重连，让人误以为「没配置」就是「配错了」。现新增 `/beacon join <控制面地址> <令牌>` 命令式接入：写入凭据文件后立即接入，随后在 Web 待确认列表中批准转 active。
+  - **未接入 ≠ 配置错误**：`endpoints` 与 `bootstrapToken` 皆空时降为一条 INFO 提示并**不进入重连循环**，也不向控制面预建 pending 身份；直接配好 `config.yml` 的旧用法行为逐字不变。
+  - **身份标识单一真源**：解析顺序为「凭据文件 > 旧 `identity.yml`（一次性迁移）> 新生成」，三者不会分裂成两套互不同步的 ID；旧 `identity.yml` 迁移后**保留不删**以便回滚，凭据文件不可读时先备份 `.corrupt-<时间戳>` 再迁移。
+  - **凭据独立成文件**：token 只写入 `agent-credentials.json`，**不进 `config.yml`、也不进 `identity.yml`**——后者仅承载 `format-version` / `identity-id` / `created-at`。文件权限尽力收紧到 0600（创建时即用属主读写属性，写后 chmod 兜底，原子写经临时文件 + `move`），平台不支持 Posix 时降级但**显式告警一次**，不静默。
+  - **已绑定实例拒绝重复接入**：守卫读凭据里的 `binding` 字段，非空即拒绝，防止一台服在控制面上对应两个身份；binding 由控制面确认归属时写回，解绑/否决时清空——不清空会永久挡住自助恢复，故两侧均有落地路径。
 
 - **接入待确认列表带 token 标识（FR-279）**：`/servers` 的「注册待确认」抽屉此前只有服务器 ID / 类型 / 状态 / 操作，运维无法分辨「这条待确认请求是用哪个接入 token 递交的」——尤其顶栏环境选「全部」时，来自不同 namespace 的待确认请求在列表里完全看不出归属。现每条待确认行在服务器 ID 下方副标题处显示 **token 指纹**（形如「token 指纹 1a2b3c4d」），身份详情抽屉同步给出同一事实。
   - **只下发不可逆短标识，不动落盘**：取值由 `namespace.access_token_hash` 二次摘要截取 8 位小写 hex，**不新增任何数据库字段、不存 token 前缀明文**——token 明文仍只在创建 / 轮换响应返回一次，`access_token_hash` 仍是唯一的落盘凭据事实。指纹既不能反推 token，也不能用于认证。
   - **语义诚实**：同 token 恒得同一指纹（同 namespace 的多条身份一致，据此可确认「同一凭据接入」），跨 namespace 必然不同；token 轮换后指纹随之改变，界面不会继续显示已失效凭据的旧标识；未签发 token 的旧 namespace 服务端返回 `null`，界面显示「token 指纹未提供」而非伪造值。
   - **加性演进**：`GET /admin/v2/agent-identities` 与详情响应新增 `tokenFingerprint`（契约里为可选字段），不认该字段的旧前端照旧工作；接口与规格同步见 [API](docs/API.md)、[v2-agent-identity](docs/specs/v2-agent-identity.md) §5.2。
-
 
 - **适配手机屏幕的页眉响应式**：页眉此前只有汉堡按钮一处响应式规则，环境/命名空间选择器、状态点、右侧工具区均无收缩策略，实测在 375px 视口下需要 841px 宽度（溢出 466px，接近屏宽一倍）。现按断点逐项收敛，11 个视口（320 / 375 / 390 / 414 / 430 / 640 / 768 / 1023 / 1024 / 1280 / 1440）实测页眉溢出与文档横向溢出均为 0。
   - **元素分档**：汉堡 `<768` 出现；控制面状态在 `<1280` 只留圆点、文字隐藏；命名空间选择器 `<640` 与合并菜单共处（见下条）；语言切换从 `640` 起恢复（属硬功能，不因屏幕小而消失）；刷新按钮仅 `1024` 起显示，小屏可下拉整页刷新。
@@ -44,7 +54,27 @@
   - **过滤在调用前生效**：被过滤掉的监听器既不执行、也**不进 `ConfigReloadReport.outcomes`**（它没跑过，不该凭空多出一条成功或失败记录）。逐监听器隔离与超时机制不变。
   - **测试**：`agent-core` 新增 `EffectiveConfigViewPrefixFilterTest` 10 例（命中 / 不命中不调用 / 空前缀不过滤 / 零变更仍回调 / 混用 / outcomes 不含被跳过者 / 命中后仍隔离与超时 / 上报式监听器 / 注销），`agent-kit` 新增 5 例（只重放匹配项、零匹配不重放、`pump()` 补注册不丢前缀、无前缀仍全量且走单参、前缀规则本身）。
 
+- **交付重载回执传导与失败告警（FR-274 / FR-275）**：`hot_reload` 此前只要「文件落盘 + 通知派发完成」就回执 success，插件重载失败完全不可见（面板绿、无告警）。现补齐全链路：
+  - **逐监听器隔离**：`EffectiveConfigView.fireChanged` 由裸 `for` 改为逐监听器 `try/catch(Throwable)`，一个插件抛异常不再让其余插件收不到通知。
+  - **结果上报契约**：`agent-api` 新增 `ConfigReloadResult`（ok/failed + reason + appliedMd5/appliedVersion/appliedCount）与 `ReportingConfigChangeListener`（`extends ConfigChangeListener` + default 桥接，老插件零改动）。
+  - **逐监听器可配超时**：`AgentSettings.configReloadTimeoutMs`（默认 0=内联无超时），超时按失败计并指明插件；线程池为守护线程，不阻止 JVM 退出。
+  - **平台壳返回报告而非抛异常**：`PlatformAdapter.publishConfigChanged` 改返回 `ConfigReloadReport`——因周期同步路径（`ConfigApplier.apply`）也调该入口，抛异常会打断同步循环。
+  - **一票否决**：交付路径读报告，任一插件失败即 `failed` 回执（保留「文件已落盘」的部分成功语义 + 逐插件明细）。
+  - **回执与落库**：回执报文加性新增 `reload` 段；`change_target.reload_report`（TEXT，禁 JSON 列类型）在失败与成功路径都落库，供核对「回执成功但版本不符」。
+  - **失败告警**：目标落 `failed` 时扇出 `publish-fail`（复用预留枚举），复用健康告警同一套 Dispatcher；**刻意不纳入 FR-232 收敛**——交付失败逐条可见、逐条处置。`alert.Alert` 加性扩展 `Type`/`Message`/`Detail`，健康路径行为不变。
+  - **测试**：agent-core 749 例、service 新增 4 例、alert 域新增 2 例、告警接线 3 例，全绿；`go build ./...` 与 `go vet` 通过。
+
 ### 变更
+
+- **agent 配置项补齐与口径对齐（FR-280）**：并发 reload 的插件数默认 **64**、可配范围 `[1, 256]`，既可从 `config.yml` 配置也可由控制面下发；配置重载超时默认 **30000ms**（0 表示不设超时）、上限 **3600000ms**。
+  - **越界收口必须留痕**：本地配置与下发值越界都收口到合法区间，并告警带出**键名、原值、生效值、合法区间**四个要素，不静默改值。
+  - **元数据描述与实际默认对齐**：修正此前「描述写 0、代码是 30000」的误导，服务端元数据、`AgentBootstrap` 与 `ReloadDispatcher` 三处默认值一致；服务端写入阶段即对越界值 400 拒绝，不落库。
+
+- **退役第一版前端目录（FR-273）**：根级 `web/` 是第一版管理台，自 P1 起因「第二版二进制只嵌 `apps/web`」而整体冻结（FR-138），此后不再演进。它与生产链路已无任何耦合——二进制只 `go:embed apps/web/dist`、根 workspace 为 `apps/*` 与 `packages/*`、`Makefile` 与 `turbo` 均不引用——但 CI 仍为它跑依赖安装、lint、格式与覆盖率四项检查，E2E 还保留一个只测它的 Playwright job，等于长期为空壳付门禁成本。
+  - **删除该目录**（255 个源文件、独立 workspace 与 lockfile），历史实现由 `git log -- web/` 追溯
+  - **CI 移除四项旧版检查**与对应的 lockfile 缓存路径；`make web` 与 `make build` 链路不变（只构建 `apps/web`）
+  - **E2E 移除「前端真后端」job**（`web-e2e-real`）；新版前端的假后端 E2E 仍在 `ci.yml` 作为 PR 必跑门禁
+  - **文档补齐退役边界**：ARCHITECTURE 的 Legacy 边界与物理现状、ROADMAP 的冻结条目同步为「已退役」；并记入新版前端的待办功能缺口——旧版独有的覆盖集管理、反向抓取任务化、整树生效预览、可逆操作撤回、服务器实时文件树浏览，后台端点均在线但无前端入口
 
 - **交付域页面重构**：变更单（列表 / 详情 / 创建向导 / 各 Tab）、配置中心（列表 / 详情 / 各 Tab / 回收站）、文件资产、交付历史页面整体重构，统一对接 `PageHeader` 与空态引导；新增资产路径选择器、服务器选择器、文档帮助组件，替换原先分散在页面内的实现。删除已被取代的 `namespace-picker.tsx`（页内不再放第二套命名空间选择器，改由页眉作用域承担）。
   - **作用域行为收紧**：未在页眉选定具体命名空间时，交付页**不再静默把全局范围改写为第一个可用命名空间**，改为展示引导说明并禁用写入口——避免写操作落到用户未选定的命名空间。
@@ -68,6 +98,8 @@
 
 ### 修复
 
+- **定时 E2E 归档被自身凭据文件误阻断**：FR-276 让 agent 凭据独立成 `agent-credentials.json` 并写入真实 token，而归档敏感内容扫描的候选集合是「整个 `mc-testkit` 目录」，**远大于真实上传范围**（工作流只上传 `.tmp/*.log`、`mc-testkit/**/*.log` 与 `mc-testkit/results/**`）。于是这个**根本不会被上传**的运行期文件被当成泄漏，报「归档候选文件含动态 accessToken」并阻断归档——扫描面一旦大于上传面，正常产物就会被误判。现候选集合改为与上传范围逐条对齐：`.tmp` 仅顶层 `*.log`，`mc-testkit` 递归 `*.log` 与 `results/**`。新增回归测试钉住两侧一致性（含「凭据 / `identity.yml` / `pushed-config.json` 不得入选」与「`results/**` 必须入选」）。
+
 - **浏览结果正文长期留存**：直执浏览的结果写入后没有独立有效期，而清理器只处理已过期的 active grant、命令过期清理也不覆盖 `done` 状态——客户端断开或未读取结果时，文件正文会一直留在数据库。现为浏览结果新增独立过期时间（写入即设 5 分钟期限），清理器按期限清除未消费的 `done` 正文，不再依赖 grant；无 grant 与已完成未读取两条路径均有测试覆盖。
 
 - **`GET /browse` 收回副作用**：该端点此前不带参数调用会创建命令并写审计，浏览器重试或客户端重复请求都可能重复下发。现改为只读取指定 `commandId` 的一次性结果，缺少或非法 `commandId` 返回 `400`，创建命令统一由 `POST /browse` 承担。
@@ -89,32 +121,6 @@
   - **命名空间随请求传递**：资产预览保留行上的 `namespaceId` 并传给后端，文件差异左右两侧分别携带，避免同名 `serverId` 跨命名空间解析。
   - **差异面板绑定命名空间**：左右选择改为携带 `namespaceId` 的对象，切换命名空间时清空选择、路径与结果，并在请求回调里比对当前命名空间，避免旧请求回写到新范围。变更单内的文件差异读取仍返回 `409` 走审批，未改动。
 
-### 安全
-
-- **敏感内容读取改为直接执行并强化审计（[ADR-0093](docs/adr/0093-direct-sensitive-content-reads.md)，部分取代 [ADR-0079](docs/adr/0079-principal-capability-and-dangerous-operation-approval.md) 与 FR-209 对指定读取操作必须审批的结论）**：此前实时日志、文件正文、目录浏览与消息 payload 读取统一要求审批（`approval_required`），自动化主体为读一次正文需先申请、再等待批准、再消费授权，高频只读场景下严重阻碍排障。现改为**直接执行**：指定管理路由使用 operation `content.read`、capability `management.read`、分类 `direct`，不创建审批申请、也不要求签发或消费 grant。
-  - **这是有意的安全策略放宽，代价必须明确**：任何经管理面认证且具备 `management.read` 的主体（**明确包括只读 API key**）都可直接读取上述正文。**持有相应凭据的自动化因此可能读取服务器上的凭据文件**。接受该代价的前提是"凭据本身已按最小权限发放"；若部署中存在过度发放的只读凭据，应视为需要收敛的风险。
-  - **只读凭据不因此获得写能力**：路由中间件对该 operation 明确校验 capability，只读 API key 可调用这些读取端点，但不因此获得任何其他写操作能力。
-  - **审计照常且前置**：每次读取仍记录主体、时间、目标与结果，专项审计在返回内容之前完成；正文本身不落审计。
-  - **兼容路径保留**：旧审批申请与授权消费路径（文件资产预览 / 差异、消息 payload、日志读取与受限目录浏览的既有 grant 消费）保留可用，便于过渡期客户端逐步切换。
-
-- **消息正文不再滞留前端缓存**：payload 读取使用 `useMutation`，响应正文会进入全局 `MutationCache`；关闭弹窗时 `reset()` 只清除当前 observer 的结果，缓存条目要到默认 `gcTime` 才被回收——正文虽从界面消失，仍可在这段时间内从缓存取到，对敏感正文属非预期留存。现该 mutation 设 `gcTime: 0`，无 observer 后立即回收，并补断言锁定「关闭后缓存中不得存在含正文的条目」。
-
-### 文档
-
-- 新增 [ADR-0093](docs/adr/0093-direct-sensitive-content-reads.md) 并更新 [ADR-0079](docs/adr/0079-principal-capability-and-dangerous-operation-approval.md) 与 [ADR 索引](docs/adr/README.md) 的取代关系；同步 `docs/specs/agent-command-and-sensitive-content-approval.md`、`docs/API-v1-legacy.md`、`docs/UX.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`、`docs/API.md` 与 `docs/wiki/` 下相关口径。
-- 新增 `docs/specs/control-plane-resource-header.md`，记录页眉资源指标的数据来源、轮询与降级口径。
-- **交付重载回执传导与失败告警（FR-274 / FR-275）**：`hot_reload` 此前只要「文件落盘 + 通知派发完成」就回执 success，插件重载失败完全不可见（面板绿、无告警）。现补齐全链路：
-  - **逐监听器隔离**：`EffectiveConfigView.fireChanged` 由裸 `for` 改为逐监听器 `try/catch(Throwable)`，一个插件抛异常不再让其余插件收不到通知。
-  - **结果上报契约**：`agent-api` 新增 `ConfigReloadResult`（ok/failed + reason + appliedMd5/appliedVersion/appliedCount）与 `ReportingConfigChangeListener`（`extends ConfigChangeListener` + default 桥接，老插件零改动）。
-  - **逐监听器可配超时**：`AgentSettings.configReloadTimeoutMs`（默认 0=内联无超时），超时按失败计并指明插件；线程池为守护线程，不阻止 JVM 退出。
-  - **平台壳返回报告而非抛异常**：`PlatformAdapter.publishConfigChanged` 改返回 `ConfigReloadReport`——因周期同步路径（`ConfigApplier.apply`）也调该入口，抛异常会打断同步循环。
-  - **一票否决**：交付路径读报告，任一插件失败即 `failed` 回执（保留「文件已落盘」的部分成功语义 + 逐插件明细）。
-  - **回执与落库**：回执报文加性新增 `reload` 段；`change_target.reload_report`（TEXT，禁 JSON 列类型）在失败与成功路径都落库，供核对「回执成功但版本不符」。
-  - **失败告警**：目标落 `failed` 时扇出 `publish-fail`（复用预留枚举），复用健康告警同一套 Dispatcher；**刻意不纳入 FR-232 收敛**——交付失败逐条可见、逐条处置。`alert.Alert` 加性扩展 `Type`/`Message`/`Detail`，健康路径行为不变。
-  - **测试**：agent-core 749 例、service 新增 4 例、alert 域新增 2 例、告警接线 3 例，全绿；`go build ./...` 与 `go vet` 通过。
-
-### 修复
-
 - **配置变更派发的监听器隔离（归真 FR-16「下游 SDK 接入包」）**：`EffectiveConfigView.fireChanged` 此前是裸 `for` 循环、无逐监听器兜错——**一个业务插件的重载回调抛异常，会让其后所有插件收不到本次配置变更通知，静默停留在旧配置**。该缺陷落在 FR-16 已交付的「配置订阅桥」能力内（`agent-kit` 的 `subscribeConfig` 依赖它派发），故 FR-16 由 `已交付` 退回 `开发中`，修复完成后随 FR-274 一并重新交付。
   - **逐监听器独立兜错**：改为 catch `Throwable` 而非 `Exception`——插件侧 `NoClassDefFoundError` / `LinkageError` 在 `agent-api` 版本不匹配时很常见，只兜 `Exception` 会让异常逃逸并打死交付命令执行线程，连回执都发不出去。
   - **聚合失败清单**：`fireChanged` 返回 `ConfigReloadReport`（逐监听器 `PluginReloadOutcome` + `failureSummary()`），两个平台壳（Bukkit / Bungee）在有失败时写 ERROR 日志，不再静默无痕。
@@ -128,6 +134,23 @@
   - **回归锁**：新增 `hot_reload 插件上报失败时回执携带 reload 段`（并含「派发整体异常时**不得**伪造插件结果」——不知道就不编，是「不得假报」的另一面）、`TestDeliveryResultDetailCarriesReload`、`TestDeliveryResultDetailOmitsReloadForOldAgent`。
   - **顺带修 E2E 环境**：`agent-e2e` 两份模板的 TabooLib 运行期仓库原指向 `repo.tabooproject.org`，而 `wcpe` 定制库只托管在 `repo.wcpe.top`，导致 agent 插件在 Paper 内加载失败；已改指向后者（与 `build.gradle.kts` 注释一致）。
   - **真机验收结论**：`apps/server/test/e2e/hotreload` 通过（167.6s，真控制面 + Paper 1.20.4 + 真 BeaconAgent + 真业务插件），取证见 [delivery-reload-ack-acceptance](docs/specs/delivery-reload-ack-acceptance.md) §2。
+
+### 安全
+
+- **敏感内容读取改为直接执行并强化审计（[ADR-0093](docs/adr/0093-direct-sensitive-content-reads.md)，部分取代 [ADR-0079](docs/adr/0079-principal-capability-and-dangerous-operation-approval.md) 与 FR-209 对指定读取操作必须审批的结论）**：此前实时日志、文件正文、目录浏览与消息 payload 读取统一要求审批（`approval_required`），自动化主体为读一次正文需先申请、再等待批准、再消费授权，高频只读场景下严重阻碍排障。现改为**直接执行**：指定管理路由使用 operation `content.read`、capability `management.read`、分类 `direct`，不创建审批申请、也不要求签发或消费 grant。
+  - **这是有意的安全策略放宽，代价必须明确**：任何经管理面认证且具备 `management.read` 的主体（**明确包括只读 API key**）都可直接读取上述正文。**持有相应凭据的自动化因此可能读取服务器上的凭据文件**。接受该代价的前提是"凭据本身已按最小权限发放"；若部署中存在过度发放的只读凭据，应视为需要收敛的风险。
+  - **只读凭据不因此获得写能力**：路由中间件对该 operation 明确校验 capability，只读 API key 可调用这些读取端点，但不因此获得任何其他写操作能力。
+  - **审计照常且前置**：每次读取仍记录主体、时间、目标与结果，专项审计在返回内容之前完成；正文本身不落审计。
+  - **兼容路径保留**：旧审批申请与授权消费路径（文件资产预览 / 差异、消息 payload、日志读取与受限目录浏览的既有 grant 消费）保留可用，便于过渡期客户端逐步切换。
+
+- **消息正文不再滞留前端缓存**：payload 读取使用 `useMutation`，响应正文会进入全局 `MutationCache`；关闭弹窗时 `reset()` 只清除当前 observer 的结果，缓存条目要到默认 `gcTime` 才被回收——正文虽从界面消失，仍可在这段时间内从缓存取到，对敏感正文属非预期留存。现该 mutation 设 `gcTime: 0`，无 observer 后立即回收，并补断言锁定「关闭后缓存中不得存在含正文的条目」。
+
+### 文档
+
+- 新增 [ADR-0093](docs/adr/0093-direct-sensitive-content-reads.md) 并更新 [ADR-0079](docs/adr/0079-principal-capability-and-dangerous-operation-approval.md) 与 [ADR 索引](docs/adr/README.md) 的取代关系；同步 `docs/specs/agent-command-and-sensitive-content-approval.md`、`docs/API-v1-legacy.md`、`docs/UX.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`、`docs/API.md` 与 `docs/wiki/` 下相关口径。
+
+- 新增 `docs/specs/control-plane-resource-header.md`，记录页眉资源指标的数据来源、轮询与降级口径。
+
 
 ## 1.5.0（2026-10-12）
 ### 新增

@@ -510,6 +510,61 @@ func TestRegisterArtifactSecretRejectsCorruptFingerprintWithoutLeakingSecrets(t 
 	}
 }
 
+// TestArtifactLogCandidatesAlignWithUploadedArtifacts 钉住扫描范围与真实归档上传范围一致。
+//
+// 回归背景：FR-276 让 agent 凭据独立成 agent-credentials.json 并写入真实 token，
+// 而它与 background.yml 无关——旧实现把整个 mc-testkit 目录当候选，于是把这个
+// **不会上传**的运行期文件当成泄漏，导致定时 E2E 稳定误报「归档候选文件含动态
+// accessToken」并阻断归档。扫描面一旦大于上传面，正常产物就会被误判为泄漏。
+func TestArtifactLogCandidatesAlignWithUploadedArtifacts(t *testing.T) {
+	repoRoot := t.TempDir()
+	runRoot := filepath.Join(repoRoot, "apps", "agent", "agent-e2e", "build", "mc-testkit")
+	logsRoot := filepath.Join(repoRoot, ".tmp")
+
+	files := map[string]bool{ // path -> 是否为归档候选
+		// .tmp 只归档顶层 *.log
+		filepath.Join(logsRoot, "controlplane.log"):        true,
+		filepath.Join(logsRoot, "nested", "inner.log"):     false,
+		filepath.Join(logsRoot, "state.json"):              false,
+		filepath.Join(logsRoot, "e2e-secret-fingerprints"): false,
+		// mc-testkit 递归归档 *.log 与 results/** 全量
+		filepath.Join(runRoot, "logs", "backend.log"):        true,
+		filepath.Join(runRoot, "results", "report.json"):     true,
+		filepath.Join(runRoot, "results", "nested", "x.txt"): true,
+		// agent 运行期凭据含真实 token，但既非日志也不在 results 下，不上传
+		filepath.Join(runRoot, "run", "plugins", "BeaconAgent", "agent-credentials.json"): false,
+		filepath.Join(runRoot, "run", "plugins", "BeaconAgent", "identity.yml"):           false,
+		filepath.Join(runRoot, "run", "plugins", "BeaconAgent", "pushed-config.json"):     false,
+		filepath.Join(runRoot, "config.yml"):                                              false,
+	}
+	for path := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("创建目录失败：%v", err)
+		}
+		if err := os.WriteFile(path, []byte("content"), 0o600); err != nil {
+			t.Fatalf("写入文件失败：%v", err)
+		}
+	}
+
+	candidates, err := artifactLogCandidates(repoRoot)
+	if err != nil {
+		t.Fatalf("收集归档候选失败：%v", err)
+	}
+	got := make(map[string]bool, len(candidates))
+	for _, path := range candidates {
+		got[path] = true
+	}
+
+	for path, want := range files {
+		if want && !got[path] {
+			t.Errorf("应纳入归档候选却被跳过：%s", path)
+		}
+		if !want && got[path] {
+			t.Errorf("不在上传范围内却被当作候选（会误阻断归档）：%s", path)
+		}
+	}
+}
+
 func TestScanRegisteredArtifactSecretsRejectsLeakedToken(t *testing.T) {
 	repoRoot := t.TempDir()
 	logDir := filepath.Join(repoRoot, ".tmp")
