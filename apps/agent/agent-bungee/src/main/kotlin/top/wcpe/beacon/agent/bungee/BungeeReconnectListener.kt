@@ -46,20 +46,20 @@ object BungeeReconnectListener {
     private var router: ReconnectRouter? = null
 
     @Volatile
-    private var directory: BungeeServerDirectory? = null
+    private var lookup: ManagedServerLookup? = null
 
     fun start(
         router: ReconnectRouter,
-        directory: BungeeServerDirectory,
+        directory: ManagedServerLookup,
     ) {
         this.router = router
-        this.directory = directory
+        this.lookup = directory
         info("子服回退路由已启用（接管 ServerKickEvent + ServerConnectEvent）")
     }
 
     fun stop() {
         router = null
-        directory = null
+        lookup = null
     }
 
     /** 路径一：子服主动 kick（含正常 stop 时的 "Server closed"）。 */
@@ -102,6 +102,6 @@ object BungeeReconnectListener {
     /** 把选中的 serverId 翻译成可用的 [ServerInfo]；不在受管目录内时返回 null（交还原生回退）。 */
     private fun managedTarget(selected: ReconnectRoute.Selected): ServerInfo? {
         info("回退路由命中层级=${selected.reason}，目标=${selected.serverId}")
-        return directory?.managedServerInfo(selected.serverId)
+        return lookup?.managedServerInfo(selected.serverId)
     }
 }
