@@ -36,12 +36,14 @@ import java.util.concurrent.CompletableFuture
  * 与 {@code failReason = "unavailable"} 一起自证"这是看不到，不是没有"。</p>
  */
 object UnavailableScheduling : BeaconScheduling {
-    override fun acquireCandidate(zone: String): CompletableFuture<ScheduleResult> = acquireCandidate(zone, null)
-
-    override fun acquireCandidate(
-        zone: String,
-        purpose: String?,
-    ): CompletableFuture<ScheduleResult> =
+    /**
+     * 「结论不可用」的统一构造：门面从未就绪时**看不到任何东西**，故一律是
+     * [ScheduleState.UNAVAILABLE]（当前状态、可重试）而不是「确实没有候选」。
+     *
+     * <p>取候选的三档（小区 / 入口大厅 / 共享游戏池）共用本函数，因而都不会为了复用而编造一个假 zone 名——
+     * 那正是 FR-281 要禁的走法。</p>
+     */
+    private fun unavailableResult(): CompletableFuture<ScheduleResult> =
         CompletableFuture.completedFuture(
             ScheduleResult(
                 null,
@@ -51,6 +53,13 @@ object UnavailableScheduling : BeaconScheduling {
                 ScheduleState.UNAVAILABLE,
             ),
         )
+
+    override fun acquireCandidate(zone: String): CompletableFuture<ScheduleResult> = acquireCandidate(zone, null)
+
+    override fun acquireCandidate(
+        zone: String,
+        purpose: String?,
+    ): CompletableFuture<ScheduleResult> = unavailableResult()
 
     /**
      * 带作用域的重载同样以「结论不可用」正常完成：本占位没有任何候选缓存，
@@ -82,6 +91,91 @@ object UnavailableScheduling : BeaconScheduling {
         throw IllegalStateException(
             "调度门面尚未就绪（没有候选缓存）：本次按作用域收窄判不了。" +
                 "这是当前状态（可重试），不是「没有满足条件的候选」这一稳定结论",
+        )
+    }
+
+    /**
+     * 大厅档取候选（FR-281）：与 zone 档**同一口径**——本占位没有任何候选缓存，
+     * 大厅与否都改变不了「看不到」这个事实，故照常以「结论不可用」正常完成、绝不外抛。
+     *
+     * <p>不覆盖本条会落到接口 `default` 而抛 {@link UnsupportedOperationException}——那是「本实现不提供
+     * 该能力」，与 zone 档的「能力在、只是没有数据」自相矛盾，且会同步打断调用方链路，正是本类要防的。</p>
+     */
+    override fun acquireCandidateInLobby(purpose: String?): CompletableFuture<ScheduleResult> = acquireCandidateInLobby(purpose, null)
+
+    /**
+     * 带作用域的大厅档取候选（FR-281）：同 [acquireCandidate] 的带作用域重载，
+     * 作用域非空也不改抛异常——它是 fail-static 正常完成路径，不是"判据收窄"路径。
+     */
+    override fun acquireCandidateInLobby(
+        purpose: String?,
+        scope: AdmissionScope?,
+    ): CompletableFuture<ScheduleResult> = unavailableResult()
+
+    /**
+     * 大厅候选读取（FR-281）：门面从未就绪时**看不到**大厅池，但这里返回空表是诚实的——
+     * 与 zone 档 1 参重载同口径（该重载同样返回空表）。区别在于本方法没有"作用域"这个判据参数，
+     * 不存在把"看不到"读成"没有"的收窄歧义；带作用域的那条重载才需要抛。
+     */
+    override fun candidatesInLobby(): List<CandidateView> = emptyList()
+
+    /**
+     * 带作用域的大厅候选读取（FR-281）：与 [candidatesInZone] 的带作用域重载同口径——
+     * 作用域非空时**判不了**（门面从未就绪 = 本帧判据看不到），如实抛 [IllegalStateException]；
+     * 空作用域不涉及判据，返回空表。
+     *
+     * @throws IllegalStateException 作用域非空且门面从未就绪（判据不可用，属可重试的当前状态）
+     */
+    override fun candidatesInLobby(scope: AdmissionScope?): List<CandidateView> {
+        if (scope == null || scope.isEmpty) {
+            return emptyList()
+        }
+        throw IllegalStateException(
+            "调度门面尚未就绪（没有候选缓存）：本次按作用域收窄判不了。" +
+                "这是当前状态（可重试），不是「池里没有机器」这一稳定结论",
+        )
+    }
+
+    /**
+     * 共享游戏池档取候选（FR-281）：与 zone 档 / 大厅档**同一口径**——本占位没有任何候选缓存，
+     * 共享池与否都改变不了「看不到」这个事实，故照常以「结论不可用」正常完成、绝不外抛。
+     *
+     * <p>不覆盖本条会落到接口 `default` 而抛 {@link UnsupportedOperationException}——那是「本实现不提供
+     * 该能力」，与 zone 档的「能力在、只是没有数据」自相矛盾，且会同步打断调用方链路，正是本类要防的。</p>
+     */
+    override fun acquireCandidateInSharedPool(purpose: String?): CompletableFuture<ScheduleResult> =
+        acquireCandidateInSharedPool(purpose, null)
+
+    /**
+     * 带作用域的共享池档取候选（FR-281）：同 [acquireCandidate] 的带作用域重载，
+     * 作用域非空也不改抛异常——它是 fail-static 正常完成路径，不是"判据收窄"路径。
+     */
+    override fun acquireCandidateInSharedPool(
+        purpose: String?,
+        scope: AdmissionScope?,
+    ): CompletableFuture<ScheduleResult> = unavailableResult()
+
+    /**
+     * 共享池候选读取（FR-281）：门面从未就绪时**看不到**共享池，但这里返回空表是诚实的——
+     * 与 zone 档 1 参重载、大厅候选读取同口径。区别在于本方法没有"作用域"这个判据参数，
+     * 不存在把"看不到"读成"没有"的收窄歧义；带作用域的那条重载才需要抛。
+     */
+    override fun candidatesInSharedPool(): List<CandidateView> = emptyList()
+
+    /**
+     * 带作用域的共享池候选读取（FR-281）：与 [candidatesInZone] 的带作用域重载同口径——
+     * 作用域非空时**判不了**（门面从未就绪 = 本帧判据看不到），如实抛 [IllegalStateException]；
+     * 空作用域不涉及判据，返回空表。
+     *
+     * @throws IllegalStateException 作用域非空且门面从未就绪（判据不可用，属可重试的当前状态）
+     */
+    override fun candidatesInSharedPool(scope: AdmissionScope?): List<CandidateView> {
+        if (scope == null || scope.isEmpty) {
+            return emptyList()
+        }
+        throw IllegalStateException(
+            "调度门面尚未就绪（没有候选缓存）：本次按作用域收窄判不了。" +
+                "这是当前状态（可重试），不是「池里没有机器」这一稳定结论",
         )
     }
 

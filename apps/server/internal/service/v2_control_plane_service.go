@@ -138,6 +138,10 @@ func (s *V2ControlPlaneService) CreateV2Namespace(p CreateV2NamespaceParams) (*m
 		if err := tx.Create(&model.LobbyCluster{NamespaceID: ns.ID}).Error; err != nil {
 			return err
 		}
+		// 共享游戏池与入口大厅池成对创建（FR-281）。
+		if err := tx.Create(&model.SharedPool{NamespaceID: ns.ID}).Error; err != nil {
+			return err
+		}
 		return createAudit(tx, model.AuditLog{
 			NamespaceCode: ns.Code,
 			Operator:      operatorOrSystem(p.Operator),
@@ -744,6 +748,7 @@ func clearServerAssignmentByIdentity(tx *gorm.DB, ident *model.AgentIdentity) er
 	server.ZoneID = nil
 	server.BCClusterID = nil
 	server.LobbyClusterID = nil
+	server.SharedPoolID = nil
 	server.IsDefaultEntry = false
 	return tx.Save(server).Error
 }
@@ -1764,6 +1769,7 @@ func (s *V2ControlPlaneService) unassignServers(p AssignServersParams) ([]model.
 			servers[i].ZoneID = nil
 			servers[i].BCClusterID = nil
 			servers[i].LobbyClusterID = nil
+			servers[i].SharedPoolID = nil
 			servers[i].IsDefaultEntry = false
 			if err := tx.Save(&servers[i]).Error; err != nil {
 				return err
@@ -1788,11 +1794,13 @@ func applyAssignment(server *model.Server, targetKind string, targetID uint, isD
 	if targetKind == model.AssignmentTargetZone {
 		server.BCClusterID = nil
 		server.LobbyClusterID = nil
+		server.SharedPoolID = nil
 		server.ZoneID = &id
 		server.IsDefaultEntry = isDefaultEntry
 	} else {
 		server.ZoneID = nil
 		server.LobbyClusterID = nil
+		server.SharedPoolID = nil
 		server.BCClusterID = &id
 		server.IsDefaultEntry = false
 	}
@@ -1919,6 +1927,7 @@ func (s *V2ControlPlaneService) initRezone(tx *gorm.DB, server *model.Server, p 
 	server.ZoneID = nil
 	server.BCClusterID = nil
 	server.LobbyClusterID = nil
+	server.SharedPoolID = nil
 	server.IsDefaultEntry = false
 	if targetKind == model.AssignmentTargetZone {
 		server.PendingZoneID = &id
@@ -1958,6 +1967,10 @@ func validateRezonableServer(server *model.Server, targetNS uint, targetKind str
 		return apperr.ErrRezoneNotAssigned
 	}
 	if server.LobbyClusterID != nil && server.ZoneID == nil && server.BCClusterID == nil {
+		return apperr.ErrIllegalState
+	}
+	// 共享游戏池成员同样只能单挂：换区需先 move_out（FR-281）。
+	if server.SharedPoolID != nil && server.ZoneID == nil && server.BCClusterID == nil {
 		return apperr.ErrIllegalState
 	}
 	if server.NamespaceID != targetNS {

@@ -186,20 +186,40 @@ type LobbyCluster struct {
 
 func (LobbyCluster) TableName() string { return "lobby_cluster" }
 
+// SharedPool 是 namespace 唯一的共享游戏池（FR-281）。
+// 成员由 Server.SharedPoolID 表达；不建立外键，归属完整性由事务 service 校验。
+//
+// 与 LobbyCluster 的分工（这是拆成两个池的原因）：
+//   - LobbyCluster = 「入口大厅」：BC 首次落脚时挑一台让玩家登录，语义上是等待区；
+//   - SharedPool   = 「共享游戏池」：不属于任何小区、跨区共享的游戏服，选中即开游戏房。
+//
+// 两者若共用一个池，玩家从 BC 进来会被直接丢进游戏服（BC 落脚只按成员集合过滤，
+// 没有字段能区分「等待大厅」与「游戏服」，末段还是随机的）。
+type SharedPool struct {
+	ID          uint `gorm:"primaryKey;autoIncrement"`
+	NamespaceID uint `gorm:"column:namespace_id;not null;uniqueIndex:uk_shared_pool_namespace"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (SharedPool) TableName() string { return "shared_pool" }
+
 // Server 是 v2 子服 / BC 节点资产。
 type Server struct {
-	ID                 uint   `gorm:"primaryKey;autoIncrement"`
-	NamespaceID        uint   `gorm:"column:namespace_id;not null;uniqueIndex:uk_server_id,priority:1;index"`
-	ServerID           string `gorm:"column:server_id;size:64;not null;uniqueIndex:uk_server_id,priority:2;index:idx_server_server_id"`
-	DisplayName        string `gorm:"column:display_name;size:128"`
-	Kind               string `gorm:"column:kind;size:16;not null"`
-	BCClusterID        *uint  `gorm:"column:bc_cluster_id;index"`
-	ZoneID             *uint  `gorm:"column:zone_id;index"`
-	LobbyClusterID     *uint  `gorm:"column:lobby_cluster_id;index"`
-	PendingZoneID      *uint  `gorm:"column:pending_zone_id"`
-	PendingBCClusterID *uint  `gorm:"column:pending_bc_cluster_id"`
-	IsDefaultEntry     bool   `gorm:"column:is_default_entry;not null;default:false"`
-	Draining           bool   `gorm:"column:draining;not null;default:false"`
+	ID             uint   `gorm:"primaryKey;autoIncrement"`
+	NamespaceID    uint   `gorm:"column:namespace_id;not null;uniqueIndex:uk_server_id,priority:1;index"`
+	ServerID       string `gorm:"column:server_id;size:64;not null;uniqueIndex:uk_server_id,priority:2;index:idx_server_server_id"`
+	DisplayName    string `gorm:"column:display_name;size:128"`
+	Kind           string `gorm:"column:kind;size:16;not null"`
+	BCClusterID    *uint  `gorm:"column:bc_cluster_id;index"`
+	ZoneID         *uint  `gorm:"column:zone_id;index"`
+	LobbyClusterID *uint  `gorm:"column:lobby_cluster_id;index"`
+	// SharedPoolID 是共享游戏池归属（FR-281）。与 ZoneID / LobbyClusterID 互斥，四选一。
+	SharedPoolID       *uint `gorm:"column:shared_pool_id;index"`
+	PendingZoneID      *uint `gorm:"column:pending_zone_id"`
+	PendingBCClusterID *uint `gorm:"column:pending_bc_cluster_id"`
+	IsDefaultEntry     bool  `gorm:"column:is_default_entry;not null;default:false"`
+	Draining           bool  `gorm:"column:draining;not null;default:false"`
 	// 生命周期状态：active / archived / tombstoned。
 	Lifecycle string `gorm:"column:lifecycle;size:16;not null;default:active;index"`
 	// 归档时间；仅 archived 状态有值。

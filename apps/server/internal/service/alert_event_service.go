@@ -54,7 +54,7 @@ func (s *AlertEventService) ResolveAlertRole(namespace, serverID string) string 
 	var server model.Server
 	if err := s.db.
 		Joins("JOIN namespace ON namespace.id = server.namespace_id").
-		Select("server.kind, server.lobby_cluster_id").
+		Select("server.kind, server.lobby_cluster_id, server.shared_pool_id").
 		Where("namespace.code = ? AND server.server_id = ?", namespace, serverID).
 		First(&server).Error; err != nil {
 		return ""
@@ -63,7 +63,11 @@ func (s *AlertEventService) ResolveAlertRole(namespace, serverID string) string 
 	if server.LobbyClusterID != nil {
 		lobbyID = *server.LobbyClusterID
 	}
-	return alert.RoleOf(server.Kind, lobbyID)
+	sharedPoolID := uint(0)
+	if server.SharedPoolID != nil {
+		sharedPoolID = *server.SharedPoolID
+	}
+	return alert.RoleOfPool(server.Kind, lobbyID, sharedPoolID)
 }
 
 // OverrideAlertLevel 人工升降一条告警的级别（FR-231）：写 severity_override/overridden_by/overridden_at，

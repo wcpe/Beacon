@@ -3,6 +3,7 @@ package top.wcpe.beacon.agent.core.scheduling
 import top.wcpe.beacon.agent.core.client.CandidateEntry
 import top.wcpe.beacon.agent.core.client.JsonTree
 import top.wcpe.beacon.agent.core.client.LobbyCandidates
+import top.wcpe.beacon.agent.core.client.SharedPoolCandidates
 import top.wcpe.beacon.agent.core.filetree.AtomicFileWriter
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File
@@ -42,6 +43,16 @@ class SchedulingSnapshotStore(
                     "candidates" to lobby.candidates.map { candidateTree(it) },
                 )
         }
+        // 共享游戏池段（FR-281）：为 null 时**不写**该键——键的存在与否就是「本帧有没有共享池模型」的信号，
+        // 落盘不能把「看不到」升级成「池里没有机器」（与 labels 键同一原则）。
+        snapshot.shared?.let { shared ->
+            tree["shared"] =
+                linkedMapOf<String, Any?>(
+                    "poolId" to shared.poolId,
+                    "ready" to shared.ready,
+                    "candidates" to shared.candidates.map { candidateTree(it) },
+                )
+        }
         AtomicFileWriter.write(file, codec.encode(tree).toByteArray(StandardCharsets.UTF_8))
     }
 
@@ -70,11 +81,23 @@ class SchedulingSnapshotStore(
                         candidates = JsonTree.asList(lobbyObj["candidates"]).map { parseCandidate(it) },
                     )
                 }
+            // 共享池段（FR-281）：落盘格式无版本号，靠「字段可缺省」保持兼容——读不到就是 null（看不到），
+            // 而不是空表（池空）。
+            val shared =
+                (obj["shared"] as? Map<*, *>)?.let { rawShared ->
+                    val sharedObj = JsonTree.asObject(rawShared)
+                    SharedPoolCandidates(
+                        poolId = JsonTree.longOr(sharedObj, "poolId", 0L),
+                        ready = JsonTree.boolOr(sharedObj, "ready", false),
+                        candidates = JsonTree.asList(sharedObj["candidates"]).map { parseCandidate(it) },
+                    )
+                }
             CandidateSnapshot(
                 generatedAtMs = JsonTree.longOr(obj, "generatedAtMs", 0L),
                 savedAtMs = JsonTree.longOr(obj, "savedAt", 0L),
                 zones = zones,
                 lobby = lobby,
+                shared = shared,
             )
         } catch (e: Exception) {
             null
@@ -82,7 +105,7 @@ class SchedulingSnapshotStore(
     }
 
     /**
-     * 候选条目 → 落盘树（zones 与 lobby 两侧共用同一对函数，落盘 / 还原口径只此一处）。
+     * 候选条目 → 落盘树（zones 与各池段共用同一对函数，落盘 / 还原口径只此一处）。
      *
      * <p>`labels` 键**只在** [CandidateEntry.labelsPresent] 为 true 时写入（空 map 也写 `{}`）：
      * 该键的存在与否就是"本帧来源携带没携带自声明标签字段"的信号，

@@ -40,6 +40,7 @@ func newV2HandlerTestService(t *testing.T) (*gorm.DB, *service.V2ControlPlaneSer
 		&model.Region{},
 		&model.Zone{},
 		&model.LobbyCluster{},
+		&model.SharedPool{},
 		&model.Server{}, &model.ServerTag{},
 		&model.AgentIdentity{},
 		&model.AgentEndpoint{},

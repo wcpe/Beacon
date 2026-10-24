@@ -81,6 +81,10 @@ func (s *NamespaceService) Create(code, name, operator, clientIP string) (*model
 		if err := tx.Create(&model.LobbyCluster{NamespaceID: ns.ID}).Error; err != nil {
 			return err
 		}
+		// 共享游戏池与入口大厅池成对创建（FR-281）：两者都是 namespace 唯一的池，各自独立表达归属。
+		if err := tx.Create(&model.SharedPool{NamespaceID: ns.ID}).Error; err != nil {
+			return err
+		}
 		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: ns.Code,
 			Operator:      operator,
@@ -227,7 +231,11 @@ func (s *NamespaceService) SeedDefaults() error {
 			if err := s.repo.WithTx(tx).Create(&defaults[i]); err != nil {
 				return err
 			}
-			return tx.Create(&model.LobbyCluster{NamespaceID: defaults[i].ID}).Error
+			if err := tx.Create(&model.LobbyCluster{NamespaceID: defaults[i].ID}).Error; err != nil {
+				return err
+			}
+			// 共享游戏池与入口大厅池成对创建（FR-281）。
+			return tx.Create(&model.SharedPool{NamespaceID: defaults[i].ID}).Error
 		}); err != nil {
 			return err
 		}

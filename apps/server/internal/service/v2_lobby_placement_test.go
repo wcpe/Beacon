@@ -266,6 +266,78 @@ func lobbyForNamespace(t *testing.T, db *gorm.DB, namespaceID uint) model.LobbyC
 	return lobby
 }
 
+func sharedPoolForNamespace(t *testing.T, db *gorm.DB, namespaceID uint) model.SharedPool {
+	t.Helper()
+	var pool model.SharedPool
+	if err := db.Where("namespace_id = ?", namespaceID).First(&pool).Error; err != nil {
+		t.Fatalf("读取共享游戏池失败: %v", err)
+	}
+	return pool
+}
+
+// TestFR281ServerPlacementIsExclusiveAcrossThreePools 锁住归属四选一：
+// 小区 / 入口大厅 / 共享游戏池同一时刻只能有一个非空，且迁入共享池会清掉其余归属。
+func TestFR281ServerPlacementIsExclusiveAcrossThreePools(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := approveLobbyBackend(t, svc, token, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "game-1")
+	zone := createLobbyTestZone(t, svc, ns.ID)
+	lobby := lobbyForNamespace(t, db, ns.ID)
+	shared := sharedPoolForNamespace(t, db, ns.ID)
+
+	// 先按既有流程把 server 落到小区（未分配状态下直接迁移不是合法迁移路径）。
+	if _, err := svc.AssignServers(AssignServersParams{
+		ServerIDs: []uint{server.ID}, TargetKind: model.AssignmentTargetZone, TargetID: zone.ID,
+		IsDefaultEntry: true, Reason: "首次分配", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("首次分配小区失败: %v", err)
+	}
+	// 小区 → 共享游戏池：落地后只能有 SharedPoolID，其余归属全空。
+	view, err := svc.TransferServerPlacement(ServerPlacementTransferParams{
+		ServerID: server.ServerID, TargetKind: SharedPoolPlacementKind, TargetID: shared.ID,
+		Reason: "改为共享游戏池", Operator: "admin",
+	})
+	if err != nil {
+		t.Fatalf("小区迁入共享池失败: %v", err)
+	}
+	if view.PlacementKind != SharedPoolPlacementKind || view.ZoneID != nil || view.IsDefaultEntry {
+		t.Fatalf("迁入共享池后应只剩共享池归属，实际 %+v", view)
+	}
+
+	var reloaded model.Server
+	if err := db.Where("server_id = ?", server.ServerID).First(&reloaded).Error; err != nil {
+		t.Fatalf("回读 server 失败: %v", err)
+	}
+	if reloaded.SharedPoolID == nil || *reloaded.SharedPoolID != shared.ID {
+		t.Fatalf("库内 SharedPoolID 应指向共享池，实际 %v", reloaded.SharedPoolID)
+	}
+	if reloaded.LobbyClusterID != nil || reloaded.ZoneID != nil || reloaded.BCClusterID != nil {
+		t.Fatalf("其余归属必须同时清空，实际 lobby=%v zone=%v bc=%v",
+			reloaded.LobbyClusterID, reloaded.ZoneID, reloaded.BCClusterID)
+	}
+
+	// 共享池 → 入口大厅：同样只保留大厅归属。
+	view, err = svc.TransferServerPlacement(ServerPlacementTransferParams{
+		ServerID: server.ServerID, TargetKind: LobbyPlacementKind, TargetID: lobby.ID,
+		Reason: "改回入口大厅", Operator: "admin",
+	})
+	if err != nil {
+		t.Fatalf("共享池迁入大厅失败: %v", err)
+	}
+	if view.PlacementKind != LobbyPlacementKind {
+		t.Fatalf("应落在入口大厅，实际 %+v", view)
+	}
+	if err := db.Where("server_id = ?", server.ServerID).First(&reloaded).Error; err != nil {
+		t.Fatalf("回读 server 失败: %v", err)
+	}
+	if reloaded.SharedPoolID != nil {
+		t.Fatalf("迁出后 SharedPoolID 必须清空，实际 %v", reloaded.SharedPoolID)
+	}
+}
+
 func createLobbyTestZone(t *testing.T, svc *v2ControlPlaneTestService, namespaceID uint) *model.Zone {
 	t.Helper()
 	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: namespaceID, Name: "bc-lobby", Operator: "admin"})

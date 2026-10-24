@@ -5,6 +5,18 @@ import top.wcpe.beacon.agent.api.DataSourceState
 import top.wcpe.beacon.agent.core.client.CandidateEntry
 
 /**
+ * 池段选择器（FR-281）：入口大厅与共享游戏池在缓存里是两段独立的候选，语义完全对称，
+ * 故读写入口按段参数化，而不是各写一套同构方法。
+ */
+enum class PoolSection {
+    /** 入口大厅池：BC 首次落脚用，成员不属于任何小区。 */
+    LOBBY,
+
+    /** 共享游戏池：跨区共享的游戏服池，成员同样不属于任何小区，但与入口大厅成员互斥。 */
+    SHARED,
+}
+
+/**
  * 候选缓存的线程安全内存态（FR-148）：持一帧 [CandidateSnapshot] + 「最近刷新是否在线成功」标志，
  * O(1) 读供 candidatesInZone / healthOf / dataSource，写由刷新循环整帧原子替换（@Volatile 指针交换）。
  *
@@ -49,16 +61,43 @@ class SchedulingCache(
         serverId: String,
     ): CandidateEntry? = snapshot?.zones?.get(zone)?.firstOrNull { it.serverId == serverId }
 
-    /** 跨全部 zone 按 serverId 找候选条目（用于 healthOf）。 */
+    /**
+     * 池段候选条目：**非 null（含空表）= 本帧有该池模型**，空表即"池里没有可调度成员"这一稳定事实；
+     * **null = 本帧没有该池模型**（尚无任何快照，或本帧来源是还没下发该段的旧控制面）——那是"看不到"，
+     * 调用方必须按不可用处置，**不得**读成"池里没有机器"。
+     *
+     * 入口大厅与共享游戏池共用本方法：两段的 nullable 语义完全一致，分两个方法只会多一份同样的判定。
+     */
+    fun poolEntries(pool: PoolSection): List<CandidateEntry>? =
+        when (pool) {
+            PoolSection.LOBBY -> snapshot?.lobby?.candidates
+            PoolSection.SHARED -> snapshot?.shared?.candidates
+        }
+
+    /** 指定池段内按 serverId 找候选条目（用于控制面 chosen 的视图补全）。 */
+    fun findInPool(
+        pool: PoolSection,
+        serverId: String,
+    ): CandidateEntry? = poolEntries(pool)?.firstOrNull { it.serverId == serverId }
+
+    /**
+     * 跨全部 zone 与两个池段（入口大厅 / 共享游戏池）按 serverId 找候选条目（用于 healthOf）。
+     *
+     * <p>必须覆盖三处：两池成员**都不属于任何小区**，只按小区找会让池成员的 healthOf 恒为 null。
+     * 顺序为小区段 → 大厅段 → 共享池段：归属四选一保证同一台服只会出现在其中一处，故顺序不影响结果，
+     * 只决定命中时的查找先后。</p>
+     */
     fun findAnywhere(serverId: String): CandidateEntry? {
-        val zones = snapshot?.zones ?: return null
-        for ((_, entries) in zones) {
-            val hit = entries.firstOrNull { it.serverId == serverId }
-            if (hit != null) {
-                return hit
+        val zones = snapshot?.zones
+        if (zones != null) {
+            for ((_, entries) in zones) {
+                val hit = entries.firstOrNull { it.serverId == serverId }
+                if (hit != null) {
+                    return hit
+                }
             }
         }
-        return null
+        return findInPool(PoolSection.LOBBY, serverId) ?: findInPool(PoolSection.SHARED, serverId)
     }
 
     /** 当前数据来源状态与快照年龄（无快照时年龄为 MAX、非新鲜）。 */

@@ -4,6 +4,26 @@ import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.transport.HttpRequest
 
 /**
+ * 调度作用域的线上值：namespace 全局大厅池（FR-281）。
+ *
+ * <p>取的是控制面**既有**的 `scope=lobby` 分支，不新造协议；控制面缺省值为 `zone`，
+ * 故本键只在走大厅档时下发（缺省即 zone 档，请求体逐字不变）。</p>
+ */
+internal const val SCHED_SCOPE_LOBBY = "lobby"
+
+/**
+ * 调度作用域的线上值：namespace 唯一的共享游戏池（FR-281）。
+ *
+ * <p>与 [SCHED_SCOPE_LOBBY] 是**两个互斥的池档**，取向也不同：`lobby` 是 BC **首次落脚**的入口大厅，
+ * 玩家先落到那里再转进游戏；本档是**跨区共享的游戏服池**，选中即开游戏房。控制面按归属四选一
+ * （小区 / 大厅 / 共享池 / 独立）圈定成员，故两档的候选集合不会重叠，也不该互相兜底。</p>
+ *
+ * <p>与大厅档同一约束：本档要求 `zone` 必须为空，故下发本值时**不带** `zone` 键
+ * （见 `validateScopedDecideParams`）；缺省仍不下发该键（控制面缺省值为 `zone` 档）。</p>
+ */
+internal const val SCHED_SCOPE_SHARED_POOL = "shared_pool"
+
+/**
  * 拉取调度候选快照：GET /beacon/v2/agent/schedule/candidates（FR-148 §5.1）。同步调用，请在异步线程使用。
  *
  * 无参（服务端按请求方 namespace 圈定）；200 返回 `{generatedAtMs, zones:[{zone, candidates:[...]}]}`
@@ -29,7 +49,7 @@ fun BeaconApiClient.scheduleCandidates(identity: AgentIdentity): SchedCandidates
 /**
  * 请求控制面做一次调度决策：POST /beacon/v2/agent/schedule/decide（FR-148 §5.1）。同步调用，请在异步线程使用。
  *
- * 请求体 `{zone, purpose?, plugin?, admissionScope?}`（全 camelCase，purpose/plugin 非空才拼入；
+ * 请求体 `{scope?, zone?, purpose?, plugin?, admissionScope?}`（全 camelCase，purpose/plugin 非空才拼入；
  * admissionScope 非空才拼入，见参数说明）；读超时收紧到
  * [BeaconApiClient.SCHED_DECIDE_TIMEOUT_MS]（玩家链路不容久等，超时即由上层降级本地决策）。200 决策成功 / 无候选；
  * 404 zone_not_found；403 cross_namespace；400 参数非法；503 准入作用域判不了（当前状态、可重试）；
@@ -39,6 +59,10 @@ fun BeaconApiClient.scheduleCandidates(identity: AgentIdentity): SchedCandidates
  *                       键值标签」（备选之间 OR、备选之内 AND，逐项精确相等）。
  *                       **空列表（缺省）= 不下发该键**，请求体与改动前逐字一致（向后兼容）；
  *                       控制面在**生成候选的那一刻**按它收窄，故被排除的候选连被选中的机会都没有。
+ * @param scope 调度作用域线上值（FR-281）：{@code null}（缺省）= 不下发该键，按控制面缺省的 `zone` 档，
+ *              请求体与改动前**逐字一致**；[SCHED_SCOPE_LOBBY] = 入口大厅池档，[SCHED_SCOPE_SHARED_POOL] =
+ *              共享游戏池档；两个池档都**不下发 `zone` 键**（控制面要求池档 zone 必须为空，
+ *              见 `validateScopedDecideParams`）。
  */
 fun BeaconApiClient.scheduleDecide(
     identity: AgentIdentity,
@@ -46,10 +70,15 @@ fun BeaconApiClient.scheduleDecide(
     purpose: String?,
     plugin: String?,
     admissionScope: List<Map<String, String>> = emptyList(),
+    scope: String? = null,
 ): SchedDecideOutcome {
     val body =
         buildMap<String, Any?> {
-            put("zone", zone)
+            // 作用域键只在显式指定时下发：缺省请求体与改动前逐字一致（旧控制面对未知键虽不报错，
+            // 但"逐字不变"是更硬的兼容承诺）。
+            if (scope != null) put("scope", scope)
+            // 池档（大厅 / 共享游戏池）不下发 zone 键：控制面要求该档 zone 必须为空，缺键即空串。
+            if (zone.isNotEmpty()) put("zone", zone)
             if (!purpose.isNullOrBlank()) put("purpose", purpose)
             if (!plugin.isNullOrBlank()) put("plugin", plugin)
             // 空作用域不下发该键：旧控制面对未知键虽不报错，但"逐字不变"是更硬的兼容承诺。
@@ -106,7 +135,7 @@ fun BeaconApiClient.reportLocalDecisions(
     }
 }
 
-/** 解析 candidates 200 响应（generatedAtMs + 各 zone 候选 + 可选大厅候选）。 */
+/** 解析 candidates 200 响应（generatedAtMs + 各 zone 候选 + 可选大厅候选 + 可选共享游戏池候选）。 */
 internal fun BeaconApiClient.parseCandidates(jsonBody: String): SchedCandidates {
     val obj = JsonTree.asObject(codec.decode(jsonBody))
     val zones =
@@ -130,7 +159,22 @@ internal fun BeaconApiClient.parseCandidates(jsonBody: String): SchedCandidates 
                 candidates = JsonTree.asList(lobbyObj["candidates"]).map { raw -> parseCandidate(JsonTree.asObject(raw)) },
             )
         }
-    return SchedCandidates(generatedAtMs = JsonTree.longOr(obj, "generatedAtMs", 0L), zones = zones, lobby = lobby)
+    // 共享游戏池段（FR-281）：与大厅段各自独立，缺键留 null（= 旧控制面没有该段，属「看不到」而非「池里没有机器」）。
+    val shared =
+        (obj["shared"] as? Map<*, *>)?.let { rawShared ->
+            val sharedObj = JsonTree.asObject(rawShared)
+            SharedPoolCandidates(
+                poolId = JsonTree.longOr(sharedObj, "poolId", 0L),
+                ready = JsonTree.boolOr(sharedObj, "ready", false),
+                candidates = JsonTree.asList(sharedObj["candidates"]).map { raw -> parseCandidate(JsonTree.asObject(raw)) },
+            )
+        }
+    return SchedCandidates(
+        generatedAtMs = JsonTree.longOr(obj, "generatedAtMs", 0L),
+        zones = zones,
+        lobby = lobby,
+        shared = shared,
+    )
 }
 
 internal fun BeaconApiClient.parseCandidate(obj: Map<String, Any?>): CandidateEntry =
