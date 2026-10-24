@@ -64,7 +64,12 @@ public final class CandidateView {
         return serverId;
     }
 
-    /** 候选所在小区名。 */
+    /**
+     * 候选所在小区名。
+     *
+     * <p><b>大厅成员为空串</b>：全局大厅池（FR-281）的成员不属于任何小区，其取值是空串，
+     * 不是"未知小区"。取值与取值来源一一对应——经 {@code ...InLobby} 路径拿到的视图 zone 恒为空串。</p>
+     */
     public String zone() {
         return zone;
     }

@@ -7,6 +7,7 @@ import top.wcpe.beacon.agent.core.client.CandidateEntry
 import top.wcpe.beacon.agent.core.client.LobbyCandidates
 import top.wcpe.beacon.agent.core.client.SchedCandidates
 import top.wcpe.beacon.agent.core.client.SelfHealth
+import top.wcpe.beacon.agent.core.client.SharedPoolCandidates
 import java.util.UUID
 
 /**
@@ -15,12 +16,15 @@ import java.util.UUID
  * @param generatedAtMs 控制面生成时刻（快照内容时间）
  * @param savedAtMs     本机接收 / 落盘时刻（新鲜度基准，dataSource 年龄以此计）
  * @param zones         zone 名 → 候选列表（控制面已按分降序）
+ * @param lobby         入口大厅池段（FR-281）；null = 本帧来源没有该段（看不到，不是池空）
+ * @param shared        共享游戏池段（FR-281）；null 同上，两池各自独立判定
  */
 data class CandidateSnapshot(
     val generatedAtMs: Long,
     val savedAtMs: Long,
     val zones: Map<String, List<CandidateEntry>>,
     val lobby: LobbyCandidates? = null,
+    val shared: SharedPoolCandidates? = null,
 )
 
 /** 带接收时刻的自身健康视图（selfHealth 的 sampledAtMs 取此时刻）。 */
@@ -66,13 +70,19 @@ internal fun SelfHealth.toHealthView(
     sampledAtMs: Long,
 ): HealthView = HealthView(serverId, score, mapLevel(level), schedulable, reasons, sampledAtMs)
 
-/** candidates 响应 → 内存候选快照（zone 名保序、savedAt 取接收时刻）。 */
+/** candidates 响应 → 内存候选快照（zone 名保序、savedAt 取接收时刻；两个池段原样透传）。 */
 internal fun SchedCandidates.toSnapshot(nowMs: Long): CandidateSnapshot {
     val map = LinkedHashMap<String, List<CandidateEntry>>()
     for (zone in zones) {
         map[zone.zone] = zone.candidates
     }
-    return CandidateSnapshot(generatedAtMs = generatedAtMs, savedAtMs = nowMs, zones = map, lobby = lobby)
+    return CandidateSnapshot(
+        generatedAtMs = generatedAtMs,
+        savedAtMs = nowMs,
+        zones = map,
+        lobby = lobby,
+        shared = shared,
+    )
 }
 
 /** 生成本地决策 traceId（UUID，与控制面 traceId 同形，供降级期决策 / 补报幂等键）。 */

@@ -246,11 +246,24 @@ data class LobbyCandidates(
     val candidates: List<CandidateEntry>,
 )
 
-/** candidates 200 响应体（生成时刻 + 各 zone 候选）。 */
+/**
+ * namespace 共享游戏池的可选候选段（FR-281）；缺失表示旧控制面尚未提供共享池模型。
+ *
+ * <p>与 [LobbyCandidates] 各自独立、成员集合互斥（控制面归属四选一保证）：大厅是 BC 首次落脚的入口，
+ * 共享池是跨区共享的游戏服池（选中即开游戏房）。</p>
+ */
+data class SharedPoolCandidates(
+    val poolId: Long,
+    val ready: Boolean,
+    val candidates: List<CandidateEntry>,
+)
+
+/** candidates 200 响应体（生成时刻 + 各 zone 候选 + 两个可选池段）。 */
 data class SchedCandidates(
     val generatedAtMs: Long,
     val zones: List<ZoneCandidates>,
     val lobby: LobbyCandidates? = null,
+    val shared: SharedPoolCandidates? = null,
 )
 
 /** 拉取候选快照的结果。 */

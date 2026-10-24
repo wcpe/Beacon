@@ -21,6 +21,13 @@ complexity:
   # 追加可选子门面时，带默认值的形参不应被判为「参数过多」——这是刻意的门面聚合而非坏味道。
   LongParameterList:
     ignoreDefaultParameters: true
+  # 函数过多：规则保持启用以挡住真正的上帝类；但**只数本类自己声明的方法，不数 override**。
+  # 理由：契约实现类的 override 数量由上游接口决定，不是本类的复杂度信号——
+  # BeaconScheduling 现为 12 个方法（FR-281 起含 4 条大厅档），任何完整实现都必然 ≥12 个 override，
+  # 在不重写契约的前提下无法降到阈值 11 以下；把这类「按接口逐方法实现」判为坏味道只会逼出
+  # 拆类到无意义粒度或挂 baseline 的坏处理。真正该把关的「自己写出来的第 12 个方法」仍会命中。
+  TooManyFunctions:
+    ignoreOverridden: true
 
 empty-blocks:
   # 空函数体：规则保持启用以挡住真正遗漏的空函数；但放行「空的 override」——
