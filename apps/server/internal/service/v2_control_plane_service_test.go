@@ -78,6 +78,7 @@ func newV2ControlPlaneTestService(t *testing.T) (*gorm.DB, *v2ControlPlaneTestSe
 		&model.Region{},
 		&model.Zone{},
 		&model.LobbyCluster{},
+		&model.SharedPool{},
 		&model.Server{}, &model.ServerTag{},
 		&model.AgentIdentity{},
 		&model.AgentEndpoint{},

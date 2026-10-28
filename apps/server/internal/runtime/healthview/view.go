@@ -56,15 +56,19 @@ type View struct {
 	LobbyClusterID uint
 	// NamespaceLobbyClusterID 是该 namespace 唯一大厅集群，供空大厅快照保留权威集群标识。
 	NamespaceLobbyClusterID uint
-	Score                   int    // 0-100
-	Level                   string // healthy / degraded / unhealthy
-	Schedulable             bool
-	Reasons                 []string // §4.5 原因码，可叠加
-	Factors                 []Factor
-	WeightsRev              int
-	OnlineCount             int
-	MaxOnline               int
-	ComputedAtMs            int64
+	// SharedPoolID 是该 server 的共享游戏池归属（FR-281）；0 表示不是共享池成员。
+	SharedPoolID uint
+	// NamespaceSharedPoolID 是该 namespace 唯一共享游戏池，供空池快照保留权威池标识。
+	NamespaceSharedPoolID uint
+	Score                 int    // 0-100
+	Level                 string // healthy / degraded / unhealthy
+	Schedulable           bool
+	Reasons               []string // §4.5 原因码，可叠加
+	Factors               []Factor
+	WeightsRev            int
+	OnlineCount           int
+	MaxOnline             int
+	ComputedAtMs          int64
 }
 
 // serverKey 是视图按 (namespace, server) 定位的键（serverId 仅 namespace 内唯一，跨 ns 须带 ns 区分）。

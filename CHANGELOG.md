@@ -4,6 +4,19 @@
 
 ## 未发布
 
+### 变更
+
+- **拆出入口大厅与共享游戏池，并在门面暴露两池能力（FR-281）**：`LobbyCluster` 从 FR-199 起只有一个用途——BC 首次落脚时挑一台等待大厅。但下游业务把它当成「跨区共享的游戏服池」复用，两种语义撞在一个池里：BC 落脚只按成员集合过滤、没有字段能区分「等待大厅」与「游戏服」，末段还是按分数 + 负载 + 随机取一台。**若为业务把 game 服放进池，玩家从 BC 进来就会被直接丢进游戏服**；反过来只放入口服，业务的共享池派房又会选中入口服来跑游戏房。这不是配置问题，是模型缺一层，故拆成两个池，决策见 [ADR-0096](docs/adr/0096-split-lobby-cluster-and-shared-game-pool.md)，规格见 [shared-game-pool-scheduling](docs/specs/shared-game-pool-scheduling.md)。
+  - **两个池各自 namespace 唯一，`Server` 归属四选一互斥**：`LobbyCluster`（入口大厅，`Server.LobbyClusterID`）与新表 `SharedPool`（共享游戏池，`Server.SharedPoolID`）并列；`ZoneID` / `LobbyClusterID` / `SharedPoolID` 同时置两个返回 `409 SERVER_PLACEMENT_CONFLICT`。**成员集合因此天然不重叠**——「玩家不会被丢进游戏服」从运维约定变成机制保证，由 `TestFR281SharedPoolCandidatesDoNotLeakIntoLobby` 与 `TestFR281ServerPlacementIsExclusiveAcrossThreePools` 锁住。
+  - **调度作用域新增 `shared_pool`**：与 `lobby` 并列，两档都要求 zone 为空；候选快照新增 `shared` 段（与 `lobby` 段各自独立解析与落盘）；`GET /admin/v2/shared-pools` 与 `{id}` 提供摘要与成员分页。
+  - **门面新增 8 条 `default` 方法**：入口大厅 4 条（`acquireCandidateInLobby` / `candidatesInLobby`）+ 共享游戏池 4 条（`acquireCandidateInSharedPool` / `candidatesInSharedPool`）。既有签名**一字未改**，agent-api 仍是纯 Java 8、零三方依赖，老实现不重写也能编译。缺省实现**失败关闭**（抛 `UnsupportedOperationException`），不返回空表、不忽略作用域。
+  - **三处口径严格分开**：本帧没有该池模型 ⇒ 读候选**抛 `IllegalStateException`**（当前状态、可重试），绝不返回空表冒充"池里没有机器"；池在而确实没有可调度成员 ⇒ 返回空表（稳定事实）；控制面 4xx ⇒ 取候选归 `UNAVAILABLE` 并原样带出对端码（池档的"问到了"只有 200 一条路），不读成"确实没有候选"。
+  - **fail-static 与 zone 档同一套实现**：控制面不可达时用本地快照的对应池段决策，收窄 / 排序 / 三态判定与小区档共用同一个纯函数（`CandidatePool` 把两池差异收成数据）；`CHOSEN` 时 `CandidateView.zone()` 为**空串**（池成员不属于任何小区）；`healthOf` 依次覆盖所在小区、入口大厅池与共享游戏池（此前池成员的 `healthOf` 恒为 null）。
+  - **降级补报的边界**：池决策没有 zone，而 `report-local` 的校验要求 zone 非空（空 zone 回 400，刷新循环会把整批退回队列、堵住后续所有小区档补报），故池档降级决策不入补报队列，日志留痕；要可查则应由控制面侧给显式 `scope` 标记，本次不越界。
+  - **告警角色新增 `shared_pool`**：与 `lobby` 分级相同（都是玩家链路关键节点），但角色分开——把共享池故障标成「大厅故障」会把运维引向错误的排查方向。
+  - **BC 首次落脚链路一行未改**：`InitialLobbyRouter` 继续只读 `lobby` 段与 `lobbyClusterMember()`，拆池对它是纯收益（池里不再混入游戏服）。
+  - **门禁配套**：detekt `TooManyFunctions` 增 `ignoreOverridden`——契约实现类的 override 数量由上游接口决定，不是本类复杂度信号；`SchedulingCache` 已逼近阈值，故池段读写按 `PoolSection` 参数化而非各写一套同构方法。
+
 ## 1.5.0（2026-10-24）
 
 ### 新增

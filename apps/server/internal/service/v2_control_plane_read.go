@@ -26,6 +26,7 @@ type ServerView struct {
 	BCClusterID     *uint                `json:"bcClusterId"`
 	BCClusterName   *string              `json:"bcClusterName"`
 	LobbyClusterID  *uint                `json:"lobbyClusterId"`
+	SharedPoolID    *uint                `json:"sharedPoolId"`
 	ZoneID          *uint                `json:"zoneId"`
 	ZoneName        *string              `json:"zoneName"`
 	RegionName      *string              `json:"regionName"`
@@ -60,7 +61,7 @@ type onlineKey struct {
 
 // isServerAssigned 判断 server 是否已有任一权威归属。
 func isServerAssigned(s *model.Server) bool {
-	return s.ZoneID != nil || s.BCClusterID != nil || s.LobbyClusterID != nil
+	return s.ZoneID != nil || s.BCClusterID != nil || s.LobbyClusterID != nil || s.SharedPoolID != nil
 }
 
 // enrichServers 把 server 行批量富化为视图：一次性批量取名与在线态，禁循环内查库（N+1）。
@@ -299,7 +300,7 @@ func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameBy
 	lifecycle := serverLifecycleValue(s)
 	view := ServerView{
 		ID: s.ID, NamespaceID: s.NamespaceID, ServerID: s.ServerID, DisplayName: displayName, Kind: s.Kind,
-		BCClusterID: s.BCClusterID, LobbyClusterID: s.LobbyClusterID,
+		BCClusterID: s.BCClusterID, LobbyClusterID: s.LobbyClusterID, SharedPoolID: s.SharedPoolID,
 		ZoneID: s.ZoneID, PendingZoneID: s.PendingZoneID,
 		IsDefaultEntry: s.IsDefaultEntry, Draining: s.Draining, Lifecycle: lifecycle,
 		LifecycleStatus: lifecycle, EffectiveActive: lifecycle == model.ServerLifecycleActive,

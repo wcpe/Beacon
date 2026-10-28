@@ -54,6 +54,7 @@ func labelsField(labels map[string]string) *map[string]string {
 type schedCandidatesResponse struct {
 	GeneratedAtMs int64         `json:"generatedAtMs"`
 	Lobby         schedLobbyJS  `json:"lobby"`
+	Shared        schedSharedJS `json:"shared"`
 	Zones         []schedZoneJS `json:"zones"`
 }
 
@@ -62,6 +63,27 @@ type schedLobbyJS struct {
 	ClusterID  uint               `json:"clusterId"`
 	Ready      bool               `json:"ready"`
 	Candidates []schedCandidateJS `json:"candidates"`
+}
+
+// schedSharedJS 是 namespace 共享游戏池候选集（FR-281）；与大厅段各自独立，成员集合不重叠。
+// 空集仍返回 ready=false，避免与「旧控制面没有该段」混淆。
+type schedSharedJS struct {
+	PoolID     uint               `json:"poolId"`
+	Ready      bool               `json:"ready"`
+	Candidates []schedCandidateJS `json:"candidates"`
+}
+
+// schedCandidatesJS 把服务层候选逐条翻成响应形状（三个候选段共用）。
+func schedCandidatesJS(items []service.SchedCandidate) []schedCandidateJS {
+	out := make([]schedCandidateJS, 0, len(items))
+	for _, c := range items {
+		out = append(out, schedCandidateJS{
+			ServerID: c.ServerID, Score: c.Score, Level: c.Level,
+			Schedulable: c.Schedulable, OnlineCount: c.OnlineCount, MaxOnline: c.MaxOnline,
+			Labels: labelsField(c.Labels),
+		})
+	}
+	return out
 }
 
 // Candidates 处理 GET /beacon/v2/agent/schedule/candidates：按请求方 namespace 圈定，
@@ -75,26 +97,12 @@ func (h *V2SchedHandler) Candidates(w http.ResponseWriter, r *http.Request) {
 	result := h.svc.Candidates(identity)
 	zones := make([]schedZoneJS, 0, len(result.Zones))
 	for _, z := range result.Zones {
-		candidates := make([]schedCandidateJS, 0, len(z.Candidates))
-		for _, c := range z.Candidates {
-			candidates = append(candidates, schedCandidateJS{
-				ServerID: c.ServerID, Score: c.Score, Level: c.Level,
-				Schedulable: c.Schedulable, OnlineCount: c.OnlineCount, MaxOnline: c.MaxOnline,
-				Labels: labelsField(c.Labels),
-			})
-		}
-		zones = append(zones, schedZoneJS{Zone: z.Zone, Candidates: candidates})
-	}
-	lobbyCandidates := make([]schedCandidateJS, 0, len(result.Lobby.Candidates))
-	for _, c := range result.Lobby.Candidates {
-		lobbyCandidates = append(lobbyCandidates, schedCandidateJS{
-			ServerID: c.ServerID, Score: c.Score, Level: c.Level, Schedulable: c.Schedulable,
-			OnlineCount: c.OnlineCount, MaxOnline: c.MaxOnline, Labels: labelsField(c.Labels),
-		})
+		zones = append(zones, schedZoneJS{Zone: z.Zone, Candidates: schedCandidatesJS(z.Candidates)})
 	}
 	render.WriteJSON(w, http.StatusOK, schedCandidatesResponse{
 		GeneratedAtMs: result.GeneratedAtMs, Zones: zones,
-		Lobby: schedLobbyJS{ClusterID: result.Lobby.ClusterID, Ready: result.Lobby.Ready, Candidates: lobbyCandidates},
+		Lobby:  schedLobbyJS{ClusterID: result.Lobby.ClusterID, Ready: result.Lobby.Ready, Candidates: schedCandidatesJS(result.Lobby.Candidates)},
+		Shared: schedSharedJS{PoolID: result.Shared.PoolID, Ready: result.Shared.Ready, Candidates: schedCandidatesJS(result.Shared.Candidates)},
 	})
 }
 

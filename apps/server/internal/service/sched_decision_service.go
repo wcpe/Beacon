@@ -74,8 +74,14 @@ const (
 	SchedFailZoneNotFound = "zone_not_found"
 	// SchedScopeZone 保持既有按小区调度的缺省作用域。
 	SchedScopeZone = "zone"
-	// SchedScopeLobby 是 namespace 唯一大厅集群的调度作用域。
+	// SchedScopeLobby 是 namespace 唯一入口大厅集群的调度作用域。
 	SchedScopeLobby = "lobby"
+	// SchedScopeSharedPool 是 namespace 唯一共享游戏池的调度作用域（FR-281）。
+	//
+	// 与 lobby 分开的理由：lobby 承担「BC 首次落脚」语义（玩家登录落到等待大厅），
+	// 而共享游戏池是「跨区共享的游戏服」（选中即开游戏房）。两者若共用一个池，
+	// 玩家从 BC 进来会被直接丢进游戏服。形状约束与 lobby 相同：该档 zone 必须为空。
+	SchedScopeSharedPool = "shared_pool"
 )
 
 // 请求字段长度上限（与 spec §3.4 列宽一致；超限 400 拒绝，防止坏行毒化异步 flush 批）。
@@ -346,7 +352,7 @@ func toSchedDecisionRow(o SchedDecisionOutcome) model.SchedDecisionV2 {
 	}
 }
 
-// validateScopedDecideParams 校验 scope 与其目标字段形状；lobby 不接受非空 zone。
+// validateScopedDecideParams 校验 scope 与其目标字段形状；池档（lobby / shared_pool）不接受非空 zone。
 func validateScopedDecideParams(scope, zone, purpose, plugin string) error {
 	if len(purpose) > schedPurposeMaxLen || len(plugin) > schedPluginMaxLen {
 		return apperr.ErrInvalidParam
@@ -356,7 +362,7 @@ func validateScopedDecideParams(scope, zone, purpose, plugin string) error {
 		if zone == "" || len(zone) > schedZoneNameMaxLen {
 			return apperr.ErrInvalidParam
 		}
-	case SchedScopeLobby:
+	case SchedScopeLobby, SchedScopeSharedPool:
 		if zone != "" {
 			return apperr.ErrInvalidParam
 		}
@@ -392,11 +398,14 @@ func validateAdmissionScope(admission []map[string]string) error {
 	return nil
 }
 
-// scopedViews 返回目标作用域的健康视图。lobby 即使没有成员也视为有效作用域并返回空集，
-// 让调用方以 no_candidate 表达业务结果；只有 zone 才使用 zone_not_found。
+// scopedViews 返回目标作用域的健康视图。池档（lobby / shared_pool）即使没有成员也视为有效作用域
+// 并返回空集，让调用方以 no_candidate 表达业务结果；只有 zone 才使用 zone_not_found。
 func (s *SchedulingV2Service) scopedViews(namespaceID uint, scope, zone string) ([]healthview.View, bool) {
 	if scope == SchedScopeLobby {
 		return s.lobbyViews(namespaceID), true
+	}
+	if scope == SchedScopeSharedPool {
+		return s.sharedPoolViews(namespaceID), true
 	}
 	views := s.zoneViews(namespaceID, zone)
 	return views, len(views) > 0
@@ -424,6 +433,36 @@ func namespaceLobbyClusterID(views []healthview.View, namespaceID uint) uint {
 	for _, v := range views {
 		if v.NamespaceID == namespaceID && v.NamespaceLobbyClusterID != 0 {
 			return v.NamespaceLobbyClusterID
+		}
+	}
+	return 0
+}
+
+// sharedPoolViews 仅从本 namespace 同一共享游戏池的健康视图取候选（FR-281），不触达 DB。
+//
+// 与 lobbyViews 严格按各自归属列过滤：这是「玩家从 BC 进来不会被丢进游戏服」的保证——
+// 共享池成员只出现在这里，永远不进入 lobby 段。
+func (s *SchedulingV2Service) sharedPoolViews(namespaceID uint) []healthview.View {
+	all := s.views.List()
+	poolID := namespaceSharedPoolID(all, namespaceID)
+	if poolID == 0 {
+		return []healthview.View{}
+	}
+	out := make([]healthview.View, 0)
+	for _, v := range all {
+		if v.NamespaceID == namespaceID && v.SharedPoolID == poolID {
+			out = append(out, v)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ServerID < out[j].ServerID })
+	return out
+}
+
+// namespaceSharedPoolID 从健康快照取 namespace 权威共享游戏池 ID。
+func namespaceSharedPoolID(views []healthview.View, namespaceID uint) uint {
+	for _, v := range views {
+		if v.NamespaceID == namespaceID && v.NamespaceSharedPoolID != 0 {
+			return v.NamespaceSharedPoolID
 		}
 	}
 	return 0
@@ -586,10 +625,18 @@ type SchedLobbyCandidates struct {
 	Candidates []SchedCandidate
 }
 
+// SchedSharedPoolCandidates 是 namespace 共享游戏池的候选快照（FR-281）。
+type SchedSharedPoolCandidates struct {
+	PoolID     uint
+	Ready      bool
+	Candidates []SchedCandidate
+}
+
 // SchedCandidatesResult 是候选快照结果（对齐 §5.1 candidates 响应）。
 type SchedCandidatesResult struct {
 	GeneratedAtMs int64
 	Lobby         SchedLobbyCandidates
+	Shared        SchedSharedPoolCandidates
 	Zones         []SchedZoneCandidates
 }
 
@@ -625,9 +672,21 @@ func (s *SchedulingV2Service) Candidates(id agentauth.Identity) SchedCandidatesR
 		}
 	}
 	sortSchedCandidates(lobbyCandidates)
+	// 共享游戏池候选段（FR-281）：与 lobby 各自独立，成员集合不重叠（归属四选一保证）。
+	sharedPoolID := namespaceSharedPoolID(all, id.NamespaceID)
+	sharedCandidates := make([]SchedCandidate, 0)
+	if sharedPoolID != 0 {
+		for _, v := range all {
+			if v.NamespaceID == id.NamespaceID && v.SharedPoolID == sharedPoolID && v.Schedulable {
+				sharedCandidates = append(sharedCandidates, s.schedCandidateOf(id.Namespace, v))
+			}
+		}
+	}
+	sortSchedCandidates(sharedCandidates)
 	return SchedCandidatesResult{
 		GeneratedAtMs: s.now().UnixMilli(), Zones: zones,
-		Lobby: SchedLobbyCandidates{ClusterID: clusterID, Ready: len(lobbyCandidates) > 0, Candidates: lobbyCandidates},
+		Lobby:  SchedLobbyCandidates{ClusterID: clusterID, Ready: len(lobbyCandidates) > 0, Candidates: lobbyCandidates},
+		Shared: SchedSharedPoolCandidates{PoolID: sharedPoolID, Ready: len(sharedCandidates) > 0, Candidates: sharedCandidates},
 	}
 }
 

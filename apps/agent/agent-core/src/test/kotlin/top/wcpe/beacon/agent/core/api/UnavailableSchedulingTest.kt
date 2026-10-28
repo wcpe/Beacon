@@ -98,4 +98,62 @@ class UnavailableSchedulingTest {
         assertEquals(DataSource.LOCAL_SNAPSHOT, dataSource.source())
         assertFalse(dataSource.fresh(), "从未就绪的快照不可能是新鲜的")
     }
+
+    @Test
+    fun `大厅档取候选同样以结论不可用正常完成`() {
+        val scheduling = UnavailableScheduling
+
+        val future = scheduling.acquireCandidateInLobby("lobby-transfer")
+
+        assertTrue(future.isDone, "占位实现必须立即完成，绝不阻塞玩家链路")
+        val result = future.get()
+        assertNull(result.chosen(), "没有任何候选缓存")
+        assertEquals(
+            ScheduleState.UNAVAILABLE,
+            result.state(),
+            "「看不到」是当前状态、可重试；落到接口 default 抛 UnsupportedOperationException 会同步打断调用方，且语义上谎称「不提供该能力」",
+        )
+        assertEquals("unavailable", result.failReason())
+        assertEquals(DecisionSource.LOCAL_FALLBACK, result.source())
+    }
+
+    @Test
+    fun `带作用域的大厅档取候选同样正常完成而不外抛`() {
+        val scheduling = UnavailableScheduling
+
+        val future = scheduling.acquireCandidateInLobby("lobby-transfer", AdmissionScope.of("k", "v"))
+
+        assertTrue(future.isDone)
+        val result = future.get()
+        assertEquals(
+            ScheduleState.UNAVAILABLE,
+            result.state(),
+            "作用域非空也改变不了「看不到」这个事实，与 zone 档同一口径",
+        )
+        assertEquals("unavailable", result.failReason())
+    }
+
+    @Test
+    fun `空作用域读大厅候选返回空表而非落到接口缺省实现`() {
+        val scheduling = UnavailableScheduling
+
+        assertTrue(scheduling.candidatesInLobby().isEmpty())
+        assertTrue(scheduling.candidatesInLobby(AdmissionScope.empty()).isEmpty())
+        assertTrue(scheduling.candidatesInLobby(null).isEmpty())
+    }
+
+    @Test
+    fun `非空作用域读大厅候选如实抛判据不可用`() {
+        val scheduling = UnavailableScheduling
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                scheduling.candidatesInLobby(AdmissionScope.of("k", "v"))
+            }
+
+        assertFalse(
+            failure.message.isNullOrBlank(),
+            "异常要带说明（可重试的当前状态 vs 稳定结论），不能是无说明的 ISE",
+        )
+    }
 }

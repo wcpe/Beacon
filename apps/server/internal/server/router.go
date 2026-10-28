@@ -307,6 +307,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// 大厅集群独立于大区 / 小区；成员迁移由专用端点原子完成。
 			r.Get("/lobby-clusters", h.V2.ListLobbyClusters)
 			r.Get("/lobby-clusters/{id}", h.V2.GetLobbyCluster)
+			// 共享游戏池与大厅集群并列（FR-281）：前者是跨区共享的游戏服池，后者是 BC 首次落脚的入口大厅。
+			r.Get("/shared-pools", h.V2.ListSharedPools)
+			r.Get("/shared-pools/{id}", h.V2.GetSharedPool)
 			r.Post("/server-placement-transfers", h.V2.TransferServerPlacement)
 			r.Post("/server-assignments", h.V2.AssignServers)
 			// 换区工单（FR-155）：已分配 server 改归属，解绑重确认编排

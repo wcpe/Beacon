@@ -99,7 +99,7 @@ func TestSchedCandidatesResponseShape(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应非 json: %v", err)
 	}
-	assertKeys(t, body, "generatedAtMs", "lobby", "zones")
+	assertKeys(t, body, "generatedAtMs", "lobby", "shared", "zones")
 	lobby, ok := body["lobby"].(map[string]any)
 	if !ok {
 		t.Fatalf("缺少大厅成员时 lobby 仍应为对象，实际 %v", body["lobby"])
