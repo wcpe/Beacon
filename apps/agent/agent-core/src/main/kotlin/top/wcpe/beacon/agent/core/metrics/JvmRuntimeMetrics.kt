@@ -1,14 +1,15 @@
 package top.wcpe.beacon.agent.core.metrics
 
+import com.sun.management.OperatingSystemMXBean
 import java.lang.management.ManagementFactory
 
 /**
  * JVM 侧内存 / CPU 采集（平台无关，FR-32 相位1）。
  *
  * 内存走 [Runtime]（已用堆 = total - free，最大堆 = max）；
- * CPU 走 `com.sun.management.OperatingSystemMXBean.getProcessCpuLoad`，经反射调用——
- * 该接口属 JDK 扩展，并非所有 JVM 都提供，故反射 + 取不到回退 [RuntimeMetrics.CPU_UNAVAILABLE]，
- * 不在 core 硬绑 `com.sun.*` 类型（守 DB 之外的可移植性，避免编译期依赖私有接口）。
+ * CPU 走 `com.sun.management.OperatingSystemMXBean.getProcessCpuLoad`——该接口是 JDK 在
+ * `jdk.management` 模块中**导出**的公开扩展接口，直接绑定即可，无需反射；
+ * 异构 JVM 上接口缺失或取值异常时回退 [RuntimeMetrics.CPU_UNAVAILABLE]。
  *
  * 均为廉价 MXBean / Runtime 调用，无阻塞 IO；由壳层在既有 async 上报线程内调用。
  */
@@ -96,27 +97,15 @@ object JvmRuntimeMetrics {
      *
      * `getProcessCpuLoad` 在 JVM 刚启动的极短窗口可能返回负值（尚无采样），归一化为不可用。
      */
-    private fun readProcessCpuLoad(): Double {
-        return try {
-            val osBean = ManagementFactory.getOperatingSystemMXBean()
-            // com.sun.management.OperatingSystemMXBean.getProcessCpuLoad()：反射避免编译期硬绑 JDK 扩展接口。
-            // 必须经「已导出的扩展接口」查方法——JDK 9+ 模块化下实现类所在包未导出，
-            // 按实现类（javaClass）反射会被模块封装拦截（InaccessibleObjectException），导致恒回退 -1。
-            val iface = Class.forName("com.sun.management.OperatingSystemMXBean")
-            val load =
-                if (iface.isInstance(osBean)) {
-                    iface.getMethod("getProcessCpuLoad").invoke(osBean) as? Double
-                } else {
-                    null
-                }
+    private fun readProcessCpuLoad(): Double =
+        runCatching {
+            // 直接绑定 JDK 导出的扩展接口（com.sun.management 位于 jdk.management 模块且已导出）。
+            // 不走反射：按名称查找既无编译期校验，又会在模块封装下静默失效。
+            val load = (ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean)?.processCpuLoad
             if (load == null || load < 0.0 || load.isNaN()) {
                 RuntimeMetrics.CPU_UNAVAILABLE
             } else {
                 load.coerceAtMost(1.0)
             }
-        } catch (e: Exception) {
-            // 接口缺失 / 反射失败：CPU 不可用，回退哨兵（不抛、不刷屏）。
-            RuntimeMetrics.CPU_UNAVAILABLE
-        }
-    }
+        }.getOrDefault(RuntimeMetrics.CPU_UNAVAILABLE)
 }

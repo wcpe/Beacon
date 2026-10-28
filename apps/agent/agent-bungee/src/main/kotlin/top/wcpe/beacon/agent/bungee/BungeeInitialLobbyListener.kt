@@ -11,19 +11,19 @@ object BungeeInitialLobbyListener {
     private var router: InitialLobbyRouter? = null
 
     @Volatile
-    private var directory: BungeeServerDirectory? = null
+    private var lookup: ManagedServerLookup? = null
 
     fun start(
         router: InitialLobbyRouter,
-        directory: BungeeServerDirectory,
+        directory: ManagedServerLookup,
     ) {
-        this.directory = directory
+        this.lookup = directory
         this.router = router
     }
 
     fun stop() {
         router = null
-        directory = null
+        lookup = null
     }
 
     @SubscribeEvent
@@ -39,7 +39,7 @@ object BungeeInitialLobbyListener {
         event: ServerConnectEvent,
         serverId: String,
     ) {
-        val target = directory?.managedServerInfo(serverId)
+        val target = lookup?.managedServerInfo(serverId)
         if (target == null) {
             rejectFirstEntry(event)
             return

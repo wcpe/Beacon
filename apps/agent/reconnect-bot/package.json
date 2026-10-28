@@ -1,0 +1,20 @@
+{
+  "name": "@wcpe/beacon-reconnect-bot",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Beacon FR-274 子服关闭回退场景机器人（mineflayer）。内核来自共享包 @wcpe/mc-testkit-bot，本包只登记业务场景。",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/connectAndWait.js",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@wcpe/mc-testkit-bot": "^0.1.0",
+    "mineflayer": "^4.23.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  }
+}

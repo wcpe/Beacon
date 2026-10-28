@@ -17,6 +17,13 @@ dependencies {
     // 仅编译期依赖对外只读 API：模拟真实业务插件的依赖方式（不把 API 打进 jar，运行期由 BeaconAgent 提供）。
     compileOnly(project(":agent-api"))
     compileOnly(kotlin("stdlib"))
+    // Bukkit 平台 API（org.bukkit.*）：TabooLib 的 install("platform-bukkit") 只装平台实现，
+    // 不会把 Bukkit API 传到编译类路径；FR-274 回退探针需要订阅聊天/进服事件，故显式 compileOnly。
+    // 采与 agent-bungee 同款做法（见其 build.gradle.kts 对 bungeecord-api 的处理）。
+    // 选 1.16.5 而非 1.20.x：本模块编译目标是 JVM 8（见下方 jvmTarget），
+    // 而 paper-api 1.20.4 要求 JVM 17+，会被 Gradle 的兼容性校验直接拒绝。
+    // 探针只用到 Bukkit 最基础的 API（事件订阅 / shutdown / chat），1.16.5 的位置与签名在 1.20 上同样成立。
+    compileOnly("org.spigotmc:spigot-api:1.16.5-R0.1-SNAPSHOT")
 }
 
 taboolib {
@@ -57,6 +64,11 @@ fun integerProperty(
 val paperVersion = providers.gradleProperty("e2ePaperVersion").orElse("1.20.4").get()
 val backendPort = integerProperty("e2eMcPort", 25566)
 val proxyPort = integerProperty("e2eProxyPort", 25577)
+// FR-274 回退拓扑：需要两台大厅（分属两个小区）与一台可关闭的业务子服。
+// 端口各自独立，避免与既有单后端 serve 争用；可用 Gradle 属性覆盖以避本地端口冲突。
+val lobby1Port = integerProperty("e2eLobby1Port", 25568)
+val lobby2Port = integerProperty("e2eLobby2Port", 25569)
+val gamePort = integerProperty("e2eGamePort", 25570)
 val beaconVersion = project.version.toString()
 
 // Q2 harness 只把非敏感端口放入 -P；端点、令牌、namespace 与身份全部从子进程环境读取。
@@ -135,7 +147,9 @@ mcTestkit {
     proxy("bungee") {
         platform = bungeecord
         port = proxyPort
-        routesTo("backend")
+        // 必须覆盖全部后端：mc-testkit 在配置期校验「多后端场景的代理须 routesTo 每个被引用后端」，
+        // 漏一个会直接报错（正是这条校验提前拦住了回退场景拓扑写漏）。
+        routesTo("backend", "lobby1", "lobby2", "game")
         plugin(proxyAgentJar)
         plugin(proxyE2eJar)
         templateDirectory(proxyTemplate)
@@ -157,6 +171,44 @@ mcTestkit {
     serve("proxy") {
         backend = "backend"
         via = "bungee"
+    }
+    // ── FR-274 子服关闭回退拓扑 ──────────────────────────────────────────
+    // 两个大厅分属一区 / 二区，一台业务子服可被关闭以触发回退；全部经同一代理转发。
+    // **顺序有意义**：代理的 priorities 按声明顺序取首个可用后端，故 game 必须排最前——
+    // bot 要先落在业务子服里，才能把这个子服关掉去验证回退。
+    backend("game") {
+        platform = paper
+        version = paperVersion
+        port = gamePort
+        templateDirectory(backendTemplate)
+        env("JAVA_TOOL_OPTIONS", "-Xms512M -Xmx1536M -Dtaboolib.debug=true")
+        env("BEACON_E2E_RECONNECT_ROLE", "game")
+    }
+    backend("lobby1") {
+        platform = paper
+        version = paperVersion
+        port = lobby1Port
+        templateDirectory(backendTemplate)
+        env("JAVA_TOOL_OPTIONS", "-Xms512M -Xmx1536M -Dtaboolib.debug=true")
+        env("BEACON_E2E_RECONNECT_ROLE", "lobby-1")
+    }
+    backend("lobby2") {
+        platform = paper
+        version = paperVersion
+        port = lobby2Port
+        templateDirectory(backendTemplate)
+        env("JAVA_TOOL_OPTIONS", "-Xms512M -Xmx1536M -Dtaboolib.debug=true")
+        env("BEACON_E2E_RECONNECT_ROLE", "lobby-2")
+    }
+    // 回退场景：bot 进 game 后端 → 触发其关闭 → agent 把玩家送回同区大厅。
+    // backends(...) 的顺序同样须让 game 在首位（与上面声明顺序保持一致）。
+    scenario("reconnect") {
+        backends("game", "lobby1", "lobby2")
+        via = "bungee"
+        bot {
+            username = "Reconnector"
+            action = "reconnect-fallback"
+        }
     }
     dependencies {
         pluginUnderTest = backendAgentJar

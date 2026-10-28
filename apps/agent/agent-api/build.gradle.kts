@@ -1,6 +1,21 @@
-import java.lang.reflect.Modifier
 import java.util.jar.JarFile
-import java.net.URLClassLoader
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.FieldVisitor
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
+
+// apiDump 需要读编译产物的字节码来导出公开签名。用 ASM 解析常量池而非 `Class.forName`
+// 加载类：① 不触发类初始化与依赖解析，产物有缺失依赖也能导出；② 全仓零反射约束。
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath("org.ow2.asm:asm:9.7.1")
+    }
+}
 
 // agent-api：业务插件 compileOnly 依赖的只读契约。纯 Java 8，无 Kotlin、无任何第三方依赖。
 // 公开签名只用 java.util.* / java.util.Optional / java.util.function.*，不引用其它模块的内部类型。
@@ -83,58 +98,138 @@ val apiDump by tasks.registering {
         val jar = jarTask.get().archiveFile.get().asFile
         val out = outputFile.get().asFile
         out.parentFile.mkdirs()
-        val url = jar.toURI().toURL()
-        val loader = URLClassLoader(arrayOf(url), ClassLoader.getSystemClassLoader())
-        val lines = mutableListOf<String>()
+        val classes = mutableListOf<ApiClass>()
         JarFile(jar).use { jf ->
-            val names =
-                jf.entries().asSequence()
-                    .map { it.name }
-                    .filter { it.endsWith(".class") && !it.contains('$') }
-                    .map { it.removeSuffix(".class").replace('/', '.') }
-                    .sorted()
-                    .toList()
-            for (name in names) {
-                val cls = Class.forName(name, false, loader)
-                // 只记录对外可见的类型（package-private 类不是契约）。
-                if (!Modifier.isPublic(cls.modifiers)) continue
-                lines += "class ${cls.name}${if (cls.isInterface) " (interface)" else ""}"
-                // 构造器
-                cls.declaredConstructors
-                    .filter { Modifier.isPublic(it.modifiers) || Modifier.isProtected(it.modifiers) }
-                    .map { "${cls.simpleName}(${it.parameterTypes.joinToString(",") { p -> p.name }})" }
-                    .sorted()
-                    .forEach { lines += "  ctor $it" }
-                // 方法（含 static / default）
-                cls.declaredMethods
-                    .filter { Modifier.isPublic(it.modifiers) || Modifier.isProtected(it.modifiers) }
-                    .filter { !it.isSynthetic && !it.isBridge }
-                    .map { m ->
-                        val mods =
-                            buildList {
-                                if (Modifier.isStatic(m.modifiers)) add("static")
-                                if (Modifier.isAbstract(m.modifiers)) add("abstract")
-                                if (m.isDefault) add("default")
-                            }.joinToString(" ")
-                        "${m.name}(${m.parameterTypes.joinToString(",") { p -> p.name }}):" +
-                            "${m.returnType.name}${if (mods.isEmpty()) "" else " [$mods]"}"
-                    }.sorted()
-                    .forEach { lines += "  method $it" }
-                // 字段（含枚举常量）
-                cls.declaredFields
-                    .filter { Modifier.isPublic(it.modifiers) || Modifier.isProtected(it.modifiers) }
-                    .filter { !it.isSynthetic }
-                    .map { f ->
-                        val mods = if (Modifier.isStatic(f.modifiers)) "static " else ""
-                        "${f.name}:${f.type.name} [$mods]"
-                    }.sorted()
-                    .forEach { lines += "  field $it" }
+            for (entry in jf.entries()) {
+                val path = entry.name
+                // 与旧实现保持一致：只看顶层类（跳过内部类），它们才是对外契约的粒度。
+                if (!path.endsWith(".class") || path.contains('$')) continue
+                classes += readApiClass(jf.getInputStream(entry).use { it.readBytes() })
             }
         }
-        loader.close()
+        val lines = mutableListOf<String>()
+        for (c in classes.sortedBy { it.name }) {
+            // 只记录对外可见的类型（package-private 类不是契约）。
+            if (!c.isPublic) continue
+            lines += "class ${c.name}${if (c.isInterface) " (interface)" else ""}"
+            c.ctors.sorted().forEach { lines += "  ctor $it" }
+            c.methods.sorted().forEach { lines += "  method $it" }
+            c.fields.sorted().forEach { lines += "  field $it" }
+        }
         out.writeText(lines.joinToString("\n", postfix = "\n"), Charsets.UTF_8)
     }
 }
+
+/** 一个类导出的公开契约。 */
+private class ApiClass(
+    val name: String,
+    val isPublic: Boolean,
+    val isInterface: Boolean,
+    val ctors: List<String>,
+    val methods: List<String>,
+    val fields: List<String>,
+)
+
+/**
+ * 把一个 class 文件的公开/protected 成员读成签名文本。
+ *
+ * 全程只解析字节码，不 `Class.forName` 加载类——那会触发初始化与依赖解析，
+ * 产物若引用了当前类路径没有的类型就会整批导出失败。
+ */
+private fun readApiClass(bytes: ByteArray): ApiClass {
+    var access = 0
+    var internalName = ""
+    val ctors = mutableListOf<String>()
+    val methods = mutableListOf<String>()
+    val fields = mutableListOf<String>()
+
+    ClassReader(bytes).accept(
+        object : ClassVisitor(Opcodes.ASM9) {
+            override fun visit(
+                version: Int,
+                classAccess: Int,
+                name: String,
+                signature: String?,
+                superName: String?,
+                interfaces: Array<out String>?,
+            ) {
+                access = classAccess
+                internalName = name
+            }
+
+            override fun visitMethod(
+                methodAccess: Int,
+                name: String,
+                descriptor: String,
+                signature: String?,
+                exceptions: Array<out String>?,
+            ): MethodVisitor? {
+                if (!isApiVisible(methodAccess)) return null
+                // 静态初始化块不是 API；<init> 才是构造器。
+                if (name == "<clinit>") return null
+                val type = Type.getMethodType(descriptor)
+                val params = type.argumentTypes.joinToString(",") { apiTypeName(it) }
+                if (name == "<init>") {
+                    ctors += "${internalName.substringAfterLast('/')}($params)"
+                } else {
+                    // 编译器生成的合成方法 / 桥接方法不是契约（与旧实现一致）。
+                    if (methodAccess and (Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) != 0) return null
+                    val mods =
+                        buildList {
+                            if (methodAccess and Opcodes.ACC_STATIC != 0) add("static")
+                            if (methodAccess and Opcodes.ACC_ABSTRACT != 0) add("abstract")
+                            if (isDefaultMethod(methodAccess, access)) add("default")
+                        }.joinToString(" ")
+                    val suffix = if (mods.isEmpty()) "" else " [$mods]"
+                    methods += "$name($params):${apiTypeName(type.returnType)}$suffix"
+                }
+                return null
+            }
+
+            override fun visitField(
+                fieldAccess: Int,
+                name: String,
+                descriptor: String,
+                signature: String?,
+                value: Any?,
+            ): FieldVisitor? {
+                if (!isApiVisible(fieldAccess)) return null
+                if (fieldAccess and Opcodes.ACC_SYNTHETIC != 0) return null
+                val mods = if (fieldAccess and Opcodes.ACC_STATIC != 0) "static " else ""
+                fields += "$name:${apiTypeName(Type.getType(descriptor))} [$mods]"
+                return null
+            }
+        },
+        ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+    )
+
+    return ApiClass(
+        name = internalName.replace('/', '.'),
+        isPublic = access and Opcodes.ACC_PUBLIC != 0,
+        isInterface = access and Opcodes.ACC_INTERFACE != 0,
+        ctors = ctors,
+        methods = methods,
+        fields = fields,
+    )
+}
+
+/** public / protected 才是对外契约。 */
+private fun isApiVisible(memberAccess: Int): Boolean =
+    memberAccess and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) != 0
+
+/** 等价 `java.lang.reflect.Method.isDefault()`：接口里的非抽象、非静态方法。 */
+private fun isDefaultMethod(methodAccess: Int, classAccess: Int): Boolean =
+    classAccess and Opcodes.ACC_INTERFACE != 0 &&
+        methodAccess and (Opcodes.ACC_ABSTRACT or Opcodes.ACC_STATIC) == 0
+
+/**
+ * 与 `Class.getName()` 输出保持一致的类型名。
+ *
+ * 数组必须用描述符形态（`[Lfoo.Bar;` / `[I`）而不是 `foo.Bar[]`——否则基线快照会整体变形。
+ */
+private fun apiTypeName(type: Type): String =
+    if (type.sort == Type.ARRAY) type.descriptor.replace('/', '.') else type.className
+
 
 /** 与基线比对：删除或修改既有签名即失败；新增允许（加性）。 */
 val apiCheck by tasks.registering {

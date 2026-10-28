@@ -33,6 +33,10 @@ subprojects {
                 includeGroup("io.izzel.taboolib.gradle")
                 includeGroup("org.tabooproject.reflex")
                 includeGroup("top.wcpe.taboolib.ioc")
+                // 平台 API：agent-e2e 的 FR-274 回退探针需订阅 Bukkit 事件，
+                // 而 TabooLib 的 install("platform-bukkit") 不把 API 传到编译类路径；
+                // 该坐标只在 WCPE 私仓可解析（mavenCentral 无快照版本）。
+                includeGroup("org.spigotmc")
             }
         }
         mavenCentral()

@@ -7,8 +7,19 @@ import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectory
 import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * 「受管子服 → 平台 [ServerInfo]」的最小查询契约。
+ *
+ * 单独抽成函数式接口，是为了让消费方（[BungeeReconnectListener]）不直接依赖
+ * [BungeeServerDirectory] 这个会去摸 `ProxyServer` 单例的实现，从而能在单测里替换掉。
+ */
+fun interface ManagedServerLookup {
+    /** 仅当该 serverId 由 Beacon 接管时返回对应 [ServerInfo]，否则返回 null。 */
+    fun managedServerInfo(serverId: String): ServerInfo?
+}
+
 /** BungeeCord ServerInfo 目录实现，只管理 Beacon 创建过的条目。 */
-class BungeeServerDirectory : ProxyServerDirectory {
+class BungeeServerDirectory : ProxyServerDirectory, ManagedServerLookup {
     private val managed: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val replaced: MutableMap<String, ServerInfo> = ConcurrentHashMap()
 
@@ -56,7 +67,7 @@ class BungeeServerDirectory : ProxyServerDirectory {
     }
 
     /** 仅返回本轮 Beacon 接管的后端，避免首次大厅路由落到同名手工配置。 */
-    fun managedServerInfo(serverId: String): ServerInfo? {
+    override fun managedServerInfo(serverId: String): ServerInfo? {
         if (!managed.contains(serverId)) return null
         return ProxyServer.getInstance().servers[serverId]
     }

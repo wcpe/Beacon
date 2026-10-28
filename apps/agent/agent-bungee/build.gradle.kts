@@ -43,6 +43,21 @@ dependencies {
     // BungeeCord 平台 API（net.md_5.bungee.*）：TabooLib install(BungeeCord) 未把它加到编译类路径，显式 compileOnly 引入；
     // 仅编译期可见，运行期由 BungeeCord 代理本身提供（@jar 只取主 jar、不拉传递依赖）。
     compileOnly("net.md-5:bungeecord-api:1.21-R0.4@jar")
+
+    // 测试：决策层（ReconnectDispatch）只需 BungeeCord 的事件枚举 + agent-core 的选路结果类型；
+    // 事件胶水层（BungeeReconnectListener）还要构造真实的 ServerKickEvent / ServerConnectEvent，
+    // 其构造器签名带 BaseComponent[]，故额外需要 bungeecord-chat；手写 ProxiedPlayer 替身要覆写
+    // showDialog(Dialog)，再加 bungeecord-dialog。两者缺一编译即失败——api jar 的 @jar 写法不拉传递依赖。
+    // 平台实例（ProxiedPlayer / Server / ServerInfo）由手写测试替身提供，不引入 mock 框架。
+    testImplementation(kotlin("test"))
+    testImplementation(project(":agent-core"))
+    testImplementation("net.md-5:bungeecord-api:1.21-R0.4@jar")
+    testImplementation("net.md-5:bungeecord-chat:1.21-R0.4@jar")
+    testImplementation("net.md-5:bungeecord-dialog:1.21-R0.4@jar")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 taboolib {
