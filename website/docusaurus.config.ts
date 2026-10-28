@@ -92,7 +92,7 @@ const config: Config = {
           versions: {
             current: {
               // 标签取自仓库 VERSION（发版时同步更新此处即可，避免与根 VERSION 漂移）。
-              label: '1.5.0',
+              label: '1.6.0',
               path: '',
             },
           },
