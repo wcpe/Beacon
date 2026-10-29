@@ -13,7 +13,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath("org.ow2.asm:asm:9.7.1")
+        classpath("org.ow2.asm:asm:9.11.1")
     }
 }
 
