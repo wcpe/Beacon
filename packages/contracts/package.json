@@ -17,6 +17,6 @@
   "devDependencies": {
     "@beacon/eslint-config": "workspace:*",
     "@beacon/typescript-config": "workspace:*",
-    "typescript": "5.6.3"
+    "typescript": "5.9.3"
   }
 }
