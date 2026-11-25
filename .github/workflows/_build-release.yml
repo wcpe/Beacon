@@ -94,11 +94,10 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: 构建内嵌 Web
         run: make web
-      - uses: actions/upload-artifact@v7
+      - uses: actions/cache/save@v4
         with:
-          name: web-dist
+          key: web-dist-${{ github.run_id }}-${{ github.run_attempt }}
           path: apps/web/dist/
-          if-no-files-found: error
 
   binaries:
     name: 控制面 ${{ matrix.target }}
@@ -124,10 +123,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/download-artifact@v8
+      - uses: actions/cache/restore@v4
         with:
-          name: web-dist
+          key: web-dist-${{ github.run_id }}-${{ github.run_attempt }}
           path: apps/web/dist
+          fail-on-cache-miss: true
+
       - name: 构建控制面
         shell: sh
         env:
@@ -145,11 +146,10 @@ jobs:
           go build -trimpath -ldflags "$ldflags" -o "$out" ./apps/server/cmd/beacon
           # 断言运行时版本串，而非仅正式版本号：这是「一眼分辨当前候选」的发布期守门。
           test "$("./$out" --version)" = "$RUNTIME_VER"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/cache/save@v4
         with:
-          name: beacon-${{ matrix.target }}
+          key: beacon-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: beacon-*
-          if-no-files-found: error
 
   java:
     name: Agent 与 RC Maven 产品
@@ -210,14 +210,13 @@ jobs:
             zip -q -r "$bundle" .
           )
           test -s "$bundle"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/cache/save@v4
         with:
-          name: beacon-java-products
+          key: beacon-java-products-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             dist/BeaconAgent-${{ needs.meta.outputs.version }}.jar
             dist/BeaconAgentProxy-${{ needs.meta.outputs.version }}.jar
             beacon-maven-${{ needs.meta.outputs.version }}.zip
-          if-no-files-found: error
 
   release:
     name: 汇总并发布 RC
@@ -230,26 +229,36 @@ jobs:
         with:
           ref: ${{ needs.meta.outputs.commit }}
           fetch-depth: 0
-      - uses: actions/download-artifact@v8
+      - uses: actions/cache/restore@v4
         with:
-          name: beacon-linux-amd64
+          key: beacon-linux-amd64-${{ github.run_id }}-${{ github.run_attempt }}
           path: downloaded
-      - uses: actions/download-artifact@v8
+          fail-on-cache-miss: true
+
+      - uses: actions/cache/restore@v4
         with:
-          name: beacon-linux-arm64
+          key: beacon-linux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           path: downloaded
-      - uses: actions/download-artifact@v8
+          fail-on-cache-miss: true
+
+      - uses: actions/cache/restore@v4
         with:
-          name: beacon-windows-amd64
+          key: beacon-windows-amd64-${{ github.run_id }}-${{ github.run_attempt }}
           path: downloaded
-      - uses: actions/download-artifact@v8
+          fail-on-cache-miss: true
+
+      - uses: actions/cache/restore@v4
         with:
-          name: beacon-darwin-arm64
+          key: beacon-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           path: downloaded
-      - uses: actions/download-artifact@v8
+          fail-on-cache-miss: true
+
+      - uses: actions/cache/restore@v4
         with:
-          name: beacon-java-products
+          key: beacon-java-products-${{ github.run_id }}-${{ github.run_attempt }}
           path: downloaded
+          fail-on-cache-miss: true
+
       - name: 固化产品资产
         shell: sh
         env:

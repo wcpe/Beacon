@@ -138,10 +138,3 @@ jobs:
             exit 1
           fi
           echo "内容护栏校验通过"
-
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: docs-site
-          path: website/build
-          retention-days: 7

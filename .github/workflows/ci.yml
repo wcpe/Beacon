@@ -239,14 +239,6 @@ jobs:
       - name: 一键打包
         shell: bash
         run: make package
-      - name: 上传临时开发产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: beacon-ci-${{ github.sha }}-${{ matrix.target }}
-          path: dist/
-          retention-days: 7
-          if-no-files-found: error
-
   # 最终门禁明确区分 PR 的跳过打包与 master 的完整打包成功。
   quality-gate:
     name: 最终质量门禁
