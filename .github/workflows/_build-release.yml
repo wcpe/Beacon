@@ -79,7 +79,7 @@ jobs:
     needs: [meta]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write  # 创建 draft release 并上传产物资产
     steps:
       - uses: actions/checkout@v7
         with:
@@ -94,17 +94,41 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: 构建内嵌 Web
         run: make web
-      - uses: actions/cache/save@v4
-        with:
-          key: web-dist-${{ github.run_id }}-${{ github.run_attempt }}
-          path: apps/web/dist/
+
+      # draft release 产物通道：同 run 跨 job cache 实测不可靠，改走
+      # draft release 资产；draft 对外不可见，release job 校验齐备后 publish。
+      - name: 创建 draft release 作为产物通道
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -eu
+          if gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q '^true$'; then
+            echo "复用已有 draft release ${TAG_NAME}"
+          elif gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "::error::Release ${TAG_NAME} 已存在且非 draft，拒绝污染" >&2
+            exit 1
+          else
+            gh release create "${TAG_NAME}" --draft --prerelease --title "${TAG_NAME}" --notes "release pipeline in progress"
+          fi
+
+      - name: 打包并上传 web-dist（运输资产，发布前删除）
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -eu
+          tar -czf "${RUNNER_TEMP}/transport-web-dist.tar.gz" -C apps/web dist
+          gh release upload "${TAG_NAME}" "${RUNNER_TEMP}/transport-web-dist.tar.gz" --clobber
 
   binaries:
     name: 控制面 ${{ matrix.target }}
     needs: [meta, web]
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: read
+      contents: write  # 上传二进制到 draft release
     strategy:
       fail-fast: false
       matrix:
@@ -123,11 +147,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/cache/restore@v4
-        with:
-          key: web-dist-${{ github.run_id }}-${{ github.run_attempt }}
-          path: apps/web/dist
-          fail-on-cache-miss: true
+      - name: 下载 web-dist 产物包
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -eu
+          gh release download "${TAG_NAME}" -p 'transport-web-dist.tar.gz' -D "${RUNNER_TEMP}" --clobber
+          tar -xzf "${RUNNER_TEMP}/transport-web-dist.tar.gz" -C apps/web
 
       - name: 构建控制面
         shell: sh
@@ -146,17 +174,21 @@ jobs:
           go build -trimpath -ldflags "$ldflags" -o "$out" ./apps/server/cmd/beacon
           # 断言运行时版本串，而非仅正式版本号：这是「一眼分辨当前候选」的发布期守门。
           test "$("./$out" --version)" = "$RUNTIME_VER"
-      - uses: actions/cache/save@v4
-        with:
-          key: beacon-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: beacon-*
+      - name: 上传二进制到 draft release
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -eu
+          gh release upload "${TAG_NAME}" beacon-* --clobber
 
   java:
     name: Agent 与 RC Maven 产品
     needs: [meta]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write  # 上传产品到 draft release
     steps:
       - uses: actions/checkout@v7
         with:
@@ -210,13 +242,14 @@ jobs:
             zip -q -r "$bundle" .
           )
           test -s "$bundle"
-      - uses: actions/cache/save@v4
-        with:
-          key: beacon-java-products-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            dist/BeaconAgent-${{ needs.meta.outputs.version }}.jar
-            dist/BeaconAgentProxy-${{ needs.meta.outputs.version }}.jar
-            beacon-maven-${{ needs.meta.outputs.version }}.zip
+      - name: 上传产品到 draft release
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -eu
+          gh release upload "${TAG_NAME}"             "dist/BeaconAgent-${{ needs.meta.outputs.version }}.jar"             "dist/BeaconAgentProxy-${{ needs.meta.outputs.version }}.jar"             "beacon-maven-${{ needs.meta.outputs.version }}.zip"             --clobber
 
   release:
     name: 汇总并发布 RC
@@ -229,35 +262,18 @@ jobs:
         with:
           ref: ${{ needs.meta.outputs.commit }}
           fetch-depth: 0
-      - uses: actions/cache/restore@v4
-        with:
-          key: beacon-linux-amd64-${{ github.run_id }}-${{ github.run_attempt }}
-          path: downloaded
-          fail-on-cache-miss: true
-
-      - uses: actions/cache/restore@v4
-        with:
-          key: beacon-linux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
-          path: downloaded
-          fail-on-cache-miss: true
-
-      - uses: actions/cache/restore@v4
-        with:
-          key: beacon-windows-amd64-${{ github.run_id }}-${{ github.run_attempt }}
-          path: downloaded
-          fail-on-cache-miss: true
-
-      - uses: actions/cache/restore@v4
-        with:
-          key: beacon-darwin-arm64-${{ github.run_id }}-${{ github.run_attempt }}
-          path: downloaded
-          fail-on-cache-miss: true
-
-      - uses: actions/cache/restore@v4
-        with:
-          key: beacon-java-products-${{ github.run_id }}-${{ github.run_attempt }}
-          path: downloaded
-          fail-on-cache-miss: true
+      - name: 下载全部产物并清运输资产
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -eu
+          gh release download "${TAG_NAME}" -D downloaded --clobber
+          rm -f downloaded/transport-web-dist.tar.gz
+          # 运输资产不进正式 release
+          gh release delete-asset "${TAG_NAME}" transport-web-dist.tar.gz -y || true
+          ls -l downloaded/
 
       - name: 固化产品资产
         shell: sh
@@ -281,7 +297,7 @@ jobs:
             "BeaconAgent-${VERSION}.jar" \
             "BeaconAgentProxy-${VERSION}.jar"
           do
-            source="downloaded/dist/$name"
+            source="downloaded/$name"
             test -f "$source"
             cp "$source" "artifacts/$name"
           done
@@ -324,16 +340,17 @@ jobs:
             printf 'Beacon %s RC。\n\n' "$VERSION"
             printf '%s 指向同一 master 提交，资产由 SHA256SUMS.txt 严格校验。\n' "$RC_TAG"
           } > release-body.md
-      - name: 创建 RC Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.meta.outputs.tag }}
-          name: ${{ needs.meta.outputs.tag }}
-          files: artifacts/*
-          prerelease: true
-          generate_release_notes: true
-          body_path: release-body.md
-          fail_on_unmatched_files: true
+      - name: 上传产品资产并发布 RC Release
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -eu
+          gh release upload "${RC_TAG}" artifacts/* --clobber
+          # 追加 GitHub 自动生成的 What's Changed 到自定义正文之后
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes"             -f tag_name="${RC_TAG}" -q .body >> release-body.md || true
+          gh release edit "${RC_TAG}" --draft=false --notes-file release-body.md
 
   publish-rc-maven:
     name: 发布 RC Maven SDK
@@ -374,3 +391,25 @@ jobs:
               :agent-kit:publishMavenPublicationToBeaconRemoteRepository \
               --no-daemon
           )
+
+  # ── 收尾：半成品 draft 不残留（失败/中断时清理；发布成功的已非 draft） ──
+  cleanup-draft:
+    needs: [meta, release]
+    if: ${{ always() && needs.meta.outputs.tag != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 清理未发布的 draft release
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -eu
+          if gh release view "${TAG_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q '^true$'; then
+            gh release delete "${TAG_NAME}" -y
+            echo "已清理残留 draft release ${TAG_NAME}"
+          else
+            echo "无残留 draft（已发布或未创建）"
+          fi
